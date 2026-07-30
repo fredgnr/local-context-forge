@@ -191,8 +191,14 @@ restore 默认要求相邻 `.sha256`，不会直接删除旧 data；详细边界
 
 - runtime：`auto`、`docker-desktop`、`colima`
 - provider：`auto`、`codex_cli`、`cursor_cli`、`mock`、`ollama`
+- `--images build|ghcr`：从当前 checkout 构建，或拉取 GHCR 多架构预构建镜像
+- `--image-tag TAG`：GHCR 标签，默认 `main`；稳定部署建议精确 semver 或 `sha-*`
+- `--ghcr-owner OWNER`：GHCR 用户/组织，默认 `fredgnr`
 - `--skip-build`：使用已有镜像
 - `--no-open`：部署完成不自动打开浏览器
+
+私有 GHCR 模式必须先让当前 Docker context 登录 `ghcr.io`；凭据进入 Docker credential
+store，不进入 runtime env。详见 [GitHub Actions 与 GHCR](15-github-actions-ghcr.md)。
 
 所有端口仍绑定 `127.0.0.1`。本版本没有认证/ACL/TLS；不要通过修改 bind host
 直接暴露到局域网或公网。

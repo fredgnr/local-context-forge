@@ -72,6 +72,22 @@ owner 的 deploy lock 会被安全清理。
 ./scripts/lcf uninstall   # 保留 data/imports/backups
 ```
 
+仓库的 GitHub Actions 会同时构建 `linux/arm64` 与 `linux/amd64`，并把 API、MCP、Web
+发布到 GHCR。默认安装仍从当前 checkout 本地构建，因此不要求 Registry 登录。希望跳过本地
+构建时，先让当前 Docker context 登录私有 GHCR，再运行：
+
+```bash
+read -s CR_PAT
+printf '%s' "$CR_PAT" | docker login ghcr.io -u fredgnr --password-stdin
+unset CR_PAT
+./install.sh --images ghcr --image-tag main
+```
+
+PAT 只需要 classic `read:packages`；不要把它写进仓库、`.env` 或 `.lcf/runtime.env`。
+版本发布可把 `main` 换成精确的 `0.1.0`，提交锁定部署可使用流水线生成的
+`sha-<12位提交前缀>`。完整标签、Colima 和权限说明见
+[GitHub Actions 与 GHCR](docs/15-github-actions-ghcr.md)。
+
 高级用户可指定已有 runtime、provider 与端口：
 
 ```bash

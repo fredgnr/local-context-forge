@@ -22,11 +22,14 @@ REQ -> ADR -> ITER/task -> owned paths -> VAL -> evidence
 
 | 需求 ID | 验收目标 | 决策 | 任务 | Owned paths | 验证 | 当前状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ-PLATFORM-001 | macOS Apple Silicon Electron all-in-one，React renderer | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02 | `desktop/**` | VAL-INSTALL-001 | `planned` |
-| REQ-TRUST-001 | Electron Main 是信任边界，renderer 仅有类型化最小能力 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02 | `desktop/main/**`, `desktop/preload/**`, `desktop/renderer/**` | VAL-TRUST-001 | `planned` |
+| REQ-PLATFORM-001 | macOS Apple Silicon Electron all-in-one，React renderer | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02；ITER-0004/P01、P05 | `desktop/**`, `web/src/**` | VAL-P1-CONTRACT-001、VAL-P1-SOURCE-001、VAL-INSTALL-001 | 源码壳已实现；完整 source/安装门禁 `not-run` |
+| REQ-TRUST-001 | Electron Main 是信任边界，renderer 仅有类型化最小能力 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02、T04 | `desktop/src/main/**`, `desktop/src/preload/**`, `web/src/**` | VAL-P1-CONTRACT-001、VAL-TRUST-001 | 源码合同已测试；packaged trust gate `not-run` |
 | REQ-PY-001 | Python 3.12 sidecar 以 PyInstaller `onedir` 随应用交付 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0002/R01–R02 | `backend/**`, `desktop/resources/python/**` | VAL-PY-001 | `planned` |
 | REQ-QMD-001 | QMD 使用独立、内置 Node 22 worker | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0002/R03 | `desktop/workers/qmd/**` | VAL-QMD-001 | `planned` |
-| REQ-IPC-001 | Main 与 sidecar/worker 只经私有 UDS + 每次启动令牌通信 | [ADR-0002](../adr/0002-uds-startup-token-protocol.md) | ITER-0001/T03 | `desktop/main/**`, sidecar adapters | VAL-IPC-001 | `planned` |
+| REQ-IPC-001 | Main 与 sidecar/worker 只经私有 UDS + 每次启动令牌通信 | [ADR-0002](../adr/0002-uds-startup-token-protocol.md) | ITER-0001/T03 | `desktop/src/main/**`, `backend/app/{cli,desktop_session,factory}.py` | VAL-P1-CONTRACT-001、VAL-P1-SOURCE-001、VAL-IPC-001 | 源码合同已测试；真实 UDS/macOS 集成 `not-run` |
+| REQ-COMPAT-001 | Desktop bridge fail closed，同时保留 browser/Docker HTTP transport | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T04 | `web/src/{api,desktopBridge,App}.ts*`, `web/src/**/*.test.ts*` | VAL-P1-CONTRACT-001、VAL-P1-REGRESSION-001 | `source-tested` |
+| REQ-VERSION-001 | 产品、协议与 schema 版本使用单一 manifest 并跨层同步 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md)、[ADR-0002](../adr/0002-uds-startup-token-protocol.md) | ITER-0001/T05 | `runtime/version.json`, `backend/app/version.py`, `desktop/package.json`, `tools/check_version_sync.py` | VAL-P1-CONTRACT-001 | `source-tested` |
+| REQ-CI-001 | 普通源码 CI 最小权限且不能读取发布秘密 | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md) | ITER-0001/T05 | `.github/workflows/desktop-ci.yml`, `Makefile`, `.github/dependabot.yml` | VAL-CI-001 | workflow 静态审计通过；Actions `not-run` |
 | REQ-CLI-001 | Codex CLI 默认；Cursor 只可在任务开始前 preflight 替代 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0002/R05 | provider adapters | VAL-CLI-001 | `planned` |
 | REQ-MCP-001 | MCP 保持 Context7 兼容工具契约 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0002/R04 | `mcp/**`, desktop MCP bridge | VAL-MCP-001 | `planned` |
 | REQ-INSTALL-001 | 默认 DMG；目标机无需 Docker/Homebrew/Python/Node/Git/ctags | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md) | ITER-0004/P01、P05 | desktop packaging | VAL-INSTALL-001 | `planned` |
@@ -43,13 +46,14 @@ REQ -> ADR -> ITER/task -> owned paths -> VAL -> evidence
 | --- | --- | --- | --- |
 | VAL-GOV-001 | 所有新增/修改 Markdown 相对链接检查 | repository checkout | `pass` |
 | VAL-GOV-002 | 两个 `SKILL.md` frontmatter、名称和引用结构检查 | repository checkout | `pass` |
-| VAL-P1-SOURCE-001 | Electron Main/preload、Web bridge 与 desktop sidecar source tests | Linux/macOS source checkout | `not-run` |
-| VAL-P1-REGRESSION-001 | Web、API、Host Runner 全量既有测试 | Linux/macOS source checkout | `not-run` |
-| VAL-CI-001 | PR CI 最小权限、无 release secret/Environment、全部 source jobs 通过 | GitHub Actions | `not-run` |
-| VAL-TRUST-001 | renderer sandbox/IPC 负向测试和权限审计 | Electron test + packaged app | `not-run` |
+| VAL-P1-CONTRACT-001 | Electron Main/preload、Web bridge、desktop sidecar 纯源码合同与负向单元测试；不包含真实 UDS bind、macOS 或 packaged runtime | Linux x86_64 source checkout | `pass`（Desktop 42；Web 34；Backend 169，真实 bind 另列） |
+| VAL-P1-SOURCE-001 | 完整源码纵切，包含真实 AF_UNIX bind 与无 skip 的 source tests | Linux/macOS source checkout | `not-run`（当前沙箱禁止真实 bind；等待 Actions） |
+| VAL-P1-REGRESSION-001 | Web、API、Host Runner 全量既有测试 | Linux/macOS source checkout | `pass`（Backend 169；Host Runner 8；Web 34） |
+| VAL-CI-001 | PR CI 最小权限、无 release secret/Environment、全部必需 source jobs 通过 | GitHub Actions | `not-run`（仅完成 workflow 静态审计） |
+| VAL-TRUST-001 | renderer sandbox/IPC 负向测试和权限审计 | Electron test + packaged app | `not-run`（L1 source 子检查已通过） |
 | VAL-PY-001 | 打包 sidecar 回归、资源审计、无系统 Python 启动 | clean macOS arm64 user | `not-run` |
 | VAL-QMD-001 | 内置 Node 22/QMD 索引与查询生命周期 | clean macOS arm64 user | `not-run` |
-| VAL-IPC-001 | UDS 权限、令牌拒绝、超时、崩溃、stale socket | macOS integration test | `not-run` |
+| VAL-IPC-001 | UDS 权限、令牌拒绝、超时、崩溃、stale socket | macOS integration test | `not-run`（源码合同已测试；真实 bind/macOS 未运行） |
 | VAL-CLI-001 | provider preflight 矩阵与任务开始后不 fallback | macOS integration test | `not-run` |
 | VAL-MCP-001 | Context7 兼容工具契约回放 | packaged sidecars | `not-run` |
 | VAL-INSTALL-001 | 无外部运行时的 DMG 安装与核心 smoke | clean physical Apple Silicon Mac | `not-run` |
@@ -64,20 +68,23 @@ REQ -> ADR -> ITER/task -> owned paths -> VAL -> evidence
 
 | ADR | 迭代任务 | 主要验证 |
 | --- | --- | --- |
-| [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02–T04；ITER-0002/R01–R05 | VAL-P1-SOURCE-001、VAL-TRUST-001、VAL-PY-001、VAL-QMD-001、VAL-CLI-001、VAL-MCP-001 |
-| [ADR-0002](../adr/0002-uds-startup-token-protocol.md) | ITER-0001/T03；ITER-0002/R02–R03 | VAL-P1-SOURCE-001、VAL-IPC-001 |
-| [ADR-0003](../adr/0003-macos-release-signing-update-policy.md) | ITER-0004/P01–P05；ITER-0005/U01–U05 | VAL-INSTALL-001、VAL-RELEASE-001、VAL-SECRET-001、VAL-UPDATE-001 |
+| [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02–T05；ITER-0002/R01–R05 | VAL-P1-CONTRACT-001、VAL-P1-SOURCE-001、VAL-P1-REGRESSION-001、VAL-TRUST-001、VAL-PY-001、VAL-QMD-001、VAL-CLI-001、VAL-MCP-001 |
+| [ADR-0002](../adr/0002-uds-startup-token-protocol.md) | ITER-0001/T03、T05；ITER-0002/R02–R03 | VAL-P1-CONTRACT-001、VAL-P1-SOURCE-001、VAL-IPC-001 |
+| [ADR-0003](../adr/0003-macos-release-signing-update-policy.md) | ITER-0001/T05；ITER-0004/P01–P05；ITER-0005/U01–U05 | VAL-CI-001、VAL-INSTALL-001、VAL-RELEASE-001、VAL-SECRET-001、VAL-UPDATE-001 |
 | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md) | ITER-0003/D01–D05；ITER-0006/L01–L05 | VAL-DATA-001、VAL-MODEL-001、VAL-LEGACY-001 |
 
 ## 本次变更映射
 
 | 变更范围 | 目的 | 需求/任务 | 验证 |
 | --- | --- | --- | --- |
-| `AGENTS.md` | 仓库规则、证据和分层入口 | ITER-0001/T01 | VAL-GOV-001 |
-| `docs/README.md`, `docs/development/**` | 路线图、迭代与证据链 | ITER-0001/T01 | VAL-GOV-001 |
-| `docs/adr/**` | 记录四项初始跨边界决策 | REQ-TRUST/IPC/RELEASE/DATA 系列；T01 | VAL-GOV-001 |
-| `.agents/skills/lcf-desktop-development/**` | 路由桌面架构与测试工作 | ITER-0001/T01 | VAL-GOV-002 |
-| `.agents/skills/lcf-change-traceability/**` | 执行 ADR/迭代/验证流程 | ITER-0001/T01 | VAL-GOV-002 |
+| `AGENTS.md`, `.agents/**`, `docs/README.md`, `docs/adr/**`, `docs/development/**`, `tools/check_markdown_links.py` | 仓库规则、分层入口、ADR、迭代和证据链 | ITER-0001/T01、T06 | VAL-GOV-001、VAL-GOV-002 |
+| `docs/15-github-actions-ghcr.md` | 保留上游 Docker/GHCR 运维文档，不把 Electron 迁移误作 legacy 删除 | REQ-LEGACY-001；ITER-0006/L01–L05 | VAL-P1-REGRESSION-001；VAL-LEGACY-001 `not-run` |
+| `runtime/version.json`, `backend/app/version.py`, `backend/pyproject.toml`, `backend/uv.lock`, `desktop/{package,package-lock}.json`, `tools/check_version_sync.py` | 固定产品、协议、schema 与源码依赖版本 | REQ-VERSION-001；ITER-0001/T05 | VAL-P1-CONTRACT-001 |
+| `desktop/src/**`, `desktop/tests/**`, `desktop/{README.md,tsconfig.json,vitest.config.ts}` | Electron Main/preload 信任边界、静态协议、类型化 IPC、sidecar supervisor 与负向测试 | REQ-PLATFORM-001、REQ-TRUST-001、REQ-IPC-001；ITER-0001/T02–T03 | VAL-P1-CONTRACT-001；VAL-P1-SOURCE-001/VAL-TRUST-001/VAL-IPC-001 `not-run` |
+| `backend/app/{__init__,cli,desktop_session,factory,main,service,version}.py`, `backend/{pyproject.toml,uv.lock}`, `tests/backend/test_desktop_transport.py` | 保留 legacy API，同时提供仅 UDS、每次启动认证的 desktop sidecar | REQ-IPC-001、REQ-COMPAT-001；ITER-0001/T03–T04 | VAL-P1-CONTRACT-001、VAL-P1-REGRESSION-001；VAL-P1-SOURCE-001/VAL-IPC-001 `not-run` |
+| `web/src/{App,App.test,MarkdownView.test,api,api.test,csp.test,desktopBridge,desktopBridge.test}.ts*`, `web/src/components/{KnowledgeGraph,MarkdownView}.tsx`, `web/src/styles.css` | desktop bridge fail closed、browser transport 兼容、CSP 与 Markdown 外链收口 | REQ-TRUST-001、REQ-COMPAT-001；ITER-0001/T02、T04 | VAL-P1-CONTRACT-001、VAL-P1-REGRESSION-001；VAL-TRUST-001 `not-run` |
+| `.github/workflows/desktop-ci.yml`, `.github/dependabot.yml`, `Makefile`, `.gitignore` | 最小权限源码 CI、依赖更新分组与生成物排除 | REQ-CI-001；ITER-0001/T05 | VAL-CI-001 `not-run` |
+| `desktop/electron-builder.yml`, `desktop/scripts/afterPack.cjs`, `desktop/resources/**` | 为后续 arm64 打包和 fuse 提供配置骨架；本轮不生成发行产物 | REQ-INSTALL-001、REQ-RELEASE-001；ITER-0004/P01 | VAL-INSTALL-001、VAL-RELEASE-001 `not-run` |
 
 后续变更应追加或更新本节，不删除已发布证据。若实现路径与 planned owned paths 不同，
 在同一变更中修正映射。

@@ -11,6 +11,12 @@ import type {
   QueryResponse,
   SystemStatus
 } from "./types";
+import {
+  desktopApiBridge,
+  MAX_DESKTOP_API_TIMEOUT_MS,
+  type DesktopApiMethod,
+  type DesktopApiResponse
+} from "./desktopBridge";
 
 const configuredBase = import.meta.env.VITE_API_BASE?.trim() ?? "";
 export const API_BASE = configuredBase.replace(/\/+$/, "");
@@ -134,11 +140,68 @@ export function formatApiError(body: unknown, status: number): string {
   );
 }
 
+function desktopMethod(init: RequestInit): DesktopApiMethod {
+  const method = (init.method ?? "GET").toUpperCase();
+  if (
+    method === "GET" ||
+    method === "POST" ||
+    method === "PATCH"
+  ) {
+    return method;
+  }
+  throw new Error(`桌面 API 不支持 ${method} 请求`);
+}
+
+function desktopBody(body: BodyInit | null | undefined): unknown {
+  if (body === undefined || body === null) return undefined;
+  if (typeof body !== "string") {
+    throw new Error("桌面 API 只接受 JSON 请求体");
+  }
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    throw new Error("桌面 API 请求体不是有效 JSON");
+  }
+}
+
+function validateDesktopResponse(
+  response: DesktopApiResponse
+): DesktopApiResponse {
+  if (
+    !response ||
+    !Number.isInteger(response.status) ||
+    response.status < 100 ||
+    response.status > 599
+  ) {
+    throw new Error("桌面 API 返回了无效响应");
+  }
+  return response;
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
   timeoutMs = 30_000
 ): Promise<T> {
+  const bridge = desktopApiBridge();
+  if (bridge) {
+    const response = validateDesktopResponse(
+      await bridge.request({
+        method: desktopMethod(init),
+        path,
+        ...(init.body === undefined ? {} : { body: desktopBody(init.body) }),
+        timeoutMs: Math.min(timeoutMs, MAX_DESKTOP_API_TIMEOUT_MS)
+      })
+    );
+    if (response.status < 200 || response.status >= 300) {
+      throw new ApiError(
+        formatApiError(response.body, response.status),
+        response.status
+      );
+    }
+    return response.body as T;
+  }
+
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 

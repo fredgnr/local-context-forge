@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react";
+import { isDesktopRuntime } from "../desktopBridge";
 
 function safeRelativeWikiLink(value: string) {
   const path = value.split("#", 1)[0];
@@ -34,6 +35,17 @@ function inline(
       const isExternal = /^(https?:|mailto:)/.test(target);
       const isAnchor = target.startsWith("#");
       const isInternal = safeRelativeWikiLink(target);
+      if (isExternal && isDesktopRuntime()) {
+        return (
+          <span
+            className="markdown-link--blocked"
+            key={index}
+            title="桌面版已阻止打开外部链接"
+          >
+            {link[1]}
+          </span>
+        );
+      }
       const safeHref = isExternal || isAnchor
         ? target
         : isInternal

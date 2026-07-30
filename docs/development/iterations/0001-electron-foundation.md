@@ -41,45 +41,49 @@ Docker 路径。本轮只验证源码级边界，不把它表述为已打包、�
 
 | 决策 | 记录 | 实现状态 |
 | --- | --- | --- |
-| Main 为信任边界；Python 与 Node worker 分离 | [ADR-0001](../../adr/0001-electron-python-sidecar-boundary.md) | `planned` |
-| sidecar/worker 使用私有 UDS + 每次启动令牌 | [ADR-0002](../../adr/0002-uds-startup-token-protocol.md) | `planned` |
-| DMG、自签名、受保护发布与更新 fallback | [ADR-0003](../../adr/0003-macos-release-signing-update-policy.md) | `planned` |
-| macOS 路径、按需模型与可回滚旧数据迁移 | [ADR-0004](../../adr/0004-runtime-paths-legacy-data-migration.md) | `planned` |
+| Main 为信任边界；Python 与 Node worker 分离 | [ADR-0001](../../adr/0001-electron-python-sidecar-boundary.md) | Electron/Python 源码纵切已实现；packaged runtimes 仍为 `planned` |
+| sidecar/worker 使用私有 UDS + 每次启动令牌 | [ADR-0002](../../adr/0002-uds-startup-token-protocol.md) | Python 源码合同已实现；macOS/packaged 集成仍为 `not-run` |
+| DMG、自签名、受保护发布与更新 fallback | [ADR-0003](../../adr/0003-macos-release-signing-update-policy.md) | 仅有 packaging 配置骨架；发行、签名与更新均为 `not-run` |
+| macOS 路径、按需模型与可回滚旧数据迁移 | [ADR-0004](../../adr/0004-runtime-paths-legacy-data-migration.md) | 私有 desktop data/runtime 目录已实现；模型与迁移仍为 `planned` |
 
 ## 任务
 
 - [x] **T01 治理骨架**：建立根规则、文档索引、路线图、追踪矩阵、初始 ADR 和两个项目 skill；
   通过 VAL-GOV-001/002 后勾选。
-- [ ] **T02 Electron 信任边界**：实现 Main/preload/renderer 骨架和类型化 IPC。
-- [ ] **T03 本地协议纵切**：实现源码模式 UDS、每进程独立启动令牌、握手、停止和手动恢复。
-- [ ] **T04 Renderer 适配**：桌面 bridge fail closed，浏览器 transport 保持兼容，清除 CSP
+- [x] **T02 Electron 信任边界**：实现 Main/preload/renderer 骨架和类型化 IPC。
+- [x] **T03 本地协议纵切**：实现源码模式 UDS、每进程独立启动令牌、握手、停止和手动恢复。
+- [x] **T04 Renderer 适配**：桌面 bridge fail closed，浏览器 transport 保持兼容，清除 CSP
   不允许的 inline style，并阻止桌面 Markdown 外链。
-- [ ] **T05 契约与 CI**：同步产品/协议版本，添加 source-mode tests 和无 secret 的 PR CI。
+- [x] **T05 契约与 CI**：同步产品/协议版本，添加 source-mode tests 和无 secret 的 PR CI。
 - [ ] **T06 收口与发布**：全量回归、独立安全审查、更新证据和变更清单，发布 Draft PR。
 
 ## 验收
 
-- [ ] 每项硬约束都能由 `REQ -> ADR -> task -> path -> VAL -> evidence` 追踪。
-- [ ] 源码级负向测试证明 renderer 不能直接访问 Node、文件、子进程、令牌、socket 或 updater。
-- [ ] Main 只接受可信 frame、版本化 channel 和精确 API allowlist；`/api/admin/*` 被拒绝。
-- [ ] UDS 目录/socket 权限、令牌、launch ID、协议、request ID、deadline 与 payload 上限有测试。
-- [ ] 现有 Web/API/Host Runner 回归通过，browser/Docker transport 不变。
-- [ ] 普通 CI 只需 `contents: read`，且不引用 release Environment 或 secret。
-- [ ] packaged/DMG/签名/更新/迁移门禁保持 `not-run`，并链接到后续迭代。
+- [x] 每项硬约束都能由 `REQ -> ADR -> task -> path -> VAL -> evidence` 追踪。
+- [x] 源码级负向测试证明 renderer 不能直接访问 Node、文件、子进程、令牌、socket 或 updater。
+- [x] Main 只接受可信 frame、版本化 channel 和精确 API allowlist；`/api/admin/*` 被拒绝。
+- [x] UDS 目录/socket 权限、令牌、launch ID、协议、request ID、deadline 与 payload 上限有测试。
+- [x] 现有 Web/API/Host Runner 回归通过，browser/Docker transport 不变。
+- [x] 普通 CI 只需 `contents: read`，且不引用 release Environment 或 secret。
+- [ ] GitHub Actions 的全部必需 source jobs 在发布提交上通过并留下 run URL。
+- [ ] 真实 AF_UNIX bind 在 Linux/macOS source 环境无 skip 通过；macOS/packaged IPC
+  仍由后续物理门禁验证。
+- [x] packaged/DMG/签名/更新/迁移门禁保持 `not-run`，并链接到后续迭代。
 
 ## 验证日志
 
 | 验证 | 结果 | 日期/提交 | 命令或过程 | 证据/说明 |
 | --- | --- | --- | --- | --- |
-| VAL-GOV-001 | `pass` | 2026-07-30；working tree on `5fce306` | Python 扫描仓库 Markdown 相对链接目标 | 全部目标存在 |
-| VAL-GOV-002 | `pass` | 2026-07-30；working tree on `5fce306` | `quick_validate.py` 分别检查两个 skill；reference 行数检查 | 两个 skill 均 valid；references 均少于 100 行 |
-| VAL-P1-SOURCE-001 | `not-run` | — | Electron/Web/Python source tests、typecheck、build | 实现进行中 |
-| VAL-P1-REGRESSION-001 | `not-run` | — | Web/API/Host Runner 全量回归 | 实现进行中 |
-| VAL-CI-001 | `not-run` | — | workflow 静态审计和 Draft PR checks | workflow 尚未创建 |
-| VAL-TRUST-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
+| VAL-GOV-001 | `pass` | 2026-07-30；pre-push tree | `python3 tools/check_markdown_links.py` | 50 个 Markdown 文件的仓库内相对链接通过 |
+| VAL-GOV-002 | `pass` | 2026-07-30；governance commit | `quick_validate.py` 分别检查两个 skill；reference 行数检查 | 两个 skill 均 valid；references 均少于 100 行 |
+| VAL-P1-CONTRACT-001 | `pass` | 2026-07-30；Linux x86_64；Node 24.14；Python 3.12.13 | `UV_CACHE_DIR=/tmp/lcf-uv-cache make ci-python`；`NPM_CONFIG_CACHE=/tmp/lcf-npm-cache make ci-web`；`NPM_CONFIG_CACHE=/tmp/lcf-npm-cache make desktop-ci` | Desktop 42、Web 34、Backend 169 通过；只覆盖纯源码合同，不包含真实 UDS bind、macOS 或 packaged runtime |
+| VAL-P1-SOURCE-001 | `not-run` | 2026-07-30；pre-push tree | 同上三项 source 命令 | 源码子检查通过，但当前 Linux 沙箱禁止真实 AF_UNIX bind，1 项明确 skip；等待 GitHub/macOS source CI 无 skip 证据 |
+| VAL-P1-REGRESSION-001 | `pass` | 2026-07-30；Linux x86_64；Node 24.14；Python 3.12.13 | `UV_CACHE_DIR=/tmp/lcf-uv-cache make ci-python`；`NPM_CONFIG_CACHE=/tmp/lcf-npm-cache make ci-web` | Backend 169 pass（唯一 skip 是新增 desktop UDS bind）；Host Runner 8 pass；Web 34 pass，typecheck/build pass |
+| VAL-CI-001 | `not-run` | 2026-07-30；pre-push tree | workflow/Makefile 静态审计；`make -n ci-source ci-ipc-source` | workflow 仅 `contents: read`，无 Environment/secret；尚无 Actions run URL |
+| VAL-TRUST-001 | `not-run` | 2026-07-30；pre-push tree | 42 个 Desktop L1 source tests + 独立静态安全复核 | 源码边界子检查通过；该门禁还要求 packaged app，因此不能标记 pass |
 | VAL-PY-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
 | VAL-QMD-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
-| VAL-IPC-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
+| VAL-IPC-001 | `not-run` | 2026-07-30；pre-push tree | Main/Python UDS、令牌、握手、超时、生命周期与负向 source tests | L1 合同已实现；当前沙箱真实 bind skip，macOS 集成与 packaged child 尚未运行 |
 | VAL-CLI-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
 | VAL-MCP-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
 | VAL-INSTALL-001 | `not-run` | — | 见追踪矩阵 | 尚无 DMG |
@@ -90,6 +94,17 @@ Docker 路径。本轮只验证源码级边界，不把它表述为已打包、�
 | VAL-DATA-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
 | VAL-LEGACY-001 | `not-run` | — | 见追踪矩阵 | 尚未执行迁移演练 |
 
+依赖审计补充记录：
+
+- `desktop` 的 `npm audit --omit=dev --audit-level=high` 为 0 vulnerabilities；
+- 完整 dev tree 的 `npm audit --audit-level=high` 为 `fail`：Electron 打包工具链的
+  `brace-expansion` 传递路径报告 16 个 high 且当前无修复。本迭代 source CI 不执行
+  `electron-builder`，但 ITER-0004 在解决、隔离或正式接受该风险前不得通过发行门禁。
+
+独立安全复核结论：source-mode Draft PR 为 `GO`，未发现阻断项；merge-ready、
+packaged app、DMG、签名、安装和 release security 均为 `NO-GO`，直到 Actions、真实
+AF_UNIX/macOS、packaged runtime、干净机与 ITER-0004 依赖处置证据齐备。
+
 ## 风险与缓解
 
 | 风险 | 影响 | 缓解/回滚点 |
@@ -99,10 +114,14 @@ Docker 路径。本轮只验证源码级边界，不把它表述为已打包、�
 | PyInstaller 隐式依赖遗漏 | 打包后功能缺失 | 对 `onedir` 运行回归和资源清单审计 |
 | QMD/Node native 兼容 | arm64 worker 启动或索引失败 | 固定 Node 22 与依赖；干净机 contract/smoke |
 | UDS 路径、权限或 stale socket | 启动失败或本机同用户注入 | 短路径、0700 目录、令牌、owner/symlink 检查、每次启动清理 |
+| Main 退出时 child 在有界 SIGTERM/SIGKILL 后仍未确认退出 | 可能短暂遗留孤儿进程和 runtime 目录 | 保留 `failed/canRetry=false`、不提前清理或重启；fd3 EOF 作为额外停止信号；在 packaged 生命周期门禁观察 |
+| 同一用户可写 renderer tree 的路径组件 TOCTOU | 源码模式静态资源可能在验证与打开间被替换 | 最终文件使用 `O_NOFOLLOW`；源码模式只面向开发；ITER-0004 对 packaged resources 做完整性与 Electron 实测 |
+| 响应 allowlist 不是通用 DLP | 合法 content/message 文本仍可能包含路径样式字符串 | 不赋予文件能力；结构化 `path/file`、library source、token/socket/header/stderr 已单独过滤；继续限制 renderer route |
 | 模型下载中断/篡改 | 磁盘浪费或加载不可信权重 | partial 文件、完整性校验、原子 rename、显式清理 |
 | 旧数据模式漂移 | 丢失、重复或无法回滚 | 只读盘点、备份、staging、journal、原目录不改写 |
 | 自动更新在自签名环境失效 | 用户停留旧版本 | G6 实机阻断；失败则校验后下载并打开 DMG |
 | 公开仓库 secret 泄漏 | 签名/更新供应链受损 | protected Environment、审批、fork/PR secret 负向验证 |
+| Electron 打包工具链的传递依赖审计 | 完整 dev tree 的 `brace-expansion` 链报告 16 个 high、当前无修复；可能造成构建进程 DoS | P1 CI 不调用 `electron-builder`，`npm audit --omit=dev` 为 0；在 ITER-0004 发布门禁前升级/隔离并重新审计，当前结果不能作为 release 证据 |
 | 过早删除 Docker | 现有用户无恢复路径 | legacy 保留至 P7 和独立 ADR |
 
 ## 迭代修订
@@ -110,10 +129,11 @@ Docker 路径。本轮只验证源码级边界，不把它表述为已打包、�
 | 日期 | 修订 | 原因 |
 | --- | --- | --- |
 | 2026-07-30 | 把 packaged runtimes、数据/模型、DMG、更新和 legacy 退出拆到 ITER-0002–0006 | 让源码纵切与只能在 macOS/真实产物上完成的门禁分别审查，避免一次 PR 产生虚假完成声明 |
+| 2026-07-30 | 完成 P1 源码纵切并拆分 `VAL-P1-CONTRACT-001` 与完整 source/physical gates | 纯源码合同已有可复现证据，但 G1、真实 UDS、macOS、packaged app、DMG、签名和更新门禁仍开放 |
 
 ## 变更清单
 
-当前治理变更：
+治理与计划：
 
 - `AGENTS.md`
 - `docs/README.md`
@@ -129,5 +149,41 @@ Docker 路径。本轮只验证源码级边界，不把它表述为已打包、�
 - `.agents/skills/lcf-desktop-development/**`
 - `.agents/skills/lcf-change-traceability/**`
 
-实现文件必须在实际修改时追加到本节并更新
-[本次变更映射](../traceability.md#本次变更映射)。当前列表不表示未来路径已创建。
+版本、验证与 CI：
+
+- `runtime/version.json`
+- `tools/check_version_sync.py`
+- `tools/check_markdown_links.py`
+- `.github/workflows/desktop-ci.yml`
+- `.github/dependabot.yml`
+- `Makefile`
+- `.gitignore`
+
+Python desktop sidecar：
+
+- `backend/app/{cli,desktop_session,factory,version}.py`
+- `backend/app/{__init__,main,service}.py`
+- `backend/{pyproject.toml,uv.lock}`
+- `tests/backend/test_desktop_transport.py`
+
+Electron Main/preload：
+
+- `desktop/package.json`
+- `desktop/package-lock.json`
+- `desktop/electron-builder.yml`
+- `desktop/README.md`
+- `desktop/resources/**`
+- `desktop/scripts/afterPack.cjs`
+- `desktop/src/**`
+- `desktop/tests/**`
+- `desktop/{tsconfig.json,vitest.config.ts}`
+
+Web renderer 适配：
+
+- `web/src/{App,App.test,api,api.test,desktopBridge,desktopBridge.test,csp.test}.ts*`
+- `web/src/MarkdownView.test.tsx`
+- `web/src/components/{KnowledgeGraph,MarkdownView}.tsx`
+- `web/src/styles.css`
+
+以上路径已同步到[本次变更映射](../traceability.md#本次变更映射)。`node_modules`、
+`dist`、虚拟环境、缓存、模型、索引和用户数据不属于变更清单。

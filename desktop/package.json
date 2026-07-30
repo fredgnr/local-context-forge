@@ -1,0 +1,27 @@
+{
+  "name": "local-context-forge-desktop",
+  "version": "0.3.0-alpha.1",
+  "private": true,
+  "description": "Local Context Forge Electron desktop trust boundary",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "npm run build:main && npm run build:preload",
+    "build:main": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/main/index.js",
+    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/preload/index.cjs",
+    "start:source": "npm run build && electron .",
+    "typecheck": "tsc --noEmit --pretty false",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pack:dir": "npm run build && electron-builder --dir --config electron-builder.yml",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --arm64 --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "@types/node": "24.13.3",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.1",
+    "typescript": "5.8.3",
+    "vitest": "4.1.10"
+  }
+}

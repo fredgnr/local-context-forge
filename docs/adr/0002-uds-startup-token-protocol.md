@@ -51,8 +51,9 @@ macOS Unix domain socket 有路径长度限制，也容易受到 stale socket、
 
 1. Main 持有 child PID、control pipe、socket、token 和状态机的唯一权威记录。
 2. 启动有截止时间；超时或异常 ready 时终止 child，等待退出，再清理本次 runtime 目录。
-3. shutdown 先发授权请求，再等待有界 grace period，最后强制终止本次 PID；不得按进程名
-   广泛 kill。
+3. shutdown 先关闭本次 control pipe 写端，由 child 通过 EOF 验证父进程持有关系并进入
+   graceful stop；若后续 child 契约增加显式 shutdown endpoint，可在 EOF 前发送授权请求。
+   Main 随后等待有界 grace period，最后只强制终止本次 PID；不得按进程名广泛 kill。
 4. 崩溃可按有界 backoff 重启；每次重启生成新目录和 token。正在进行的非幂等请求标记为
    结果不确定，不自动跨 child 重放。
 
@@ -80,6 +81,12 @@ macOS Unix domain socket 有路径长度限制，也容易受到 stale socket、
 4. **token 放 argv 或环境变量。** 拒绝：会进入进程检查、崩溃报告或 child 继承环境。
 5. **只有目录权限，不做应用认证。** 拒绝：无法绑定“本次 Main”和 child。
 6. **复用一个 token/socket 给两个 child。** 拒绝：扩大泄露和混淆半径。
+
+## 修订记录
+
+| 日期 | 修订 | 原因 |
+| --- | --- | --- |
+| 2026-07-30 | 明确 P1 graceful shutdown 使用已认证父进程持有的 control pipe EOF；HTTP shutdown endpoint 不是必需条件 | 与 fd3 token/liveness 的同一所有权协议及已实现状态机保持一致，避免把尚不存在的 endpoint 误写成实现要求 |
 
 ## 验证门禁
 

@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import stat
+import tempfile
 import threading
 import time
 import tomllib
@@ -553,36 +554,36 @@ def test_socket_path_rejects_any_existing_entry(
 
 
 def test_socket_path_rejects_conservative_macos_overflow(
-    tmp_path: Path,
 ) -> None:
-    runtime = _runtime_directory(tmp_path)
-    base_bytes = len(f"{runtime}/".encode("utf-8"))
-    filename_size = MAX_UDS_PATH_BYTES - base_bytes + 1
-    if filename_size > 255:
-        pytest.skip("temporary root is too short to create the boundary path")
-    socket_path = runtime / ("s" * filename_size)
-    assert len(str(socket_path).encode("utf-8")) == MAX_UDS_PATH_BYTES + 1
-    with pytest.raises(DesktopTransportError):
-        validate_socket_path(socket_path)
+    with tempfile.TemporaryDirectory(prefix="lcf-ipc-", dir="/tmp") as root:
+        runtime = _runtime_directory(Path(root))
+        base_bytes = len(f"{runtime}/".encode("utf-8"))
+        filename_size = MAX_UDS_PATH_BYTES - base_bytes + 1
+        assert 1 <= filename_size <= 255
+        socket_path = runtime / ("s" * filename_size)
+        assert len(str(socket_path).encode("utf-8")) == MAX_UDS_PATH_BYTES + 1
+        with pytest.raises(DesktopTransportError):
+            validate_socket_path(socket_path)
 
 
-def test_prebound_socket_is_0600_and_removed_on_exit(tmp_path: Path) -> None:
-    runtime = _runtime_directory(tmp_path)
-    socket_path = runtime / "py.sock"
-    try:
-        with prebound_unix_socket(socket_path) as listener:
-            metadata = socket_path.lstat()
-            assert listener.family == socket.AF_UNIX
-            assert stat.S_ISSOCK(metadata.st_mode)
-            assert stat.S_IMODE(metadata.st_mode) == 0o600
-            assert metadata.st_uid == os.geteuid()
-    except DesktopTransportError as error:
-        if isinstance(error.__cause__, PermissionError):
-            if os.getenv("CI", "").lower() == "true":
-                raise
-            pytest.skip("execution sandbox prohibits AF_UNIX socket creation")
-        raise
-    assert not os.path.lexists(socket_path)
+def test_prebound_socket_is_0600_and_removed_on_exit() -> None:
+    with tempfile.TemporaryDirectory(prefix="lcf-ipc-", dir="/tmp") as root:
+        runtime = _runtime_directory(Path(root))
+        socket_path = runtime / "py.sock"
+        try:
+            with prebound_unix_socket(socket_path) as listener:
+                metadata = socket_path.lstat()
+                assert listener.family == socket.AF_UNIX
+                assert stat.S_ISSOCK(metadata.st_mode)
+                assert stat.S_IMODE(metadata.st_mode) == 0o600
+                assert metadata.st_uid == os.geteuid()
+        except DesktopTransportError as error:
+            if isinstance(error.__cause__, PermissionError):
+                if os.getenv("CI", "").lower() == "true":
+                    raise
+                pytest.skip("execution sandbox prohibits AF_UNIX socket creation")
+            raise
+        assert not os.path.lexists(socket_path)
 
 
 def test_token_fd_read_is_bounded_and_closes_descriptor() -> None:

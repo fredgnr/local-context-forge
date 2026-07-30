@@ -11,7 +11,14 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)\s]+)(?:\s+[^)]*)?\)")
-EXCLUDED_PARTS = {".git", ".venv", "node_modules", "dist", "release"}
+EXCLUDED_PARTS = {
+    ".git",
+    ".pytest_cache",
+    ".venv",
+    "node_modules",
+    "dist",
+    "release",
+}
 
 
 def markdown_files() -> list[Path]:

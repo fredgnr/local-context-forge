@@ -55,7 +55,7 @@ Docker 路径。本轮只验证源码级边界，不把它表述为已打包、�
 - [x] **T04 Renderer 适配**：桌面 bridge fail closed，浏览器 transport 保持兼容，清除 CSP
   不允许的 inline style，并阻止桌面 Markdown 外链。
 - [x] **T05 契约与 CI**：同步产品/协议版本，添加 source-mode tests 和无 secret 的 PR CI。
-- [ ] **T06 收口与发布**：全量回归、独立安全审查、更新证据和变更清单，发布 Draft PR。
+- [x] **T06 收口与发布**：全量回归、独立安全审查、更新证据和变更清单，发布 Draft PR。
 
 ## 验收
 
@@ -65,8 +65,8 @@ Docker 路径。本轮只验证源码级边界，不把它表述为已打包、�
 - [x] UDS 目录/socket 权限、令牌、launch ID、协议、request ID、deadline 与 payload 上限有测试。
 - [x] 现有 Web/API/Host Runner 回归通过，browser/Docker transport 不变。
 - [x] 普通 CI 只需 `contents: read`，且不引用 release Environment 或 secret。
-- [ ] GitHub Actions 的全部必需 source jobs 在发布提交上通过并留下 run URL。
-- [ ] 真实 AF_UNIX bind 在 Linux/macOS source 环境无 skip 通过；macOS/packaged IPC
+- [x] GitHub Actions 的全部必需 source jobs 在发布提交上通过并留下 run URL。
+- [x] 真实 AF_UNIX bind 在 Linux/macOS source 环境无 skip 通过；macOS/packaged IPC
   仍由后续物理门禁验证。
 - [x] packaged/DMG/签名/更新/迁移门禁保持 `not-run`，并链接到后续迭代。
 
@@ -74,16 +74,16 @@ Docker 路径。本轮只验证源码级边界，不把它表述为已打包、�
 
 | 验证 | 结果 | 日期/提交 | 命令或过程 | 证据/说明 |
 | --- | --- | --- | --- | --- |
-| VAL-GOV-001 | `pass` | 2026-07-30；pre-push tree | `python3 tools/check_markdown_links.py` | 50 个 Markdown 文件的仓库内相对链接通过 |
+| VAL-GOV-001 | `pass` | 2026-07-30；evidence tree | `python3 tools/check_markdown_links.py` | 排除生成缓存后，48 个受管 Markdown 文件的仓库内相对链接通过 |
 | VAL-GOV-002 | `pass` | 2026-07-30；governance commit | `quick_validate.py` 分别检查两个 skill；reference 行数检查 | 两个 skill 均 valid；references 均少于 100 行 |
 | VAL-P1-CONTRACT-001 | `pass` | 2026-07-30；Linux x86_64；Node 24.14；Python 3.12.13 | `UV_CACHE_DIR=/tmp/lcf-uv-cache make ci-python`；`NPM_CONFIG_CACHE=/tmp/lcf-npm-cache make ci-web`；`NPM_CONFIG_CACHE=/tmp/lcf-npm-cache make desktop-ci` | Desktop 42、Web 34、Backend 169 通过；只覆盖纯源码合同，不包含真实 UDS bind、macOS 或 packaged runtime |
-| VAL-P1-SOURCE-001 | `not-run` | 2026-07-30；pre-push tree | 同上三项 source 命令 | 源码子检查通过，但当前 Linux 沙箱禁止真实 AF_UNIX bind，1 项明确 skip；等待 GitHub/macOS source CI 无 skip 证据 |
-| VAL-P1-REGRESSION-001 | `pass` | 2026-07-30；Linux x86_64；Node 24.14；Python 3.12.13 | `UV_CACHE_DIR=/tmp/lcf-uv-cache make ci-python`；`NPM_CONFIG_CACHE=/tmp/lcf-npm-cache make ci-web` | Backend 169 pass（唯一 skip 是新增 desktop UDS bind）；Host Runner 8 pass；Web 34 pass，typecheck/build pass |
-| VAL-CI-001 | `not-run` | 2026-07-30；pre-push tree | workflow/Makefile 静态审计；`make -n ci-source ci-ipc-source` | workflow 仅 `contents: read`，无 Environment/secret；尚无 Actions run URL |
+| VAL-P1-SOURCE-001 | `pass` | 2026-07-30；`6d5ddf8`；[Actions 30550023917](https://github.com/fredgnr/local-context-forge/actions/runs/30550023917) | GitHub Actions 的 Python/Web/Desktop/macOS arm64 source jobs | Ubuntu Python 170、Desktop 42、Web 34 全通过；macOS 15 arm64 IPC 43 全通过，真实 AF_UNIX bind 无 skip |
+| VAL-P1-REGRESSION-001 | `pass` | 2026-07-30；Linux x86_64；Node 24.14；Python 3.12.13；Actions `6d5ddf8` | `UV_CACHE_DIR=/tmp/lcf-uv-cache make ci-python`；`NPM_CONFIG_CACHE=/tmp/lcf-npm-cache make ci-web` | 本地 Backend 169 pass + 1 sandbox-only skip、Host Runner 8、Web 34；Actions Ubuntu Backend 170 无 skip |
+| VAL-CI-001 | `pass` | 2026-07-30；`6d5ddf8`；[Actions 30550023917](https://github.com/fredgnr/local-context-forge/actions/runs/30550023917) | workflow/Makefile 静态审计 + 四个必需 source jobs | workflow 仅 `contents: read`，无 Environment/secret；Python/Web/Desktop/macOS arm64 全通过 |
 | VAL-TRUST-001 | `not-run` | 2026-07-30；pre-push tree | 42 个 Desktop L1 source tests + 独立静态安全复核 | 源码边界子检查通过；该门禁还要求 packaged app，因此不能标记 pass |
 | VAL-PY-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
 | VAL-QMD-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
-| VAL-IPC-001 | `not-run` | 2026-07-30；pre-push tree | Main/Python UDS、令牌、握手、超时、生命周期与负向 source tests | L1 合同已实现；当前沙箱真实 bind skip，macOS 集成与 packaged child 尚未运行 |
+| VAL-IPC-001 | `not-run` | 2026-07-30；`6d5ddf8` | Main/Python UDS、令牌、握手、超时、生命周期与负向 source tests | macOS arm64 source bind/合同子门禁已通过；packaged child/lifecycle 尚未运行，因此完整门禁不提升 |
 | VAL-CLI-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
 | VAL-MCP-001 | `not-run` | — | 见追踪矩阵 | 尚未实现 |
 | VAL-INSTALL-001 | `not-run` | — | 见追踪矩阵 | 尚无 DMG |
@@ -114,6 +114,7 @@ AF_UNIX/macOS、packaged runtime、干净机与 ITER-0004 依赖处置证据齐�
 | PyInstaller 隐式依赖遗漏 | 打包后功能缺失 | 对 `onedir` 运行回归和资源清单审计 |
 | QMD/Node native 兼容 | arm64 worker 启动或索引失败 | 固定 Node 22 与依赖；干净机 contract/smoke |
 | UDS 路径、权限或 stale socket | 启动失败或本机同用户注入 | 短路径、0700 目录、令牌、owner/symlink 检查、每次启动清理 |
+| 截止时间后同步 handler 的线程工作可能继续 | 连续短 deadline 可积累后台工作并造成可用性下降 | Main 限制 8 个并发且非幂等结果标记 uncertain；ITER-0002 为未完成 application tasks 增加硬上限/信号量及连续超时回归 |
 | Main 退出时 child 在有界 SIGTERM/SIGKILL 后仍未确认退出 | 可能短暂遗留孤儿进程和 runtime 目录 | 保留 `failed/canRetry=false`、不提前清理或重启；fd3 EOF 作为额外停止信号；在 packaged 生命周期门禁观察 |
 | 同一用户可写 renderer tree 的路径组件 TOCTOU | 源码模式静态资源可能在验证与打开间被替换 | 最终文件使用 `O_NOFOLLOW`；源码模式只面向开发；ITER-0004 对 packaged resources 做完整性与 Electron 实测 |
 | 响应 allowlist 不是通用 DLP | 合法 content/message 文本仍可能包含路径样式字符串 | 不赋予文件能力；结构化 `path/file`、library source、token/socket/header/stderr 已单独过滤；继续限制 renderer route |
@@ -130,6 +131,7 @@ AF_UNIX/macOS、packaged runtime、干净机与 ITER-0004 依赖处置证据齐�
 | --- | --- | --- |
 | 2026-07-30 | 把 packaged runtimes、数据/模型、DMG、更新和 legacy 退出拆到 ITER-0002–0006 | 让源码纵切与只能在 macOS/真实产物上完成的门禁分别审查，避免一次 PR 产生虚假完成声明 |
 | 2026-07-30 | 完成 P1 源码纵切并拆分 `VAL-P1-CONTRACT-001` 与完整 source/physical gates | 纯源码合同已有可复现证据，但 G1、真实 UDS、macOS、packaged app、DMG、签名和更新门禁仍开放 |
+| 2026-07-30 | 首轮 macOS run 30549806596 因 pytest 临时路径自身超过 100 bytes 失败；`6d5ddf8` 改用 `/tmp` 短私有夹具，run 30550023917 四个 source jobs 全通过 | 保留生产 100-byte 上限和真实 bind 门禁，不以 skip 或放宽路径限制换取绿灯 |
 
 ## 变更清单
 

@@ -70,9 +70,10 @@ G1：
 - CSP、导航、新窗口、外部链接与 payload 上限的负向测试通过；
 - Main/renderer 契约版本不匹配时 fail closed。
 
-当前证据：源码合同与回归已在 Linux x86_64 通过；当前沙箱禁止真实 AF_UNIX bind，
-且尚无 GitHub Actions、macOS 或 packaged-app 证据。因此 `VAL-P1-SOURCE-001`、
-`VAL-TRUST-001` 和 `VAL-IPC-001` 仍为 `not-run`，G1 未满足，P1 保持
+当前证据：源码合同与回归已在 Linux x86_64 通过；公开仓库的 GitHub Actions 又在
+Ubuntu 与 macOS 15 arm64 完成全部 source jobs，包含真实 AF_UNIX bind，因此
+`VAL-P1-SOURCE-001` 为 `pass`。但 `VAL-TRUST-001` 的 packaged app 与
+`VAL-IPC-001` 的 packaged child/lifecycle 仍为 `not-run`，G1 未满足，P1 保持
 `in-progress`。
 
 ## P2：Python sidecar

@@ -2,7 +2,7 @@ name: local-context-forge
 
 services:
   api:
-    image: ${LCF_API_IMAGE:-local-context-forge-api:0.1.0}
+    image: local-context-forge-api:0.1.0
     build:
       context: ./backend
       dockerfile: ../docker/api.Dockerfile
@@ -68,7 +68,7 @@ services:
       - lcf
 
   mcp:
-    image: ${LCF_MCP_IMAGE:-local-context-forge-mcp:0.1.0}
+    image: local-context-forge-mcp:0.1.0
     build:
       context: ./mcp
       dockerfile: ../docker/mcp.Dockerfile
@@ -102,7 +102,7 @@ services:
       - lcf
 
   web:
-    image: ${LCF_WEB_IMAGE:-local-context-forge-web:0.1.0}
+    image: local-context-forge-web:0.1.0
     build:
       context: ./web
       args:

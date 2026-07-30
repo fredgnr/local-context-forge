@@ -19,14 +19,8 @@ fi
 
 runtime_choice="auto"
 provider_choice="auto"
-image_source_choice="build"
-image_tag_choice="main"
-ghcr_owner_choice="fredgnr"
 runtime_option_set=0
 provider_option_set=0
-image_source_option_set=0
-image_tag_option_set=0
-ghcr_owner_option_set=0
 web_port=""
 api_port=""
 mcp_port=""
@@ -60,9 +54,6 @@ Usage:
 Install options:
   --runtime auto|docker-desktop|colima
   --provider auto|codex_cli|cursor_cli|mock|ollama
-  --images build|ghcr
-  --image-tag TAG
-  --ghcr-owner OWNER
   --web-port PORT
   --api-port PORT
   --mcp-port PORT
@@ -72,8 +63,6 @@ Install options:
 The mock provider is a control-plane demo and does not generate production
 documentation. The command never installs a third-party CLI, switches Docker
 context, mounts ~/.codex, mounts Cursor credentials, or mounts the Docker socket.
-GHCR credentials stay in Docker's credential store and are never written to
-.env, .lcf/runtime.env, an image, or a container.
 EOF
 }
 
@@ -166,14 +155,6 @@ check_resources() {
 
 valid_port() {
   [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1024 && 10#$1 <= 65535))
-}
-
-valid_image_tag() {
-  [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
-}
-
-valid_ghcr_owner() {
-  [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$ ]]
 }
 
 env_value() {
@@ -284,7 +265,7 @@ write_runtime_env() {
   local codex_bin="$1"
   local cursor_bin="$2"
   local python_bin="$3"
-  local default_web default_api default_mcp api_image mcp_image web_image
+  local default_web default_api default_mcp
   default_web="$(env_value WEB_PORT 8080)"
   default_api="$(env_value API_PORT 8000)"
   default_mcp="$(env_value MCP_PORT 8001)"
@@ -296,15 +277,6 @@ write_runtime_env() {
   valid_port "$mcp_port" || die "invalid MCP port: ${mcp_port}"
   [[ "$web_port" != "$api_port" && "$web_port" != "$mcp_port" && "$api_port" != "$mcp_port" ]] \
     || die "Web, API and MCP ports must be different"
-  if [[ "$image_source_choice" == "ghcr" ]]; then
-    api_image="ghcr.io/${ghcr_owner_choice}/local-context-forge-api:${image_tag_choice}"
-    mcp_image="ghcr.io/${ghcr_owner_choice}/local-context-forge-mcp:${image_tag_choice}"
-    web_image="ghcr.io/${ghcr_owner_choice}/local-context-forge-web:${image_tag_choice}"
-  else
-    api_image="local-context-forge-api:0.1.0"
-    mcp_image="local-context-forge-mcp:0.1.0"
-    web_image="local-context-forge-web:0.1.0"
-  fi
 
   mkdir -p "$state_dir"
   chmod 700 "$state_dir"
@@ -316,12 +288,6 @@ write_runtime_env() {
   UPDATE_DOCKER_CONTEXT="$docker_context" \
   UPDATE_RUNTIME="$runtime_choice" \
   UPDATE_PROVIDER="$provider_choice" \
-  UPDATE_IMAGE_SOURCE="$image_source_choice" \
-  UPDATE_IMAGE_TAG="$image_tag_choice" \
-  UPDATE_GHCR_OWNER="$ghcr_owner_choice" \
-  UPDATE_API_IMAGE="$api_image" \
-  UPDATE_MCP_IMAGE="$mcp_image" \
-  UPDATE_WEB_IMAGE="$web_image" \
   UPDATE_WEB_PORT="$web_port" \
   UPDATE_API_PORT="$api_port" \
   UPDATE_MCP_PORT="$mcp_port" \
@@ -351,12 +317,6 @@ updates = {
     "LCF_DOCKER_CONTEXT": os.environ["UPDATE_DOCKER_CONTEXT"],
     "LCF_CONTAINER_RUNTIME": os.environ["UPDATE_RUNTIME"],
     "LCF_DEFAULT_PROVIDER": os.environ["UPDATE_PROVIDER"],
-    "LCF_IMAGE_SOURCE": os.environ["UPDATE_IMAGE_SOURCE"],
-    "LCF_IMAGE_TAG": os.environ["UPDATE_IMAGE_TAG"],
-    "LCF_GHCR_OWNER": os.environ["UPDATE_GHCR_OWNER"],
-    "LCF_API_IMAGE": os.environ["UPDATE_API_IMAGE"],
-    "LCF_MCP_IMAGE": os.environ["UPDATE_MCP_IMAGE"],
-    "LCF_WEB_IMAGE": os.environ["UPDATE_WEB_IMAGE"],
     "LCF_BIND_HOST": "127.0.0.1",
     "WEB_PORT": os.environ["UPDATE_WEB_PORT"],
     "API_PORT": os.environ["UPDATE_API_PORT"],
@@ -393,9 +353,6 @@ write_state() {
   STATE_CONTEXT="$docker_context" \
   STATE_RUNTIME="$runtime_choice" \
   STATE_PROVIDER="$provider_choice" \
-  STATE_IMAGE_SOURCE="$image_source_choice" \
-  STATE_IMAGE_TAG="$image_tag_choice" \
-  STATE_GHCR_OWNER="$ghcr_owner_choice" \
   STATE_WEB="$web_port" \
   STATE_API="$api_port" \
   STATE_MCP="$mcp_port" \
@@ -413,11 +370,6 @@ payload = {
     "docker_context": os.environ["STATE_CONTEXT"],
     "runtime": os.environ["STATE_RUNTIME"],
     "provider": os.environ["STATE_PROVIDER"],
-    "images": {
-        "source": os.environ["STATE_IMAGE_SOURCE"],
-        "tag": os.environ["STATE_IMAGE_TAG"],
-        "ghcr_owner": os.environ["STATE_GHCR_OWNER"],
-    },
     "ports": {
         "web": int(os.environ["STATE_WEB"]),
         "api": int(os.environ["STATE_API"]),
@@ -641,24 +593,6 @@ parse_install_options() {
         provider_option_set=1
         shift
         ;;
-      --images)
-        [[ $# -ge 2 ]] || die "--images requires a value"
-        image_source_choice="$2"
-        image_source_option_set=1
-        shift
-        ;;
-      --image-tag)
-        [[ $# -ge 2 ]] || die "--image-tag requires a value"
-        image_tag_choice="$2"
-        image_tag_option_set=1
-        shift
-        ;;
-      --ghcr-owner)
-        [[ $# -ge 2 ]] || die "--ghcr-owner requires a value"
-        ghcr_owner_choice="$2"
-        ghcr_owner_option_set=1
-        shift
-        ;;
       --web-port|--api-port|--mcp-port)
         [[ $# -ge 2 ]] || die "$1 requires a value"
         case "$1" in
@@ -682,13 +616,6 @@ parse_install_options() {
     auto|codex_cli|cursor_cli|mock|ollama) ;;
     *) die "provider must be auto, codex_cli, cursor_cli, mock, or ollama" ;;
   esac
-  case "$image_source_choice" in
-    build|ghcr) ;;
-    *) die "images must be build or ghcr" ;;
-  esac
-  valid_image_tag "$image_tag_choice" || die "invalid container image tag: ${image_tag_choice}"
-  valid_ghcr_owner "$ghcr_owner_choice" || die \
-    "GHCR owner must be a lowercase GitHub user or organization name"
 }
 
 install_command() {
@@ -713,22 +640,6 @@ install_command() {
   if [[ -f "$runtime_env" && "$provider_option_set" == "0" ]]; then
     provider_choice="$(env_value LCF_DEFAULT_PROVIDER auto)"
   fi
-  if [[ -f "$runtime_env" && "$image_source_option_set" == "0" ]]; then
-    image_source_choice="$(env_value LCF_IMAGE_SOURCE build)"
-  fi
-  if [[ -f "$runtime_env" && "$image_tag_option_set" == "0" ]]; then
-    image_tag_choice="$(env_value LCF_IMAGE_TAG main)"
-  fi
-  if [[ -f "$runtime_env" && "$ghcr_owner_option_set" == "0" ]]; then
-    ghcr_owner_choice="$(env_value LCF_GHCR_OWNER fredgnr)"
-  fi
-  case "$image_source_choice" in
-    build|ghcr) ;;
-    *) die "recorded image source must be build or ghcr" ;;
-  esac
-  valid_image_tag "$image_tag_choice" || die "invalid container image tag: ${image_tag_choice}"
-  valid_ghcr_owner "$ghcr_owner_choice" || die \
-    "recorded GHCR owner must be a lowercase GitHub user or organization name"
   install_in_progress=1
   trap 'rollback_install $?' ERR
   trap 'rollback_install 130' INT
@@ -842,18 +753,10 @@ install_command() {
     wait_for_runner || die "host runner did not become healthy; inspect ${logs_dir}/host-runner.err.log"
   fi
 
-  if [[ "$image_source_choice" == "ghcr" ]]; then
-    note "Pulling prebuilt multi-architecture images from GHCR"
-    if ! compose pull; then
-      die "GHCR pull failed. For private packages, log this Docker context into ghcr.io with a classic PAT limited to read:packages, then rerun."
-    fi
-    note "Starting the loopback-only stack without a local build"
-    compose up -d --no-build --wait --wait-timeout 600
-  elif ((skip_build == 1)); then
-    note "Starting the loopback-only stack from existing local images"
-    compose up -d --no-build --wait --wait-timeout 600
+  note "Building and starting the loopback-only stack"
+  if ((skip_build == 1)); then
+    compose up -d --wait --wait-timeout 600
   else
-    note "Building and starting the loopback-only stack"
     compose up -d --build --wait --wait-timeout 600
   fi
   http_wait "http://127.0.0.1:${api_port}/api/health" || die "API health check timed out"
@@ -956,9 +859,6 @@ status_command() {
   local provider
   provider="$(env_value LCF_DEFAULT_PROVIDER auto)"
   compose ps
-  printf '\nImages:\n'
-  printf '  source: %s\n' "$(env_value LCF_IMAGE_SOURCE build)"
-  printf '  tag: %s\n' "$(env_value LCF_IMAGE_TAG main)"
   printf '\nHost runner:\n'
   printf '  configured provider: %s\n' "$provider"
   if launchctl print "gui/${UID}/${launch_label}" >/dev/null 2>&1; then

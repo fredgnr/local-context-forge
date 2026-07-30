@@ -1,0 +1,1011 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd -- "${script_dir}/.." && pwd -P)"
+state_dir="${repo_root}/.lcf"
+runtime_env="${state_dir}/runtime.env"
+state_file="${state_dir}/install-state.json"
+logs_dir="${state_dir}/logs"
+runner_dir="${repo_root}/data/runner"
+launch_label="dev.local-context-forge.host-runner"
+launch_agents_dir="${HOME}/Library/LaunchAgents"
+launch_plist="${launch_agents_dir}/${launch_label}.plist"
+command_name="${1:-help}"
+if (($#)); then
+  shift
+fi
+
+runtime_choice="auto"
+provider_choice="auto"
+runtime_option_set=0
+provider_option_set=0
+web_port=""
+api_port=""
+mcp_port=""
+no_open=0
+skip_build=0
+docker_context=""
+install_in_progress=0
+stack_was_running=0
+runtime_backup=""
+plist_backup=""
+rollback_tag=""
+existing_install=0
+
+usage() {
+  cat <<'EOF'
+Local Context Forge control command
+
+Usage:
+  ./scripts/lcf install [options]  Configure, launch host runner, deploy and verify
+  ./scripts/lcf start              Start host runner and Compose services
+  ./scripts/lcf stop               Stop services without deleting data
+  ./scripts/lcf down               Remove containers; preserve all local data
+  ./scripts/lcf restart            Restart and verify services
+  ./scripts/lcf status             Show Compose and host runner status
+  ./scripts/lcf logs               Follow Compose logs; print host log locations
+  ./scripts/lcf doctor             Run read-only configuration and health checks
+  ./scripts/lcf backup             Create a consistent, checksummed data backup
+  ./scripts/lcf restore [options]  Restore a backup (passes options to restore.sh)
+  ./scripts/lcf uninstall          Remove services and LaunchAgent; keep all data
+
+Install options:
+  --runtime auto|docker-desktop|colima
+  --provider auto|codex_cli|cursor_cli|mock|ollama
+  --web-port PORT
+  --api-port PORT
+  --mcp-port PORT
+  --skip-build
+  --no-open
+
+The mock provider is a control-plane demo and does not generate production
+documentation. The command never installs a third-party CLI, switches Docker
+context, mounts ~/.codex, mounts Cursor credentials, or mounts the Docker socket.
+EOF
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+note() {
+  printf '==> %s\n' "$*"
+}
+
+acquire_deploy_lock() {
+  local lock_dir="${state_dir}/deploy.lock"
+  local owner_file="${lock_dir}/owner.pid"
+  local owner_pid=""
+  if mkdir "$lock_dir" 2>/dev/null; then
+    printf '%s\n' "$$" >"$owner_file"
+    return
+  fi
+  if [[ -L "$lock_dir" || ! -d "$lock_dir" ]]; then
+    die "unsafe deploy lock path: ${lock_dir}"
+  fi
+  if [[ -f "$owner_file" && ! -L "$owner_file" ]]; then
+    owner_pid="$(awk 'NR == 1 && /^[0-9]+$/ {print; exit}' "$owner_file")"
+  fi
+  if [[ -n "$owner_pid" ]] && kill -0 "$owner_pid" 2>/dev/null; then
+    die "another install or upgrade is running (PID ${owner_pid})"
+  fi
+  note "Removing a stale deploy lock left by an interrupted installer"
+  rm -f -- "$owner_file"
+  rmdir "$lock_dir" 2>/dev/null \
+    || die "deploy lock contains unexpected files; inspect ${lock_dir}"
+  mkdir "$lock_dir" || die "could not acquire deploy lock"
+  printf '%s\n' "$$" >"$owner_file"
+}
+
+release_deploy_lock() {
+  local lock_dir="${state_dir}/deploy.lock"
+  rm -f -- "${lock_dir}/owner.pid"
+  rmdir "$lock_dir" 2>/dev/null || true
+}
+
+ensure_private_directory() {
+  local path="$1"
+  if [[ -L "$path" ]]; then
+    die "private runtime directory must not be a symlink: ${path}"
+  fi
+  if [[ -e "$path" && ! -d "$path" ]]; then
+    die "private runtime path is not a directory: ${path}"
+  fi
+  mkdir -p "$path"
+  chmod 700 "$path"
+}
+
+require_macos() {
+  [[ "$(uname -s)" == "Darwin" ]] || die "the all-in-one installer targets macOS"
+  if ((EUID == 0)); then
+    die "do not run Local Context Forge with sudo; the LaunchAgent and CLI login belong to your macOS user"
+  fi
+  [[ "$HOME" == /* && "$HOME" != *$'\n'* && "$HOME" != *$'\r'* ]] \
+    || die "HOME must be a safe absolute path"
+  if [[ "$(uname -m)" != "arm64" ]]; then
+    printf '%s\n' "warning: this deployment is tuned for Apple Silicon" >&2
+  fi
+}
+
+check_resources() {
+  local memory_bytes free_kib
+  memory_bytes="$(sysctl -n hw.memsize 2>/dev/null || printf 0)"
+  if [[ "$memory_bytes" =~ ^[0-9]+$ ]] && ((memory_bytes > 0)); then
+    if ((memory_bytes < 16 * 1024 * 1024 * 1024)); then
+      printf '%s\n' \
+        "warning: less than 16 GiB RAM detected; keep worker concurrency at 1 and hybrid disabled initially." \
+        >&2
+    else
+      printf 'ok: %.0f GiB physical memory\n' \
+        "$((memory_bytes / 1024 / 1024 / 1024))"
+    fi
+  fi
+  free_kib="$(df -Pk "$repo_root" | awk 'NR == 2 {print $4}')"
+  if ! [[ "$free_kib" =~ ^[0-9]+$ ]]; then
+    die "could not determine free disk space"
+  fi
+  if ((free_kib < 10 * 1024 * 1024)); then
+    die "at least 10 GiB free disk space is required for images, indexes and rollback headroom"
+  fi
+  printf 'ok: %.0f GiB free disk space\n' "$((free_kib / 1024 / 1024))"
+}
+
+valid_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1024 && 10#$1 <= 65535))
+}
+
+env_value() {
+  local key="$1"
+  local fallback="${2:-}"
+  local value=""
+  if [[ -f "$runtime_env" ]]; then
+    value="$(awk -v wanted="$key" '
+      index($0, wanted "=") == 1 {
+        sub(/^[^=]*=/, "")
+        print
+        exit
+      }
+    ' "$runtime_env")"
+  fi
+  printf '%s' "${value:-$fallback}"
+}
+
+compose() {
+  local context
+  context="${docker_context:-$(env_value LCF_DOCKER_CONTEXT)}"
+  [[ -n "$context" ]] || die "Docker context is not configured; run ./install.sh"
+  docker --context "$context" compose \
+    --project-directory "$repo_root" \
+    --env-file "$runtime_env" \
+    -f "${repo_root}/docker-compose.yml" "$@"
+}
+
+resolve_executable() {
+  local command="$1"
+  local found=""
+  found="$(command -v "$command" 2>/dev/null || true)"
+  if [[ -n "$found" ]]; then
+    (
+      cd -- "$(dirname -- "$found")"
+      printf '%s/%s\n' "$(pwd -P)" "$(basename -- "$found")"
+    )
+  fi
+}
+
+wait_for_docker() {
+  local deadline=$((SECONDS + 180))
+  while ((SECONDS < deadline)); do
+    if docker --context "$docker_context" info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+detect_runtime() {
+  command -v docker >/dev/null 2>&1 || die \
+    "Docker CLI is missing. Install Docker Desktop, or install Homebrew Docker + Colima, then rerun."
+  if [[ -z "$docker_context" ]]; then
+    docker_context="$(docker context show 2>/dev/null || true)"
+  fi
+  [[ -n "$docker_context" ]] || die "Docker has no current context"
+
+  case "$runtime_choice" in
+    auto) ;;
+    docker-desktop)
+      case "$docker_context" in
+        desktop-linux|default) ;;
+        *) die "selected Docker context is '${docker_context}', not Docker Desktop. Select it yourself, then rerun; the installer will not switch contexts." ;;
+      esac
+      ;;
+    colima)
+      case "$docker_context" in
+        colima|colima-*) ;;
+        *) die "selected Docker context is '${docker_context}', not Colima. Run 'docker context use colima' yourself if intended, then rerun." ;;
+      esac
+      ;;
+    *) die "unknown runtime: ${runtime_choice}" ;;
+  esac
+
+  if ! docker --context "$docker_context" info >/dev/null 2>&1; then
+    case "$docker_context" in
+      desktop-linux|default)
+        if [[ -d /Applications/Docker.app ]]; then
+          note "Starting Docker Desktop"
+          open -a Docker
+        else
+          die "Docker Desktop daemon is unavailable and /Applications/Docker.app was not found"
+        fi
+        ;;
+      colima|colima-*)
+        command -v colima >/dev/null 2>&1 || die \
+          "the current context is Colima but the colima command is missing"
+        note "Starting the existing Colima profile without changing its resources"
+        if [[ "$docker_context" == "colima" ]]; then
+          colima start
+        else
+          colima start --profile "${docker_context#colima-}"
+        fi
+        ;;
+      *)
+        die "Docker context '${docker_context}' is not ready. Start its daemon yourself; the installer will not switch contexts."
+        ;;
+    esac
+    wait_for_docker || die "Docker context '${docker_context}' did not become ready within 180 seconds"
+  fi
+  docker --context "$docker_context" compose version >/dev/null 2>&1 || die \
+    "Compose v2 is unavailable for Docker context '${docker_context}'"
+}
+
+write_runtime_env() {
+  local codex_bin="$1"
+  local cursor_bin="$2"
+  local python_bin="$3"
+  local default_web default_api default_mcp
+  default_web="$(env_value WEB_PORT 8080)"
+  default_api="$(env_value API_PORT 8000)"
+  default_mcp="$(env_value MCP_PORT 8001)"
+  web_port="${web_port:-$default_web}"
+  api_port="${api_port:-$default_api}"
+  mcp_port="${mcp_port:-$default_mcp}"
+  valid_port "$web_port" || die "invalid Web port: ${web_port}"
+  valid_port "$api_port" || die "invalid API port: ${api_port}"
+  valid_port "$mcp_port" || die "invalid MCP port: ${mcp_port}"
+  [[ "$web_port" != "$api_port" && "$web_port" != "$mcp_port" && "$api_port" != "$mcp_port" ]] \
+    || die "Web, API and MCP ports must be different"
+
+  mkdir -p "$state_dir"
+  chmod 700 "$state_dir"
+  local temporary="${runtime_env}.tmp.$$"
+  python_bin="$python_bin" \
+  RUNTIME_ENV="$runtime_env" \
+  ENV_EXAMPLE="${repo_root}/.env.example" \
+  OUTPUT_ENV="$temporary" \
+  UPDATE_DOCKER_CONTEXT="$docker_context" \
+  UPDATE_RUNTIME="$runtime_choice" \
+  UPDATE_PROVIDER="$provider_choice" \
+  UPDATE_WEB_PORT="$web_port" \
+  UPDATE_API_PORT="$api_port" \
+  UPDATE_MCP_PORT="$mcp_port" \
+  UPDATE_DATA_DIR="${repo_root}/data" \
+  UPDATE_IMPORTS_DIR="${repo_root}/imports" \
+  UPDATE_RUNNER_DIR="${repo_root}/data/runner" \
+  UPDATE_CODEX_BIN="$codex_bin" \
+  UPDATE_CURSOR_BIN="$cursor_bin" \
+  "$python_bin" <<'PY'
+import os
+from pathlib import Path
+
+values = {}
+order = []
+for source in (Path(os.environ["ENV_EXAMPLE"]), Path(os.environ["RUNTIME_ENV"])):
+    if not source.is_file():
+        continue
+    for raw in source.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key not in values:
+            order.append(key)
+        values[key] = value
+updates = {
+    "LCF_DOCKER_CONTEXT": os.environ["UPDATE_DOCKER_CONTEXT"],
+    "LCF_CONTAINER_RUNTIME": os.environ["UPDATE_RUNTIME"],
+    "LCF_DEFAULT_PROVIDER": os.environ["UPDATE_PROVIDER"],
+    "LCF_BIND_HOST": "127.0.0.1",
+    "WEB_PORT": os.environ["UPDATE_WEB_PORT"],
+    "API_PORT": os.environ["UPDATE_API_PORT"],
+    "MCP_PORT": os.environ["UPDATE_MCP_PORT"],
+    "LOCAL_DATA_DIR": os.environ["UPDATE_DATA_DIR"],
+    "LOCAL_IMPORTS_DIR": os.environ["UPDATE_IMPORTS_DIR"],
+    "LCF_RUNNER_DIR": "/data/runner",
+    "LCF_HOST_RUNNER_DIR": os.environ["UPDATE_RUNNER_DIR"],
+    "LCF_CODEX_BIN": os.environ["UPDATE_CODEX_BIN"],
+    "LCF_CURSOR_BIN": os.environ["UPDATE_CURSOR_BIN"],
+}
+for key, value in updates.items():
+    if key not in values:
+        order.append(key)
+    values[key] = value
+for key, value in values.items():
+    if any(character in value for character in "\r\n\0"):
+        raise SystemExit(f"unsafe newline in environment value: {key}")
+output = Path(os.environ["OUTPUT_ENV"])
+with output.open("w", encoding="utf-8") as handle:
+    for key in order:
+        handle.write(f"{key}={values[key]}\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(output, 0o600)
+PY
+  mv -f -- "$temporary" "$runtime_env"
+  chmod 600 "$runtime_env"
+}
+
+write_state() {
+  local python_bin="$1"
+  STATE_FILE="$state_file" \
+  STATE_CONTEXT="$docker_context" \
+  STATE_RUNTIME="$runtime_choice" \
+  STATE_PROVIDER="$provider_choice" \
+  STATE_WEB="$web_port" \
+  STATE_API="$api_port" \
+  STATE_MCP="$mcp_port" \
+  "$python_bin" <<'PY'
+import json
+import os
+import time
+from pathlib import Path
+
+path = Path(os.environ["STATE_FILE"])
+temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+payload = {
+    "schema_version": 1,
+    "installed_at": int(time.time()),
+    "docker_context": os.environ["STATE_CONTEXT"],
+    "runtime": os.environ["STATE_RUNTIME"],
+    "provider": os.environ["STATE_PROVIDER"],
+    "ports": {
+        "web": int(os.environ["STATE_WEB"]),
+        "api": int(os.environ["STATE_API"]),
+        "mcp": int(os.environ["STATE_MCP"]),
+    },
+}
+with temporary.open("w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(temporary, 0o600)
+os.replace(temporary, path)
+PY
+}
+
+check_port() {
+  local port="$1"
+  local health_url="$2"
+  if ! command -v lsof >/dev/null 2>&1 \
+    || ! lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    return 0
+  fi
+  if curl --fail --silent --max-time 3 "$health_url" >/dev/null 2>&1; then
+    return 0
+  fi
+  die "port ${port} is already used by another process; choose a different --*-port"
+}
+
+install_launch_agent() {
+  local python_bin="$1"
+  local codex_bin="$2"
+  local cursor_bin="$3"
+  mkdir -p "$launch_agents_dir"
+  ensure_private_directory "$logs_dir"
+  local temporary="${launch_plist}.tmp.$$"
+  PLIST_PATH="$temporary" \
+  LABEL="$launch_label" \
+  PYTHON_BIN="$python_bin" \
+  REPO_ROOT="$repo_root" \
+  RUNNER_DIR="$runner_dir" \
+  LOGS_DIR="$logs_dir" \
+  CODEX_BIN="$codex_bin" \
+  CURSOR_BIN="$cursor_bin" \
+  "$python_bin" <<'PY'
+import os
+import plistlib
+from pathlib import Path
+
+environment = {
+    "HOME": str(Path.home()),
+    "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
+    "PYTHONPATH": os.environ["REPO_ROOT"],
+}
+for name in ("CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
+    value = os.environ.get(name)
+    if not value or any(character in value for character in "\0\r\n"):
+        continue
+    candidate = Path(value).expanduser()
+    if candidate.is_absolute():
+        environment[name] = str(candidate)
+if os.environ.get("CODEX_BIN"):
+    environment["LCF_CODEX_BIN"] = os.environ["CODEX_BIN"]
+if os.environ.get("CURSOR_BIN"):
+    environment["LCF_CURSOR_BIN"] = os.environ["CURSOR_BIN"]
+payload = {
+    "Label": os.environ["LABEL"],
+    "ProgramArguments": [
+        os.environ["PYTHON_BIN"],
+        "-m",
+        "host_runner.runner",
+        "--runner-dir",
+        os.environ["RUNNER_DIR"],
+    ],
+    "WorkingDirectory": os.environ["REPO_ROOT"],
+    "EnvironmentVariables": environment,
+    "RunAtLoad": True,
+    "KeepAlive": True,
+    "ThrottleInterval": 5,
+    "ProcessType": "Background",
+    "StandardOutPath": str(Path(os.environ["LOGS_DIR"]) / "host-runner.out.log"),
+    "StandardErrorPath": str(Path(os.environ["LOGS_DIR"]) / "host-runner.err.log"),
+}
+path = Path(os.environ["PLIST_PATH"])
+with path.open("wb") as handle:
+    plistlib.dump(payload, handle)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(path, 0o600)
+PY
+  plutil -lint "$temporary" >/dev/null
+  launchctl bootout "gui/${UID}/${launch_label}" >/dev/null 2>&1 || true
+  rm -f -- "${runner_dir}/heartbeat.json"
+  mv -f -- "$temporary" "$launch_plist"
+  chmod 600 "$launch_plist"
+  launchctl bootstrap "gui/${UID}" "$launch_plist"
+  launchctl kickstart -k "gui/${UID}/${launch_label}"
+}
+
+wait_for_runner() {
+  local deadline=$((SECONDS + 30))
+  while ((SECONDS < deadline)); do
+    if [[ -f "${runner_dir}/heartbeat.json" ]]; then
+      local modified now
+      modified="$(stat -f '%m' "${runner_dir}/heartbeat.json" 2>/dev/null || printf 0)"
+      now="$(date +%s)"
+      if ((now - modified < 30)); then
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+http_wait() {
+  local url="$1"
+  local deadline=$((SECONDS + 120))
+  while ((SECONDS < deadline)); do
+    if curl --fail --silent --max-time 5 "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+configure_api_provider() {
+  local api_url="http://127.0.0.1:${api_port}"
+  local current revision order fallback payload
+  current="$(curl --fail --silent --show-error "${api_url}/api/settings")"
+  revision="$(jq -er '.revision | numbers' <<<"$current")"
+  case "$provider_choice" in
+    auto)
+      order='["codex_cli","cursor_cli"]'
+      fallback=true
+      ;;
+    codex_cli|cursor_cli|mock|ollama)
+      order="$(jq -cn --arg provider "$provider_choice" '[$provider]')"
+      fallback=false
+      ;;
+    *) die "cannot configure unsupported API provider: ${provider_choice}" ;;
+  esac
+  payload="$(jq -cn \
+    --argjson expected_revision "$revision" \
+    --argjson provider_order "$order" \
+    --argjson fallback_enabled "$fallback" \
+    '{
+      expected_revision: $expected_revision,
+      provider_order: $provider_order,
+      fallback_enabled: $fallback_enabled
+    }')"
+  curl --fail --silent --show-error \
+    -X PATCH \
+    -H 'Content-Type: application/json' \
+    --data "$payload" \
+    "${api_url}/api/settings" >/dev/null
+}
+
+save_rollback_state() {
+  ensure_private_directory "${state_dir}/rollback"
+  rollback_tag="$(date -u '+%Y%m%dT%H%M%SZ').$$"
+  if [[ -f "$runtime_env" ]]; then
+    runtime_backup="${state_dir}/rollback/runtime.env.${rollback_tag}"
+    cp -p "$runtime_env" "$runtime_backup"
+  fi
+  if [[ -f "$launch_plist" ]]; then
+    plist_backup="${state_dir}/rollback/host-runner.plist.${rollback_tag}"
+    cp -p "$launch_plist" "$plist_backup"
+  fi
+  if [[ -f "$runtime_env" ]]; then
+    docker_context="$(env_value LCF_DOCKER_CONTEXT "$docker_context")"
+    if [[ -n "$docker_context" ]] \
+      && docker --context "$docker_context" info >/dev/null 2>&1 \
+      && compose ps --status running --services 2>/dev/null | grep -q .; then
+      stack_was_running=1
+    fi
+  fi
+}
+
+rollback_install() {
+  local incoming=$?
+  local status="${1:-$incoming}"
+  trap - ERR INT TERM
+  set +e
+  if ((install_in_progress == 1 && status != 0)); then
+    printf '%s\n' "Installation failed; restoring the previous runtime configuration." >&2
+    if [[ -n "$runtime_backup" && -f "$runtime_backup" ]]; then
+      cp -p "$runtime_backup" "$runtime_env"
+    fi
+    launchctl bootout "gui/${UID}/${launch_label}" >/dev/null 2>&1
+    if [[ -n "$plist_backup" && -f "$plist_backup" ]]; then
+      cp -p "$plist_backup" "$launch_plist"
+      launchctl bootstrap "gui/${UID}" "$launch_plist" >/dev/null 2>&1
+    elif [[ -f "$launch_plist" ]]; then
+      rm -f -- "$launch_plist"
+    fi
+    if ((stack_was_running == 1)) && [[ -f "$runtime_env" ]]; then
+      docker_context="$(env_value LCF_DOCKER_CONTEXT "$docker_context")"
+      compose up -d >/dev/null 2>&1
+    elif [[ -f "$runtime_env" ]]; then
+      compose down >/dev/null 2>&1
+    fi
+    printf '%s\n' "Source data, imports and backups were not removed." >&2
+  fi
+  exit "$status"
+}
+
+parse_install_options() {
+  while (($#)); do
+    case "$1" in
+      --runtime)
+        [[ $# -ge 2 ]] || die "--runtime requires a value"
+        runtime_choice="$2"
+        runtime_option_set=1
+        shift
+        ;;
+      --provider)
+        [[ $# -ge 2 ]] || die "--provider requires a value"
+        provider_choice="$2"
+        provider_option_set=1
+        shift
+        ;;
+      --web-port|--api-port|--mcp-port)
+        [[ $# -ge 2 ]] || die "$1 requires a value"
+        case "$1" in
+          --web-port) web_port="$2" ;;
+          --api-port) api_port="$2" ;;
+          --mcp-port) mcp_port="$2" ;;
+        esac
+        shift
+        ;;
+      --no-open) no_open=1 ;;
+      --skip-build) skip_build=1 ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *) die "unknown install option: $1" ;;
+    esac
+    shift
+  done
+  case "$provider_choice" in
+    auto|codex_cli|cursor_cli|mock|ollama) ;;
+    *) die "provider must be auto, codex_cli, cursor_cli, mock, or ollama" ;;
+  esac
+}
+
+install_command() {
+  parse_install_options "$@"
+  require_macos
+  check_resources
+  ensure_private_directory "$state_dir"
+  [[ ! -L "$runtime_env" ]] || die "runtime.env must not be a symlink"
+  [[ ! -L "$state_file" ]] || die "install-state.json must not be a symlink"
+  [[ -f "$runtime_env" ]] && existing_install=1
+  acquire_deploy_lock
+  trap release_deploy_lock EXIT
+  save_rollback_state
+  # First install uses the current context. A repeat install reuses the recorded
+  # context and choices unless the user explicitly supplies an override.
+  if [[ -f "$runtime_env" && "$runtime_option_set" == "0" ]]; then
+    runtime_choice="$(env_value LCF_CONTAINER_RUNTIME auto)"
+    docker_context="$(env_value LCF_DOCKER_CONTEXT)"
+  else
+    docker_context=""
+  fi
+  if [[ -f "$runtime_env" && "$provider_option_set" == "0" ]]; then
+    provider_choice="$(env_value LCF_DEFAULT_PROVIDER auto)"
+  fi
+  install_in_progress=1
+  trap 'rollback_install $?' ERR
+  trap 'rollback_install 130' INT
+  trap 'rollback_install 143' TERM
+
+  note "Checking Docker runtime without changing its context"
+  detect_runtime
+  local python_bin codex_bin cursor_bin
+  python_bin="$(resolve_executable python3)"
+  if [[ -z "$python_bin" ]] && command -v brew >/dev/null 2>&1; then
+    note "Installing required Python 3 with Homebrew"
+    brew install python
+    python_bin="$(resolve_executable python3)"
+  fi
+  [[ -n "$python_bin" ]] || die \
+    "Python 3 is required. Install Homebrew or Python 3, then rerun the same command."
+  "$python_bin" -c 'import sys; raise SystemExit(sys.version_info < (3, 9))' \
+    || die "Python 3.9 or newer is required"
+  for dependency in git curl tar rsync; do
+    command -v "$dependency" >/dev/null 2>&1 || die "required command is missing: ${dependency}"
+  done
+  if ! command -v jq >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      note "Installing required jq with Homebrew"
+      brew install jq
+    else
+      die "jq is required for smoke/backup operations. Install Homebrew and 'brew install jq', then rerun."
+    fi
+  fi
+  codex_bin="$(resolve_executable codex)"
+  cursor_bin="$(resolve_executable cursor-agent)"
+  if [[ "$provider_choice" == "codex_cli" && -z "$codex_bin" ]]; then
+    die "Codex CLI is not installed. Install it and complete 'codex login'; the installer does not install third-party CLIs."
+  fi
+  if [[ "$provider_choice" == "cursor_cli" && -z "$cursor_bin" ]]; then
+    die "Cursor CLI is not installed. Install it and complete 'cursor-agent login'; the installer does not install third-party CLIs."
+  fi
+  if [[ "$provider_choice" == "auto" && -z "$codex_bin" && -z "$cursor_bin" ]]; then
+    if ((existing_install == 0 && provider_option_set == 0)); then
+      provider_choice="mock"
+      provider_option_set=1
+      printf '%s\n' \
+        "warning: no Codex/Cursor CLI was found; installing in mock demo mode." \
+        "         Install and log in to a CLI later, then rerun with --provider codex_cli or cursor_cli." \
+        >&2
+    else
+      die "Neither Codex CLI nor Cursor CLI was found. Use --provider mock for a demo-only install, or install and log in to a CLI."
+    fi
+  fi
+  if [[ -n "$codex_bin" && "$provider_choice" != "mock" && "$provider_choice" != "ollama" && "$provider_choice" != "cursor_cli" ]] \
+    && ! "$codex_bin" login status >/dev/null 2>&1; then
+    if [[ "$provider_choice" == "codex_cli" ]]; then
+      die "Codex CLI is installed but not logged in. Run 'codex login', then rerun."
+    fi
+    printf '%s\n' "warning: Codex is not logged in; auto mode may use Cursor if installed." >&2
+    if [[ "$provider_choice" == "auto" && -z "$cursor_bin" ]]; then
+      if ((existing_install == 0 && provider_option_set == 0)); then
+        provider_choice="mock"
+        provider_option_set=1
+        printf '%s\n' \
+          "warning: no authenticated CLI is available; installing in mock demo mode." \
+          "         Run 'codex login' later, then rerun with --provider codex_cli." \
+          >&2
+      else
+        die "Codex is not logged in and Cursor CLI is unavailable. Use --provider mock or log in, then rerun."
+      fi
+    fi
+  fi
+  if [[ "$provider_choice" == "cursor_cli" ]] \
+    && ! "$cursor_bin" status >/dev/null 2>&1; then
+    die "Cursor CLI is installed but not logged in. Run 'cursor-agent login', then rerun."
+  fi
+  if [[ "$provider_choice" == "auto" && -n "$cursor_bin" ]] \
+    && ! "$cursor_bin" status >/dev/null 2>&1; then
+    printf '%s\n' "warning: Cursor is installed but not logged in; it cannot be used as fallback." >&2
+    if [[ -z "$codex_bin" ]] || ! "$codex_bin" login status >/dev/null 2>&1; then
+      if ((existing_install == 0 && provider_option_set == 0)); then
+        provider_choice="mock"
+        provider_option_set=1
+        printf '%s\n' \
+          "warning: no authenticated CLI is available; installing in mock demo mode." \
+          "         Log in later, then rerun with an explicit CLI provider." \
+          >&2
+      else
+        die "No authenticated CLI is available. Use --provider mock or log in to a CLI, then rerun."
+      fi
+    fi
+  fi
+
+  note "Writing private, idempotent runtime configuration"
+  write_runtime_env "$codex_bin" "$cursor_bin" "$python_bin"
+  ensure_private_directory "${repo_root}/data"
+  ensure_private_directory "${repo_root}/imports"
+  ensure_private_directory "${repo_root}/backups"
+  ensure_private_directory "$runner_dir"
+  ensure_private_directory "${runner_dir}/inbox"
+  ensure_private_directory "${runner_dir}/working"
+  ensure_private_directory "${runner_dir}/outbox"
+  ensure_private_directory "${runner_dir}/failed"
+  check_port "$web_port" "http://127.0.0.1:${web_port}/healthz"
+  check_port "$api_port" "http://127.0.0.1:${api_port}/api/health"
+  check_port "$mcp_port" "http://127.0.0.1:${mcp_port}/health"
+
+  if [[ "$provider_choice" == "mock" || "$provider_choice" == "ollama" ]]; then
+    note "${provider_choice} mode selected; disabling the host CLI runner"
+    launchctl bootout "gui/${UID}/${launch_label}" >/dev/null 2>&1 || true
+    rm -f -- "$launch_plist" "${runner_dir}/heartbeat.json"
+  else
+    note "Installing the per-user macOS host runner"
+    install_launch_agent "$python_bin" "$codex_bin" "$cursor_bin"
+    wait_for_runner || die "host runner did not become healthy; inspect ${logs_dir}/host-runner.err.log"
+  fi
+
+  note "Building and starting the loopback-only stack"
+  if ((skip_build == 1)); then
+    compose up -d --wait --wait-timeout 600
+  else
+    compose up -d --build --wait --wait-timeout 600
+  fi
+  http_wait "http://127.0.0.1:${api_port}/api/health" || die "API health check timed out"
+  http_wait "http://127.0.0.1:${mcp_port}/health" || die "MCP health check timed out"
+  http_wait "http://127.0.0.1:${web_port}/healthz" || die "Web health check timed out"
+  LCF_API_URL="http://127.0.0.1:${api_port}" \
+  LCF_MCP_URL="http://127.0.0.1:${mcp_port}" \
+  LCF_WEB_URL="http://127.0.0.1:${web_port}" \
+    "${repo_root}/scripts/smoke-test.sh"
+  doctor_command
+  if ((provider_option_set == 1)); then
+    note "Applying the selected provider to the Web/API settings"
+    configure_api_provider
+  fi
+  write_state "$python_bin"
+
+  install_in_progress=0
+  trap - ERR INT TERM
+  release_deploy_lock
+  trap - EXIT
+  note "Local Context Forge is ready"
+  printf 'Web: http://127.0.0.1:%s\n' "$web_port"
+  printf 'API: http://127.0.0.1:%s/docs\n' "$api_port"
+  printf 'MCP: http://127.0.0.1:%s/mcp\n' "$mcp_port"
+  printf '%s\n' "Run './scripts/lcf doctor' at any time."
+  if ((no_open == 0)); then
+    open "http://127.0.0.1:${web_port}"
+  fi
+}
+
+require_installed() {
+  [[ -f "$runtime_env" && ! -L "$runtime_env" ]] \
+    || die "not installed or runtime.env is unsafe; run ./install.sh first"
+  docker_context="$(env_value LCF_DOCKER_CONTEXT)"
+  [[ -n "$docker_context" ]] || die "runtime.env has no LCF_DOCKER_CONTEXT"
+}
+
+start_runner() {
+  if [[ ! -f "$launch_plist" ]]; then
+    die "host runner LaunchAgent is missing; rerun ./install.sh"
+  fi
+  rm -f -- "${runner_dir}/heartbeat.json"
+  launchctl bootstrap "gui/${UID}" "$launch_plist" >/dev/null 2>&1 || true
+  launchctl kickstart -k "gui/${UID}/${launch_label}"
+  wait_for_runner || die "host runner did not become healthy"
+}
+
+stop_runner() {
+  launchctl bootout "gui/${UID}/${launch_label}" >/dev/null 2>&1 || true
+  rm -f -- "${runner_dir}/heartbeat.json"
+}
+
+start_command() {
+  require_macos
+  require_installed
+  runtime_choice="$(env_value LCF_CONTAINER_RUNTIME auto)"
+  detect_runtime
+  if [[ "$(env_value LCF_DEFAULT_PROVIDER auto)" != "mock" \
+    && "$(env_value LCF_DEFAULT_PROVIDER auto)" != "ollama" ]]; then
+    start_runner
+  else
+    stop_runner
+  fi
+  if ! compose up -d --wait --wait-timeout 600; then
+    stop_runner
+    die "Compose failed to start; the host runner was stopped to prevent partial operation"
+  fi
+  doctor_command
+}
+
+stop_command() {
+  require_installed
+  local compose_status=0
+  compose stop || compose_status=$?
+  stop_runner
+  if ((compose_status != 0)); then
+    die "Compose stop failed; the host runner was stopped, but inspect remaining containers"
+  fi
+  note "Stopped services; all data is preserved"
+}
+
+down_command() {
+  require_installed
+  local compose_status=0
+  compose down || compose_status=$?
+  stop_runner
+  if ((compose_status != 0)); then
+    die "Compose down failed; the host runner was stopped, but inspect remaining containers"
+  fi
+  note "Removed containers and stopped the host runner; all data is preserved"
+}
+
+restart_command() {
+  stop_command
+  start_command
+}
+
+status_command() {
+  require_installed
+  local provider
+  provider="$(env_value LCF_DEFAULT_PROVIDER auto)"
+  compose ps
+  printf '\nHost runner:\n'
+  printf '  configured provider: %s\n' "$provider"
+  if launchctl print "gui/${UID}/${launch_label}" >/dev/null 2>&1; then
+    printf '%s\n' "  LaunchAgent: loaded"
+  else
+    printf '%s\n' "  LaunchAgent: not loaded"
+  fi
+  if [[ "$provider" == "mock" || "$provider" == "ollama" ]]; then
+    printf '%s\n' "  heartbeat: not required for this provider"
+  elif [[ -f "${runner_dir}/heartbeat.json" ]]; then
+    python3 -m json.tool "${runner_dir}/heartbeat.json"
+  else
+    printf '%s\n' "  heartbeat: missing"
+  fi
+}
+
+logs_command() {
+  require_installed
+  printf 'Host runner logs: %s\n' "${logs_dir}/host-runner.out.log"
+  printf 'Host runner errors: %s\n' "${logs_dir}/host-runner.err.log"
+  compose logs --follow --tail=200
+}
+
+doctor_command() {
+  require_installed
+  local failures=0
+  local web api mcp mode provider
+  web="$(env_value WEB_PORT 8080)"
+  api="$(env_value API_PORT 8000)"
+  mcp="$(env_value MCP_PORT 8001)"
+  provider="$(env_value LCF_DEFAULT_PROVIDER auto)"
+  mode="$(stat -f '%Lp' "$runtime_env" 2>/dev/null || printf unknown)"
+  if [[ "$mode" == "600" ]]; then
+    printf '%s\n' "ok: runtime.env mode 600"
+  else
+    printf 'failed: runtime.env mode is %s, expected 600\n' "$mode" >&2
+    failures=$((failures + 1))
+  fi
+  docker_context="$(env_value LCF_DOCKER_CONTEXT)"
+  if docker --context "$docker_context" info >/dev/null 2>&1; then
+    printf 'ok: Docker context %s\n' "$docker_context"
+  else
+    printf 'failed: Docker context %s is unavailable\n' "$docker_context" >&2
+    failures=$((failures + 1))
+  fi
+  for check in \
+    "api|http://127.0.0.1:${api}/api/health" \
+    "mcp|http://127.0.0.1:${mcp}/health" \
+    "web|http://127.0.0.1:${web}/healthz"; do
+    local label="${check%%|*}"
+    local url="${check#*|}"
+    if curl --fail --silent --max-time 10 "$url" >/dev/null 2>&1; then
+      printf 'ok: %s (%s)\n' "$label" "$url"
+    else
+      printf 'failed: %s (%s)\n' "$label" "$url" >&2
+      failures=$((failures + 1))
+    fi
+  done
+  if [[ "$provider" == "mock" || "$provider" == "ollama" ]]; then
+    if launchctl print "gui/${UID}/${launch_label}" >/dev/null 2>&1; then
+      printf 'failed: %s provider selected but host runner is still loaded\n' "$provider" >&2
+      failures=$((failures + 1))
+    else
+      printf 'ok: %s provider selected; host runner is intentionally disabled\n' "$provider"
+    fi
+  elif wait_for_runner; then
+    printf '%s\n' "ok: host runner heartbeat is fresh"
+  else
+    printf '%s\n' "failed: host runner heartbeat is missing or stale" >&2
+    failures=$((failures + 1))
+  fi
+  if [[ "$provider" != "mock" && "$provider" != "ollama" \
+    && -f "${runner_dir}/heartbeat.json" ]]; then
+    python3 - "${runner_dir}/heartbeat.json" "$provider" <<'PY' || failures=$((failures + 1))
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+requested = sys.argv[2]
+providers = payload.get("providers", {})
+codex = providers.get("codex_cli", {})
+cursor = providers.get("cursor_cli", {})
+print(
+    "provider: codex installed=%s authenticated=%s usable=%s; "
+    "cursor installed=%s authenticated=%s usable=%s"
+    % (
+        codex.get("installed"),
+        codex.get("authenticated"),
+        codex.get("usable"),
+        cursor.get("installed"),
+        cursor.get("authenticated"),
+        cursor.get("usable"),
+    )
+)
+usable = {
+    "auto": bool(codex.get("usable") or cursor.get("usable")),
+    "codex_cli": bool(codex.get("usable")),
+    "cursor_cli": bool(cursor.get("usable")),
+}.get(requested, False)
+raise SystemExit(0 if usable else 1)
+PY
+  fi
+  if ((failures)); then
+    printf 'Doctor found %s problem(s).\n' "$failures" >&2
+    return 1
+  fi
+  printf '%s\n' "Doctor passed."
+}
+
+uninstall_command() {
+  require_macos
+  local cleanup_failed=0
+  if [[ -f "$runtime_env" ]]; then
+    docker_context="$(env_value LCF_DOCKER_CONTEXT)"
+    if command -v docker >/dev/null 2>&1 \
+      && docker --context "$docker_context" info >/dev/null 2>&1; then
+      if ! compose down; then
+        printf '%s\n' "warning: Compose down failed; containers may remain." >&2
+        cleanup_failed=1
+      fi
+    else
+      printf '%s\n' "warning: Docker is unavailable; containers were not removed." >&2
+      cleanup_failed=1
+    fi
+  fi
+  stop_runner
+  if [[ -f "$launch_plist" ]]; then
+    rm -f -- "$launch_plist"
+  fi
+  printf '%s\n' "Uninstalled services and LaunchAgent."
+  printf '%s\n' "Preserved: ${repo_root}/data, imports, backups, and ${state_dir}."
+  if ((cleanup_failed != 0)); then
+    return 1
+  fi
+}
+
+case "$command_name" in
+  install) install_command "$@" ;;
+  start) start_command ;;
+  stop) stop_command ;;
+  down) down_command ;;
+  restart) restart_command ;;
+  status) status_command ;;
+  logs) logs_command ;;
+  doctor) doctor_command ;;
+  backup) exec "${repo_root}/scripts/backup.sh" "$@" ;;
+  restore) exec "${repo_root}/scripts/restore.sh" "$@" ;;
+  uninstall) uninstall_command ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; die "unknown command: ${command_name}" ;;
+esac

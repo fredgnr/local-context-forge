@@ -1,0 +1,4 @@
+*
+!requirements.txt
+!mcp_server/
+!mcp_server/**

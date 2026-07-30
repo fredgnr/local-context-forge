@@ -1,0 +1,134 @@
+name: local-context-forge
+
+services:
+  api:
+    image: local-context-forge-api:0.1.0
+    build:
+      context: ./backend
+      dockerfile: ../docker/api.Dockerfile
+      args:
+        QMD_VERSION: "2.5.3"
+    restart: unless-stopped
+    environment:
+      LCF_DATA_DIR: /data
+      LCF_DATABASE_PATH: /data/metadata.sqlite3
+      LCF_LOCAL_SOURCE_ROOTS: /examples:/imports
+      LCF_REMOTE_SOURCE_HOSTS: ${LCF_REMOTE_SOURCE_HOSTS:-github.com,gitlab.com,bitbucket.org}
+      LCF_QMD_ENABLED: ${LCF_QMD_ENABLED:-true}
+      LCF_QMD_HYBRID_ENABLED: ${LCF_QMD_HYBRID_ENABLED:-true}
+      QMD_EMBED_MODEL: ${QMD_EMBED_MODEL:-hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf}
+      LCF_CTAGS_BIN: ctags
+      LCF_CTAGS_ENABLED: ${LCF_CTAGS_ENABLED:-true}
+      LCF_CTAGS_TIMEOUT_SECONDS: ${LCF_CTAGS_TIMEOUT_SECONDS:-120}
+      QMD_CONFIG_DIR: /data/qmd/config
+      XDG_CACHE_HOME: /data/qmd/cache
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-600}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-32768}
+      OLLAMA_NUM_PREDICT: ${OLLAMA_NUM_PREDICT:-8192}
+      # The host runner exchanges bounded JSON through this data-volume spool.
+      # No Codex/Cursor credentials and no Docker socket are mounted.
+      LCF_RUNNER_DIR: ${LCF_RUNNER_DIR:-/data/runner}
+      LCF_DEFAULT_PROVIDER: ${LCF_DEFAULT_PROVIDER:-auto}
+      LCF_HOST_RUNNER_TIMEOUT_SECONDS: ${LCF_HOST_RUNNER_TIMEOUT_SECONDS:-1800}
+      LCF_ENABLE_CODEX_PROVIDER: ${LCF_ENABLE_CODEX_PROVIDER:-false}
+      LCF_MAX_FILE_BYTES: ${LCF_MAX_FILE_BYTES:-384000}
+      LCF_MAX_SNAPSHOT_FILES: ${LCF_MAX_SNAPSHOT_FILES:-100000}
+      LCF_MAX_SNAPSHOT_BYTES: ${LCF_MAX_SNAPSHOT_BYTES:-2147483648}
+      LCF_MAX_EVIDENCE_BYTES: ${LCF_MAX_EVIDENCE_BYTES:-240000}
+      LCF_MAX_EXISTING_WIKI_BYTES: ${LCF_MAX_EXISTING_WIKI_BYTES:-20000}
+      LCF_MAX_MODEL_PAYLOAD_BYTES: ${LCF_MAX_MODEL_PAYLOAD_BYTES:-100000}
+      LCF_MAX_MODEL_MANIFEST_BYTES: ${LCF_MAX_MODEL_MANIFEST_BYTES:-12000}
+      LCF_MAX_MODEL_SYMBOLS_BYTES: ${LCF_MAX_MODEL_SYMBOLS_BYTES:-25000}
+      LCF_MAX_MODEL_EVIDENCE_BYTES: ${LCF_MAX_MODEL_EVIDENCE_BYTES:-30000}
+      LCF_MAX_MODEL_SYMBOLS: ${LCF_MAX_MODEL_SYMBOLS:-80}
+      LCF_MAX_MODEL_MANIFEST_FILES: ${LCF_MAX_MODEL_MANIFEST_FILES:-150}
+      LCF_MAX_SYMBOLS: ${LCF_MAX_SYMBOLS:-2000}
+      LCF_CORS_ORIGINS: ${LCF_CORS_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}
+    ports:
+      - "${LCF_BIND_HOST:-127.0.0.1}:${API_PORT:-8000}:8000"
+    volumes:
+      - "${LOCAL_DATA_DIR:-./data}:/data"
+      - ./examples:/examples:ro
+      - "${LOCAL_IMPORTS_DIR:-./imports}:/imports:ro"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - lcf
+
+  mcp:
+    image: local-context-forge-mcp:0.1.0
+    build:
+      context: ./mcp
+      dockerfile: ../docker/mcp.Dockerfile
+    restart: unless-stopped
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8001"
+      MCP_PATH: /mcp
+      BACKEND_URL: http://api:8000
+      BACKEND_TIMEOUT_SECONDS: ${BACKEND_TIMEOUT_SECONDS:-660}
+    ports:
+      - "${LCF_BIND_HOST:-127.0.0.1}:${MCP_PORT:-8001}:8001"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    networks:
+      - lcf
+
+  web:
+    image: local-context-forge-web:0.1.0
+    build:
+      context: ./web
+      args:
+        VITE_API_BASE: /api
+    restart: unless-stopped
+    ports:
+      - "${LCF_BIND_HOST:-127.0.0.1}:${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32m,noexec,nosuid
+      - /var/run:size=8m,noexec,nosuid
+      - /tmp:size=16m,noexec,nosuid
+    networks:
+      - lcf
+
+networks:
+  lcf:
+    driver: bridge

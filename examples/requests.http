@@ -1,0 +1,37 @@
+@api = http://127.0.0.1:8000
+
+### Health
+GET {{api}}/api/health
+
+### Create the mounted demo library
+POST {{api}}/api/libraries
+Content-Type: application/json
+
+{
+  "name": "LCF Demo SDK",
+  "slug": "lcf-demo-sdk",
+  "source": "/examples/demo-python-sdk",
+  "description": "Deterministic local demo"
+}
+
+### Start mock ingest; replace LIBRARY_ID
+POST {{api}}/api/libraries/LIBRARY_ID/ingest
+Content-Type: application/json
+
+{
+  "version": "1.0.0",
+  "ref": "HEAD",
+  "provider": "mock",
+  "auto_publish": false
+}
+
+### Query; replace LIBRARY_ID after publishing proposals
+POST {{api}}/api/query
+Content-Type: application/json
+
+{
+  "library_id": "LIBRARY_ID",
+  "version": "1.0.0",
+  "query": "How do I create a client with a timeout?",
+  "limit": 5
+}

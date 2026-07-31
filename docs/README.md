@@ -4,7 +4,9 @@ Local Context Forge 正在从 Docker/Web 部署迁移为 macOS Apple Silicon
 Electron all-in-one 客户端。阅读文档时请先区分两条路径：
 
 - **Electron 桌面版**：目标形态。应用内置 Python sidecar、Node/QMD、Web UI 与 MCP
-  companion；但正式 Release、干净用户安装、真实 Codex 任务和物理更新门禁仍未完成。
+  companion，并已有 tag-only Draft/trusted-main promotion source policy；但真实 GitHub
+  settings、正式 Release、干净用户安装、真实 Codex 任务和物理更新门禁仍未完成。整体保持
+  **source merge GO / release NO-GO**。
 - **legacy Docker/Web**：现有可运行路径，继续保留用于回退；`install.sh` 与
   `docs/15-github-actions-ghcr.md` 描述的是这条路径，不是 Electron 安装器。
 

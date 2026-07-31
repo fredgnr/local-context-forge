@@ -4,7 +4,7 @@
 This tool intentionally has no CI mode. It writes only public pins into the
 repository. Private material stays in a mode-0700 directory outside the
 repository and every private file is mode 0600. With ``--upload`` it sends one
-versioned credential bundle to the protected ``macos-release`` GitHub
+versioned credential bundle to the protected ``macos-signing`` GitHub
 Environment through ``gh secret set`` stdin and removes the private directory
 only after the matching public pins have been committed locally.
 
@@ -43,11 +43,27 @@ UPDATE_LOCK = (
 CODESIGN_LOCK = (
     REPOSITORY_ROOT / "runtime" / "macos-codesign-certificate.lock.json"
 )
-ENVIRONMENT_NAME = "macos-release"
+SIGNING_ENVIRONMENT_NAME = "macos-signing"
+PROMOTION_ENVIRONMENT_NAME = "macos-release"
 SIGNING_IDENTITY = "Local Context Forge Self Signed"
 CANONICAL_REPOSITORY = "fredgnr/local-context-forge"
 RELEASE_TAG_POLICY = "v*.*.*"
+PROMOTION_BRANCH_POLICY = "main"
+RELEASE_TAG_RULESET_NAME = "immutable-release-tags"
+RELEASE_TAG_CREATION_RULESET_NAME = "release-tag-creation"
+RELEASE_TAG_RULESET_PATTERN = "refs/tags/v*.*.*"
+MAIN_RULESET_NAME = "protected-main"
+MAIN_RULESET_PATTERN = "refs/heads/main"
 CREDENTIAL_BUNDLE_SECRET = "DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64"
+FORBIDDEN_REPOSITORY_RELEASE_SECRETS = {
+    CREDENTIAL_BUNDLE_SECRET,
+    "UPDATE_METADATA_ED25519_PRIVATE_KEY_BASE64",
+    "MACOS_CERTIFICATE_P12_BASE64",
+    "MACOS_CERTIFICATE_PASSWORD",
+    "APPLE_ID",
+    "APPLE_APP_SPECIFIC_PASSWORD",
+    "APPLE_TEAM_ID",
+}
 
 
 class BootstrapError(RuntimeError):
@@ -287,7 +303,7 @@ def _gh_api_json(repository: str, endpoint: str, label: str) -> dict[str, Any]:
             "--header",
             "Accept: application/vnd.github+json",
             "--header",
-            "X-GitHub-Api-Version: 2022-11-28",
+            "X-GitHub-Api-Version: 2026-03-10",
             endpoint,
         ],
         label=label,
@@ -301,26 +317,41 @@ def _gh_api_json(repository: str, endpoint: str, label: str) -> dict[str, Any]:
     return value
 
 
-def _verify_protected_environment(repository: str) -> None:
-    repository_state = _gh_api_json(
-        repository,
-        f"repos/{repository}",
-        "Canonical repository verification",
+def _gh_api_array(repository: str, endpoint: str, label: str) -> list[Any]:
+    raw = _run(
+        [
+            "gh",
+            "api",
+            "--method",
+            "GET",
+            "--header",
+            "Accept: application/vnd.github+json",
+            "--header",
+            "X-GitHub-Api-Version: 2026-03-10",
+            endpoint,
+        ],
+        label=label,
     )
-    if (
-        repository_state.get("full_name") != CANONICAL_REPOSITORY
-        or repository_state.get("private") is not False
-        or repository_state.get("visibility") != "public"
-        or repository_state.get("archived") is True
-    ):
-        raise BootstrapError(
-            "Secret upload requires the canonical active public repository"
-        )
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BootstrapError(f"{label} returned invalid JSON") from exc
+    if not isinstance(value, list):
+        raise BootstrapError(f"{label} returned an invalid shape")
+    return value
 
+
+def _verify_environment_policy(
+    repository: str,
+    *,
+    environment_name: str,
+    deployment_name: str,
+    deployment_type: str,
+) -> None:
     environment = _gh_api_json(
         repository,
-        f"repos/{repository}/environments/{ENVIRONMENT_NAME}",
-        "Protected Environment verification",
+        f"repos/{repository}/environments/{environment_name}",
+        f"{environment_name} Environment verification",
     )
     rules = environment.get("protection_rules")
     reviewer_rules = (
@@ -335,41 +366,277 @@ def _verify_protected_environment(repository: str) -> None:
     )
     branch_policy = environment.get("deployment_branch_policy")
     if (
-        environment.get("name") != ENVIRONMENT_NAME
+        environment.get("name") != environment_name
         or len(reviewer_rules) != 1
         or not reviewer_rules[0].get("reviewers")
+        or reviewer_rules[0].get("prevent_self_review") is not True
+        or environment.get("can_admins_bypass", False) is not False
         or not isinstance(branch_policy, dict)
         or branch_policy.get("protected_branches") is not False
         or branch_policy.get("custom_branch_policies") is not True
     ):
         raise BootstrapError(
-            "macos-release must require reviewers and use a custom "
-            "deployment policy"
+            f"{environment_name} must require independent reviewers and "
+            "use a custom deployment policy"
         )
 
     policies = _gh_api_json(
         repository,
         (
-            f"repos/{repository}/environments/{ENVIRONMENT_NAME}"
+            f"repos/{repository}/environments/{environment_name}"
             "/deployment-branch-policies?per_page=100"
         ),
-        "Environment deployment policy verification",
+        f"{environment_name} deployment policy verification",
     )
     policy_values = policies.get("branch_policies")
     if (
-        not isinstance(policy_values, list)
+        policies.get("total_count") != 1
+        or not isinstance(policy_values, list)
         or len(policy_values) != 1
         or not isinstance(policy_values[0], dict)
-        or policy_values[0].get("name") != RELEASE_TAG_POLICY
-        or policy_values[0].get("type") not in (None, "tag")
+        or policy_values[0].get("name") != deployment_name
+        or policy_values[0].get("type") != deployment_type
     ):
         raise BootstrapError(
-            "macos-release must allow only the v*.*.* deployment tag policy"
+            f"{environment_name} must allow only the exact "
+            f"{deployment_type} deployment policy {deployment_name}"
         )
 
 
+def _verify_main_ruleset(repository: str) -> None:
+    summaries = _gh_api_array(
+        repository,
+        (
+            f"repos/{repository}/rulesets"
+            "?targets=branch&includes_parents=true&per_page=100"
+        ),
+        "Protected main ruleset list",
+    )
+    matches = [
+        value
+        for value in summaries
+        if isinstance(value, dict)
+        and value.get("name") == MAIN_RULESET_NAME
+        and value.get("target") == "branch"
+    ]
+    if (
+        len(matches) != 1
+        or not isinstance(matches[0].get("id"), int)
+        or matches[0]["id"] <= 0
+    ):
+        raise BootstrapError(
+            "The active protected-main branch ruleset is required"
+        )
+    ruleset = _gh_api_json(
+        repository,
+        f"repos/{repository}/rulesets/{matches[0]['id']}",
+        "Protected main ruleset verification",
+    )
+    conditions = ruleset.get("conditions")
+    ref_name = (
+        conditions.get("ref_name")
+        if isinstance(conditions, dict)
+        else None
+    )
+    rule_values = ruleset.get("rules")
+    rules_by_type = (
+        {
+            rule.get("type"): rule
+            for rule in rule_values
+            if isinstance(rule, dict)
+            and isinstance(rule.get("type"), str)
+        }
+        if isinstance(rule_values, list)
+        else {}
+    )
+    pull_request = rules_by_type.get("pull_request")
+    pull_parameters = (
+        pull_request.get("parameters")
+        if isinstance(pull_request, dict)
+        else None
+    )
+    allowed_merge_methods = (
+        pull_parameters.get("allowed_merge_methods")
+        if isinstance(pull_parameters, dict)
+        else None
+    )
+    approval_count = (
+        pull_parameters.get("required_approving_review_count")
+        if isinstance(pull_parameters, dict)
+        else None
+    )
+    if (
+        ruleset.get("name") != MAIN_RULESET_NAME
+        or ruleset.get("target") != "branch"
+        or ruleset.get("enforcement") != "active"
+        or ruleset.get("source_type") != "Repository"
+        or ruleset.get("source") != repository
+        or ruleset.get("bypass_actors") != []
+        or not isinstance(ref_name, dict)
+        or ref_name.get("include") != [MAIN_RULESET_PATTERN]
+        or ref_name.get("exclude") != []
+        or set(rules_by_type) != {
+            "deletion",
+            "non_fast_forward",
+            "pull_request",
+        }
+        or not isinstance(pull_parameters, dict)
+        or not isinstance(approval_count, int)
+        or isinstance(approval_count, bool)
+        or approval_count < 1
+        or pull_parameters.get("dismiss_stale_reviews_on_push") is not True
+        or pull_parameters.get("require_last_push_approval") is not True
+        or pull_parameters.get(
+            "required_review_thread_resolution"
+        )
+        is not True
+        or not isinstance(allowed_merge_methods, list)
+        or not allowed_merge_methods
+        or not set(allowed_merge_methods).issubset(
+            {"merge", "squash", "rebase"}
+        )
+    ):
+        raise BootstrapError(
+            "protected-main must require independently reviewed pull "
+            "requests and block force-push/deletion with no bypass actors"
+        )
+
+
+def _verify_release_tag_rulesets(
+    repository: str,
+    *,
+    release_actor_id: int,
+) -> None:
+    summaries = _gh_api_array(
+        repository,
+        (
+            f"repos/{repository}/rulesets"
+            "?targets=tag&includes_parents=true&per_page=100"
+        ),
+        "Release tag ruleset list",
+    )
+    expected = {
+        RELEASE_TAG_CREATION_RULESET_NAME: {
+            "rules": {"creation"},
+            "bypass": [
+                {
+                    "actor_id": release_actor_id,
+                    "actor_type": "User",
+                    "bypass_mode": "always",
+                }
+            ],
+        },
+        RELEASE_TAG_RULESET_NAME: {
+            "rules": {"update", "deletion"},
+            "bypass": [],
+        },
+    }
+    for name, policy in expected.items():
+        matches = [
+            value
+            for value in summaries
+            if isinstance(value, dict)
+            and value.get("name") == name
+            and value.get("target") == "tag"
+        ]
+        if (
+            len(matches) != 1
+            or not isinstance(matches[0].get("id"), int)
+            or matches[0]["id"] <= 0
+        ):
+            raise BootstrapError(
+                f"The active {name} tag ruleset is required"
+            )
+        ruleset = _gh_api_json(
+            repository,
+            f"repos/{repository}/rulesets/{matches[0]['id']}",
+            f"{name} tag ruleset verification",
+        )
+        conditions = ruleset.get("conditions")
+        ref_name = (
+            conditions.get("ref_name")
+            if isinstance(conditions, dict)
+            else None
+        )
+        rule_values = ruleset.get("rules")
+        if (
+            ruleset.get("name") != name
+            or ruleset.get("target") != "tag"
+            or ruleset.get("enforcement") != "active"
+            or ruleset.get("source_type") != "Repository"
+            or ruleset.get("source") != repository
+            or ruleset.get("bypass_actors") != policy["bypass"]
+            or not isinstance(ref_name, dict)
+            or ref_name.get("include") != [RELEASE_TAG_RULESET_PATTERN]
+            or ref_name.get("exclude") != []
+            or not isinstance(rule_values, list)
+            or {
+                rule.get("type")
+                for rule in rule_values
+                if isinstance(rule, dict)
+            }
+            != policy["rules"]
+        ):
+            raise BootstrapError(
+                f"{name} does not match the reviewed release-tag policy"
+            )
+
+
+def _verify_protected_environments(repository: str) -> None:
+    repository_state = _gh_api_json(
+        repository,
+        f"repos/{repository}",
+        "Canonical repository verification",
+    )
+    owner = repository_state.get("owner")
+    if (
+        repository_state.get("full_name") != CANONICAL_REPOSITORY
+        or repository_state.get("private") is not False
+        or repository_state.get("visibility") != "public"
+        or repository_state.get("archived") is True
+        or not isinstance(owner, dict)
+        or owner.get("login") != "fredgnr"
+        or not isinstance(owner.get("id"), int)
+        or owner["id"] <= 0
+    ):
+        raise BootstrapError(
+            "Secret upload requires the canonical active public repository"
+        )
+
+    immutable_releases = _gh_api_json(
+        repository,
+        f"repos/{repository}/immutable-releases",
+        "Immutable Releases verification",
+    )
+    if immutable_releases.get("enabled") is not True:
+        raise BootstrapError(
+            "GitHub Immutable Releases must be enabled before provisioning"
+        )
+
+    _verify_main_ruleset(repository)
+    _verify_release_tag_rulesets(
+        repository,
+        release_actor_id=owner["id"],
+    )
+    _verify_environment_policy(
+        repository,
+        environment_name=SIGNING_ENVIRONMENT_NAME,
+        deployment_name=RELEASE_TAG_POLICY,
+        deployment_type="tag",
+    )
+    _verify_environment_policy(
+        repository,
+        environment_name=PROMOTION_ENVIRONMENT_NAME,
+        deployment_name=PROMOTION_BRANCH_POLICY,
+        deployment_type="branch",
+    )
+
+
 def _set_environment_secret(
-    repository: str, name: str, value: bytes
+    repository: str,
+    environment_name: str,
+    name: str,
+    value: bytes,
 ) -> None:
     _run(
         [
@@ -378,7 +645,7 @@ def _set_environment_secret(
             "set",
             name,
             "--env",
-            ENVIRONMENT_NAME,
+            environment_name,
             "--repo",
             repository,
         ],
@@ -387,27 +654,70 @@ def _set_environment_secret(
     )
 
 
-def _verify_environment_secret_exists(repository: str, name: str) -> None:
+def _verify_environment_secrets(
+    repository: str,
+    environment_name: str,
+    expected_names: set[str],
+) -> None:
     response = _gh_api_json(
         repository,
         (
-            f"repos/{repository}/environments/{ENVIRONMENT_NAME}"
+            f"repos/{repository}/environments/{environment_name}"
             "/secrets?per_page=100"
         ),
-        "Protected Environment secret verification",
+        f"{environment_name} Environment secret verification",
     )
     values = response.get("secrets")
-    if (
-        not isinstance(values, list)
-        or sum(
-            1
+    names = (
+        {
+            value.get("name")
             for value in values
-            if isinstance(value, dict) and value.get("name") == name
-        )
-        != 1
+            if isinstance(value, dict)
+            and isinstance(value.get("name"), str)
+        }
+        if isinstance(values, list)
+        else set()
+    )
+    if (
+        response.get("total_count") != len(expected_names)
+        or not isinstance(values, list)
+        or len(values) != len(expected_names)
+        or len(names) != len(values)
+        or names != expected_names
     ):
         raise BootstrapError(
-            "Versioned desktop release credential bundle is not present"
+            f"{environment_name} Environment secret membership differs "
+            "from the reviewed release policy"
+        )
+
+
+def _verify_repository_has_no_release_secrets(repository: str) -> None:
+    response = _gh_api_json(
+        repository,
+        f"repos/{repository}/actions/secrets?per_page=100",
+        "Repository Actions secret verification",
+    )
+    values = response.get("secrets")
+    names = (
+        {
+            value.get("name")
+            for value in values
+            if isinstance(value, dict)
+            and isinstance(value.get("name"), str)
+        }
+        if isinstance(values, list)
+        else set()
+    )
+    if (
+        not isinstance(values, list)
+        or response.get("total_count") != len(values)
+        or len(values) > 100
+        or len(names) != len(values)
+        or names.intersection(FORBIDDEN_REPOSITORY_RELEASE_SECRETS)
+    ):
+        raise BootstrapError(
+            "Repository Actions secrets contain a release credential or "
+            "could not be exhaustively verified"
         )
 
 
@@ -434,7 +744,7 @@ def _credential_bundle(
             "schemaVersion": 1,
             "credentialGenerationId": generation_id,
             "repository": CANONICAL_REPOSITORY,
-            "environment": ENVIRONMENT_NAME,
+            "environment": SIGNING_ENVIRONMENT_NAME,
             "updateMetadata": {
                 "algorithm": "Ed25519",
                 "privateKeyPemBase64": base64.b64encode(
@@ -561,7 +871,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "write one versioned private credential bundle to the protected "
-            "macos-release Environment using gh stdin, then remove the "
+            "macos-signing Environment using gh stdin, then remove the "
             "private directory after public-pin commit succeeds"
         ),
     )
@@ -577,6 +887,16 @@ def _parser() -> argparse.ArgumentParser:
         "--rotate",
         action="store_true",
         help="replace existing provisioned public pins intentionally",
+    )
+    parser.add_argument(
+        "--confirm-admin-bypass-disabled",
+        action="store_true",
+        help=(
+            "attest that both GitHub Environments have 'Allow "
+            "administrators to bypass configured protection rules' disabled; "
+            "required with --upload because the Environment REST response "
+            "does not reliably expose this UI-only setting"
+        ),
     )
     return parser
 
@@ -599,8 +919,19 @@ def main(argv: list[str] | None = None) -> int:
         raise BootstrapError("openssl is required")
     if arguments.upload and shutil.which("gh") is None:
         raise BootstrapError("gh is required for protected Environment upload")
+    if arguments.upload and not arguments.confirm_admin_bypass_disabled:
+        raise BootstrapError(
+            "--upload requires --confirm-admin-bypass-disabled after "
+            "checking both Environment settings in the GitHub UI"
+        )
     if arguments.upload:
-        _verify_protected_environment(arguments.repo)
+        _verify_protected_environments(arguments.repo)
+        _verify_repository_has_no_release_secrets(arguments.repo)
+        _verify_environment_secrets(
+            arguments.repo,
+            PROMOTION_ENVIRONMENT_NAME,
+            set(),
+        )
 
     if arguments.private_output_dir is None:
         private_directory = Path(
@@ -627,13 +958,20 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.upload:
             _set_environment_secret(
                 arguments.repo,
+                SIGNING_ENVIRONMENT_NAME,
                 CREDENTIAL_BUNDLE_SECRET,
                 bundle,
             )
             secret_uploaded = True
-            _verify_environment_secret_exists(
+            _verify_environment_secrets(
                 arguments.repo,
-                CREDENTIAL_BUNDLE_SECRET,
+                SIGNING_ENVIRONMENT_NAME,
+                {CREDENTIAL_BUNDLE_SECRET},
+            )
+            _verify_environment_secrets(
+                arguments.repo,
+                PROMOTION_ENVIRONMENT_NAME,
+                set(),
             )
         _commit_public_artifacts(generation_id, update, codesign)
         public_committed = True
@@ -663,7 +1001,8 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.upload:
         print(
             "one versioned private credential bundle was uploaded to the "
-            "protected macos-release Environment and removed locally"
+            "protected macos-signing Environment and removed locally; "
+            "macos-release remains secret-free"
         )
     else:
         print(

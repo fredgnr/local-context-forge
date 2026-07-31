@@ -4,8 +4,9 @@
 - 开始日期：2026-07-31
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
 - 前置检查点：`agent/electron-desktop-foundation@7e4524f`
-- 当前工作分支：`agent/electron-bundled-runtimes`
-- 当前公开 source 检查点：`fcca1e4`
+- source merge 基线：`main@52a5ffa`
+- 当前工作分支：`agent/two-phase-desktop-release`
+- 当前公开 source 检查点：`main@52a5ffa`
 - 依赖：[ITER-0001](0001-electron-foundation.md) 的源码模式 trust/IPC 契约
 - 路线图阶段：P2、P3；提前落地 P5/P6 source foundation
 - 追踪矩阵：[traceability](../traceability.md)
@@ -50,6 +51,7 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 | Main-owned signed update client | [ADR-0011](../../adr/0011-main-owned-signed-update-client.md) | R09 source client/policy 已实现；public pins 尚未 provision |
 | 本地仓库 picker 与 opaque grant | [ADR-0012](../../adr/0012-local-repository-picker-opaque-grants.md) | R10 Main/Backend/Web source 已实现；物理 volume gate 待运行 |
 | Codex MCP onboarding 与签名 CLI discovery | [ADR-0013](../../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | R08 source discovery/onboarding 已实现；真实 OpenAI 签名 gate 待运行 |
+| 候选 Draft 与公开 promotion 分离 | [ADR-0014](../../adr/0014-two-stage-desktop-release-promotion.md) | R09 的 tag-only signing、trusted-main/secret-free promotion、ruleset/immutable source policy 已实现并复验；真实 settings/promotion 待运行 |
 
 ## 任务
 
@@ -73,7 +75,9 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
   per-`CODEX_HOME` ownership ledger/marker、bundle chain、UI/rendezvous；见
   [R08](0002-r08-mcp-onboarding.md)。
 - [x] **R09 signed update client**：完成独立 Ed25519 manifest、私有 cache、verified DMG
-  open、显式固定 Release 页面出口和受保护 release policy；见
+  open、显式固定 Release 页面出口和受保护 release policy；将 tag-bound Draft 与
+  `workflow_dispatch --ref main` 的 candidate-digest、fixed-Release-ID manual promotion
+  分离；见
   [R09](0002-r09-signed-update-client.md)。
 - [x] **R10 local/private repositories**：完成 picker、opaque grant、Main/Backend 双层路径
   策略和脱敏 UX；见 [R10](0002-r10-local-repositories.md)。
@@ -95,7 +99,8 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 - [ ] Python/QMD/companion/renderer staging 的 source digest、inventory、native closure、
   SBOM、notices 和 `beforePack` tamper rejection 在正式 macOS arm64 build 可复现。
 - [ ] 本地 home/外置卷私有仓库在 packaged app 中完成选择、重启、移动/删除和脱敏矩阵。
-- [ ] protected Environment 生成真实签名 DMG，clean-user Gatekeeper/smoke 和
+- [ ] 两个 protected Environment、三组 ruleset 和 Immutable Releases settings 验证后生成
+  真实签名 DMG，完成 clean-user Gatekeeper/smoke 和
   0.0.1 → 0.0.2 + verified DMG fallback 物理门禁完成。
 - [ ] VAL-GIT-001、VAL-PY-001、VAL-QMD-001、VAL-CLI-001、VAL-MCP-001、VAL-PACK-001
   获得与各自最低环境相符的完整证据。
@@ -104,10 +109,10 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 
 | 验证 | 结果 | 日期/提交 | 命令或过程 | 证据/说明 |
 | --- | --- | --- | --- | --- |
-| VAL-GOV-001 | `pass` | 2026-07-31；当前文档工作树 | `python tools/check_markdown_links.py` | Markdown link validation passed: 66 files |
+| VAL-GOV-001 | `pass` | 2026-07-31；当前文档工作树 | `python tools/check_markdown_links.py` | Markdown link validation passed: 67 files |
 | VAL-P1-SOURCE-001 | `pass` | 2026-07-30；`7e4524f` | 继承 ITER-0001 Actions 证据 | 仅证明恢复基线 |
-| 当前 Backend source 回归 | `pass` | 2026-07-31；`8eedd7e` | `cd backend && .venv/bin/pytest -q ../tests/backend` | 313 pass / 1 AF_UNIX skip |
-| 当前 Desktop source 回归 | `pass` | 2026-07-31；`fcca1e4` | `cd desktop && npm test -- --run` | 30 files / 235 pass / 7 skip |
+| 当前 Backend source 回归 | `pass` | 2026-07-31；当前工作树 | `cd backend && .venv/bin/pytest` | 322 pass / 1 AF_UNIX skip |
+| 当前 Desktop source 回归 | `pass` | 2026-07-31；当前工作树 | `cd desktop && npm test -- --run` | 30 files / 245 pass / 7 skip |
 | 当前 Web source 回归 | `pass` | 2026-07-31；`fcca1e4` | `cd web && npm test -- --run` | 7 files / 51 pass |
 | 当前 QMD worker source 回归 | `pass` | 2026-07-31；`8eedd7e` | `cd desktop/workers/qmd && npm test` | 8 pass / 3 skip（AF_UNIX/native/model 条件） |
 | 当前 Host Runner 回归 | `pass` | 2026-07-31；`8eedd7e` | `backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .` | 8 pass |
@@ -119,13 +124,14 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 | VAL-MCP-001 | `not-run` | — | core 3 files / 37 pass；bridge/companion source 子集 15 pass / 7 skip；需 packaged sidecars/Codex | 7 skip 保持可见；见 [R08](0002-r08-mcp-onboarding.md) |
 | VAL-MCP-ONBOARD-001 | `not-run` | — | Desktop 6 files / 73、Web 3 files / 25 source 子检查 `pass`；需真实签名 Codex packaged app | `fcca1e4`；source fake/signature injection 不替代 physical |
 | VAL-PACK-001 | `not-run` | — | beforePack/build/audit/source tamper 子检查已通过；需 macOS 15 arm64 formal staging | public release locks 仍 unprovisioned |
-| VAL-RELEASE-POLICY-001 | `pass` | 2026-07-31；`8eedd7e` | Desktop release policy 20；Backend workflow/bootstrap policy 13 | 只证明 source workflow policy，不证明签名产物 |
+| VAL-RELEASE-POLICY-001 | `pass` | 2026-07-31；当前工作树 | Desktop release/update policy 2 files / 18；Backend workflow/bootstrap policy 22 | 只证明 source workflow policy，不证明签名产物或真实 GitHub settings |
+| VAL-RELEASE-PROMOTION-001 | `pass` | 2026-07-31；当前工作树 | 两阶段 focused tests；YAML parse；17 个 workflow `run` script `bash -n` | tag push Draft-only、`--ref main` trusted verifier/隔离 tag worktree/fresh peel、PATCH 前 fresh `origin/main` promotion order、固定 Release ID、published 预状态拒绝、post-publish attestation/immutable source contract；真实 settings/promotion `not-run` |
 | VAL-UPDATE-CLIENT-001 | `pass` | 2026-07-31；`fcca1e4` | Desktop 5 files / 42；Web 2 files / 19 | exact 命令见 [R09](0002-r09-signed-update-client.md) |
 | VAL-TRUST-001 packaged | `not-run` | — | 需 packaged renderer/IPC/updater/local-source 审计 | source 负向合同不能替代 |
 | VAL-LOCAL-SOURCE-001 | `pass` | 2026-07-31；full `fcca1e4`、focused `8eedd7e` | Desktop 235/7 skip、Web 51；核心 security 子集 30 | 见 [R10](0002-r10-local-repositories.md) |
 | VAL-LOCAL-SOURCE-002 | `pass` | 2026-07-31；`8eedd7e` | Backend source+transport 103 pass / 1 skip；全量 Backend 313 / 1 | desktop argv roots/owner/sensitive root 重验 |
 | VAL-LOCAL-SOURCE-003 | `not-run` | — | 需 physical packaged macOS home/外置卷/重启矩阵 | source checkout 不替代 NSOpenPanel/volume |
-| VAL-INSTALL-001、VAL-RELEASE-001、VAL-SECRET-001 | `not-run` | — | 需 protected Environment、真实签名 DMG、clean-user 与仓库设置证据 | release policy source `pass` 不提升这些门禁 |
+| VAL-INSTALL-001、VAL-RELEASE-001、VAL-SECRET-001 | `not-run` | — | 需两 Environment、三组 ruleset、Immutable Releases、真实签名 DMG、clean-user 与仓库设置证据 | release policy source `pass` 不提升这些门禁 |
 | VAL-UPDATE-001 | `not-run` | — | 需物理 Apple Silicon 0.0.1 → 0.0.2 与失败 DMG fallback | automatic apply 保持禁用 |
 
 ## 风险、阻塞与回滚点
@@ -134,6 +140,11 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 | --- | --- | --- |
 | source 通过数被误写成完整交付 | 绕过 clean-user/signing/native/physical 风险 | 每项记录最低环境；完整门禁继续 `not-run` |
 | public update/codesign locks 尚未 provision | formal release/update 不可用 | fail closed；按 [release runbook](../desktop-release.md) 由管理员 provision |
+| tag push 被误当成公开授权 | 未经过物理门禁的候选被立即公开 | ADR-0014：tag push 只创建 Draft；`--ref main` manual promotion 绑定 candidate digest 和固定 Release ID |
+| promotion 从 tag 执行不可信 verifier | tag author 可选择/削弱验证策略 | workflow 固定 protected `main`，tag 仅作为 data 放入 detached worktree |
+| 并行 tag promotion 使用启动时旧 HEAD | 较旧版本可能被错误设为 latest | `PATCH` 前 fresh-fetch `origin/main`，以该 comparison ref 重跑 `verifyPromotionOrder`/计算 `make_latest` |
+| Draft verify→PATCH 竞态或已 published 预状态被重跑洗绿 | 公开字节不再等于已测试候选 | GitHub Draft 无 CAS；fresh peel/fixed ID、published 预状态安全事件、post-publish `gh release verify`/immutable/完整集合后验检测 |
+| owner/contents writer/settings admin 越过流程 | 发布控制可被根信任改写 | 明确根信任；独立 reviews、no-bypass rulesets 和审计证据，不夸大为对抗恶意 owner |
 | better-sqlite3/模型/arm64 dylib 不匹配 | QMD 只在 source fake 上可用 | formal arm64 staging、native closure、真实模型/UDS 门禁 |
 | provider commit 后 Main 崩溃 | 结果未知、可能重复计费/发布 | attempt 标记 `uncertain`；用户显式新建 retry，不自动重放 |
 | Codex 安装布局或签名变化 | onboarding fail closed | 固定 layout/signature allowlist；退回手动 MCP 配置 |
@@ -146,7 +157,7 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 
 治理与证据：
 
-- `docs/adr/{README,0003-*,0005-* 至 0013-*}.md`
+- `docs/adr/{README,0003-*,0005-* 至 0014-*}.md`
 - `docs/development/{README,roadmap,traceability,desktop-release,mcp-companion-protocol}.md`
 - `docs/development/iterations/{README,0002-bundled-runtimes,0002-r07-qmd-embeddings,0002-r08-mcp-onboarding,0002-r09-signed-update-client,0002-r10-local-repositories}.md`
 - `README.md`、`SECURITY.md`、`desktop/README.md`
@@ -170,3 +181,6 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 
 生成 staging、release assets、缓存、模型、索引、用户数据、credential bundle 和私有 evidence
 不入库。
+
+本轮最新 release source contract 不提升生产门禁：真实 GitHub settings 与物理 Mac 证据继续
+`not-run`，整体状态保持 **source merge GO / release NO-GO**。

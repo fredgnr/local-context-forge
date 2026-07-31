@@ -171,19 +171,36 @@ Application Support 包含私有源码快照、SQLite、facts、proposal、任�
 
 公开仓库使用 `.github/workflows/desktop-release.yml`：
 
-- 只响应 `v*.*.*` tag 或受控手动运行；
-- build job 绑定受保护的 `macos-release` Environment；
+- build/sign 只响应 `v*.*.*` tag push，并绑定仅允许该 tag pattern 的
+  `macos-signing` Environment；
 - 只有一个 private secret：
   `DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`；
+- Draft job 不绑定 Environment、也不读取 secret；
 - 自签名证书、密码和 Ed25519 private key 不进入仓库、artifact 或普通 CI；
 - public key 和 certificate fingerprint 作为可审查 lock 提交；
-- workflow 先生成 draft，复核 GitHub 远端资产大小与 digest 后才发布。
+- tag push 只构建、签名并生成经远端复核的 Draft，不自动公开；
+- 真机测试后，维护者必须以 `workflow_dispatch --ref main` 启动 promotion；`release_tag`
+  只是资料输入，promotion 绑定只允许 branch `main`、零 secret 的 `macos-release`
+  Environment；
+- 两个 Environment 都要求独立 reviewer、prevent self review，且在 GitHub UI 禁止 admin
+  bypass；`protected-main`、owner-only `release-tag-creation`、无 bypass 的
+  `immutable-release-tags` ruleset 与 GitHub Immutable Releases 也必须开启；
+- trusted `main` verifier 会在隔离 tag worktree 中重验候选，以固定 Release ID REST
+  `PATCH` 公开；`PATCH` 前以 fresh `origin/main` comparison ref 重算 promotion order/
+  `make_latest`，避免并行 tag 把旧版本设为 latest；随后执行 post-publish
+  `gh release verify`、immutable 和完整资产复核。若运行开始时已经 published，一律按发布
+  安全事件处理，不按幂等成功。
 
 当前 public locks 是 `unprovisioned`，所以正式 workflow 会 fail closed。应用虽然实现了签名
 manifest 检查，以及用户确认后的已验证 DMG 下载/打开，但物理 0.0.1 → 0.0.2 门禁尚未运行；
 “自动应用更新”不是已交付能力。source/unprovisioned、校验或网络错误时不会旁路 signed
 updater；只有用户显式操作才可让 Main 打开固定的 canonical GitHub Releases 页面，renderer
 不能提供或读取该 URL，这个手工出口也不会改写 signed updater 的错误/候选状态。
+
+repository owner、`contents` writer/能改 workflow 的主体仍是根信任；GitHub Draft 没有资产
+CAS，verify→固定 ID `PATCH` 的竞态只能由发布后复核检测。真实 GitHub settings、受保护签名/
+promotion、签名 DMG 和物理 Mac 证据仍为 `not-run`，所以整体结论是
+**source merge GO / release NO-GO**。
 
 ## 开发者验证
 

@@ -19,22 +19,113 @@ def _workflow() -> str:
     return RELEASE_WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_release_trigger_environment_and_permissions_are_narrow() -> None:
+def _job_slice(workflow: str, job_name: str) -> str:
+    header = f"  {job_name}:\n"
+    start = workflow.index(header, workflow.index("jobs:\n")) + len(header)
+    following = re.search(r"^  [a-zA-Z0-9_-]+:\n", workflow[start:], re.M)
+    end = len(workflow) if following is None else start + following.start()
+    return workflow[start:end]
+
+
+def test_release_events_are_split_and_tag_bound() -> None:
     workflow = _workflow()
     trigger = workflow.split("concurrency:", 1)[0]
+    global_policy = workflow[: workflow.index("jobs:\n")]
+    build = _job_slice(workflow, "build")
+    create_draft = _job_slice(workflow, "create_draft")
+    promote = _job_slice(workflow, "promote")
+    job_names = set(
+        re.findall(
+            r"^  ([a-zA-Z0-9_-]+):\n",
+            workflow[workflow.index("jobs:\n") + len("jobs:\n"):],
+            re.M,
+        )
+    )
+    assert job_names == {"build", "create_draft", "promote"}
     assert 'tags:\n      - "v*.*.*"' in trigger
     assert "workflow_dispatch:" in trigger
+    for input_name in (
+        "release_tag:",
+        "candidate_manifest_sha256:",
+        "confirm_publish:",
+    ):
+        assert input_name in trigger
+    assert "\n      publish:\n" not in trigger
+    assert re.search(
+        r"release_tag:\n"
+        r"(?:        .*\n)*?"
+        r"        required: true\n"
+        r"        type: string\n",
+        trigger,
+    )
+    assert re.search(
+        r"candidate_manifest_sha256:\n"
+        r"(?:        .*\n)*?"
+        r"        required: true\n"
+        r"        type: string\n",
+        trigger,
+    )
+    assert re.search(
+        r"confirm_publish:\n"
+        r"(?:        .*\n)*?"
+        r"        required: true\n"
+        r"        type: boolean\n"
+        r"        default: false\n",
+        trigger,
+    )
     assert "pull_request:" not in trigger
     assert "branches:" not in trigger
-    assert workflow.count("environment: macos-release") == 1
-    assert workflow.count("contents: write") == 1
+    assert "contents: read" in global_policy
+    assert "contents: write" not in global_policy
+    assert "cancel-in-progress: false" in global_policy
     assert (
-        "github.repository == 'fredgnr/local-context-forge'" in workflow
-    )
-    assert workflow.count(
-        "startsWith(github.ref, 'refs/tags/v')"
-    ) == 2
-    assert "cancel-in-progress: false" in workflow
+        "github.event_name == 'workflow_dispatch' && 'promotion' "
+        "|| github.ref_name"
+    ) in global_policy
+
+    for push_job in (build, create_draft):
+        assert "github.event_name == 'push'" in push_job
+        assert "github.ref_type == 'tag'" in push_job
+        assert "startsWith(github.ref, 'refs/tags/v')" in push_job
+        assert "workflow_dispatch" not in push_job
+    assert "needs: build" in create_draft
+    assert "needs:" not in build
+
+    assert "github.event_name == 'workflow_dispatch'" in promote
+    assert "github.ref_type == 'branch'" in promote
+    assert "github.ref == 'refs/heads/main'" in promote
+    assert "github.ref_name == 'main'" in promote
+    assert "inputs.confirm_publish == true" in promote
+    assert "needs:" not in promote
+    assert "github.event_name == 'push'" not in promote
+
+
+def test_job_permissions_environments_and_secret_slices_are_narrow() -> None:
+    workflow = _workflow()
+    build = _job_slice(workflow, "build")
+    create_draft = _job_slice(workflow, "create_draft")
+    promote = _job_slice(workflow, "promote")
+
+    assert "runs-on: macos-15" in build
+    assert "environment: macos-signing" in build
+    assert "contents: read" in build
+    assert "contents: write" not in build
+    assert re.findall(r"secrets\.([A-Z0-9_]+)", build) == [
+        "DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64"
+    ]
+
+    assert "runs-on: ubuntu-24.04" in create_draft
+    assert "contents: write" in create_draft
+    assert "environment:" not in create_draft
+    assert "secrets." not in create_draft
+
+    assert "runs-on: ubuntu-24.04" in promote
+    assert "contents: write" in promote
+    assert "environment: macos-release" in promote
+    assert "secrets." not in promote
+    assert workflow.count("environment: macos-signing") == 1
+    assert workflow.count("environment: macos-release") == 1
+    assert workflow.count("contents: write") == 2
 
 
 def test_release_actions_are_immutable_and_checkout_drops_credentials() -> None:
@@ -66,12 +157,20 @@ def test_release_actions_are_immutable_and_checkout_drops_credentials() -> None:
             "d3f86a106a0bac45b974a628896c90dbdf5c8093",
         ),
     }
-    assert workflow.count("persist-credentials: false") == 2
+    assert workflow.count("persist-credentials: false") == 3
+    assert workflow.count(
+        "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+    ) == 3
+    assert workflow.count("ref: ${{ github.ref }}") == 2
+    assert "ref: ${{ github.sha }}" in workflow
     assert "cache:" not in workflow
 
 
 def test_formal_release_has_one_atomic_secret_and_no_pr_or_notary_path() -> None:
     workflow = _workflow()
+    build = _job_slice(workflow, "build")
+    create_draft = _job_slice(workflow, "create_draft")
+    promote = _job_slice(workflow, "promote")
     secret_names = re.findall(r"secrets\.([A-Z0-9_]+)", workflow)
     assert secret_names == ["DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64"]
     assert "UPDATE_METADATA_ED25519_PRIVATE_KEY_BASE64" not in workflow
@@ -83,6 +182,14 @@ def test_formal_release_has_one_atomic_secret_and_no_pr_or_notary_path() -> None
     assert "--config electron-builder.release.yml" in workflow
     assert "--config electron-builder.yml" not in workflow
     assert "--publish never" in workflow
+    for unprivileged_slice in (create_draft, promote):
+        assert "DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64" not in (
+            unprivileged_slice
+        )
+        assert "electron-builder" not in unprivileged_slice
+        assert "verify-key" not in unprivileged_slice
+        assert "CSC_NAME" not in unprivileged_slice
+    assert "Sign, package, and assemble formal assets" in build
     base_builder = (
         PROJECT_ROOT / "desktop" / "electron-builder.yml"
     ).read_text(encoding="utf-8")
@@ -108,6 +215,9 @@ def test_formal_release_has_one_atomic_secret_and_no_pr_or_notary_path() -> None
 
 def test_release_builds_and_reaudits_every_packaged_runtime() -> None:
     workflow = _workflow()
+    build = _job_slice(workflow, "build")
+    create_draft = _job_slice(workflow, "create_draft")
+    promote = _job_slice(workflow, "promote")
     for command in (
         "make python-sidecar-build",
         "make qmd-runtime-build",
@@ -119,8 +229,26 @@ def test_release_builds_and_reaudits_every_packaged_runtime() -> None:
         "make qmd-runtime-audit",
         "make renderer-audit",
     ):
-        assert command in workflow
-    assert workflow.count("verify-assets") == 2
+        assert command in build
+        assert command not in create_draft
+        assert command not in promote
+    verify_assets = re.findall(
+        r"prepareRelease\.cjs\"?\s+verify-assets",
+        workflow,
+    )
+    assert len(verify_assets) == 3
+    for job in (build, create_draft, promote):
+        assert len(
+            re.findall(
+                r"prepareRelease\.cjs\"?\s+verify-assets",
+                job,
+            )
+        ) == 1
+    assert "actions/upload-artifact@" in build
+    assert "actions/download-artifact@" in create_draft
+    assert "actions/download-artifact@" not in promote
+    assert "releases/assets/${asset_id}" in promote
+    assert 'Accept: application/octet-stream' in promote
     assert "renderer-build-manifest.json" in (
         PROJECT_ROOT / "desktop" / "scripts" / "prepareRelease.cjs"
     ).read_text(encoding="utf-8")
@@ -181,25 +309,195 @@ def test_public_pins_default_fail_closed_without_breaking_source_ci() -> None:
     assert certificate_lock["certificateSha256"] is None
     source = SOURCE_WORKFLOW.read_text(encoding="utf-8")
     assert "secrets." not in source
+    assert "macos-signing" not in source
     assert "macos-release" not in source
     assert "electron-builder.release.yml" not in source
 
 
-def test_publish_is_draft_first_and_verifies_remote_asset_set() -> None:
+def test_push_path_creates_only_a_remotely_verified_draft() -> None:
     workflow = _workflow()
-    create = workflow.index("gh release create")
-    remote = workflow.index("lcf-draft-release.json")
-    publish = workflow.index('gh release edit "${tag}"')
-    assert create < remote < publish
-    assert "--draft" in workflow[workflow.index("create_flags=("):publish]
-    assert "release.draft !== true" in workflow
-    assert 'asset.state !== "uploaded"' in workflow
-    assert "asset.digest !== expected.digest" in workflow
-    assert "asset.browser_download_url" in workflow
-    assert "remoteNames.has(asset.name)" in workflow
-    assert "local.size !== remoteNames.size" in workflow
-    assert "--draft=false" in workflow[publish:]
-    assert "GH_TOKEN: ${{ github.token }}" in workflow
+    create_draft = _job_slice(workflow, "create_draft")
+    promote = _job_slice(workflow, "promote")
+
+    create = create_draft.index("gh release create")
+    remote = create_draft.index("lcf-draft-release.json")
+    verify = create_draft.index(
+        "prepareRelease.cjs verify-github-release"
+    )
+    assert create < remote < verify
+    assert "--draft" in create_draft[
+        create_draft.index("create_flags=("):verify
+    ]
+    assert "--expected-state draft" in create_draft[verify:]
+    assert (
+        "--release-notes .github/desktop-release-notes.md"
+        in create_draft[verify:]
+    )
+    assert "--candidate-manifest-sha256" not in create_draft
+    assert "gh release edit" not in create_draft
+    assert "--method PATCH" not in create_draft
+    assert "--draft=false" not in create_draft
+    assert "--clobber" not in create_draft
+    assert create_draft.count("gh release create") == 1
+
+    assert create_draft.count("--paginate") == 1
+    assert create_draft.count("--slurp") == 1
+    assert (
+        "repos/fredgnr/local-context-forge/releases?per_page=100"
+        in create_draft
+    )
+    assert ".filter((release) => release.tag_name === expectedTag)" in (
+        create_draft
+    )
+    assert 'expectation === "absent-or-draft"' in create_draft
+    assert "matches.length === 0" in create_draft
+    assert "matches.length !== 1" in create_draft
+    assert "matches[0].draft !== true" in create_draft
+    assert (
+        "Existing exact-tag release is not one recoverable Draft"
+        in create_draft
+    )
+    recovery = create_draft.index('if [[ -e "${before_json}" ]]')
+    recovery_verify = create_draft.index(
+        "verify-github-release", recovery
+    )
+    create = create_draft.index("gh release create")
+    assert recovery < recovery_verify < create
+    assert create_draft.count("verify-github-release") == 2
+
+    # The authenticated full list includes drafts for this write-capable
+    # token. It runs under `set -e`, so API/auth/pagination failures cannot be
+    # reinterpreted as absence, and the create follows only a validated empty
+    # exact-tag match.
+    assert create_draft.index("set -euo pipefail") < create_draft.index(
+        "fetch_release_pages"
+    )
+    assert "set +e" not in create_draft
+    assert "releases/tags/${tag}" not in create_draft
+    assert "gh release view" not in create_draft
+    assert "|| true" not in create_draft
+    assert 'tag_without_build_metadata="${tag%%+*}"' in create_draft
+    assert '[[ "${tag_without_build_metadata}" == *-* ]]' in create_draft
+
+    publish_payload = '{"draft":false,"make_latest":"%s"}'
+    assert publish_payload not in workflow[: workflow.index("  promote:\n")]
+    assert workflow.count(publish_payload) == 1
+    assert "--method PATCH" in promote
+    assert "releases/${release_id}" in promote
+    assert "gh release edit" not in promote
+
+
+def test_manual_promotion_revalidates_remote_draft_and_published_state() -> None:
+    workflow = _workflow()
+    promote = _job_slice(workflow, "promote")
+
+    for provenance_check in (
+        'test "${GITHUB_REF_TYPE}" = "branch"',
+        'test "${GITHUB_REF_NAME}" = "main"',
+        'test "${GITHUB_REF}" = "refs/heads/main"',
+        'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"',
+        'test "${initial_main_commit}" = "${GITHUB_SHA}"',
+        'release_ref="refs/lcf-release-tags/${LCF_RELEASE_TAG}"',
+        'git worktree add --detach "${source_dir}" "${release_commit}"',
+        "git merge-base --is-ancestor",
+        "refs/remotes/origin/main",
+        "prepareRelease.cjs",
+        "\n            preflight \\",
+        '--source-root "${source_dir}"',
+        '--expected-commit "${release_commit}"',
+        '--comparison-commit "${initial_main_commit}"',
+    ):
+        assert provenance_check in promote
+    assert (
+        '[[ "${LCF_CANDIDATE_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]'
+        in promote
+    )
+
+    assert "test ! -e \"${asset_dir}\"" in promote
+    assert 'mkdir -m 700 "${asset_dir}"' in promote
+    assert promote.count("--paginate") == 3
+    assert promote.count("--slurp") == 3
+    assert promote.count(
+        "repos/fredgnr/local-context-forge/releases?per_page=100"
+    ) == 3
+    assert "pages.length > 100" in promote
+    assert "page.length > 100" in promote
+    assert "matches.length !== 1" in promote
+    assert "matches[0].assets.length > 64" in promote
+    assert "names.has(asset.name)" in promote
+    assert "asset.state !== \"uploaded\"" in promote
+    assert "asset.url !== expectedApiUrl" in promote
+    assert "totalSize > 8 * 1024 ** 3" in promote
+    assert (
+        "Expected one exact Draft; an existing published release "
+        "is a security incident"
+    ) in promote
+    assert promote.count("matches[0].id !== expectedId") == 2
+    assert 'printf \'LCF_PROMOTION_RELEASE_ID=%s\\n\'' in promote
+
+    assert promote.count("verify-github-release") == 2
+    assert promote.count("--expected-state draft") == 1
+    assert promote.count("--expected-state published") == 1
+    assert promote.count("--candidate-manifest-sha256") == 2
+    assert promote.count('--release-notes "${release_notes}"') == 2
+    assert promote.count("--method PATCH") == 1
+    assert promote.count('{"draft":false,"make_latest":"%s"}') == 1
+    assert promote.count("git fetch --force --tags origin") == 2
+    assert promote.count("verify-promotion-order") == 2
+    assert 'fresh_main_ref="refs/remotes/lcf-promotion-main"' in promote
+    assert (
+        '"+refs/heads/main:${fresh_main_ref}"'
+        in promote
+    )
+    assert '--comparison-commit "${fresh_main_commit}"' in promote
+    assert promote.count("git merge-base --is-ancestor") >= 3
+    assert '["true", "false"].includes(value.makeLatest)' in promote
+    assert "process.stdout.write(value.makeLatest)" in promote
+    assert 'gh release verify "${tag}"' in promote
+    assert "gh release edit" not in promote
+    assert "gh release create" not in promote
+    assert "gh release upload" not in promote
+    assert "LCF_PROMOTION_RELEASE_STATE" not in promote
+    assert "exit 0" not in promote
+    assert (
+        workflow.count("X-GitHub-Api-Version: 2026-03-10") == 5
+    )
+
+    downloaded_verify = promote.index("verify-assets")
+    fresh_fetch = promote.index(
+        "lcf-pre-publish-release-pages.json", downloaded_verify
+    )
+    verify_draft = promote.index("--expected-state draft", fresh_fetch)
+    latest_order = promote.rindex("verify-promotion-order", verify_draft)
+    publish = promote.index(
+        '{"draft":false,"make_latest":"%s"}',
+        latest_order,
+    )
+    attestation = promote.index("gh release verify", publish)
+    refetch = promote.index("lcf-published-release-pages.json", publish)
+    final_verify = promote.rindex("--expected-state published")
+    assert (
+        downloaded_verify
+        < fresh_fetch
+        < verify_draft
+        < latest_order
+        < publish
+        < attestation
+        < refetch
+        < final_verify
+    )
+    assert "Exact release is no longer the approved Draft" in promote[
+        fresh_fetch:verify_draft
+    ]
+    assert "matches[0].draft !== false" in promote[refetch:final_verify]
+    assert promote.count("refresh_remote_tag") == 4
+    assert 'test "$(git rev-parse "${destination}^{commit}")" = \\' in promote
+    assert "GH_TOKEN: ${{ github.token }}" in promote
+    release_policy = (
+        PROJECT_ROOT / "desktop" / "scripts" / "prepareRelease.cjs"
+    ).read_text(encoding="utf-8")
+    assert "release.immutable !== !expectedDraft" in release_policy
+    assert "packageLockPath: path.join(" in release_policy
 
 
 def test_repository_tracks_no_private_key_material() -> None:

@@ -3,7 +3,8 @@
 ## 基线与目标
 
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
-- 开发分支：`agent/electron-bundled-runtimes`
+- source merge 基线：`main@52a5ffa`
+- 开发分支：`agent/two-phase-desktop-release`
 - 平台目标：macOS Apple Silicon
 - 当前总体状态：`in-progress`
 
@@ -139,21 +140,38 @@ G4：
 - 默认用户产物是 macOS arm64 DMG；
 - 应用及 sidecar 使用明确的自签名身份，发布记录披露未 notarize、未启用
   hardened runtime；
-- 公开仓库的发布秘密只在受保护 `macos-release` Environment 中可用；
+- 公开仓库唯一发布秘密只在 tag-only `macos-signing` Environment 中可用；
+- `macos-release` 只允许 branch `main` 的 promotion，且零 secret；两 Environment 都要求
+  独立 reviewer、prevent self review、UI 禁 admin bypass；
 - PR、fork 与普通构建不接触发布秘密。
 - canonical release/update manifest、完整资产集合和独立 Ed25519 信任锚在打包前
   fail closed。
+- tag push 只创建候选 Draft；公开 promotion 必须以 `workflow_dispatch --ref main` 运行，
+  将 `release_tag` 只作为资料输入，由 trusted `main` verifier 在隔离 tag worktree 中
+  fresh-peel、重新下载、绑定 candidate manifest digest；在 `PATCH` 前以 fresh
+  `origin/main` comparison ref 验证 promotion order/`make_latest`，再以固定 Release ID REST
+  `PATCH` 并执行 post-publish attestation/immutable/完整集合复核。
+- active `protected-main`、owner-only `release-tag-creation`、no-bypass
+  `immutable-release-tags` ruleset 与 GitHub Immutable Releases 是发布前置。
 
 G5：
 
 - `VAL-INSTALL-001` 在未安装 Docker/Homebrew/Python/Node/Git/ctags 的干净 Mac
   完成安装、启动与核心 smoke；
 - `VAL-RELEASE-001` 记录 DMG 内容、签名身份、架构和限制；
-- `VAL-SECRET-001` 证明非发布工作流拿不到 Environment Secrets。
+- `VAL-SECRET-001` 证明真实 Environment/ruleset/Immutable Releases settings 精确匹配，
+  且非发布工作流拿不到 Environment Secrets。
 
-当前 source 进度：release workflow、credential bootstrap、tag/provenance、完整资产集合和
-draft 远端复核合同已通过 `VAL-RELEASE-POLICY-001`；public trust locks 仍为
-`unprovisioned`，protected build、真实签名 DMG 与 Gatekeeper 均为 `not-run`。
+当前 source 进度：release workflow、credential bootstrap、tag/provenance、trusted-main
+verifier、隔离 tag worktree、fresh peel、固定 Release ID 和 Draft/Published/immutable 远端复核
+合同已实现；两阶段 policy 已通过 `VAL-RELEASE-POLICY-001`/
+`VAL-RELEASE-PROMOTION-001` source 复验。published 预状态按安全事件拒绝，不提供幂等洗绿。
+public trust locks 仍为 `unprovisioned`，真实 GitHub settings、protected build、真实签名 DMG、
+promotion 与 Gatekeeper 均为 `not-run`。
+
+repository owner、contents writer/可改 workflow 的主体和 settings admin 仍是根信任；GitHub
+Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。因此当前 P5 总结保持
+**source merge GO / release NO-GO**。
 
 ## P6：0.0.1 → 0.0.2 更新实机门禁
 

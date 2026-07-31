@@ -326,6 +326,26 @@ class ProviderAttemptStore:
         result["claim_id"] = claim_id
         return result
 
+    def claim_next(self, *, lease_seconds: int = 120) -> dict[str, Any] | None:
+        rows = self._database.fetchall(
+            """
+            SELECT id FROM provider_attempts
+            WHERE execution_committed_at IS NULL
+              AND status IN ('pending', 'claimed', 'selected')
+            ORDER BY created_at, id
+            LIMIT 32
+            """
+        )
+        for row in rows:
+            try:
+                return self.claim(
+                    str(row["id"]),
+                    lease_seconds=lease_seconds,
+                )
+            except ProviderAttemptConflict:
+                continue
+        return None
+
     def select(
         self,
         attempt_id: str,

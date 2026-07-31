@@ -239,6 +239,19 @@ def test_preflight_failure_is_terminal_without_execution_commit(
         store.claim(str(attempt["id"]))
 
 
+def test_claim_next_returns_none_then_the_oldest_claimable_attempt(
+    attempt_store: tuple[ProviderAttemptStore, Database, Clock],
+) -> None:
+    store, _, _ = attempt_store
+    assert store.claim_next() is None
+    attempt = create_attempt(store)
+    claimed = store.claim_next()
+    assert claimed is not None
+    assert claimed["id"] == attempt["id"]
+    assert claimed["status"] == "claimed"
+    assert store.claim_next() is None
+
+
 def test_expired_precommit_claim_is_recoverable_but_commit_is_uncertain(
     attempt_store: tuple[ProviderAttemptStore, Database, Clock],
 ) -> None:

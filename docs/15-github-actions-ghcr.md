@@ -1,5 +1,14 @@
 # GitHub Actions 与 GHCR
 
+> **Deprecated historical runbook：** container/GHCR workflow 已进入
+> `TODO-LEGACY-REMOVE-RELEASE-001`，将在 Electron cutover 后删除。本页记录当前尚存行为与
+> 风险，不再承诺继续发布镜像，也不授权删除远端已有 GHCR package。
+
+> **操作停止：** 当前 tag 仍会同时触发 container 与 desktop，且 public locks 为
+> `unprovisioned`；在 `TODO-LEGACY-REMOVE-RELEASE-001`、最终 removal candidate 的完整 M4
+> 复验和 `VAL-LEGACY-ABSENCE-001` 通过前，禁止创建任何新 release tag。本页后续命令仅用于
+> 审计现存 workflow，不是发布步骤。整体仍是 **source merge GO / release NO-GO**。
+
 仓库通过 `.github/workflows/container-images.yml` 构建并托管三个镜像：
 
 ```text
@@ -17,7 +26,7 @@ Codex CLI、Cursor CLI、登录缓存和 Host Runner 不进入镜像。Host Runn
 | --- | --- | --- |
 | PR 到 `main` | 双架构构建验证，不登录、不推送 | 无 |
 | push 到 `main` | 构建并推送三个镜像 | `main`、`sha-<12位>` |
-| push `vX.Y.Z` | 构建并推送版本镜像 | `X.Y.Z`、`X.Y`、`sha-<12位>` |
+| push `vX.Y.Z` | 构建并推送版本镜像；同时触发桌面候选流程 | `X.Y.Z`、`X.Y`、`sha-<12位>` |
 | 手动运行 | 重建所选 ref | 按 ref 规则 |
 
 每个镜像同时包含 `linux/arm64` 和 `linux/amd64`。M4/Colima 自动选择 arm64，常规
@@ -35,9 +44,10 @@ permissions:
 发布使用仓库自动生成的 `GITHUB_TOKEN`，不需要配置 PAT、Codex secret 或 OpenAI key。
 第三方 Actions 固定到完整 commit SHA，并由 Dependabot 每周检查更新。
 
-## 首次发布
+## 首次 `main` 镜像构建
 
-把 workflow 提交到 `main` 会自动启动第一次发布。打开：
+把 workflow 提交到 `main` 会自动启动第一次 `main` 镜像构建与推送；这不是版本 Release。
+打开：
 
 ```text
 https://github.com/fredgnr/local-context-forge/actions
@@ -89,8 +99,16 @@ docker info
 在源码 checkout 根目录运行：
 
 ```bash
-./install.sh --images ghcr --image-tag main
+LCF_CONTROL_BIN="$(pwd -P)/scripts/lcf"
+lcf_managed() {
+  env -i HOME="$HOME" PATH="$PATH" "$LCF_CONTROL_BIN" "$@"
+}
+
+lcf_managed install --images ghcr --image-tag main
 ```
+
+最小环境包装用于清除可能覆盖 Compose project、data、bind、port 或 image 的调用者变量；
+实现缺口与高级 allowlist 见[部署总手册](18-deployment-operations.md#22-安装)。
 
 安装器会：
 
@@ -105,13 +123,13 @@ docker info
 稳定版本建议使用精确标签：
 
 ```bash
-./install.sh --images ghcr --image-tag 0.1.0
+lcf_managed install --images ghcr --image-tag 0.1.0
 ```
 
 需要和某个源码提交严格对应时，使用该次流水线生成的 SHA 标签：
 
 ```bash
-./install.sh --images ghcr --image-tag sha-0123456789ab
+lcf_managed install --images ghcr --image-tag sha-0123456789ab
 ```
 
 Host Runner 来自本地 checkout，而 API 来自镜像；协议升级后尤其应让 checkout 与镜像标签
@@ -120,7 +138,7 @@ Host Runner 来自本地 checkout，而 API 来自镜像；协议升级后尤其
 切回本地源码构建：
 
 ```bash
-./install.sh --images build
+lcf_managed install --images build
 ```
 
 ## 验证架构和镜像
@@ -151,15 +169,25 @@ docker buildx imagetools inspect \
 
 ## 发布版本
 
-创建并推送严格的 `vX.Y.Z` tag 会发布 semver 镜像：
+只有桌面发行前置全部满足并已选定唯一版本时，才由 canonical owner 从受保护 `main` 创建
+annotated、不可变的 `vX.Y.Z` tag。示意命令如下，执行前必须把两个占位符替换成同一个真实
+版本并再次核对目标 commit：
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag -a "vX.Y.Z" -m "Local Context Forge vX.Y.Z"
+git push origin "vX.Y.Z"
 ```
 
-流水线不会自动创建 Git tag，也不会发布漂移含义不清的 `latest`。`main` 适合持续更新，
-`X.Y.Z` 或 digest 适合稳定部署和回滚。
+推送后会并行发生两件事：
+
+1. container workflow 发布 `X.Y.Z`、`X.Y`、`sha-<12位>`；
+2. desktop workflow 等待 `macos-signing` 审批并尝试创建唯一 Draft，绝不会因 tag push 自动
+   公开桌面 Release。
+
+二者不是原子事务：容器镜像可能已经存在，而桌面构建仍等待审批或 fail closed。对外公告前必须
+分别核对 GHCR digest、桌面 Draft 资产、物理 M4 门禁和最终 promotion。不要移动、删除或复用
+失败版本的 tag；修复后提升版本。流水线不会自动创建 Git tag，也不会发布漂移含义不清的
+`latest`。`main` 适合持续更新，精确 `X.Y.Z` 或 digest 适合稳定部署和回滚。
 
 ## 故障排查
 

@@ -1,8 +1,17 @@
 # 数据模型与磁盘布局
 
+> Electron 只保证当前 desktop schema/layout；旧 Docker/alpha data、volume 与 backup 不提供
+> importer、converter、downgrade 或兼容窗口，也不会被应用自动删除。下方 `/data` 仅是待退役
+> owner inventory。当前 layout/backup 工作见 `TODO-DATA-LAYOUT-001` / `TODO-DATA-BACKUP-001`。
+
 ## 数据根目录
 
-默认 `LCF_DATA_DIR=/data`，Compose 把宿主机 `./data` 绑定到这里：
+以下 `/data` 图是 legacy Docker/native domain 的逻辑布局。Electron 把同一类 domain 文件
+放在 `~/Library/Application Support/Local Context Forge/`，并另用
+`~/Library/Caches/Local Context Forge/qmd-runtime/` 和 per-launch temp。当前 desktop 的精确
+实现、ADR-0004 目标差距和 backup 限制见[系统设计的数据章节](17-system-design.md)。
+
+Legacy 默认 `LCF_DATA_DIR=/data`，Compose 把宿主机 `./data` 绑定到这里：
 
 ```text
 /data/
@@ -46,6 +55,12 @@ advisory lock 文件（Windows byte-range lock 可能写一个占位 byte）：�
 存在不表示当前有人持锁；实际锁随进程退出而释放。
 QMD cache/index 可以重建；其余目录共同构成可恢复状态。不要只备份 SQLite 而忽略 Wiki Git、
 源码快照与 job 控制文件。
+
+上图的 `runner/` 是 legacy host-runner spool。共享 `Settings` 也会在 desktop 数据根创建
+`runner/inbox/` 和 `runner/outbox/` 兼容目录，但当前 desktop provider 不通过它执行：
+desktop attempt 的 bounded evidence 位于
+`~/Library/Application Support/Local Context Forge/provider-attempts/<job-id>/`，状态权威记录
+在 SQLite `provider_attempts` 表。不要把 `runner/` 当作 desktop provider attempt 的恢复依据。
 
 当前 API/runtime 的 page 正文来自 SQLite，Wiki Git 是同步生成的审计副本，不是可独立切换的运行时权威源。两者都要一致备份；直接编辑/revert Git 不会更新 SQLite，当前没有自动 reconcile。
 
@@ -219,11 +234,22 @@ retry_of、取消时间、worker owner 和结果。API 重启后 `queued` 保持
 `runtime_settings` 保存 provider 顺序、fallback 开关、固定单并发与全局 embedding model，并用
 revision 做乐观并发。`embedding_state` 保存 desired/active model、status、corpus/indexed
 revision 与最后 rebuild job。只有 active=desired 且 revision 一致时 `hybrid_ready=true`；
-否则 query 使用 lexical fallback。
+否则不使用向量：desktop 指定 library 且 broker/revision 健康时为 `qmd-bm25`，broker 失败或
+全局查询为 Python `lexical`；legacy transport 按其 retriever 配置使用 lexical。
+
+Desktop ingest job 至多有一条 `provider_attempts` 记录。它保存 policy、候选 provider、用户同意
+版本、input/output digest、executable identity、claim/commit 时间和
+`pending/claimed/selected/executing/succeeded/failed/cancelled/uncertain` 状态；文件系统中的
+`provider-attempts/<job-id>/` 保存与该行 digest 绑定的 bounded input/output evidence。
+`execution_committed_at` 之后若结果未知，不能自动 replay 或 fallback。
 
 ## 关系图
 
-这是逻辑关系图，不等同于当前 SQLite schema。`SYMBOL`、`SOURCE_REF`、`SNAPSHOT` 与 `WIKI_COMMIT` 主要存在于 facts、sidecar、路径/commit 字段和 Git 中；当前数据库只规范化 `libraries/versions/jobs/proposals/pages`。
+这是逻辑关系图，不等同于当前 SQLite schema。`SYMBOL`、`SOURCE_REF`、`SNAPSHOT` 与
+`WIKI_COMMIT` 主要存在于 facts、sidecar、路径/commit 字段和 Git 中。当前 SQLite schema
+规范化 `libraries`、`versions`、`jobs`、`proposals`、`pages`、`queue_counter`、
+`runtime_settings`、`embedding_state` 和 `provider_attempts`；这些全局/attempt 状态在图中只
+画出与主要实体有关的关系。
 
 ```mermaid
 erDiagram
@@ -235,6 +261,7 @@ erDiagram
     PAGE }o--o{ SYMBOL : documents
     PAGE ||--o{ SOURCE_REF : cites
     VERSION ||--o{ JOB : processed_by
+    JOB ||--o| PROVIDER_ATTEMPT : may_execute_through
     PROPOSAL ||--o| WIKI_COMMIT : publishes
 ```
 
@@ -260,7 +287,8 @@ journal、乐观并发与启动时 Git/SQLite publish reconcile。
 QMD 更新失败不会撤销已经发布的 Wiki/SQLite 页面；人工最后一页 publish 响应中的 `index` 会
 显示失败或降级，而 `auto_publish` job 可能仍显示 completed，因此运维监控还要独立检查 QMD。
 Embedding 是全局显式运维 job。模型或 corpus 改变后状态为 stale；rebuild 成功并确认目标
-corpus revision 未漂移时才切 active model。此前不会使用不匹配向量，而是 lexical fallback。
+corpus revision 未漂移时才切 active model。此前不会使用不匹配向量；desktop scoped 查询在
+broker/revision 健康时使用 QMD BM25，broker 失败或全局查询使用 Python lexical。
 QMD 的 collection 注册、refresh、remove 和 rebuild 共用全局跨进程 writer lock。统一使用
 `./scripts/reindex.sh [--embed]` 从 SQLite 中的 fully published version 重新注册 Wiki
 collection；library/version 只筛选 registration，随后的 update/embed 覆盖当前 config。
@@ -282,10 +310,20 @@ shell 命令以非零码退出，JSON 用于定位具体失败。review/rejected
 
 ## 迁移
 
-当前参考实现只有 `CREATE TABLE IF NOT EXISTS` 初始化，没有数据库迁移框架、旧 sidecar 自动升级或后台逐版本重编译。任何 schema 变化都必须先：
+当前数据库使用 `PRAGMA user_version`、`SCHEMA_VERSION=5`、进程间 migration lock 和
+`backend/app/db.py` 中的逐版本迁移；并非只有 `CREATE TABLE IF NOT EXISTS`。这套 SQLite
+schema migration 不等于 legacy Docker → Electron 数据迁移，也不提供自动 downgrade 或完整
+backup/restore。
+
+任何**当前 Electron schema** 变化仍必须先：
 
 - 备份并在数据副本验证专用迁移脚本。
-- 明确旧/新应用的读写兼容窗口。
+- 覆盖并发启动、重复运行、中断、损坏和 unknown-version。
+- 明确支持的当前 desktop schema 范围；unknown/legacy version fail closed，不建立兼容窗口。
 - 同步迁移 SQLite、sidecar 与 Wiki index。
-- embedding 模型变化后通过全局 rebuild job 强制 re-embed；完成前 lexical fallback，不混用向量。
+- embedding 模型变化后通过全局 rebuild job 强制 re-embed；完成前只走上述非向量路径，不混用向量。
 - 失败时恢复同一备份 manifest 的 SQLite、Wiki Git 与快照。
+
+Desktop 完整 layout 与当前格式 backup/restore 仍是
+[TODO-DATA-*](development/todo.md)，`VAL-DATA-001` 保持 `not-run`；legacy transaction/import
+已由 ADR-0015 明确取代，不再实施。

@@ -4,6 +4,10 @@
 - 日期：2026-07-30
 - 关联需求：REQ-DATA-001、REQ-MODEL-001、REQ-LEGACY-001
 
+> **后续关系：** 本 ADR 仍为 Accepted，但 legacy import/migration/lifecycle 与相应兼容门禁已由
+> [ADR-0015](0015-electron-only-legacy-retirement.md#对既有-adr-的影响)部分取代；只保留该链接
+> 所列的 non-legacy 路径、数据安全、模型和当前 desktop backup 条款。
+
 ## 上下文
 
 现有安装可在仓库目录或 Docker bind mount/volume 中保存 SQLite、Wiki、源码 snapshot、

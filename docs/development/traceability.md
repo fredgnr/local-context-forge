@@ -4,10 +4,13 @@
 
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
 - 已发布 P1 检查点：`agent/electron-desktop-foundation@7e4524f`
-- source merge 基线：`main@52a5ffa`
-- 当前公开 source 检查点：`main@52a5ffa`
+- bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
+- two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
+- 文档审计基线：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
 - 活动父迭代：[ITER-0002](iterations/0002-bundled-runtimes.md)
 - 路线图：[P0–P7](roadmap.md)
+- 当前状态：[status](status.md)
+- 剩余任务：[TODO](todo.md)
 
 每个行为变化必须形成以下链路：
 
@@ -17,46 +20,97 @@ REQ -> ADR -> ITER/task -> owned paths -> VAL -> evidence
 
 `Accepted` ADR 表示决策已确定，不表示实现或验证已完成。验证只有 `pass`、`fail`、
 `not-run` 三种结果；`source 子门禁 pass` 不能替代要求 packaged/physical 环境的完整门禁。
-R07–R10 是 ITER-0002 的追加记录，继承父迭代 `in-progress` 状态。
+R07–R12 是 ITER-0002 的追加记录，继承父迭代 `in-progress` 状态。
 
 ## 需求与映射
 
 | 需求 ID | 验收目标 | 决策 | 任务 | Owned paths | 验证 | 当前状态 |
 | --- | --- | --- | --- | --- | --- | --- |
+| REQ-GOV-001 | 每项变更有 active iteration、owner、稳定 task/VAL 和 commit-bound evidence | 现有治理规则；架构变化另由 ADR-0015/REQ-ELECTRON-ONLY 承载 | ITER-0001/T01；[R11](iterations/0002-r11-documentation-handoff.md)；[R12](iterations/0002-r12-legacy-retirement-scope.md) | `AGENTS.md`、`.agents/skills/**`、`docs/development/**`、PR template | VAL-GOV-001、VAL-DOC-HANDOFF-001、VAL-LEGACY-SCOPE-001 | 治理 foundation、`625db76` R11 与 [`64ec3c2` R12 scope checkpoint](evidence/VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) `pass`；最终 PR CI 待完成 |
+| REQ-DOC-001 | 新贡献者可从权威状态、系统设计、部署、开发、TODO 和 evidence 独立接手 | R11 基线组合 ADR-0001–0014；R12 的新 Electron-only 决策单独映射到 REQ-ELECTRON-ONLY/PRE1-BREAKING | [R11](iterations/0002-r11-documentation-handoff.md)；[R12](iterations/0002-r12-legacy-retirement-scope.md) 同步当前权威入口 | `README.md`、`TODO.md`、`docs/{README,17-*,18-*}.md`、`docs/development/**`、component READMEs | VAL-DOC-HANDOFF-001、VAL-LEGACY-SCOPE-001 | [`625db76` R11 checkpoint](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) 与 [`64ec3c2` R12 scope checkpoint](evidence/VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) `pass`；最终 PR CI 待完成 |
 | REQ-PLATFORM-001 | macOS Apple Silicon Electron all-in-one，React renderer | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02；ITER-0004/P01、P05 | `desktop/**`、`web/src/**` | VAL-P1-SOURCE-001、VAL-INSTALL-001 | source `pass`；packaged/安装 `not-run` |
+| REQ-ELECTRON-ONLY-001 | Electron 是唯一受支持产品运行/发布面；能力替代后删除 Docker、browser Web、public TCP API、legacy MCP、Host Runner 与 container/GHCR | [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) | [R12](iterations/0002-r12-legacy-retirement-scope.md)；[ITER-0007](iterations/0007-electron-only-retirement.md)；TODO-ELECTRON-CUTOVER-001、TODO-LEGACY-DECOUPLE-001、TODO-LEGACY-REMOVE-*、TODO-LEGACY-ABSENCE-001 | [strict manifest](legacy-retirement.md)、Desktop/Web/Backend split、legacy removal paths | VAL-LEGACY-SCOPE-001、VAL-ELECTRON-CUTOVER-001、VAL-LEGACY-ABSENCE-001 | 决策/范围 `pass`；实现、cutover 与 absence `not-run` |
+| REQ-PRE1-BREAKING-001 | 不承诺 legacy 部署/config/API/data 兼容或迁移；unknown layout fail closed；绝不自动删除用户 data/volume/backup | [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) | R12；ITER-0003/D01–D03；ITER-0007 | desktop-only layout、reset UX、retirement PR policy/docs | VAL-DATA-001、VAL-ELECTRON-CUTOVER-001、VAL-LEGACY-ABSENCE-001 | policy Accepted；实现/物理证据 `not-run` |
 | REQ-TRUST-001 | Main 是信任边界，renderer 只有类型化最小能力，不得到路径/argv/token/key | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md)、[ADR-0011](../adr/0011-main-owned-signed-update-client.md)、[ADR-0012](../adr/0012-local-repository-picker-opaque-grants.md)、[ADR-0013](../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | ITER-0001/T02、T04；R08–R10 | `desktop/src/main/**`、`desktop/src/preload/**`、`web/src/**` | VAL-TRUST-001、VAL-MCP-ONBOARD-001、VAL-UPDATE-CLIENT-001、VAL-LOCAL-SOURCE-001 | source contracts `pass`；packaged trust `not-run` |
 | REQ-PY-001 | CPython 3.13.14 PyInstaller `onedir` 随应用交付且可审计 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md)、[ADR-0009](../adr/0009-bundled-runtime-provenance.md) | ITER-0002/R02 | `backend/packaging/**`、`tools/*python_sidecar*`、`desktop/generated/sidecar/**`、`desktop/resources/sidecar/**` | VAL-PY-001、VAL-PACK-001 | source build/audit contract `pass`；clean-user `not-run` |
 | REQ-GIT-001 | packaged 产品不调用系统 Git，snapshot/Wiki 保持安全与回滚语义 | [ADR-0006](../adr/0006-dulwich-product-git-boundary.md)、[ADR-0012](../adr/0012-local-repository-picker-opaque-grants.md) | ITER-0002/R01、R10 | `backend/app/{source,wiki}.py`、source/Wiki tests | VAL-GIT-001、VAL-PY-001、VAL-LOCAL-SOURCE-002 | source `pass`；packaged full gate `not-run` |
 | REQ-LOCAL-SOURCE-001 | picker 以一次性 opaque grant 导入预先 clone 的本地/私有仓库，不管理凭据 | [ADR-0012](../adr/0012-local-repository-picker-opaque-grants.md) | [ITER-0002/R10](iterations/0002-r10-local-repositories.md) | `desktop/src/main/localSource*`、`backend/app/{cli,config,source}.py`、`web/src/{App,desktopBridge}.ts*` | VAL-LOCAL-SOURCE-001、002、003 | Main/Backend/Web source `pass`；physical Mac `not-run` |
 | REQ-QMD-001 | QMD 使用内置 Node 22.23.2 worker，经 Main broker 提供 revision-safe lexical/hybrid retrieval | [ADR-0007](../adr/0007-qmd-retrieval-broker-runtime.md)、[ADR-0009](../adr/0009-bundled-runtime-provenance.md)、[ADR-0010](../adr/0010-qmd-local-embedding-profile.md) | ITER-0002/R03、[R07](iterations/0002-r07-qmd-embeddings.md) | `desktop/workers/qmd/**`、`desktop/src/main/qmd*`、`backend/app/desktop_retrieval.py` | VAL-QMD-001、VAL-QMD-EMBED-001、VAL-PACK-001 | source contracts `pass`；native/model full gates `not-run` |
 | REQ-IPC-001 | Main 与 sidecar/worker/companion 使用私有 UDS、per-launch identity 与不重放 token | [ADR-0002](../adr/0002-uds-startup-token-protocol.md)、[ADR-0008](../adr/0008-mcp-companion-main-bridge.md)、[ADR-0013](../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | ITER-0001/T03；ITER-0002/R03–R04、R08、R10 | `desktop/src/main/**`、`desktop/companion/**`、`backend/app/{cli,desktop_session,factory}.py` | VAL-IPC-001、VAL-IPC-EMBED-001、VAL-MCP-001、VAL-LOCAL-SOURCE-002 | source/macOS bind 子门禁 `pass`；packaged lifecycle `not-run` |
-| REQ-COMPAT-001 | Desktop bridge fail closed，保留 browser/Docker HTTP transport | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T04；R07–R10 regressions | `web/src/{api,desktopBridge,App}.ts*`、Web tests | VAL-P1-REGRESSION-001 | `pass`（Web 51） |
+| REQ-COMPAT-001 | 历史：Desktop bridge fail closed 且保留 browser/Docker HTTP transport | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md)；由 [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) 取代兼容部分 | 历史 ITER-0001/T04；后续 TODO-LEGACY-DECOUPLE-001 | `web/src/{api,desktopBridge,App}.ts*`、Web tests | 历史 VAL-P1-REGRESSION-001 | `superseded`；历史 source `pass` 不构成继续保留授权 |
 | REQ-VERSION-001 | 产品、协议与 schema 版本由 manifest 跨层同步 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md)、[ADR-0002](../adr/0002-uds-startup-token-protocol.md) | ITER-0001/T05；ITER-0002/R06 | `runtime/version.json`、`backend/app/version.py`、`desktop/package.json`、`tools/check_version_sync.py` | VAL-P1-CONTRACT-001、VAL-PACK-001 | source `pass`；formal package `not-run` |
-| REQ-CI-001 | 普通 source CI 最小权限且不能读取 release secret | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md)、[ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) | ITER-0001/T05；R09 | `.github/workflows/{desktop-ci,desktop-release}.yml` | VAL-CI-001、VAL-RELEASE-POLICY-001、VAL-SECRET-001 | source policy `pass`；Environment setting proof `not-run` |
+| REQ-CI-001 | 普通 source CI 最小权限且不能读取配置的 Environment/repository release secret 或长期签名凭据；job 可使用按 run 签发、最小权限的短期 `GITHUB_TOKEN` | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md)、[ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) | ITER-0001/T05；R09 | `.github/workflows/{desktop-ci,desktop-release}.yml` | VAL-CI-001、VAL-RELEASE-POLICY-001、VAL-SECRET-001 | source policy `pass`；Environment setting proof `not-run` |
 | REQ-CLI-001 | Codex 默认；Cursor 仅经同意且在 spawn 前明确失败时替代，commit 后不 fallback/replay | [ADR-0005](../adr/0005-provider-attempt-execution-boundary.md)、[ADR-0013](../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | ITER-0002/R05、R08 | `backend/app/**`、`desktop/src/main/providers/**`、provider UI/tests | VAL-CLI-001、VAL-MCP-ONBOARD-001 | source policy/attempt `pass`；真实 provider `not-run` |
 | REQ-MCP-001 | 内置 stdio companion 只公开两个 Context7 兼容工具，经 Main 私有只读桥 | [ADR-0008](../adr/0008-mcp-companion-main-bridge.md)、[ADR-0013](../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | ITER-0002/R04、[R08](iterations/0002-r08-mcp-onboarding.md) | `desktop/companion/**`、`desktop/src/{mcpProtocol,main/mcp*}.ts`、[protocol](mcp-companion-protocol.md) | VAL-MCP-001、VAL-MCP-ONBOARD-001 | source 子门禁 `pass`；packaged Codex/tools `not-run` |
 | REQ-MCP-ONBOARD-001 | Main 以固定 argv、安全 CLI discovery 和 scoped target ownership 配置 Codex MCP | [ADR-0013](../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | [ITER-0002/R08](iterations/0002-r08-mcp-onboarding.md) | `desktop/src/main/{mcpOnboarding,mcpTargetOwnership}.ts`、`desktop/src/mcpProtocol.ts`、`desktop/companion/**`、providers/preload/IPC、`web/src/McpOnboarding*` | VAL-MCP-ONBOARD-001、VAL-MCP-001 | Desktop/Web source `pass`；真实 OpenAI 签名 packaged gate `not-run` |
 | REQ-PACK-001 | bundled runtime 来源、文件、native closure、许可证和输入摘要可复核，篡改 fail closed | [ADR-0009](../adr/0009-bundled-runtime-provenance.md) | ITER-0002/R02–R04、R06 | runtime schemas、build/audit scripts、Electron `beforePack` | VAL-PACK-001 | source tamper/build contracts `pass`；formal arm64 staging `not-run` |
 | REQ-INSTALL-001 | 默认 DMG；目标机无需 Docker/Homebrew/Python/Node/Git/ctags | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md) | ITER-0004/P01、P05；R09 foundation | packaging/workflow、[release runbook](desktop-release.md) | VAL-INSTALL-001、VAL-RELEASE-POLICY-001 | source policy `pass`；clean-user `not-run` |
-| REQ-MODEL-001 | 模型按需下载、校验、CAS 激活；失败确定性回 lexical | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md)、[ADR-0010](../adr/0010-qmd-local-embedding-profile.md) | ITER-0003/D04–D05；R07 foundation | QMD worker、retrieval broker、model manager/cache | VAL-MODEL-001、VAL-MODEL-EMBED-001 | source race/fallback `pass`；真实 download/native `not-run` |
+| REQ-MODEL-001 | 模型按需下载、校验、CAS 激活；未 ready 时不使用旧向量，desktop scoped 可用 QMD BM25，broker/global 走 Python lexical | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md)、[ADR-0010](../adr/0010-qmd-local-embedding-profile.md) | ITER-0003/D04–D05；R07 foundation | QMD worker、retrieval broker、model manager/cache | VAL-MODEL-001、VAL-MODEL-EMBED-001 | source race/fallback `pass`；真实 download/native `not-run` |
 | REQ-RELEASE-001 | 自签名，明确未 notarize、未 hardened；exact tag/provenance/asset set | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md)、[ADR-0011](../adr/0011-main-owned-signed-update-client.md)、[ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) | ITER-0004/P01–P03；[R09](iterations/0002-r09-signed-update-client.md) | `.github/workflows/desktop-release.yml`、`desktop/scripts/prepareRelease.cjs`、release docs | VAL-RELEASE-POLICY-001、VAL-RELEASE-001 | source policy `pass`；真实 signed artifact `not-run` |
-| REQ-RELEASE-002 | tag push 只创建候选 Draft；公开必须以 `workflow_dispatch --ref main` 使用 trusted verifier、隔离 tag worktree/fresh peel、PATCH 前 fresh `origin/main` promotion order、fixed Release ID、candidate digest 和 post-publish attestation/immutable；published 预状态是安全事件 | [ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) | ITER-0002/R09；ITER-0004/P06–P07 | release workflow、remote release validator、runbook | VAL-RELEASE-PROMOTION-001、VAL-RELEASE-001 | source policy `pass`；真实 promotion `not-run` |
-| REQ-SECRET-001 | 唯一 release secret 只在 tag-only `macos-signing` build/sign step 使用；Draft 无 Environment/secret，branch-only `macos-release` promotion 零 secret | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md)、[ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) | ITER-0004/P02–P04、P06；R09 | release workflow、`tools/bootstrap_desktop_release_keys.py` | VAL-RELEASE-POLICY-001、VAL-RELEASE-PROMOTION-001、VAL-SECRET-001 | source workflow policy `pass`；真实 settings proof `not-run` |
+| REQ-RELEASE-002 | desktop tag path 只创建候选 Draft；公开必须由 trusted-main verifier、fixed Release ID、candidate digest 和 post-publish attestation/immutable；container/GHCR 同-tag 耦合须由 Electron-only retirement 删除 | [ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md)、[ADR-0015](../adr/0015-electron-only-legacy-retirement.md) | ITER-0002/R09；ITER-0004/P06–P07；ITER-0007/E05 | desktop release workflow/validator/runbook；container workflow 为 remove surface | VAL-RELEASE-PROMOTION-001、VAL-RELEASE-001、VAL-LEGACY-ABSENCE-001 | desktop source policy `pass`；真实 promotion/legacy removal `not-run` |
+| REQ-SECRET-001 | 本 desktop release workflow 唯一配置的长期 private credential 只在 tag-only `macos-signing` build/sign step 使用；Draft 与 branch-only promotion 不配置 Environment/repository release secret 或长期签名凭据，但 job 仍以最小权限使用短期 `GITHUB_TOKEN` | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md)、[ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) | ITER-0004/P02–P04、P06；R09 | release workflow、`tools/bootstrap_desktop_release_keys.py` | VAL-RELEASE-POLICY-001、VAL-RELEASE-PROMOTION-001、VAL-SECRET-001 | source workflow policy `pass`；真实 settings proof `not-run` |
 | REQ-RELEASE-GOV-001 | 两 Environment 独立 reviewer/self-review prevention/UI no-admin-bypass；active protected-main、owner-only tag creation、no-bypass immutable tags；GitHub Immutable Releases | [ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) | ITER-0004/P02/P02a；R09 | bootstrap、GitHub settings、runbook | VAL-RELEASE-POLICY-001、VAL-SECRET-001 | source bootstrap contract `pass`；真实 GitHub settings `not-run` |
-| REQ-UPDATE-001 | 独立签名 check/download；用户确认 verified DMG；signed unavailable/error 时仅显式固定 Release 页面出口；automatic apply 需物理 gate | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md)、[ADR-0011](../adr/0011-main-owned-signed-update-client.md) | ITER-0005/U01–U05；[R09](iterations/0002-r09-signed-update-client.md) | `desktop/src/main/update*`、preload/contracts、Web UI、release assets | VAL-UPDATE-CLIENT-001、VAL-UPDATE-001 | source client `pass`；真实 feed/0.0.1→0.0.2 `not-run` |
-| REQ-DATA-001 | 标准 macOS 路径；旧数据可盘点、原子迁移、回滚 | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md) | ITER-0003/D01–D03 | runtime path/migration modules | VAL-DATA-001 | `planned` / `not-run` |
-| REQ-LEGACY-001 | Docker 暂留 legacy，迁移成功且另行决策后才弃用 | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md) | ITER-0006/L01–L05 | existing Docker paths/docs | VAL-LEGACY-001 | `planned` / `not-run` |
+| REQ-UPDATE-001 | 独立签名 check/download；用户确认 verified DMG；signed unavailable/error 时仅显式固定 Release 页面出口；automatic apply 需新 ADR 和物理 gate | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md)、[ADR-0011](../adr/0011-main-owned-signed-update-client.md) | ITER-0005/U01–U05；[R09](iterations/0002-r09-signed-update-client.md) | `desktop/src/main/update*`、preload/contracts、Web UI、release assets | VAL-UPDATE-CLIENT-001、VAL-UPDATE-001 | source client `pass`；真实 `N-1→N` `not-run` |
+| REQ-DATA-001 | 标准 macOS 路径；当前 Desktop 数据 backup/restore；unknown/legacy layout fail closed，不自动删除 | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md)、[ADR-0015](../adr/0015-electron-only-legacy-retirement.md) | ITER-0003/D01–D03；TODO-DATA-LAYOUT/BACKUP-001 | runtime layout/version、Desktop backup/restore、reset UX | VAL-DATA-001 | Application Support/Caches/temp 部分实现；完整 gate `not-run`；legacy migration 部分 `superseded` |
+| REQ-LEGACY-001 | 历史：Docker 暂留 legacy，迁移成功且另行决策后才弃用 | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md)；由 [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) 取代 | [ITER-0006](iterations/0006-legacy-exit.md)；TODO-LEGACY-CONTROL/EXIT-001 | 历史 Docker paths/docs/installer/migration controls | VAL-LEGACY-CONTROL-001、VAL-LEGACY-001 | `superseded`；两个验证保持 `not-run` |
+
+## TODO 任务映射
+
+本表稳定映射 [TODO 总览](todo.md)中的每个 Task ID。它记录预期 owner surface 和最低 gate，
+不是实现或验证已经完成的声明；表中 `planned` / `blocked` 任务的独立 VAL 均保持
+`not-run`，直到有满足最低环境的可复现证据。
+
+| Task ID | Roadmap | 当前状态 | Requirement / decision | Owned paths / artifact | VAL / gate |
+| --- | --- | --- | --- | --- | --- |
+| TODO-GOV-EVIDENCE-001 | P0 | `planned` | REQ-GOV-001；现有 evidence 治理规则 | `docs/development/{evidence/**,iterations/**,status.md,traceability.md}`、PR/commit-bound evidence ledger | VAL-GOV-001；每个 `pass` 绑定 commit/environment/command/result |
+| TODO-CI-COVERAGE-001 | P0 | `planned` | REQ-GOV-001、REQ-CI-001；ADR-0009/0014 的 source/release CI 边界 | `Makefile`、`.github/workflows/**`、`desktop/workers/qmd/**`、`guide-site/**`、coverage manifest/docs | VAL-CI-COVERAGE-001 `not-run` |
+| TODO-LEGACY-CONTROL-001 | historical | `superseded` | REQ-LEGACY-001；ADR-0004，由 ADR-0015 取代 | 历史 legacy instance-control 计划；不再实施 | VAL-LEGACY-CONTROL-001 `not-run (superseded)` |
+| TODO-DATA-LAYOUT-001 | P4 | `planned` | REQ-DATA-001；ADR-0004 | Desktop runtime path/layout modules、layout manifest/version、Logs/cache/uninstall docs | VAL-DATA-001 layout foundation `not-run` |
+| TODO-DATA-BACKUP-001 | P4 | `planned` | REQ-DATA-001；ADR-0004 | Desktop backup/restore modules、canonical manifest、UI/CLI、physical fixtures/docs | VAL-DATA-001 backup/restore subgate `not-run` |
+| TODO-DATA-MIGRATION-001 | historical | `superseded` | REQ-LEGACY-001；ADR-0004，由 ADR-0015 取代 | 历史 importer/journal/converter 计划；不再实施 | VAL-DATA-001 legacy-migration subgate `not-run (superseded)` |
+| TODO-MODEL-SUPPLY-001 | P4 | `planned` | REQ-MODEL-001、REQ-QMD-001；ADR-0004/0010 | QMD model manager/cache、signed model manifest、shadow index、release/UI docs | VAL-MODEL-001 `not-run` |
+| TODO-REL-GOV-001 | P5 | `blocked` | REQ-RELEASE-GOV-001、REQ-SECRET-001；ADR-0014 | GitHub Environments/rulesets/Immutable Releases、bootstrap settings evidence | VAL-SECRET-001 settings subgate `not-run` |
+| TODO-REL-KEYS-001 | P5 | `blocked` | REQ-SECRET-001、REQ-UPDATE-001；ADR-0003/0011/0014 | `tools/bootstrap_desktop_release_keys.py`、public key/certificate locks、rotation/revocation docs | VAL-SECRET-001 trust-pin/secret-membership subgate `not-run` |
+| TODO-PACK-ARM64-001 | P2/P3→P5 | `planned` | REQ-PACK-001、REQ-PY-001、REQ-QMD-001、REQ-INSTALL-001；ADR-0009 | `backend/packaging/**`、`desktop/scripts/**`、runtime manifests/staging、SBOM/notices、candidate assets | VAL-PACK-001、VAL-RELEASE-001 build subgate `not-run` |
+| TODO-PHYS-TRUST-001 | P1/P5 | `planned` | REQ-TRUST-001；ADR-0001/0011/0012/0013 | packaged App security/IPC audit harness、negative evidence | VAL-TRUST-001 `not-run` |
+| TODO-PHYS-PY-001 | P2/P5 | `planned` | REQ-PY-001、REQ-GIT-001、REQ-IPC-001；ADR-0001/0002/0006/0009 | bundled sidecar/Dulwich/UDS physical harness and fixtures | VAL-PY-001、VAL-GIT-001、VAL-IPC-001 `not-run` |
+| TODO-PHYS-QMD-001 | P3/P4/P5 | `planned` | REQ-QMD-001、REQ-MODEL-001、REQ-IPC-001；ADR-0004/0007/0009/0010 | packaged QMD worker/native/model corpus and fault fixtures | VAL-QMD-001、VAL-QMD-EMBED-001、VAL-IPC-EMBED-001、VAL-MODEL-EMBED-001 `not-run` |
+| TODO-PHYS-CLI-001 | P3/P5 | `planned` | REQ-CLI-001、REQ-TRUST-001；ADR-0005/0013 | provider supervisor/attempt records、real Codex/Cursor cut-point harness | VAL-CLI-001 `not-run` |
+| TODO-PHYS-MCP-001 | P3/P5 | `planned` | REQ-MCP-001、REQ-MCP-ONBOARD-001、REQ-TRUST-001；ADR-0008/0013 | packaged companion/onboarding、ownership fixtures、real Codex evidence | VAL-MCP-001、VAL-MCP-ONBOARD-001 `not-run` |
+| TODO-PHYS-LOCAL-001 | P1/P4/P5 | `planned` | REQ-LOCAL-SOURCE-001、REQ-GIT-001、REQ-TRUST-001；ADR-0012 | local-source Main/Backend policy、home/volume/private-repo physical fixtures | VAL-LOCAL-SOURCE-003 `not-run` |
+| TODO-ELECTRON-CUTOVER-001 | P7 | `planned` | REQ-ELECTRON-ONLY-001、REQ-PRE1-BREAKING-001；ADR-0015 | packaged capability matrix：ingest/queue/review/query/Wiki/model/rebuild/provider/MCP/data | VAL-ELECTRON-CUTOVER-001 `not-run` |
+| TODO-LEGACY-DECOUPLE-001 | P7 | `planned` | REQ-ELECTRON-ONLY-001；ADR-0015 strict split boundary | `web/src/{api,desktopBridge,App}.ts*`、`backend/app/{factory,config,generation,service,db}.py`、tests | source split gates `not-run`；feeds VAL-ELECTRON-CUTOVER/LEGACY-ABSENCE-001 |
+| TODO-REL-DRAFT-001 | P5 | `blocked` | REQ-RELEASE-001、REQ-RELEASE-002、REQ-SECRET-001、REQ-ELECTRON-ONLY-001；ADR-0003/0009/0014/0015 | `.github/workflows/desktop-release.yml`、tag-bound unique Draft、candidate manifest/evidence | VAL-RELEASE-POLICY-001 source `pass`；VAL-LEGACY-ABSENCE-001、VAL-RELEASE-001 remote candidate subgate `not-run` |
+| TODO-REL-PROMOTE-001 | P5 | `blocked` | REQ-RELEASE-001/002、REQ-RELEASE-GOV-001、REQ-SECRET-001；ADR-0014 | trusted-main promotion workflow、fixed Release ID、post-publish attestation/evidence | VAL-RELEASE-PROMOTION-001 source `pass`；VAL-RELEASE-001、VAL-INSTALL-001、VAL-SECRET-001 `not-run` |
+| TODO-UPDATE-NMINUS1-001 | P6 | `blocked` | REQ-UPDATE-001、REQ-DATA-001；ADR-0003/0004/0011/0014 | two protected releases、physical update/fallback/rollback evidence | VAL-UPDATE-001 `not-run` |
+| TODO-UPDATE-APPLY-001 | P6 | `planned` | REQ-UPDATE-001；planned new/superseding ADR-0011 | updater apply/restart/rollback implementation、failure harness、UI/release docs | VAL-UPDATE-APPLY-001 `not-run` |
+| TODO-OPS-DIAGNOSTICS-001 | P4/P5 | `planned` | REQ-TRUST-001、REQ-DATA-001、REQ-IPC-001；既有 redaction/path decisions | Desktop doctor/support-bundle schema、redaction tests、recovery docs | VAL-DIAGNOSTICS-001 `not-run` |
+| TODO-RUNTIME-CANCEL-001 | P2/P3 | `planned` | REQ-IPC-001、REQ-CLI-001、REQ-QMD-001；ADR-0002/0005/0007 | Main/Backend/CLI/QMD cancellation contract、real-child fault harness | VAL-CANCEL-001 `not-run` |
+| TODO-MCP-PAIRING-001 | P3 | `planned` | REQ-MCP-001、REQ-MCP-ONBOARD-001、REQ-TRUST-001；planned ADR extending ADR-0008/0013 | Keychain/code-identity pairing protocol、state migration/revocation tests/docs | VAL-MCP-PAIRING-001 `not-run` |
+| TODO-LOCAL-HARDEN-001 | P1/P4 | `planned` | REQ-LOCAL-SOURCE-001、REQ-TRUST-001；planned ADR after ADR-0012 | threat/benchmark record、selected bookmark/fd/copy/sandbox implementation and tests | VAL-LOCAL-HARDEN-001 `not-run` |
+| TODO-QMD-COMPACT-001 | P3/P4 | `planned` | REQ-QMD-001、REQ-DATA-001；ADR-0007 stale-document boundary | QMD compact inventory/staging/rollback implementation、real corpus fixtures | VAL-QMD-COMPACT-001 `not-run` |
+| TODO-EVAL-CORPUS-001 | P3/P5 | `planned` | REQ-QMD-001、REQ-MODEL-001、REQ-CLI-001；quality threshold record | fixed public corpus/golden review、lexical/hybrid/release quality evidence | VAL-EVAL-001 `not-run` |
+| TODO-WIKI-INCREMENTAL-001 | post-P3 | `planned` | planned incremental requirement and ADR; no implementation authority yet | Backend Wiki dependency/reuse format、old/new fixtures、full-rebuild fallback | VAL-WIKI-INCREMENTAL-001 `not-run` |
+| TODO-LEGACY-REMOVE-DEPLOY-001 | P7 | `planned` | REQ-ELECTRON-ONLY-001；ADR-0015 | Compose/Docker/installers/legacy scripts/Host Runner/Nginx/examples | VAL-LEGACY-ABSENCE-001 path subgate `not-run` |
+| TODO-LEGACY-REMOVE-TRANSPORT-001 | P7 | `planned` | REQ-ELECTRON-ONLY-001、REQ-PRE1-BREAKING-001；ADR-0015 | Python MCP gateway、public TCP/CORS/browser fetch/legacy provider/schema branches；保留 private UDS/desktop companion | VAL-ELECTRON-CUTOVER-001、VAL-LEGACY-ABSENCE-001 transport subgates `not-run` |
+| TODO-LEGACY-REMOVE-RELEASE-001 | P7 | `planned` | REQ-ELECTRON-ONLY-001、REQ-RELEASE-002；ADR-0015 | `container-images.yml`、GHCR/container Make/CI/tag docs；保留 desktop release | VAL-LEGACY-ABSENCE-001 release subgate `not-run` |
+| TODO-LEGACY-REMOVE-DOCS-001 | P7 | `planned` | REQ-ELECTRON-ONLY-001、REQ-DOC-001；ADR-0015 | README/Sites/active numbered/component docs；保留 historical ADR/evidence | VAL-GOV-001、VAL-LEGACY-ABSENCE-001 docs subgate `not-run` |
+| TODO-LEGACY-ABSENCE-001 | P7 | `planned` | REQ-ELECTRON-ONLY-001；ADR-0015 | versioned absence checker、CI allowlist、packaged inventory/evidence | VAL-LEGACY-ABSENCE-001 `not-run` |
+| TODO-LEGACY-EXIT-001 | historical | `superseded` | REQ-LEGACY-001；ADR-0004，由 ADR-0015/ITER-0007 取代 | 历史 migration/retention decision；不再实施 | VAL-LEGACY-001 `not-run (superseded)` |
+| TODO-REMOTE-WORKER-001 | future | `planned` | current unsupported desktop boundary；planned accept/reject requirement/ADR | threat/cost study、decision ADR、status/hardware/system-design sync | VAL-REMOTE-WORKER-DECISION-001 `not-run` |
 
 ## 验证目录
 
 | 验证 ID | 所需证据 / 最低环境 | 当前结果 |
 | --- | --- | --- |
-| VAL-GOV-001 | repository checkout；所有新增/修改 Markdown 相对链接检查 | `pass`（`python tools/check_markdown_links.py`：67 files；当前工作树） |
+| VAL-GOV-001 | repository checkout；所有新增/修改 Markdown 相对链接检查 | baseline `71890ee` / Actions 30611309112、`625db76` R11 与 [`64ec3c2` R12 clean-checkout checkpoint](evidence/VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) 为 `pass`；最终 PR CI 待完成 |
 | VAL-GOV-002 | repository checkout；两个项目 `SKILL.md` 结构 | `pass`（继承已发布检查点） |
+| VAL-DOC-HANDOFF-001 | clean checkout；权威入口、命令模式、task owner/dependency/gate 和 PR handoff 可执行性 | 首轮三路审计 `fail`；修复后 [`625db76` commit-bound checkpoint](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) `pass`；最终 PR head `not-run` |
 | VAL-P1-CONTRACT-001 | Linux source；Main/preload/Web/sidecar 纯源码合同 | `pass`（继承 ITER-0001） |
 | VAL-P1-SOURCE-001 | Linux/macOS source；真实 AF_UNIX bind 和 source jobs | `pass`（[Actions 30550023917](https://github.com/fredgnr/local-context-forge/actions/runs/30550023917)） |
 | VAL-P1-REGRESSION-001 | source checkout；Backend/Desktop/Web/Host Runner 全量 | `pass`（当前 Desktop 245/7 skip、Backend 322/1 skip；Web 51、Host 8 继承无代码变化基线） |
 | VAL-CI-001 | public GitHub Actions；普通 job 最小权限 | `pass`（继承 Actions；release policy source 另列） |
+| VAL-CI-COVERAGE-001 | source checkout + 最终 PR head CI；机器可读 aggregate 覆盖声明与实际 QMD/guide-site job 边界一致，且不隐式下载模型 | `planned` / `not-run` |
 | VAL-TRUST-001 | packaged app；renderer sandbox/IPC/path/update/provider 权限审计 | `not-run`（source 负向合同 `pass`） |
 | VAL-GIT-001 | clean packaged Mac + C Git fixture；Dulwich、安全、回滚、PATH trap | `not-run`（Backend source 子门禁包含在 313 pass） |
 | VAL-PY-001 | clean macOS arm64；bundled sidecar、无系统 runtime | `not-run`（source build/audit 子门禁 `pass`） |
@@ -69,7 +123,7 @@ R07–R10 是 ITER-0002 的追加记录，继承父迭代 `in-progress` 状态�
 | VAL-MCP-001 | packaged sidecars + Codex；两个工具契约和 lifecycle | `not-run`（core 3 files / 37 pass；bridge 4 files / 15 pass / 7 skip；`fcca1e4`） |
 | VAL-MCP-ONBOARD-001 | `/Applications` packaged app + 真实官方签名 Codex | `not-run`（Desktop 6 files / 73、Web 3 files / 25 source 子门禁 `pass`；`fcca1e4`） |
 | VAL-PACK-001 | macOS 15 arm64 formal packaging；inventory/native/SBOM/notices/tamper | `not-run`（source beforePack/build audit 子门禁 `pass`） |
-| VAL-RELEASE-POLICY-001 | source checkout；tag-only signing/Draft、main-only promotion、双 Environment/唯一 secret、ruleset/Immutable Releases bootstrap policy | `pass`（Desktop 2 files / 18；Backend 22；真实 GitHub settings `not-run`） |
+| VAL-RELEASE-POLICY-001 | source checkout；tag-only signing/Draft、main-only promotion、双 Environment、唯一配置的长期 release credential、Draft/promotion 无配置的 release secret/长期签名凭据、短期 `GITHUB_TOKEN` 最小权限、ruleset/Immutable Releases bootstrap policy | `pass`（Desktop 2 files / 18；Backend 22；真实 GitHub settings `not-run`） |
 | VAL-RELEASE-PROMOTION-001 | source checkout；trusted-main verifier、隔离 tag worktree、fresh peel、PATCH 前 fresh `origin/main` comparison ref、fixed Release ID PATCH、published 预状态拒绝、post-publish attestation/immutable/完整集合 | `pass`（focused policy tests、YAML parse、17 个 workflow `run` script `bash -n`；真实 promotion `not-run`） |
 | VAL-UPDATE-CLIENT-001 | source checkout；signature/schema/redirect/cache/IPC/DMG/Release-page contracts | `pass`（Desktop 5 files / 42；Web 2 files / 19；`fcca1e4`） |
 | VAL-LOCAL-SOURCE-001 | Desktop/Web source；grant/path/renderer negative matrix | `pass`（full Desktop 235/7 skip、Web 51：`fcca1e4`；focused 4 files / 30：`8eedd7e`） |
@@ -77,19 +131,32 @@ R07–R10 是 ITER-0002 的追加记录，继承父迭代 `in-progress` 状态�
 | VAL-LOCAL-SOURCE-003 | physical packaged macOS；home/外置卷/private/move/delete/restart | `not-run` |
 | VAL-INSTALL-001 | clean physical Apple Silicon；DMG/Gatekeeper/no external runtimes | `not-run` |
 | VAL-RELEASE-001 | protected release；真实 DMG arch/content/sign identity/limits | `not-run` |
-| VAL-SECRET-001 | public repo settings；双 Environment reviewer/self-review/no-admin-bypass/deployment/secret membership、三 ruleset、Immutable Releases、fork/PR 隔离 | `not-run`（workflow/bootstrap source policy `pass`） |
-| VAL-UPDATE-001 | physical Apple Silicon；0.0.1 → 0.0.2 + failure DMG fallback | `not-run`；automatic apply disabled |
+| VAL-SECRET-001 | public repo settings；双 Environment reviewer/self-review/no-admin-bypass/deployment、配置的 Environment/repository release secret 与长期签名凭据 membership、短期 `GITHUB_TOKEN` 最小权限、三 ruleset、Immutable Releases、fork/PR 隔离 | `not-run`（workflow/bootstrap source policy `pass`） |
+| VAL-UPDATE-001 | physical Apple Silicon；真实单调 `N-1 → N` + failure DMG fallback | `not-run`；automatic apply disabled，早期 ADR 版本号仅为示例 |
+| VAL-UPDATE-APPLY-001 | physical Apple Silicon；真实单调 `N-1 → N` automatic apply/restart/data check，覆盖 partial replace、crash、权限、Gatekeeper、schema、ENOSPC 与 rollback | `planned` / `not-run`；Accepted superseding ADR 前不得执行为产品能力 |
 | VAL-MODEL-001 | packaged app；consent/offline/integrity/resume/atomic activation | `not-run` |
-| VAL-DATA-001 | representative legacy copies；fresh/repeat/interrupt/corrupt/rollback | `not-run` |
-| VAL-LEGACY-001 | physical migration rehearsal；原数据可恢复与退出评审 | `not-run` |
+| VAL-DATA-001 | current Desktop layout/backup/restore；fresh/repeat/interrupt/corrupt/low-disk/rollback/unknown-layout fail-closed | `not-run`；legacy migration 子门禁由 ADR-0015 取代 |
+| VAL-LEGACY-SCOPE-001 | documentation review；每个候选 path/capability 为 remove/retain/split，稳定 REQ/TODO/VAL 和 external-data non-goal 完整 | [`64ec3c2` clean-checkout checkpoint](evidence/VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) `pass`；最终 PR CI 待完成 |
+| VAL-ELECTRON-CUTOVER-001 | clean M4 packaged candidate；ingest/queue/review/query/Wiki/model/rebuild/provider/MCP/current-data backup；无 Docker/public TCP/legacy runner | `not-run` |
+| VAL-LEGACY-ABSENCE-001 | final removal commit；forbidden paths/imports/listeners/workflows/active docs absent，protected Electron paths/package gates present | `not-run` |
+| VAL-LEGACY-001 | 历史 physical migration/rollback gate | `not-run (superseded)`；不得伪造 `pass` |
+| VAL-LEGACY-CONTROL-001 | 历史 isolated legacy instance-control gate | `not-run (superseded)`；不得继续扩大 legacy 实现 |
+| VAL-DIAGNOSTICS-001 | packaged App + representative failures；doctor/support bundle redaction、tamper、oversize、retention、crash 和无法启动 recovery | `planned` / `not-run` |
+| VAL-CANCEL-001 | packaged fault-injection harness + real Backend/CLI/QMD children；cancel/TERM/grace/KILL/exit/orphan/cut-point/pressure matrix | `planned` / `not-run` |
+| VAL-MCP-PAIRING-001 | physical `/Applications` App + 真实 Codex；Keychain/code identity、expiry/revoke、move/update/reinstall、multi-client 和 lost-state recovery | `planned` / `not-run` |
+| VAL-LOCAL-HARDEN-001 | physical macOS home/外置卷/大型 monorepo；same-UID replace、move/remount、TOCTOU mitigation 与 UX/性能 benchmark | `planned` / `not-run` |
+| VAL-QMD-COMPACT-001 | packaged native QMD + 真实 corpus；dry-run、删除范围、cancel/crash/ENOSPC、revision/profile、rollback 与 query parity | `planned` / `not-run` |
+| VAL-EVAL-001 | fixed public multilingual corpus + stable packaged stack；source-ref/page/query、lexical/hybrid、resource budget 与人工 golden threshold | `planned` / `not-run` |
+| VAL-WIKI-INCREMENTAL-001 | fixed old/new commits；add/delete/rename/dependency/no-op、byte reuse、partial failure、full rebuild recovery 与质量/成本 parity | `planned` / `not-run`；新 requirement/ADR Accepted 前不得宣称实现 |
+| VAL-REMOTE-WORKER-DECISION-001 | reviewed threat/cost study + accept/reject ADR；数据边界、认证/传输、故障/更新、all-in-one UX 和文档同步 | `planned` / `not-run`；只验证决策，不验证 remote worker 实现 |
 
 ## 精确 source 命令
 
 | 证据 | 命令 | 结果 |
 | --- | --- | --- |
-| Desktop full | `cd desktop && npm test -- --run` | 当前工作树：30 files / 245 pass / 7 skip |
+| Desktop full | `cd desktop && npm test -- --run` | `71890ee` [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) success；历史本地 30 files / 245 pass / 7 skip |
 | Web full | `cd web && npm test -- --run` | `fcca1e4`：7 files / 51 pass |
-| Backend full | `cd backend && .venv/bin/pytest` | 当前工作树：322 pass / 1 skip |
+| Backend full | `cd backend && .venv/bin/pytest` | `71890ee` [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) success；历史本地 322 pass / 1 skip |
 | QMD worker | `cd desktop/workers/qmd && npm test` | `8eedd7e`：8 pass / 3 skip |
 | Host Runner | `backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .` | `8eedd7e`：8 pass |
 | MCP ownership/onboarding core | `cd desktop && ./node_modules/.bin/vitest run tests/mcpTargetOwnership.test.ts tests/mcpOnboarding.test.ts tests/mcpCompanion.test.ts` | `fcca1e4`：3 files / 37 pass |
@@ -98,16 +165,18 @@ R07–R10 是 ITER-0002 的追加记录，继承父迭代 `in-progress` 状态�
 | MCP onboarding Web | `cd web && ./node_modules/.bin/vitest run src/McpOnboarding.test.tsx src/App.test.tsx src/desktopBridge.test.ts` | `fcca1e4`：3 files / 25 pass |
 | Update Desktop | `cd desktop && ./node_modules/.bin/vitest run tests/updateClient.test.ts tests/updateIpc.test.ts tests/updateTrustPackaging.test.ts tests/preload.test.ts tests/beforePack.test.ts` | `fcca1e4`：5 files / 42 pass |
 | Update Web | `cd web && ./node_modules/.bin/vitest run src/App.test.tsx src/desktopBridge.test.ts` | `fcca1e4`：2 files / 19 pass |
-| Release policy Desktop | `cd desktop && ./node_modules/.bin/vitest run tests/releasePolicy.test.ts tests/updateTrustPackaging.test.ts` | 当前工作树：2 files / 18 pass |
-| Release policy Backend | `backend/.venv/bin/pytest -q tests/backend/test_desktop_release_bootstrap.py tests/backend/test_desktop_release_workflow_policy.py` | 当前工作树：22 pass |
-| Two-stage release promotion | 上述 Desktop/Backend release policy commands；YAML parse；17 个 workflow `run` script `bash -n` | 当前工作树：source contract `pass`；真实 settings/tag/Draft/promotion `not-run` |
+| Release policy Desktop | `cd desktop && ./node_modules/.bin/vitest run tests/releasePolicy.test.ts tests/updateTrustPackaging.test.ts` | `71890ee` source CI success；历史 focused 2 files / 18 pass |
+| Release policy Backend | `backend/.venv/bin/pytest -q tests/backend/test_desktop_release_bootstrap.py tests/backend/test_desktop_release_workflow_policy.py` | `71890ee` source CI success；历史 focused 22 pass |
+| Two-stage release promotion | 上述 Desktop/Backend release policy commands；YAML parse；17 个 workflow `run` script `bash -n` | `71890ee` source contract `pass`；真实 settings/tag/Draft/promotion `not-run` |
 | Local source Desktop core | `cd desktop && ./node_modules/.bin/vitest run tests/localSourceGrants.test.ts tests/localSourcePicker.test.ts tests/localSourcePolicy.test.ts tests/ipc.test.ts` | `8eedd7e` 历史基线：4 files / 30 pass |
 | Local source Backend | `cd backend && .venv/bin/pytest -q ../tests/backend/test_source_security.py ../tests/backend/test_desktop_transport.py` | `8eedd7e`：103 pass / 1 skip |
 
-Desktop release policy 和 Backend bootstrap/workflow policy 的当前代码证据来自本工作树；
-Web、MCP、update client、QMD、Host Runner 与 local-source 实现没有代码变化，继续继承表中
-已发布检查点。表中的 7 个 Desktop/bridge 条件 skip 以及 Backend/QMD AF_UNIX/native/model
-skip 不得省略或折算为 pass。packaged/physical 门禁继续 `not-run`。
+Desktop release policy 和 Backend bootstrap/workflow policy 的公开代码证据来自
+`71890ee` / [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112)；
+Web、MCP、update client、QMD、Host Runner 与 local-source 继续继承表中列明的 exact
+checkpoint。R11 是文档/治理变更，不能把尚未提交的工作树当成新的实现证据。表中的 7 个
+Desktop/bridge 条件 skip 以及 Backend/QMD AF_UNIX/native/model skip 不得省略或折算为
+pass。packaged/physical 门禁继续 `not-run`。
 
 release source contract 通过不证明 GitHub 控制面或物理发行：两个 Environment、三组 ruleset、
 Immutable Releases、真实签名/promotion 和物理 Mac 证据继续 `not-run`。repository owner、
@@ -122,7 +191,7 @@ verify→fixed-ID PATCH 竞态只能后验检测。整体结论保持
 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02–T05；ITER-0002/R01–R05 | VAL-P1-*、VAL-TRUST-001、VAL-PY/QMD/CLI/MCP |
 | [ADR-0002](../adr/0002-uds-startup-token-protocol.md) | ITER-0001/T03、T05；ITER-0002/R02–R04、R08、R10 | VAL-IPC-001、VAL-MCP-001、VAL-LOCAL-SOURCE-002 |
 | [ADR-0003](../adr/0003-macos-release-signing-update-policy.md) | ITER-0004/P01–P05；ITER-0005/U01–U05；ITER-0002/R09 | VAL-RELEASE-POLICY-001、VAL-INSTALL/RELEASE/SECRET/UPDATE |
-| [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md) | ITER-0003/D01–D05；ITER-0006/L01–L05 | VAL-DATA/MODEL/LEGACY |
+| [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md) | ITER-0003/D01–D05；历史 ITER-0006/L01–L05 | VAL-DATA/MODEL；legacy migration/lifecycle 由 ADR-0015 取代 |
 | [ADR-0005](../adr/0005-provider-attempt-execution-boundary.md) | ITER-0002/R05、R08 | VAL-CLI-001、VAL-MCP-ONBOARD-001 |
 | [ADR-0006](../adr/0006-dulwich-product-git-boundary.md) | ITER-0002/R01、R10 | VAL-GIT-001、VAL-PY-001、VAL-LOCAL-SOURCE-002 |
 | [ADR-0007](../adr/0007-qmd-retrieval-broker-runtime.md) | ITER-0002/R03、R07 | VAL-QMD-001、VAL-IPC-001、VAL-QMD-EMBED-001 |
@@ -133,8 +202,12 @@ verify→fixed-ID PATCH 竞态只能后验检测。整体结论保持
 | [ADR-0012](../adr/0012-local-repository-picker-opaque-grants.md) | ITER-0002/R10 | VAL-LOCAL-SOURCE-001、002、003 |
 | [ADR-0013](../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | ITER-0002/R08 | VAL-MCP-ONBOARD-001、VAL-MCP-001、VAL-TRUST-001 |
 | [ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) | ITER-0002/R09；ITER-0004/P06 | VAL-RELEASE-POLICY-001、VAL-RELEASE-PROMOTION-001、VAL-SECRET/RELEASE-001 |
+| [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) | ITER-0002/R12；ITER-0007/E01–E07 | VAL-LEGACY-SCOPE-001、VAL-ELECTRON-CUTOVER-001、VAL-LEGACY-ABSENCE-001 |
 
-## 本次变更映射
+## 变更 ledger
+
+本节按纵切累积，不能脱离对应 iteration、PR/commit 和日期理解。新的实现/文档纵切应追加
+一行，不再把跨多个提交的集合称作“本次工作树”。
 
 | 变更范围 | 目的 | 需求/任务 | 验证 |
 | --- | --- | --- | --- |
@@ -142,9 +215,11 @@ verify→fixed-ID PATCH 竞态只能后验检测。整体结论保持
 | `desktop/companion/src/{bridgeClient,index}.ts`、`desktop/src/{mcpProtocol,main/mcpBridge,main/mcpSidecarRead}.ts`、`desktop/tests/{mcpBridge,mcpCompanion,mcpCompanionPackaging,mcpSidecarRead}.test.ts`、[protocol](mcp-companion-protocol.md) | 两工具只读桥、per-launch private rendezvous、ownership marker 在 bridge 前删除 | REQ-MCP/IPC/TRUST；R04/R08 | VAL-MCP-001 source 子门禁 |
 | `desktop/src/main/{mcpOnboarding,mcpTargetOwnership}.ts`、`desktop/src/main/providers/{contracts,discovery,environment,execution,preflight,providerResolver}.ts`、`desktop/src/mcpProtocol.ts`、IPC/preload、`desktop/tests/{mcpTargetOwnership,mcpOnboarding,ipc,preload}.test.ts`、`web/src/{McpOnboarding,McpOnboarding.test,App,App.test,desktopBridge,desktopBridge.test}.ts*`、R08 | Main-owned Codex 配置、四类签名 discovery、per-scope ledger/marker/exact target ownership、bundle chain 和 UI | REQ-MCP-ONBOARD/CLI/TRUST；R08 | VAL-MCP-ONBOARD-001 source 子门禁 |
 | `desktop/src/main/{updateClient,updateIpc,index}.ts`、contracts/preload、`desktop/tests/{updateClient,updateIpc,updateTrustPackaging,preload,beforePack}.test.ts`、`web/src/{App,App.test,desktopBridge,desktopBridge.test}.ts*`、ADR-0011/R09 | signed manifest、私有 cache、脱敏 IPC、verified DMG 与显式固定 Release 页面出口 | REQ-UPDATE/TRUST；R09 | VAL-UPDATE-CLIENT-001；VAL-UPDATE-001 `not-run` |
-| `.github/workflows/desktop-release.yml`、`.github/desktop-release-notes.md`、`tools/bootstrap_desktop_release_keys.py`、`desktop/scripts/{auditUpdateTrust,beforePack,prepareRelease}.cjs`、runtime locks、[runbook](desktop-release.md) | tag-only `macos-signing`、secret-free Draft/main promotion、credential generation、Environment/ruleset/Immutable Releases bootstrap contract | REQ-RELEASE/SECRET/RELEASE-GOV/INSTALL；R09 | VAL-RELEASE-POLICY-001 source；真实 settings/physical gates `not-run` |
-| `.github/workflows/desktop-release.yml`、`desktop/scripts/prepareRelease.cjs`、`desktop/tests/releasePolicy.test.ts`、Backend workflow policy tests、[ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md)、[runbook](desktop-release.md) | tag push 停止在 Draft；`--ref main` trusted verifier 使用隔离 worktree/fresh peel、PATCH 前 fresh `origin/main` promotion order 和 fixed Release ID，拒绝 published 预状态，并做 post-publish attestation/immutable/完整集合复核 | REQ-RELEASE-002/SECRET/RELEASE-GOV；R09、ITER-0004/P06–P07 | VAL-RELEASE-PROMOTION-001 source；真实 promotion `not-run` |
+| `.github/workflows/desktop-release.yml`、`.github/desktop-release-notes.md`、`tools/bootstrap_desktop_release_keys.py`、`desktop/scripts/{auditUpdateTrust,beforePack,prepareRelease}.cjs`、runtime locks、[runbook](desktop-release.md) | tag-only `macos-signing`；Draft/main promotion 不配置 Environment/repository release secret 或长期签名凭据，但使用最小权限的短期 `GITHUB_TOKEN`；credential generation、Environment/ruleset/Immutable Releases bootstrap contract | REQ-RELEASE/SECRET/RELEASE-GOV/INSTALL；R09 | VAL-RELEASE-POLICY-001 source；真实 settings/physical gates `not-run` |
+| `.github/workflows/desktop-release.yml`、`desktop/scripts/prepareRelease.cjs`、`desktop/tests/releasePolicy.test.ts`、Backend workflow policy tests、[ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md)、[runbook](desktop-release.md) | desktop tag path 停止在 Draft；同 tag GHCR 独立非原子；`--ref main` trusted verifier 使用隔离 worktree/fresh peel、PATCH 前 fresh `origin/main` promotion order 和 fixed Release ID，拒绝 published 预状态，并做 post-publish attestation/immutable/完整集合复核 | REQ-RELEASE-002/SECRET/RELEASE-GOV；R09、ITER-0004/P06–P07 | VAL-RELEASE-PROMOTION-001 source；真实 promotion `not-run` |
 | `desktop/src/main/{localSourceGrants,localSourcePicker,localSourcePolicy,ipc,index,sidecar}.ts`、preload/contracts/tests、`backend/app/{cli,config,source}.py`、`tests/backend/{test_source_security,test_desktop_transport}.py`、`web/src/{App,App.test,desktopBridge,desktopBridge.test}.ts*`、ADR-0012/R10 | opaque grant、Main/Backend path policy、无凭据本地仓库 UX | REQ-LOCAL-SOURCE/GIT/IPC/TRUST；R10 | VAL-LOCAL-SOURCE-001/002；003 `not-run` |
 | `README.md`、`SECURITY.md`、`desktop/README.md`、`docs/{README,00-overview,03-hardware-deployment,04-quickstart,06-api-and-mcp,10-security,14-all-in-one-macos,16-electron-desktop-guide}.md`、`docs/adr/{README,0003-*,0010-* 至 0013-*}.md`、`docs/development/**` | 同步用户入口、安全边界、决策、迭代、runbook、协议和证据链 | ITER-0002/R07–R10 | VAL-GOV-001 |
+| `README.md`、`TODO.md`、`AGENTS.md`、`CONTRIBUTING.md`、`.github/PULL_REQUEST_TEMPLATE.md`、`docs/{README,17-system-design,18-deployment-operations}.md`、`docs/development/{status,contributor-handbook,todo,evidence/**,roadmap,traceability,iterations/**}.md`、component/legacy docs、Makefile help | PR #7/#8/#17 后的系统设计、部署、开发、TODO、evidence 和命令边界交接 | REQ-GOV-001、REQ-DOC-001；R11；基线 `main@fb8bbbc` | VAL-DOC-HANDOFF-001、VAL-GOV-001；最终 PR CI 待记录 |
+| `docs/adr/0015-*`、`docs/development/{legacy-retirement,todo,roadmap,status,traceability,iterations/0002-r12-*,iterations/0006-*,iterations/0007-*}.md`、`README.md`、`docs/17-system-design.md` | 接受 Electron-only/pre-1.0 breaking policy，冻结 remove/retain/split 与后续 destruction gates；本纵切不删除代码 | REQ-ELECTRON-ONLY-001、REQ-PRE1-BREAKING-001；R12/ITER-0007 | [`64ec3c2` VAL-LEGACY-SCOPE-001](evidence/VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) `pass`；最终 PR CI 待记录 |
 
 后续变更应追加或更新本节，不删除已发布证据；实现路径变化时在同一变更中修正 owned paths。

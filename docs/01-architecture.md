@@ -1,5 +1,11 @@
 # 架构与流水线
 
+本文重点描述共享的 Wiki 编译领域流水线。当前 Electron 的组合进程、UDS/capability、MCP
+companion、provider、更新和数据边界以[系统设计](17-system-design.md)为权威；legacy
+Docker/Web 是 deprecated/unsupported 的待删除历史实现，不是另一项可选部署配置。本文后续
+出现的 HTTP/container 拓扑只用于 owner inventory，不能据此启动新实例或推断 renderer 拥有
+HTTP、socket 或系统命令能力。
+
 ## 核心原则
 
 1. **源码快照不可变**：同一个 `source_sha` 的内容不原地修改。
@@ -14,13 +20,15 @@
 
 ```mermaid
 flowchart LR
-    U[Web / CLI / MCP Client] --> A[FastAPI Control Plane]
+    U[Electron renderer or legacy Web/API/MCP] --> B{deployment boundary}
+    B -->|desktop: typed IPC + private UDS| A[FastAPI domain sidecar]
+    B -->|legacy: loopback HTTP| A
     A --> D[(SQLite persistent FIFO)]
     D --> J[Single persistent worker]
     J --> S[Snapshotter]
     S --> F[Fact Extractor]
     F --> G{Generator}
-    G -->|default| C[macOS Host Runner + Codex CLI]
+    G -->|desktop default / legacy host runner| C[Codex CLI]
     G -->|fallback| H[Cursor CLI]
     G -->|optional| O[Ollama on RTX 4060]
     G -->|CI/demo| M[Deterministic mock]
@@ -33,7 +41,7 @@ flowchart LR
     R --> W[SQLite pages + Git Wiki audit copy]
     W --> Q[QMD BM25 / optional hybrid]
     Q --> A
-    A --> X[Context7-compatible MCP]
+    A --> X[Desktop Main bridge or legacy MCP gateway]
 ```
 
 ### Control Plane（API）
@@ -54,26 +62,29 @@ job 创建带 `retry_of/attempt` 的新重试记录。它是可靠的单主机�
 
 - 本地目录：若检测到 Git，source 必须正好是仓库顶层、使用独立 standalone `.git` 目录并按
   确定 commit 归档；非 Git 目录在复制前、复制结果、复制后比较内容摘要，源目录变化即失败。
-- Git URL：以 `clone --no-checkout --filter=blob:none` 取得对象，解析唯一 commit 后直接
-  `git archive`；不执行被分析代码，也不依赖 checkout worktree。
+- Git URL：产品路径使用固定版本 Dulwich 获取受 allowlist 限制的 HTTPS repository，解析
+  唯一 commit 后直接导出 tree；不执行被分析代码，也不依赖 checkout worktree。
 - 默认跳过 `.git`、依赖缓存与常见构建产物；symlink 受边界检查。
 - 写入 `snapshot.json`，记录 source、source kind、`source_sha`、ref、创建时间与检测到的 `skipped_sensitive` 路径。忽略目录集合目前由代码版本决定，并未逐项固化到 metadata。
 
-Git archive 在固化前检查 mode `160000` submodule、Git LFS pointer、重复/特殊/越界 member，
-以及 NFC + casefold 后的便携路径冲突；任何一项都拒绝。需要 monorepo 子树、submodule 或 LFS
-内容时，先在宿主完全物化，再把所需 worktree/子树复制到 allowlist 中一个不含父 `.git` 的
-普通目录，不能直接把 package 子目录伪装成 Git 根。
+Dulwich tree 导出在固化前检查 mode `160000` submodule、Git LFS pointer、重复/特殊/越界
+member，以及 NFC + casefold 后的便携路径冲突；任何一项都拒绝。需要 monorepo 子树、
+submodule 或 LFS 内容时，先在宿主完全物化，再把所需 worktree/子树复制到 allowlist 中一个
+不含父 `.git` 的普通目录，不能直接把 package 子目录伪装成 Git 根。
 
 本地 Git 还拒绝 linked worktree/`.git` pointer、非普通 `.git/config`、`commondir`、alternate
-object store，以及解析后逃出仓库根的 metadata/object path。所有 source Git 子进程先删除继承的
-全部 `GIT_*` 变量，再注入受控环境，避免调用方覆盖 git-dir/config/object 行为。
+object store，以及解析后逃出仓库根的 metadata/object path。产品路径不启动系统 Git，不读取
+system/global/XDG config，不展开 include，也不运行 hooks、filters、credential helper 或外部
+attributes；C Git 只允许在测试中创建/只读检查互操作 fixture。
 
 当前 fact/evidence 提取会按常见敏感目录、文件名与后缀跳过 `.env`、私钥、凭据等，并在 manifest 记录 `skipped_sensitive`；为了保持 `source_sha`，原文件仍留在只读 snapshot。它不是内容级 secret scanner，导入前仍必须确认目标 commit/目录可以进入受保护的数据区。
 
 ### Fact Extractor
 
-优先使用 `universal-ctags --options=NONE --links=no --output-format=json`；这样不读取
-仓库/用户的 ctags options，也不跟随链接。不可用时使用内置语言规则降级。事实层至少包含：
+Legacy/native 配置可优先使用
+`universal-ctags --options=NONE --links=no --output-format=json`，并在不可用时使用内置语言
+规则。Packaged desktop 为满足无系统 ctags 的 all-in-one 边界会明确禁用 ctags，只使用内置
+解析/通用事实。事实层至少包含：
 
 - public-ish 符号的名称、kind、签名、docstring、文件与行号。
 - 每个文件的路径、大小、SHA-256、语言与 role。
@@ -155,26 +166,30 @@ QMD 提供：
 
 - SQLite FTS5/BM25：精确 API 名称、错误码、参数名非常有效。
 - 本地向量：自然语言意图到文档段落。
-- Query expansion 与 reranker：处理概念同义与较长问题。
 - collection/context：按 library/version 限定。
 
-LCF 当前让 QMD 索引发布 Wiki，但 API 会把检索命中映射回 SQLite 中的发布 page 记录。把事实层作为独立 collection、按需“下钻到证据”是后续扩展，默认不让原始代码块淹没文档结果。
+Desktop 当前只用显式 `lex + vec` typed queries，且 `rerank=false`；不会下载或调用 query
+expansion/reranker 模型。LCF 让 QMD 索引发布 Wiki，但 API 会把检索命中映射回 SQLite 中的
+发布 page 记录。把事实层作为独立 collection、按需“下钻到证据”是后续扩展，默认不让原始
+代码块淹没文档结果。
 
 所有 collection 注册、刷新、删除和 rebuild 经过同一个跨进程 QMD writer lock。embedding 模型
 与 corpus revision 是全局 profile：更换模型或发布新 corpus 会把状态标为 stale。Web/API 创建
 `embedding_rebuild` 后，worker 注册完整 published corpus 并以目标模型执行全局 `embed -f`；
-成功且 corpus revision 未变化时才原子切换 active model。此前以及失败/取消时查询使用 lexical
-fallback，不会把旧模型向量冒充新 profile。索引重建不调用生成模型；重新 ingest 才会消耗
-Codex/Cursor/Ollama。
+成功且 corpus revision 未变化时才原子切换 active model。此前以及失败/取消时不使用旧向量：
+desktop 指定 library 且 broker/revision 健康时使用 QMD BM25；broker 失败或全局查询使用
+Python lexical。索引重建不调用生成模型；重新 ingest 才会消耗 Codex/Cursor/Ollama。
 
-### MCP Gateway
+### MCP
 
-MCP 只依赖 API，不直接接触生成模型或源码写权限。它暴露：
+两种部署都只暴露：
 
 - `resolve-library-id`：把名称/slug/版本提示解析为稳定 library ID。
 - `query-docs`：在已发布 Wiki 中检索并返回带版本、页面与来源的信息。
 
-这让 Claude Desktop、Codex CLI、IDE 或其他 MCP 客户端使用同一份知识库。
+Legacy `mcp/` gateway 通过 HTTP 调 API；desktop bundled companion 由 MCP host 以 stdio
+启动，经 Electron Main 私有 bridge 调 sidecar，并要求 App 已运行和每连接授权。两者都不直接
+接触生成模型、审核/发布、原始路径或源码写权限。
 
 ## 当前 ingest 状态流
 
@@ -228,10 +243,12 @@ stateDiagram-v2
 ## 故障隔离
 
 - Ollama 不可用：当前 job 失败并保留错误；检索与 MCP 继续服务旧 Wiki，恢复后重新 ingest。
-- QMD 模型未下载或 profile stale：API 使用 lexical fallback；全局 rebuild 成功后才使用 hybrid。
+- QMD 模型未下载或 profile stale：不使用旧向量；desktop scoped 查询可走 QMD BM25，
+  broker 失败或全局查询走 Python lexical；全局 rebuild 成功后才使用 hybrid。
 - 模型生成非法 JSON：job 记录脱敏错误且不污染 Wiki；当前不持久化 raw model output，若要排查须在受控环境复现。
 - Git 初始化/提交失败：proposal 仍存在；首次初始化中断可重试。SQLite 提交失败会尝试补偿回滚刚创建的 Git commit，`lint` 负责发现强杀窗口遗留的漂移。
 - auto publish 中途失败：旧 default 保持不变，job 指明已写页数，新版本标记 `partial`。
-- Web UI 不可用：HTTP API、脚本和 MCP 仍可工作。
+- Legacy Web UI 不可用：legacy HTTP API、脚本和 HTTP MCP 仍可工作。Desktop renderer
+  不可用时没有受支持的公开 HTTP 管理旁路；desktop companion 也要求 App/Main 已运行。
 
 这种分层让“文档生成失败”不会升级为“已有知识库不可查询”。

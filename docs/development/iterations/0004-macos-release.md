@@ -9,27 +9,40 @@
 交付 macOS Apple Silicon arm64 DMG。build/sign 只由 `v*.*.*` tag push 进入
 `macos-signing`，该 Environment 保存仓库唯一 credential bundle secret；Draft job 不绑定
 Environment/secret。公开必须在真机测试后由 `workflow_dispatch --ref main` 进入 branch-only、
-zero-secret `macos-release`，以 `release_tag` 作为资料输入，由 trusted `main` verifier 对隔离
-tag worktree 和 fixed Release ID 完成。明确披露不 notarize、不启用 hardened runtime。
+无配置 Environment/repository release secret 或长期签名凭据的 `macos-release`；promotion
+job 仍使用 GitHub 自动签发的短期 `GITHUB_TOKEN`。它以 `release_tag` 作为资料输入，由 trusted
+`main` verifier 对隔离 tag worktree 和 fixed Release ID 完成。明确披露不 notarize、不启用
+hardened runtime。
 
 ## 计划任务
 
-- [ ] P01 建立 arm64 DMG/ZIP 构建、资源清单、版本和摘要产物。
+- [x] P01a source foundation：arm64 DMG/ZIP、资源清单、版本、摘要、Draft/promotion workflow
+  和 fail-closed policy 已实现并通过 source tests。
+- [ ] P01b 使用 provisioned credential 在受保护 macOS runner 生成真实签名资产。
 - [ ] P02 配置两个受保护 Environment：都 required reviewers、prevent self review、UI 禁
   admin bypass；`macos-signing` 只允许 tag `v*.*.*`/唯一 secret，`macos-release` 只允许
-  branch `main`/零 secret。
+  branch `main`/无配置 Environment/repository release secret 或长期签名凭据；promotion
+  job 仍使用短期 `GITHUB_TOKEN`。
 - [ ] P02a 配置 active `protected-main`（PR、独立 approval、dismiss stale、last-push
   approval、resolve threads、no force/delete、no bypass）、owner-only
   `release-tag-creation`、no-bypass `immutable-release-tags`，并开启 GitHub Immutable
   Releases。
-- [ ] P03 在授权 job 内临时导入证书，发布后清理临时 keychain。
+- [x] P03a source foundation：授权 job 的临时 keychain 导入/清理流程已有 source contract。
+- [ ] P03b 在真实 credential build 中验证 keychain、nested signing 和清理。
 - [ ] P04 验证 PR、fork 和普通 CI 均无法读取发布秘密。
 - [ ] P05 在无外部运行时的干净 Apple Silicon Mac 完成安装 smoke。
-- [ ] P06 从同一 Draft 下载物理测试候选，记录 `release-manifest.json` SHA-256，经第二次
+- [x] P06a source foundation：trusted-main、detached worktree、fresh peel、fixed ID、
+  promotion order 和 post-publish validator 已实现。
+- [ ] P06b 从同一 Draft 下载物理测试候选，记录 `release-manifest.json` SHA-256，经第二次
   Environment 审批；以 `--ref main` 启动 trusted verifier，隔离/fresh-peel tag，固定 Release
   ID；在 `PATCH` 前以 fresh `origin/main` comparison ref 验证 promotion order/`make_latest`，
   再执行 REST `PATCH`、post-publish `gh release verify`、immutable 和完整资产复核。
-- [ ] P07 演练 published 预状态、tag/Release ID/asset 漂移和 post-publish mismatch 均按发布
+- [x] P07a source policy：published 预状态、tag/Release ID/asset 漂移和 post-publish
+  mismatch 的拒绝合同已测试。
+- [ ] P07b 在真实 Draft/promotion 控制面演练上述安全事件，不允许重跑幂等洗绿。
+
+`[x]` 只表示提前落地的 R09 source foundation，不改变本迭代 `planned` 状态。真实任务见
+[TODO-REL-*](../todo.md)。
   安全事件 fail closed，不能重跑幂等洗绿。
 
 ## 退出门禁

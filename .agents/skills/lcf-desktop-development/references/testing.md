@@ -32,9 +32,14 @@ Never substitute a lower level for a required higher level.
   post-start fallback, missing CLI, logged-out CLI, timeout, and cancellation.
 - MCP: replay the Context7-compatible contract suite and confirm privileged
   review/publish operations are not added accidentally.
-- Runtime paths/migration: test fresh install, repeat migration, interrupted
-  copy, corrupt legacy data, insufficient disk, rollback, and concurrent-writer
-  refusal.
+- Runtime paths/data: test fresh/current layout, current-format backup/restore,
+  interrupted staging, corrupt input, insufficient disk, rollback, and
+  unknown/legacy-layout fail-closed. Do not require or claim a legacy importer.
+- Legacy retirement: first prove the full packaged M4 capability matrix in
+  `VAL-ELECTRON-CUTOVER-001`; then validate forbidden-path/transport/release/
+  active-doc absence while protected renderer, private UDS sidecar, QMD,
+  desktop MCP, and release surfaces still build and pass. Source evidence does
+  not authorize early deletion.
 - Model download: test consent, digest/signature mismatch, partial resume,
   atomic activation, offline behavior, and cache cleanup without data loss.
 - Release/update: inspect the DMG and code identity, install as a clean user,

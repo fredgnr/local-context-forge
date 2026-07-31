@@ -1,14 +1,54 @@
 # 排错手册
 
+> **Deprecated historical runbook：** 本页主体针对 unsupported legacy Docker/Web。不要执行
+> 下方 `lcf_managed`、installer、Compose、localhost 或端口改写命令；它们会改变旧实例，且
+> 不能用于 Electron 排障。Electron source/packaged 的入口见
+> [部署与运维：快速排障](18-deployment-operations.md#10-快速排障)。历史内容只用于静态 owner
+> inventory 或固定旧 commit/数据副本上的自担风险研究。
+
+受管实例先在仓库根目录定义 clean-environment 控制入口和经过校验的实际 API 地址：
+
+```bash
+LCF_CONTROL_BIN="$(pwd -P)/scripts/lcf"
+lcf_managed() {
+  env -i \
+    HOME="$HOME" \
+    PATH="$PATH" \
+    "$LCF_CONTROL_BIN" "$@"
+}
+
+LCF_DIAG_API_PORT="$(
+  awk -F= '
+    $1 == "API_PORT" && $2 ~ /^[0-9]+$/ && $2 >= 1024 && $2 <= 65535 {
+      print $2
+      exit
+    }
+  ' .lcf/runtime.env
+)"
+if [ -z "$LCF_DIAG_API_PORT" ]; then
+  printf '%s\n' 'Invalid or missing API_PORT in .lcf/runtime.env' >&2
+  exit 1
+fi
+LCF_DIAG_API_BASE="http://127.0.0.1:${LCF_DIAG_API_PORT}"
+```
+
+这会清除可覆盖实例目标的 `COMPOSE_*`、`LOCAL_*`、`LCF_*`、端口和镜像变量。未托管
+checkout 没有权威 `.lcf/runtime.env`；必须从它自己的受控配置设置 `LCF_DIAG_API_BASE`。
+
 ## 一键收集非敏感状态
 
 ```bash
-docker compose ps
-docker compose logs --since=10m --no-color api mcp web
-curl -sS http://127.0.0.1:8000/api/health | jq
+lcf_managed status
+lcf_managed doctor
+lcf_managed logs
+```
+
+安装时使用默认端口才直接复制下面的只读探测：
+
+```bash
+curl -sS "${LCF_DIAG_API_BASE}/api/health" | jq
 curl -sS http://127.0.0.1:8001/health | jq
 curl -sS http://127.0.0.1:8080/healthz
-docker compose exec api qmd status
 ```
 
 分享日志前搜索并删除 token、私有 URL、用户名与源码正文。
@@ -19,7 +59,8 @@ docker compose exec api qmd status
 
 症状：Node 版本不足、native module/SQLite 错误。
 
-检查：
+受管实例先运行 `lcf_managed doctor` 和 `lcf_managed logs`。下面的裸 Compose 构建仅用于
+未托管开发 checkout：
 
 ```bash
 docker compose build --no-cache api
@@ -29,6 +70,8 @@ docker compose build --no-cache api
 
 ### Python dependency
 
+同样仅限未托管开发 checkout：
+
 ```bash
 docker compose build --progress=plain api mcp
 ```
@@ -37,8 +80,12 @@ docker compose build --progress=plain api mcp
 
 ## Web 能打开但 API 报错
 
+受管实例先运行 `lcf_managed doctor`；如需进入容器，复制
+[固定 context/env 模板](18-deployment-operations.md#29-高级诊断与裸-compose)，再把最后的
+Compose 子命令替换为 `exec web ...`。下面两条只适用于默认端口的未托管开发 checkout：
+
 ```bash
-curl --fail http://127.0.0.1:8000/api/health
+curl --fail "${LCF_DIAG_API_BASE}/api/health"
 docker compose exec web wget -qO- http://api:8000/api/health
 ```
 
@@ -49,6 +96,9 @@ docker compose exec web wget -qO- http://api:8000/api/health
 Vite 的 `VITE_API_BASE` 是构建期变量；修改后要重建 Web。
 
 ## MCP unhealthy
+
+受管实例先运行 `lcf_managed doctor` 和 `lcf_managed logs`。下面的默认端口与裸 Compose
+命令只适用于未托管开发 checkout；受管实例的容器内诊断仍须使用固定模板：
 
 ```bash
 curl --fail http://127.0.0.1:8001/health
@@ -67,7 +117,8 @@ docker compose exec mcp \
 
 宿主端仍只绑定 127.0.0.1。
 
-若 health 正常但 `query-docs` 提前超时，先检查旧 `.env` 是否还保留了较小值；当前
+若 health 正常但 `query-docs` 提前超时，受管安装先检查 `.lcf/runtime.env`，未托管开发
+checkout 才检查 `.env`。当前
 `BACKEND_TIMEOUT_SECONDS` 默认 660 秒，只控制 MCP gateway → FastAPI 的 HTTP 等待，高于冷
 hybrid 查询的 600 秒后端上限；它不会延长 Codex/IDE 作为 MCP host 的 tool deadline。Codex 还要
 在 `~/.codex/config.toml` 独立配置：
@@ -78,8 +129,8 @@ url = "http://127.0.0.1:8001/mcp"
 tool_timeout_sec = 660.0
 ```
 
-先按本文“QMD 首次查询慢”直连 API warm-up；修改 gateway timeout 后要
-`docker compose up -d --force-recreate mcp` 才会生效。
+先按本文“QMD 首次查询慢”直连 API warm-up；修改受管配置后运行
+`lcf_managed restart` 才会生效。
 
 ## ingest 失败
 
@@ -93,19 +144,21 @@ git ls-remote --heads --tags REPO_URL
 
 ### 本地 Git 不是仓库顶层
 
-症状包含 `A local Git source must be the repository top level`。LCF 用
-`git rev-parse --show-toplevel` 解析真正根目录；不能把 monorepo 的 package 子目录直接登记为
-Git source。若只分析子树，把它复制到 allowlist 中一个不含父 `.git` 的独立目录，再以普通目录和
-`ref=HEAD` ingest。
+症状包含 `A local Git source must be the repository top level`。LCF 通过受控 Dulwich
+边界执行等价的 repository-root 解析，不调用目标机 `git`；不能把 monorepo 的 package 子目录
+直接登记为 Git source。若只分析子树，把它复制到 allowlist 中一个不含父 `.git` 的独立目录，
+再以普通目录和 `ref=HEAD` ingest。
 
 若错误提到 standalone `.git`、linked worktree、gitdir、commondir、alternate object store 或
 metadata/object path escapes，说明本地 Git 元数据会间接访问授权根之外。普通独立 `.git` 目录
-可以导入；其他布局先完整物化 worktree，再导出为不含父 `.git` 的普通目录。LCF 还会清理父进程
-继承的全部 `GIT_*` 覆盖，不能用 `GIT_DIR`/`GIT_OBJECT_DIRECTORY` 绕过这个边界。
+可以导入；其他布局先完整物化 worktree，再导出为不含父 `.git` 的普通目录。LCF 不把父进程的
+`GIT_*` 交给 executable——产品路径根本不启动系统 Git，受控 Dulwich 也不读取这些覆盖；
+不能用 `GIT_DIR`/`GIT_OBJECT_DIRECTORY` 绕过这个边界。
 
 ### submodule、LFS pointer 或便携路径碰撞
 
-Git archive 不会替你 materialize submodule/LFS，并会拒绝两个成员经 NFC + casefold 后相同。
+Dulwich tree 导出不会替你 materialize submodule/LFS，并会拒绝两个成员经 NFC + casefold
+后相同。
 在宿主完整 checkout、运行 `git submodule update --init --recursive` 与 `git lfs pull`，然后把
 所需 worktree/子树复制到不含父 `.git` 的 `imports/` 目录。不要关闭校验，也不要把 LFS pointer
 当源码。
@@ -119,7 +172,8 @@ Git archive 不会替你 materialize submodule/LFS，并会拒绝两个成员经
 
 ### ctags 不支持语言
 
-事实抽取会退化。检查：
+事实抽取会退化。以下裸 Compose 仅用于未托管开发 checkout；受管实例按固定模板执行相同的
+`exec api ...` 子命令：
 
 ```bash
 docker compose exec api ctags --version
@@ -151,6 +205,9 @@ curl --fail http://WINDOWS_PRIVATE_IP:11434/api/tags
 
 容器：
 
+以下裸 Compose 仅用于未托管开发 checkout；受管实例按固定模板执行同一 `exec api ...`
+子命令：
+
 ```bash
 docker compose exec api \
   curl --fail http://WINDOWS_PRIVATE_IP:11434/api/tags
@@ -161,7 +218,7 @@ docker compose exec api \
 - Ollama 没有在设置环境变量后重启。
 - Windows 网络被设成 Public，而规则只允许 Private。
 - Mac DHCP 地址变化，不再匹配 firewall RemoteAddress。
-- Windows IP 变化，`.env` 仍是旧地址。
+- Windows IP 变化，受管 `.lcf/runtime.env`（或未托管开发 `.env`）仍是旧地址。
 - VPN/防火墙阻断跨网段。
 
 不要为排错把规则永久改为 Any；临时测试后也必须收紧。
@@ -213,7 +270,7 @@ ollama ps
 query-expansion 模型。先查看系统状态：
 
 ```bash
-curl --fail http://127.0.0.1:8000/api/system/status |
+curl --fail "${LCF_DIAG_API_BASE}/api/system/status" |
   jq '.embedding'
 ```
 
@@ -223,7 +280,7 @@ curl --fail http://127.0.0.1:8000/api/system/status |
 curl --fail-with-body -X POST \
   -H 'Content-Type: application/json' \
   -d '{}' \
-  http://127.0.0.1:8000/api/rebuilds | jq
+  "${LCF_DIAG_API_BASE}/api/rebuilds" | jq
 ```
 
 重建是持久 FIFO job，可在任务页查看排队位置；API/主机重启不会丢失 queued job。系统会注册
@@ -241,7 +298,7 @@ curl --fail-with-body --max-time 650 \
   -d "$(jq -n \
     --arg library_id "$LIBRARY_ID" \
     '{library_id:$library_id,query:"create client timeout",limit:1}')" \
-  http://127.0.0.1:8000/api/query |
+  "${LCF_DIAG_API_BASE}/api/query" |
   jq '{engine, hits: (.results | length)}'
 ```
 
@@ -254,8 +311,8 @@ backend timeout 都是 660 秒，API 内部 hybrid QMD 上限为 600 秒；这�
 先区分“没有已发布内容”和“全局 profile 未就绪”：
 
 ```bash
-curl --fail http://127.0.0.1:8000/api/libraries | jq
-curl --fail http://127.0.0.1:8000/api/system/status |
+curl --fail "${LCF_DIAG_API_BASE}/api/libraries" | jq
+curl --fail "${LCF_DIAG_API_BASE}/api/system/status" |
   jq '.embedding'
 ```
 
@@ -264,9 +321,10 @@ curl --fail http://127.0.0.1:8000/api/system/status |
 - `hybrid_ready=false`：系统按设计使用 lexical fallback，不是数据丢失。
 - lexical 也无结果：核对 library/version 和查询中的精确 API 符号。
 
-资深用户可用 `docker compose exec api qmd status` 与 `qmd collection list` 做只读诊断，但不要
-手工运行 `qmd update/embed`，也不要猜带 hash 的 collection 名。Compose/native 使用独立
-config/cache；只让实际提供 query 的一种 runtime 运行。
+资深用户可按[固定 context/env 模板](18-deployment-operations.md#29-高级诊断与裸-compose)
+执行 `qmd status` 与 `qmd collection list` 只读诊断，但不要手工运行 `qmd update/embed`，
+也不要猜带 hash 的 collection 名。Compose/native 使用独立 config/cache；只让实际提供 query
+的一种 runtime 运行。
 
 ### 更换 QMD 模型后仍像旧模型
 
@@ -311,14 +369,29 @@ lsof -nP -iTCP:8001 -sTCP:LISTEN
 lsof -nP -iTCP:8080 -sTCP:LISTEN
 ```
 
-在 `.env` 修改宿主端口，例如 `WEB_PORT=18080`，容器内部端口不变。
+受管实例不要只改 `.env`。先确认冲突进程是否属于另一实例。只有标准 checkout
+`data/`/`imports/`/`data/runner/` 布局才能安全重跑当前安装器；若手工使用了外置 active
+data，不要执行下列命令；`TODO-LEGACY-CONTROL-001` 已由 ADR-0015 supersede，项目不会再提供
+外置 legacy instance-control 修复。标准布局
+确需改端口时运行：
+
+```bash
+lcf_managed install \
+  --web-port 18080 \
+  --api-port 18000 \
+  --mcp-port 18001 \
+  --no-open
+```
+
+安装器会更新 `.lcf/runtime.env`、重建健康检查并保持容器内部端口不变。未托管开发 checkout
+才直接维护项目 `.env`。
 
 ## SQLite locked
 
 检查是否有 Docker 与原生服务同时写同一个 data：
 
 ```bash
-docker compose ps
+lcf_managed status
 ps aux | grep -E '[u]vicorn|[m]cp_server|[q]md'
 ```
 
@@ -332,7 +405,7 @@ ps aux | grep -E '[u]vicorn|[m]cp_server|[q]md'
 curl --fail-with-body -X POST \
   -H 'Content-Type: application/json' \
   -d '{}' \
-  http://127.0.0.1:8000/api/rebuilds | jq
+  "${LCF_DIAG_API_BASE}/api/rebuilds" | jq
 ```
 
 在任务页检查重建 job；确认 `embedding.hybrid_ready=true` 后再运行 smoke test。重建期间查询
@@ -347,8 +420,8 @@ worker claim、处于 `running/cancelling` 且 owner lock 不再存活的任务�
 `status=failed, stage=orphaned`：
 
 ```bash
-curl --fail http://127.0.0.1:8000/api/jobs/active | jq
-curl --fail "http://127.0.0.1:8000/api/jobs?limit=200" |
+curl --fail "${LCF_DIAG_API_BASE}/api/jobs/active" | jq
+curl --fail "${LCF_DIAG_API_BASE}/api/jobs?limit=200" |
   jq '[.[] | select(.stage == "orphaned")]'
 ```
 
@@ -356,7 +429,7 @@ curl --fail "http://127.0.0.1:8000/api/jobs?limit=200" |
 
 ```bash
 curl --fail-with-body -X POST \
-  http://127.0.0.1:8000/api/admin/jobs/recover-orphans |
+  "${LCF_DIAG_API_BASE}/api/admin/jobs/recover-orphans" |
   jq
 ```
 

@@ -1,5 +1,12 @@
 # 威胁模型与安全基线
 
+本页汇总共享领域与 legacy 安全控制；Electron 的完整进程/capability/data flow 和同 UID
+残余风险以[系统设计](17-system-design.md)为准，当前验证状态以
+[status](development/status.md)为准。Source policy 通过不等于 packaged/physical 安全门禁
+通过。Docker/Compose、browser/public HTTP、Host Runner、legacy MCP 和 GHCR 已
+deprecated/unsupported；后文 container baseline 只保留为 retirement 风险 inventory，不能
+作为部署或“生产加固”指南。删除源码也不授权删除用户 data/volume/backup/package。
+
 ## 保护目标
 
 1. 私有源码、生成文档和查询不被未授权读取。
@@ -66,23 +73,25 @@ Renderer 不能传入候选路径，picker 选择出的绝对路径也不会返�
 
 当前远端只接受 `https://`，主机名必须精确命中 `LCF_REMOTE_SOURCE_HOSTS`（默认
 `github.com,gitlab.com,bitbucket.org`），端口只能省略或为 443；同时拒绝 userinfo/内嵌凭据、
-query、fragment、`http://`、`ssh://`、`git://` 与 `git@...`，并关闭 Git HTTP redirect。本地
+query、fragment、`http://`、`ssh://`、`git://` 与 `git@...`，并关闭 HTTP redirect。本地
 路径必须位于只读 `LCF_LOCAL_SOURCE_ROOTS` 且不能与 `/data` 重叠；一旦识别为 Git，路径还必须
-正好是 repository top level，不能把 monorepo 子目录作为 Git root。Git clone 设 900 秒超时，
-默认最终固化 snapshot 最多 100,000 个文件、2 GiB 常规文件总量
-（`LCF_MAX_SNAPSHOT_FILES` / `LCF_MAX_SNAPSHOT_BYTES`）。Git 子进程禁交互 credential prompt，
-忽略 system/global Git config、清空 credential helper、禁 hooks，并只允许 `https:file` protocol，
-避免宿主配置悄悄改写 clone 行为。
+正好是 repository top level，不能把 monorepo 子目录作为 Git root。受控 Dulwich HTTPS
+transport 有 900 秒总 deadline，连接/读取也有界；默认最终固化 snapshot 最多 100,000 个文件、
+2 GiB 常规文件总量（`LCF_MAX_SNAPSHOT_FILES` / `LCF_MAX_SNAPSHOT_BYTES`）。
 
-所有 source Git 子进程会先删除调用进程继承的全部 `GIT_*` 变量，再加入受控值。本地 Git 只接受
-仓库顶层的 standalone `.git` 目录；linked worktree/`.git` pointer、非普通 `.git/config`、
+产品 source 路径不查找或启动系统 `git` executable。远端由固定版本 Dulwich +
+`Urllib3HttpGitClient` 读取；它使用空的受控配置、固定 CA、无 proxy/redirect/retry，并拒绝非
+HTTPS transport。本地 Git 由 `ControlledRepo` 读取，只接受仓库顶层的 standalone `.git`
+目录；不会展开 config include，也不会读取 system/global/XDG Git config、credential helper、
+hook、filter 或外部 attributes。linked worktree/`.git` pointer、非普通 `.git/config`、
 `commondir`、alternate object store，或解析后逃出 authorized repository 的 metadata/object
-path 都拒绝。普通独立 `.git` 目录的本地仓库仍可导入。
+path 都拒绝。普通独立 `.git` 目录仍可导入。父进程的 `GIT_*` 变量对该产品路径没有执行目标，
+不能用来改变 repository 或 transport；C Git 只允许测试 fixture 做互操作验证。
 
-`git archive` 后还会拒绝 mode `160000` submodule、Git LFS pointer、重复/特殊 member、越界
-link，以及 NFC + casefold 后碰撞的路径。需要这些内容时，只允许操作者先完全 checkout/materialize，
-再把所需 worktree 或子树复制到 allowlist 中一个不含父 `.git` 的普通目录；不能通过关闭校验
-导入半物化快照。
+Dulwich tree 导出后还会拒绝 mode `160000` submodule、Git LFS pointer、重复/特殊 member、
+越界 link，以及 NFC + casefold 后碰撞的路径。需要这些内容时，只允许操作者先完全
+checkout/materialize，再把所需 worktree 或子树复制到 allowlist 中一个不含父 `.git` 的普通
+目录；不能通过关闭校验导入半物化快照。
 
 **当前缺口**：精确 hostname allowlist 不是 IP 安全边界；还没有解析后对 loopback、link-local、
 RFC1918、云 metadata 地址分类/固定，也没有限制 clone 临时对象库的传输字节和对象数。当前直接
@@ -193,15 +202,16 @@ download/open。Renderer 只能调用无参数、类型化 check/download/open/c
 canonical `https://github.com/fredgnr/local-context-forge/releases`，Renderer 不提供也不读取
 URL。页面打开失败只返回稳定错误，不覆盖 signed updater 已有 candidate/error 状态。这条路径
 不是下载完整性证明，也不表示已有 Release、签名 DMG、Developer ID/notarization 或 automatic
-apply；用户仍必须核对资产集合和摘要。真实 protected release、clean-user 和物理
-0.0.1 → 0.0.2 门禁均为 `not-run`。
+apply；用户仍必须核对资产集合和摘要。真实 protected release、clean-user 和物理真实
+`N-1 → N` 门禁均为 `not-run`；ADR 中的早期版本号只是示例。
 
 ### T3：归档穿越与符号链接
 
 当前实现：
 
 - 规范化每个输出路径并确认仍在 snapshot 根目录。
-- Git archive 允许目标仍位于 snapshot 内的 symlink/hardlink，拒绝越界目标；本地非 Git 目录复制跳过 symlink。
+- Dulwich tree 导出允许目标仍位于 snapshot 内的 symlink/hardlink，拒绝越界目标；本地非 Git
+  目录复制跳过 symlink。
 - Wiki/proposal 路径拒绝绝对路径与 `..`。
 
 **当前缺口**：没有通用上传归档入口；若以后增加 tar/zip 上传，必须在解压前实现压缩比、成员数
@@ -275,14 +285,19 @@ HTTP query 的 `limit<=30`、Web/MCP 超时只是命中数/等待边界，不是
 
 - Dockerfile 固定 QMD `2.5.3` 与 MCP SDK `1.28.1`；Web 有 npm lockfile。
 - 不在运行时 `pip/npm install latest`。
+- container workflow 生成 BuildKit provenance 与 SPDX SBOM；desktop workflow 也生成
+  runtime inventory/SBOM/notices 并对候选资产做完整 membership/digest 校验。
 
-**当前缺口**：Python Web 依赖仍是兼容范围，base image 没有 digest pin，也没有自动 SBOM/签名/漏洞扫描。发布构建应生成 lock/hash、镜像 digest 与 SBOM，并纳入更新审查。
+**当前缺口**：部分 Python Web 依赖仍是兼容范围，container base image 没有 digest pin，
+GHCR 镜像没有独立签名或自动漏洞门禁；desktop 的真实凭据/签名构建也尚未运行。
+provenance/SBOM 提高可追踪性，但不等于完全可复现或无漏洞。
 
 ### T9：备份与日志泄漏
 
 当前实现：
 
-- 部署凭据与 Codex auth 不应进入 `/data`；项目根 `.env` 不在数据归档范围。
+- 部署凭据与 Codex auth 不应进入 `/data`；受管安装的 `.lcf/runtime.env`、项目根 `.env`
+  和 GitHub release credential 都不在数据归档范围。
 - Compose 备份先 fail-close 中断的 running/cancelling、drain 新 ingest 并要求 worker 活动数为
   0；queued 作为持久 FIFO 状态随一致备份保存。随后暂停 API/MCP；完整保留已接受
   源码快照，只跳过根级临时/QMD cache，并生成 SHA-256。
@@ -292,10 +307,11 @@ HTTP query 的 `limit<=30`、Web/MCP 超时只是命中数/等待边界，不是
 - `umask 077` 且 archive/checksum 为 `0600`；两者先作为同目录 `.partial` 写入，fsync 后先
   rename sidecar、再 rename archive。恢复默认要求相邻 sidecar；只有 archive 另有可信认证时
   才能显式使用 `--allow-missing-checksum`。
-- 恢复后的 Wiki `.git` 也按不可信数据处理；所有发布/回滚 Git 子进程禁用 hooks、宿主
-  system/global 配置、credential helper 与交互 prompt；每次操作还会把 `.git/config` 重写成
-  最小本地配置，禁用 hooks/fsmonitor/外部 attributes，并拒绝链接形式的 `.git`/config，避免
-  备份中的 Git 配置在下一次 commit 执行程序或重定向 worktree。
+- 恢复后的 Wiki `.git` 也按不可信数据处理；source 与 service-owned Wiki 操作使用固定
+  Dulwich boundary，不执行目标机 Git、hooks、credential helper、external filter 或交互
+  prompt；每次操作还会把 `.git/config` 重写成最小本地配置，禁用
+  hooks/fsmonitor/外部 attributes，并拒绝链接形式的 `.git`/config，避免备份中的 Git 配置
+  重定向 worktree。
 - 当前不单独持久化 raw model output。
 
 **当前缺口**：drain 只覆盖脚本指向的单个 Compose API 实例和新 ingest，不会等待活动任务完成，
@@ -313,7 +329,8 @@ queued 会继续，只有当时 running/cancelling 的任务会按 runtime owner
 
 collection 注册、refresh、remove 与 rebuild 共用全局跨进程 writer lock。模型与向量空间是
 全局 profile；模型/corpus 改变会令 profile stale，排队的 embedding rebuild 才以 `-f` 构建
-完整 published corpus。成功切换 active model/revision 前查询 lexical fallback。默认
+完整 published corpus。成功切换 active model/revision 前不使用旧向量；desktop scoped 查询在
+broker/revision 健康时使用 QMD BM25，broker 失败或全局查询使用 Python lexical。默认
 `QMD_EMBED_MODEL` 固定为
 `hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf`。
 
@@ -358,6 +375,8 @@ Compose 默认：
 - Codex auth cache/access token。
 - 反向代理 OIDC client secret。
 - 备份加密密钥。
+- 受保护 `macos-signing` Environment 中、本 desktop release workflow 唯一使用的
+  `DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`。
 
 桌面导入私库时，支持路径是由操作者使用现有 Git/SSH 凭据预先 clone；LCF 不读取或复制这些凭据，
 也不把它们放入 grant 或 sidecar 请求。预先 clone 不会降低工作树本身和其 snapshot/备份的敏感度。
@@ -371,19 +390,24 @@ Compose 默认：
 - zip 交付包
 - Web 前端 bundle
 
-Docker Compose 本地可使用只读 secret file；生产使用系统 keychain/secret manager。`.env` 只适合非敏感配置，或在严格本机权限下作为临时方案。
+Docker Compose 本地可使用只读 secret file；生产使用系统 keychain/secret manager。受管
+legacy 配置保存在 mode-`0600` 的 `.lcf/runtime.env`，但它仍只适合非 secret 运行配置；项目
+`.env` 仅用于未托管开发 checkout。
 
 ## 安全验收清单
 
 以下同时包含当前回归项与共享上线门。任何未满足项都应被记录；涉及 auth、SSRF、非 root 与响应限额的缺口会阻断不可信/多用户部署。
 
-- [ ] `docker compose ps` 显示端口都绑定 127.0.0.1。
+- [ ] 受管实例通过[最小环境入口](18-deployment-operations.md#22-安装)运行
+      `lcf_managed doctor`/`status`，并以记录的 context 确认没有调用者
+      `COMPOSE_PROJECT_NAME`/插值变量覆盖，端口都绑定 127.0.0.1。
 - [ ] Windows 11434 防火墙 RemoteAddress 只有 Mac/隧道 IP。
 - [ ] 恶意 `../`、symlink、超大文件被拒绝。
 - [ ] 本地 Git source 只接受仓库顶层；submodule、LFS pointer 与 NFC/casefold path collision
       被拒绝，materialized fallback 不含父 `.git`。
 - [ ] 本地 Git 拒绝 linked worktree/gitdir pointer、非普通 config、commondir、alternate/
-      越界 object store；继承的 `GIT_*` 覆盖不会生效。
+      越界 object store；产品使用受控 Dulwich，不查找系统 Git、不展开 host config，
+      继承的 `GIT_*` 不能改变 transport/repository。
 - [ ] Ctags 固定使用 `--options=NONE --links=no`。
 - [ ] 远端 Git 的 HTTPS、精确 hostname/443 allowlist、无凭据/query/fragment 与禁 redirect 回归通过；
       共享上线前再增加解析后 IP allowlist/denylist、DNS 固定与 clone 对象/传输上限。

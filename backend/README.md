@@ -1,23 +1,36 @@
 # Local Context Forge backend
 
+This package is the domain engine used by the Electron Python sidecar. It still
+contains deprecated/unsupported legacy HTTP/Docker adapters pending ITER-0007;
+those adapters are retirement inventory, not a second supported mode. The desktop build does not expose
+its FastAPI routes on TCP: Electron Main reaches a private Unix-domain-socket
+sidecar through an allowlisted IPC proxy. See
+[`docs/17-system-design.md`](../docs/17-system-design.md) for the authoritative
+topology and [`docs/development/status.md`](../docs/development/status.md) for
+what has actually been validated.
+
+## Shared domain behavior
+
 The backend turns a repository into a reviewable, Git-backed API Wiki:
 
 1. Archive an exact Git commit (or hash a plain directory) into an immutable
    source snapshot.
 2. Extract a deterministic manifest, symbols, README/tests/examples, and
-   source-line evidence. Universal Ctags is invoked with
-   `--options=NONE --links=no` so repository/user option files and linked
-   content cannot change extraction; Python AST and conservative regex
-   extraction are the fallback.
-3. Generate typed Wiki proposals with the deterministic `mock` provider,
-   Ollama, or the opt-in official `codex exec` adapter.
+   source-line evidence. Desktop ingestion disables Ctags; the historical legacy/native
+   deployment can invoke Universal Ctags with `--options=NONE --links=no`, with
+   Python AST and conservative regex extraction as the fallback.
+3. Generate typed Wiki proposals through the deployment's provider adapter.
+   Desktop delegates one bounded provider attempt to Electron Main (Codex by
+   default, with Cursor only through explicit preflight/fallback policy).
+   Legacy/native operation supports the deterministic `mock` provider, Ollama,
+   and its host-runner-backed Codex/Cursor paths.
 4. Require at least one source reference and validate it against the exact
    evidence/symbol line ranges visible to that generation, plus snapshot SHA,
    sensitive-path, symlink, path, and line bounds.
 5. Write Markdown plus JSON sidecars to a Git repository.
-6. Publish only a QMD BM25 refresh. Vector construction is an explicit,
-   forced `reindex --embed` operation; hybrid retrieval remains opt-in, with a
-   built-in lexical fallback.
+6. Publish and reconcile the lexical QMD corpus. Vector construction remains an
+   explicit, forced rebuild; hybrid retrieval is used only for a ready matching
+   profile, with built-in lexical fallback.
 
 An explicit version such as `main` or `1.0.0` is materialized as
 `<version>+git.<sha12>`. This keeps SQLite pages, Wiki directories, and QMD
@@ -27,38 +40,51 @@ version to the pages API resolves to the latest materialized commit.
 Generation receives a bounded copy of the current target Wiki, or the most
 recent published Wiki, as `existing_wiki`. It edits that persistent baseline,
 but the current source evidence always wins and unsupported old claims must be
-removed. The current Ollama/Codex implementation is deliberately a bounded
-single-pass generator, not complete map-reduce coverage of every file in a very
-large monorepo.
+removed. Provider adapters deliberately receive bounded single-pass evidence,
+not complete map-reduce coverage of every file in a very large monorepo.
 
 The source-reference gate is deliberately narrower than factual verification:
 it now enforces generation-time evidence membership, but it does not prove that
 cited lines entail a page claim. Human review remains required.
 
-Local directory imports are disabled by default. Mount repositories read-only
-below `/imports` and set `LCF_LOCAL_SOURCE_ROOTS=/imports`. A local source may
-never contain the data directory, be contained by it, or resolve to a filesystem
-root. Remote cloning accepts credential-free HTTPS/443 only and requires an
-exact `LCF_REMOTE_SOURCE_HOSTS` match (GitHub, GitLab, and Bitbucket by default).
-Pre-clone SSH/private repositories into `/imports` instead of sharing
-credentials with the service. A local source discovered as Git must be exactly
+## Source boundaries by deployment
+
+Legacy/native local directory imports are disabled by default. Mount
+repositories read-only below `/imports` and set
+`LCF_LOCAL_SOURCE_ROOTS=/imports`. Its remote cloning accepts credential-free
+HTTPS/443 only and requires an exact `LCF_REMOTE_SOURCE_HOSTS` match (GitHub,
+GitLab, and Bitbucket by default). Pre-clone SSH/private repositories into
+`/imports` instead of sharing credentials with the service.
+
+Desktop local imports instead begin with the native directory picker and an
+opaque Main-owned grant; the Renderer never submits an arbitrary filesystem
+path. Desktop remote imports are Main-validated public GitHub HTTPS URLs only.
+Its sidecar also disables Ctags. After those deployment-specific admission
+checks, both paths use the shared immutable snapshot and evidence rules below.
+
+A local source may never contain the data directory, be contained by it, or
+resolve to a filesystem root. A local source discovered as Git must be exactly
 the repository top level and contain a standalone `.git` directory. Linked
 worktrees/gitdir pointer files, non-regular `.git/config`, `commondir`, alternate
 object stores, and metadata/object paths escaping the repository are rejected.
-`git archive` also rejects submodules, Git LFS pointer files, and NFC/casefold
-path collisions. For a monorepo subtree, submodule, LFS-backed repository, or
+The Dulwich tree export also rejects submodules, Git LFS pointer files, and
+NFC/casefold path collisions. For a monorepo subtree, submodule, LFS-backed repository, or
 linked worktree, fully check it out first, then export/copy the materialized
 worktree or subtree without its parent `.git` metadata into `/imports` and
 ingest that as a non-Git directory with `ref=HEAD`. Local non-Git snapshots
 compare source-before, copied, and source-after hashes and fail if writers
 changed the directory.
-Source Git commands drop all inherited `GIT_*` overrides, then install only
-controlled values; they also ignore system/global config, credential helpers,
-interactive prompts, hooks, and HTTP redirects. A standalone local repository's
-own regular `.git/config` may still be read; this is distinct from the stricter
-service-owned Wiki canonicalization below. The final snapshot is capped by
+Source and service-owned Wiki Git operations use the pinned bundled Dulwich
+library, not a target-machine `git` executable. The controlled repository
+reader rejects unsafe metadata layouts and does not invoke system/global Git
+configuration, credential helpers, interactive prompts, hooks, or external
+filters. A standalone local repository's own regular `.git/config` is parsed
+only under the explicit source-boundary checks; this is distinct from the
+stricter service-owned Wiki canonicalization below. The final snapshot is capped by
 `LCF_MAX_SNAPSHOT_FILES`/`LCF_MAX_SNAPSHOT_BYTES`; this is not a hard cap on all
-Git object/network transfer during a partial clone.
+Git object/network transfer during a remote clone.
+
+## Shared persistence, review, and queue semantics
 
 SQLite is the runtime materialization used by the API and MCP. The Wiki Git
 repository is a recoverable audit artifact; editing or reverting Git files does
@@ -67,24 +93,33 @@ index, and dirty-worktree drift so an administrator can explicitly repair the
 materialization. Broken relative links are currently reported as post-publish
 lint warnings rather than claimed as a publication gate.
 
-Every service-owned Wiki Git operation disables system/global configuration
-and rewrites `.git/config` to a minimal local configuration with hooks,
-fsmonitor, external attributes, and credential helpers disabled. `.git` and its
-config must be local regular directories/files, not links. This hardens a
-restored Wiki but does not authenticate it: restore only a trusted complete
-backup, since a SHA-256 sidecar is not a signature.
+Every service-owned Wiki operation uses the controlled Dulwich boundary and
+rewrites `.git/config` to a minimal local configuration with hooks, fsmonitor,
+external attributes, and credential helpers disabled. `.git` and its config
+must be local regular directories/files, not links. This hardens a restored
+Wiki but does not authenticate it: restore only a trusted complete backup,
+since a SHA-256 sidecar is not a signature.
 
 Manual proposal approval writes recoverable staged pages, but a version becomes
 query-visible/default only after every proposal is published and none is
 rejected. A rejected proposal blocks activation. A materialized
 source/version is immutable; use a new version label for a revised generation.
 
-Each API process holds a runtime owner lock. Startup and
-`POST /api/admin/jobs/recover-orphans` fail old queued/running rows when their
-`BackgroundTasks` executor is gone. They are never silently resumed.
+Each API or sidecar process uses the SQLite-backed `PersistentJobDispatcher` and
+holds a runtime owner lock. Startup and
+`POST /api/admin/jobs/recover-orphans` preserve queued rows so the active
+dispatcher resumes them in FIFO order. Only `running`/`cancelling` rows whose
+owner is gone become `failed`/orphaned; an explicit retry creates a new job.
 `POST /api/admin/ingest/drain` blocks new ingest while backup checks the active
 set; `resume` opens the gate again. `POST /api/admin/reindex` reconstructs QMD
 collection registration from fully published versions only.
+
+## Legacy/native HTTP and QMD operation
+
+The script, HTTP administration routes, purge operation, and environment
+variables below describe the legacy/native deployment. Packaged desktop owns
+QMD through its Main-managed worker/broker and its Renderer allowlist does not
+expose admin, reindex, or library-delete operations.
 
 QMD registration, refresh, removal, and full rebuild share one global
 cross-process writer lock. Normal publish calls register a collection and run
@@ -107,7 +142,7 @@ reports missing paths, filesystem failures, and each QMD removal result. Purge
 is application-level cleanup, not secure erase of SSD blocks, backups, model
 caches, filesystem snapshots, or other external copies.
 
-Run locally:
+Run the legacy/native HTTP service locally:
 
 ```bash
 python -m venv .venv
@@ -119,7 +154,11 @@ LCF_DATA_DIR=./data uvicorn app.main:app --reload --port 8000
 Health endpoints are available at both `/health` and `/api/health`. Interactive
 OpenAPI documentation is at `/docs`.
 
-Important environment variables:
+This command is for backend development and legacy operation. It is not how the
+packaged desktop sidecar is launched, authenticated, or supervised.
+
+Legacy/native environment variables (these do not configure the packaged
+desktop runtime):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -147,21 +186,23 @@ Important environment variables:
 | `LCF_MAX_MODEL_EVIDENCE_BYTES` | `30000` | Evidence subset budget inside a model request |
 | `LCF_MAX_EXISTING_WIKI_BYTES` | `20000` | Prior-Wiki baseline budget inside a model request |
 
-The Codex adapter places only bounded evidence JSON in its working directory and
-runs the CLI with `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, and a
-read-only sandbox. However, that CLI sandbox can still read files outside its
-working directory. The provider therefore refuses to run until it is placed in
-a dedicated container/VM exposing only the evidence and
+The legacy/internal direct Codex adapter places only bounded evidence JSON in
+its working directory and runs the CLI with `--ephemeral`,
+`--ignore-user-config`, `--ignore-rules`, and a read-only sandbox. However, that
+CLI sandbox can still read files outside its working directory. The provider
+therefore refuses to run until it is placed in a dedicated container/VM exposing
+only the evidence and
 `LCF_CODEX_FILESYSTEM_ISOLATED=true` is set. It is intended for a single user,
 not for sharing a subscription login as a server. Set strict isolation to
 `false` only when deliberately supporting an older official CLI that does not
-expose the two ignore flags.
+expose the two ignore flags. Packaged desktop does not use these flags or this
+adapter; Main creates and supervises the bounded provider attempt.
 
 The Codex child receives a minimal environment (`PATH`, `HOME`, `NO_COLOR`, and
 `TERM`) plus explicitly allowed non-secret variables. Cloud, CI, API-key,
 credential, token, proxy, and session variables are never forwarded.
 
-The shipped HTTP/API/MCP deployment is a trusted, local, single-user design.
-It has no authentication, per-library ACL, or total/per-page Markdown response
-byte cap. Query count limits and process timeouts do not make it safe as a
-shared service.
+The legacy shipped HTTP/API/MCP deployment is a trusted, local, single-user
+design. It has no authentication, per-library ACL, or total/per-page Markdown
+response byte cap. Query count limits and process timeouts do not make it safe
+as a shared service.

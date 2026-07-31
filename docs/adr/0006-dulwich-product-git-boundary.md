@@ -4,6 +4,10 @@
 - 日期：2026-07-30
 - 关联需求：REQ-PY-001、REQ-INSTALL-001、REQ-TRUST-001
 
+> **后续关系：** 本 ADR 仍为 Accepted；legacy shell/Docker 产品运行时可依赖系统 Git 的例外
+> 已由 [ADR-0015](0015-electron-only-legacy-retirement.md#对既有-adr-的影响)部分取代。Packaged
+> 产品禁用系统 Git 与测试 fixture 例外继续有效。
+
 ## 上下文
 
 源码 snapshot 和生成 Wiki 当前通过 `git` subprocess 工作。all-in-one 目标不允许依赖
@@ -54,4 +58,3 @@ Dulwich porcelain 默认值仍可能读取宿主配置或改变既有安全语�
   lint、rollback 仍通过。
 - 使用 C Git 对 Dulwich 生成的 Wiki 执行只读 `fsck/log/rev-list` 互操作验证；该命令只在
   测试阶段运行。
-

@@ -2,7 +2,9 @@
 
 本页按未来经过审查的 Electron DMG 描述普通用户流程，同时明确当前限制。更完整的签名、
 MCP、更新、恢复和开发者说明见
-[Electron 桌面版完整指南](16-electron-desktop-guide.md)。
+[Electron 桌面版完整指南](16-electron-desktop-guide.md)。当前是否已有合格资产以
+[状态快照](development/status.md)为准。legacy 路径已弃用并待删除，不再作为 quickstart
+fallback。
 
 ## 0. 先确认你拿到的是可审查发行物
 
@@ -11,7 +13,7 @@ MCP、更新、恢复和开发者说明见
 - 干净 macOS 用户安装；
 - 打包应用中的真实 Codex 采集；
 - 物理 Apple Silicon embedding 下载/重建；
-- 0.0.1 → 0.0.2 物理更新。
+- 真实 `N-1 → N` 物理更新。
 
 在 GitHub Releases 出现经过维护者审查的一组正式资产之前，不要把源码构建或
 `*-UNOFFICIAL.dmg` 当作推荐安装包。正式资产至少应同时包含：
@@ -22,8 +24,8 @@ MCP、更新、恢复和开发者说明见
 - `update-manifest.json`
 - `update-manifest.json.sig`
 
-Electron 是**有审查 Release 后的推荐目标**。现在需要稳定运行时，legacy Docker 路径仍可用；
-`./install.sh` 安装的是 legacy 服务，不是 Electron。
+Electron 是**有审查 Release 后的推荐目标**。在合格 Release 出现前，当前没有可推荐给普通
+用户的稳定安装；不要运行 `./install.sh` 新建已弃用的 legacy 服务。
 
 ## 1. 准备 Codex CLI
 
@@ -136,8 +138,9 @@ Codex 已经提交执行后的超时或未知结果不会自动重放。
 结果会显示检索引擎、页面、摘要和源码引用。使用 `Command + Enter` 可提交。未批准的提案
 不会出现在查询中。
 
-Embedding 未就绪时系统使用 lexical 检索；这不是错误。完成下一步后才会启用与当前 corpus
-revision 和模型 profile 一致的 hybrid 查询。
+Embedding 未就绪时不会使用旧向量；指定 library 且 desktop QMD broker 健康时使用
+`qmd-bm25`，broker/revision 失败或全局查询使用 Python `lexical`。这不是错误。完成下一步后
+才会启用与当前 corpus revision 和模型 profile 一致的 `qmd-hybrid`。
 
 ## 7. 选择 embedding 并重建
 

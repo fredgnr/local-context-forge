@@ -1,5 +1,9 @@
 # M4 Pro 24 GB + 可选 Windows 32 GB / RTX 4060 部署
 
+> 更新：Electron 是唯一目标产品面。Windows/Ollama 与 Docker/Web 路径已弃用、unsupported
+> 并列入 [legacy retirement](development/legacy-retirement.md)；本页后续 legacy 命令仅保留为
+> 待清理历史，不再构成部署建议。
+
 ## 先给结论
 
 对于日常使用最多的 M4 Pro 24 GB MacBook，Electron all-in-one 是合理目标：控制面、SQLite、
@@ -8,8 +12,8 @@ Wiki、QMD、MCP、Python sidecar 和 Node worker 都在一台 Mac 上运行，�
 Windows 电脑常驻。
 
 不过，只有在公开 Release 出现**经过审查的 DMG**，并完成干净用户安装与真实 provider
-验证后，Electron 才能成为推荐安装方式。目前这些物理门禁仍是 `not-run`。现在必须稳定运行
-时，可继续使用 legacy Docker 路径。
+验证后，Electron 才能成为推荐安装方式。目前这些物理门禁仍是 `not-run`，因此当前没有可
+推荐给普通用户的稳定部署；不要新建 legacy Docker 路径。
 
 ## 推荐分工
 
@@ -53,8 +57,9 @@ hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf
 HTTP URL 和本地任意路径会被拒绝。
 
 模型不会随 DMG 预装。第一次明确发起 embedding rebuild 时，QMD 才可能下载所选模型。下载、
-native embedding 和 hybrid 检索尚需物理 Apple Silicon 门禁；在模型未就绪、stale 或失败时，
-查询会降级为 lexical，不会混用旧向量。
+native embedding 和 hybrid 检索尚需物理 Apple Silicon 门禁；模型未就绪时，指定 library
+且 QMD broker 健康的 desktop 查询使用 BM25，broker/revision 失败或全局查询使用 Python
+lexical，不会混用旧向量。
 
 ### 磁盘与电源
 
@@ -100,49 +105,34 @@ Codex CLI 不属于内部 runtime：Wiki 生成默认使用用户自己的已登
 完整步骤见 [快速开始](04-quickstart.md) 与
 [Electron 桌面版完整指南](16-electron-desktop-guide.md)。
 
-## Windows/4060 什么时候有价值
+## Windows/4060 当前边界
 
-只有在以下场景才建议启用：
+当前不支持 Windows worker、局域网 Ollama 或 Mac/Windows 混合部署；
+`scripts/windows-ollama-setup.ps1` 属于 `TODO-LEGACY-REMOVE-DEPLOY-001` 的删除清单，不应再
+执行。32 GB + RTX 4060 设备可以保留给未来研究，但任何 remote worker 都必须先完成独立的
+安全/协议 ADR：认证、TLS/pairing、源码 evidence 出境、任务不确定态、Windows 安装/更新、
+断线恢复和 all-in-one UX 都不能沿用 legacy 实现。
 
-- 你仍运行 legacy Docker/Web；
-- 希望不用 Codex/Cursor，而是显式使用局域网 Ollama；
-- 能把 Windows 防火墙限制到 Mac 的固定私网 IP；
-- 接受源码证据会从 Mac 发送到 Windows 上的模型服务。
+唯一目标部署矩阵：
 
-旧拓扑的准备命令仍是：
+| 项目 | Electron target |
+| --- | --- |
+| 安装入口 | 经过审查的 arm64 DMG |
+| 数据根 | `~/Library/Application Support/Local Context Forge/` |
+| 本地模型缓存 | `~/Library/Caches/Local Context Forge/` |
+| 生成工具 | Codex；仅在执行前显式允许 Cursor fallback |
+| MCP | App 内 bundled stdio companion |
+| Windows/Ollama | unsupported；未来决策项 |
 
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\windows-ollama-setup.ps1 `
-  -MacAddress 192.168.1.20 `
-  -InstallOllama `
-  -RestartOllama
-```
-
-把地址替换为 Mac 的固定私网地址。随后只在 legacy `.env` 中配置 Windows Ollama。不要把
-`11434` 暴露到公网，也不要误以为这些设置会被 Electron 桌面版读取。
-
-## 两条部署路径不要混用
-
-| 项目 | Electron | legacy Docker/Web |
-| --- | --- | --- |
-| 安装入口 | 经过审查的 arm64 DMG | `./install.sh` 或 `install.command` |
-| 数据根 | `~/Library/Application Support/Local Context Forge/` | checkout 的 `data/` 或配置的 bind mount |
-| 本地模型缓存 | `~/Library/Caches/Local Context Forge/` | Compose/native QMD 配置 |
-| 生成工具 | Codex；显式 Cursor fallback | Codex/Cursor host runner、mock 或 Ollama |
-| MCP | app 内 stdio companion | streamable HTTP gateway |
-| Windows Ollama | 未实现 | 可选 |
-
-两套 writer 不能同时指向同一份数据。桌面版的 legacy 数据迁移门禁仍未运行，不要手工把
-`data/` 覆盖到 Application Support。需要回退时，保留原 legacy checkout、备份和容器配置，
-分别运行。
+Electron 不读取、迁移或删除 legacy `data/`、volume、archive 或配置。需要保留旧数据时只保存
+独立副本/固定旧版本，不得与 Electron 同时写同一目录。
 
 ## 性能调优顺序
 
 1. 先用 EmbeddingGemma 300M Q8 和固定单并发完成真实查询集；
 2. 观察 lexical fallback 是否已经满足 API/符号检索；
 3. 再试 Qwen3-Embedding 0.6B Q8，并用同一查询集比较；
-4. 只有明确需要本地生成时才启用 Windows Ollama legacy 节点；
+4. 若确有远程本地生成需求，记录到 `TODO-REMOTE-WORKER-001`，不要启用 legacy 节点；
 5. 不通过提高并发掩盖慢任务；先检查仓库规模、模型状态和任务阶段。
 
 LCF 的主要瓶颈通常是首次源码编译、Codex 生成、人工审核或首次模型准备，而不是 Web UI。

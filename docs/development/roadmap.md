@@ -3,13 +3,14 @@
 ## 基线与目标
 
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
-- source merge 基线：`main@52a5ffa`
-- 开发分支：`agent/two-phase-desktop-release`
+- bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
+- two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
+- 文档审计基线：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
 - 平台目标：macOS Apple Silicon
 - 当前总体状态：`in-progress`
 
 本路线图是交付顺序，不是完成声明。各阶段只有在其退出门禁有可复现 `pass` 证据后，
-才能进入 `validated`。
+才能进入 `validated`。当前快照见[status](status.md)，可执行任务见[TODO](todo.md)。
 
 ## 依赖图
 
@@ -18,14 +19,17 @@ P0 Governance
  └─> P1 Electron shell and trust boundary
       ├─> P2 Python sidecar
       └─> P3 Node/QMD worker and MCP
-           └─> P4 Runtime paths and legacy data migration
-                └─> P5 DMG release foundation
-                     └─> P6 Physical updater gate
-                          └─> P7 Migration exit and Docker retirement decision
+           └─> P4 Desktop runtime paths, backup and models
+                └─> P5 packaged DMG candidate
+                     └─> P7 Electron-only cutover and legacy retirement
+                          ├─> P5 trusted-main public promotion
+                          └─> P6 physical updater gate across real releases
 ```
 
 P2 与 P3 可在 P1 的 IPC 契约冻结后并行；P4 必须等两类持久数据格式和版本标识明确后
-再冻结迁移方案。
+再冻结 Desktop layout/backup。P0–P7 编号是历史阶段 ID，不再表示严格线性顺序：P7 删除
+发生在可替代能力的 packaged candidate 通过之后、首个受支持公开 Release 之前；它不再等待
+旧数据迁移或 P6 更新门禁。
 
 ## 里程碑总览
 
@@ -33,14 +37,15 @@ P2 与 P3 可在 P1 的 IPC 契约冻结后并行；P4 必须等两类持久数�
 | --- | --- | --- | --- | --- | --- |
 | P0 治理与契约 | `validated` | ITER-0001 | AGENTS、skills、ADR、迭代、追踪矩阵 | 无 | G0 |
 | P1 Electron 壳与信任边界 | `in-progress` | ITER-0001 | Main/preload/renderer 骨架、类型化 IPC | P0 | G1 |
-| P2 Python sidecar | `in-progress` | ITER-0002 | Python 3.13.14 PyInstaller `onedir`、生命周期契约 | P1 | G2 |
-| P3 Node/QMD 与 MCP | `in-progress` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1；与 P2 并行 | G3 |
-| P4 路径与迁移 | `planned` | ITER-0003 | macOS 路径、原子迁移、回滚与数据验证 | P2、P3 | G4 |
+| P2 Python sidecar | `in-progress` | ITER-0002 | Python 3.13.14 PyInstaller `onedir`、生命周期契约 | P1 source IPC contract | G2 |
+| P3 Node/QMD 与 MCP | `in-progress` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1 source IPC contract；与 P2 并行 | G3 |
+| P4 路径、备份与模型 | `planned` | ITER-0003 | macOS 路径、Desktop backup/restore、模型供应链 | P2、P3 | G4 |
 | P5 DMG 发行基础 | `planned` | ITER-0004 | arm64 DMG、自签名、受保护发布流程 | P1–P4 | G5 |
-| P6 更新实机门禁 | `planned` | ITER-0005 | 0.0.1 → 0.0.2 实机报告、DMG fallback | P5 | G6 |
-| P7 迁移退出 | `planned` | ITER-0006 | 发布判定、legacy Docker 去留决策 | P6 | G7 |
+| P6 更新实机门禁 | `planned` | ITER-0005 | 真实单调 `N-1 → N` 实机报告、DMG fallback | P5 | G6 |
+| P7 Electron-only 退出 | `planned` | ITER-0007 | capability cutover、legacy 全面删除与 absence gate | P1–P4 + packaged candidate | G7 |
 
-表中状态表示父迭代和完整退出门禁，而不是“是否已有 source 实现”。ITER-0001 的 source
+表中状态表示阶段完整退出门禁，而不是“是否已有 source 实现”。P2/P3 依赖 P1 已冻结的
+source IPC contract，不要求先把 P1 packaged gate 标成完成。ITER-0001 的 source
 纵切已验证，但 packaged trust/IPC 尚未运行，所以 P1 仍为 `in-progress`。当前 ITER-0002
 提前实现了 P5 的受保护 release workflow/policy，以及 P6 的独立签名检查和 verified DMG
 fallback source 纵切；ITER-0004/0005 仍保持 `planned`，因为 protected Environment、
@@ -118,20 +123,20 @@ G3：
   保持 `not-run`；
 - `VAL-CLI-001` 证明任务开始后不发生 Codex → Cursor fallback。
 
-## P4：运行时路径与旧数据迁移
+## P4：Desktop 运行时路径、备份与模型
 
 交付：
 
 - 持久数据、缓存、日志和临时 runtime 各自进入标准 macOS 路径；
 - 模型权重仅按需下载，校验后原子激活；
-- 旧数据先只读盘点，再经 staging、校验和原子切换迁移；
-- 原数据默认保留，可回滚，拒绝新旧 writer 并发。
+- Desktop 数据具备有版本的 backup、restore、integrity、atomic switch 和 rollback；
+- unknown/legacy layout 明确 fail closed，不尝试猜测、导入或转换。
 
 G4：
 
-- `VAL-DATA-001` 覆盖 fresh、repeat、interrupt、corrupt、low-disk 和 rollback；
+- `VAL-DATA-001` 覆盖 Desktop fresh、backup、restore、interrupt、corrupt、low-disk 和 rollback；
 - `VAL-MODEL-001` 覆盖 consent、离线、完整性失败与断点恢复；
-- legacy 数据在迁移失败后仍可由原版本读取。
+- 用户旧 Docker data/volume/backup 不被 Electron 自动读取、转换或删除。
 
 ## P5：DMG 发行基础
 
@@ -140,13 +145,17 @@ G4：
 - 默认用户产物是 macOS arm64 DMG；
 - 应用及 sidecar 使用明确的自签名身份，发布记录披露未 notarize、未启用
   hardened runtime；
-- 公开仓库唯一发布秘密只在 tag-only `macos-signing` Environment 中可用；
-- `macos-release` 只允许 branch `main` 的 promotion，且零 secret；两 Environment 都要求
+- release workflow 使用的唯一 private credential 只在 tag-only `macos-signing`
+  Environment 中可用；
+- `macos-release` 只允许 branch `main` 的 promotion，且不配置 Environment/repository
+  release secret 或长期签名凭据；job 仍使用短期 `GITHUB_TOKEN`。两 Environment 都要求
   独立 reviewer、prevent self review、UI 禁 admin bypass；
 - PR、fork 与普通构建不接触发布秘密。
 - canonical release/update manifest、完整资产集合和独立 Ed25519 信任锚在打包前
   fail closed。
-- tag push 只创建候选 Draft；公开 promotion 必须以 `workflow_dispatch --ref main` 运行，
+- 当前 desktop tag path 只创建候选 Draft；在 P7 删除前，相同 tag 的 GHCR workflow 独立且
+  非原子；desktop 公开
+  promotion 必须以 `workflow_dispatch --ref main` 运行，
   将 `release_tag` 只作为资料输入，由 trusted `main` verifier 在隔离 tag worktree 中
   fresh-peel、重新下载、绑定 candidate manifest digest；在 `PATCH` 前以 fresh
   `origin/main` comparison ref 验证 promotion order/`make_latest`，再以固定 Release ID REST
@@ -161,6 +170,8 @@ G5：
 - `VAL-RELEASE-001` 记录 DMG 内容、签名身份、架构和限制；
 - `VAL-SECRET-001` 证明真实 Environment/ruleset/Immutable Releases settings 精确匹配，
   且非发布工作流拿不到 Environment Secrets。
+- `VAL-LEGACY-ABSENCE-001` 在首个受支持 Electron-only 公开 Release 前为 `pass`；container
+  workflow、GHCR tag 耦合和 legacy runtime 不进入该 Release。
 
 当前 source 进度：release workflow、credential bootstrap、tag/provenance、trusted-main
 verifier、隔离 tag worktree、fresh peel、固定 Release ID 和 Draft/Published/immutable 远端复核
@@ -173,7 +184,7 @@ repository owner、contents writer/可改 workflow 的主体和 settings admin �
 Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。因此当前 P5 总结保持
 **source merge GO / release NO-GO**。
 
-## P6：0.0.1 → 0.0.2 更新实机门禁
+## P6：真实 `N-1 → N` 更新实机门禁
 
 交付：
 
@@ -185,32 +196,44 @@ Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。�
 
 G6：
 
-- `VAL-UPDATE-001` 在实机完成安装 0.0.1、创建数据、更新至 0.0.2、重启、
+- `VAL-UPDATE-001` 在实机完成安装真实上一版本 `N-1`、创建数据、更新至真实下一版本
+  `N`、重启、
   校验版本/sidecar/数据；
 - 同一报告注入自动更新失败，验证 DMG fallback；
 - G6 通过前，不把自动应用更新列为可交付能力。
 
 当前 source 进度：Main/preload/Web 的签名 manifest、redirect、私有 cache、脱敏 IPC、
 verified DMG open 与固定 Release 页面 no-payload/URL 隐藏/状态保持合同已通过
-`VAL-UPDATE-CLIENT-001`。真实 feed、下载、打开和 0.0.1 → 0.0.2 物理门禁仍为 `not-run`。
+`VAL-UPDATE-CLIENT-001`。真实 feed、下载、打开和 `N-1 → N` 物理门禁仍为 `not-run`。
 
-## P7：迁移退出与 legacy Docker 决策
+ADR-0003/0011 中描述的真实 `N-1 → N` 是版本关系而非固定版本号。执行门禁必须使用与
+`runtime/version.json`、tag 和 manifest 完全一致的两个真实单调版本；不能为了匹配示例伪造
+旧 tag。Automatic apply 还需要新增或 supersede ADR-0011。
+
+## P7：Electron-only cutover 与 legacy retirement
 
 交付：
 
-- 汇总 P0–P6 证据、已知限制和回滚路径；
-- 对现有 Docker 用户完成迁移演练；
-- 根据真实迁移成功率与阻塞缺陷作出独立弃用决定。
+- 用能力矩阵证明 Electron 已替代仓库索引、审核/排队/查询、Wiki、embedding/rebuild、
+  Codex/Cursor 和 Context7 MCP；
+- 先拆分 `web/src` renderer、`backend/app` private UDS sidecar 与 legacy transport/provider；
+- 删除 Docker/Compose、browser Web、公开 TCP API、legacy HTTP MCP、Host Runner、旧安装器/
+  脚本、container CI/GHCR 和活跃文档；
+- 建立永久 absence gate，防止 legacy 路径重新进入 product/release。
 
 G7：
 
-- `VAL-LEGACY-001` 证明支持的旧数据样本迁移成功且原数据可恢复；
-- 所有 P0–P6 阻断门禁为 `pass`；
-- 在单独 ADR 和用户迁移公告合入前，Docker 始终保持 `legacy`，不得删除。
+- `VAL-ELECTRON-CUTOVER-001` 在 source 和 clean M4 packaged candidate 分层通过；
+- `VAL-LEGACY-ABSENCE-001` 证明 forbidden paths/listeners/imports/workflows/active docs 不存在，
+  protected renderer/sidecar/companion/QMD/release paths 仍存在并通过回归；
+- 不要求 legacy migration、compatibility window、旧 API/config/data support、
+  `VAL-LEGACY-001` 或 `VAL-LEGACY-CONTROL-001`；这些旧门禁保持 `not-run (superseded)`；
+- 删除源码不自动删除用户 data、volume、backup、container、image 或外部 GHCR package。
 
 ## 阻断规则
 
 - 任一必需门禁为 `fail` 或 `not-run`，对应阶段不能标记 `validated`/`done`。
-- 签名 CI 成功不能替代干净 Mac 安装；模拟更新不能替代实机 0.0.1 → 0.0.2。
-- 迁移成功不能由“新应用能启动”推断，必须验证数据数量、引用、索引状态和回滚。
+- 签名 CI 成功不能替代干净 Mac 安装；模拟更新不能替代实机 `N-1 → N`。
+- Electron 替代成功不能由“新应用能启动”推断，必须逐项验证任务、页面、引用、查询、
+  embedding、provider、MCP、当前数据恢复和无 public listener。
 - 后续阶段如需改变已接受 ADR，先新增 superseding ADR，再调整路线图。

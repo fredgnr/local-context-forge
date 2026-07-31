@@ -1,20 +1,33 @@
 # 模型选择、QMD 重建与评估
 
+> **Electron-only precedence：** 支持的目标是 Mac 内置 QMD/embedding + 用户已登录 Codex，
+> 可选 Cursor 仅按 Main provider policy 在执行前 fallback。下文 Compose/native-browser、
+> `scripts/reindex.sh`、Windows/Ollama、localhost API 和环境变量流程是待删除的历史 inventory，
+> 不得用于新部署、性能建议或兼容实现；远程 worker 必须先有独立 Accepted ADR。
+
 ## 两类模型、两个职责
 
 LCF 把模型分开：
 
-- **检索模型（Mac）**：embedding、query expansion、reranker；只导航已发布 Wiki。
-- **生成模型（Windows）**：把事实/evidence 编成 API 页面提案。
+- **检索模型（Mac）**：embedding；只导航已发布 Wiki。
+- **生成模型**：Electron 默认调用 Mac 上已登录的 Codex CLI；当前不支持 Windows/Ollama。
 
 不要用一个“大模型”同时承担所有任务，也不要把 embedding 分数当作事实置信度。没有 ready
-的全局 embedding profile 时，产品使用内置 lexical fallback；只有真实评测证明自然语言召回
-不足时才需要 hybrid。
+的全局 embedding profile 时，产品使用不含旧向量的 lexical-only 路径；只有真实评测证明自然
+语言召回不足时才需要 hybrid。
+
+本文把这类路径简写为 “lexical fallback”，但响应的 `engine` 要更精确：desktop 指定
+library 且 QMD broker/revision 健康时是 `qmd-bm25`；broker/响应失败或全局查询是 Python
+`lexical`。Legacy/native retriever 也可能直接使用 Python `lexical`。
+
+Desktop 当前明确使用 QMD typed `lex + vec`、`rerank=false`，不会下载 query expansion 或
+reranker 模型。Legacy/native QMD 的命令和缓存是另一部署配置，不能据此推断 desktop bundle
+会启用额外模型。
 
 ## 检索默认值
 
 全局 profile 记录 desired/active model、corpus/indexed revision 与 rebuild 状态。模型改变或
-新版本发布后状态为 stale，查询自动使用 lexical fallback。只有持久队列中的
+新版本发布后状态为 stale，查询自动使用上述 lexical-only 路径。只有持久队列中的
 `embedding_rebuild` 成功，并且完成时的目标模型与 corpus revision 仍匹配，profile 才变为
 ready 并允许 hybrid。
 
@@ -34,8 +47,6 @@ QMD_EMBED_MODEL=hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gg
 | 任务 | 模型 | 大约大小 | 选择理由 |
 |---|---|---:|---|
 | embedding | EmbeddingGemma 300M Q8 | 300 MB | 英文代码/技术文档足够轻，适合 M4 Pro 24 GB |
-| rerank | Qwen3 reranker 0.6B Q8 | 640 MB | 重排混合召回候选 |
-| query expansion | QMD 1.7B Q4 | 1.1 GB | 生成搜索变体 |
 
 来源：[QMD README](https://github.com/tobi/qmd)。英文代码库无需为中文兼容换模型；
 `Qwen3-Embedding-0.6B` 可以作为 A/B 候选，但只能由本地 query 集决定是否升级。
@@ -64,17 +75,26 @@ Web/API 只操作当前 runtime 的 config。`reindex.sh`、`make qmd-embed` 与
 `make qmd-embed-native` 也都只调用 `LCF_API_URL` 指向的当前 API；target 名不会选择 runtime。
 不要同时运行两个 API，也不要把一套 config/cache 交给另一套 runtime。
 
-## 完整流程 A：Docker Compose
+## 历史 inventory A：Docker Compose（unsupported；不得执行）
+
+以下是 legacy/development 配置。若实例由安装器创建，先按
+[部署总手册](18-deployment-operations.md#22-安装)定义 `lcf_managed`，再运行
+`lcf_managed start|status|doctor`。当前 `scripts/lcf` 本身不会清除调用者
+shell/Compose 覆盖；裸 Compose 只用于你明确管理的开发 checkout。
 
 ### 1. 启动并检查状态
 
 确认 native 服务已停止，然后启动 Compose：
 
 ```bash
+LCF_API_BASE="http://127.0.0.1:8000"
 docker compose up -d --build
 docker compose ps
 docker compose exec api qmd status
 ```
+
+后续命令沿用同一 shell 中显式设置的 `LCF_API_BASE`；自定义端口时在执行任何写操作前修改并
+核对该值。
 
 ### 2. 发布 Wiki，再提交全局重建
 
@@ -86,7 +106,7 @@ docker compose exec api qmd status
 curl --fail-with-body -X POST \
   -H 'Content-Type: application/json' \
   -d '{}' \
-  http://127.0.0.1:8000/api/rebuilds | jq
+  "${LCF_API_BASE}/api/rebuilds" | jq
 ```
 
 索引重建不调用生成模型，也不消耗 Codex/Cursor 额度。成功后确认
@@ -96,13 +116,13 @@ curl --fail-with-body -X POST \
 curl --fail-with-body --max-time 650 \
   -H 'Content-Type: application/json' \
   -d '{"library_id":"/local/acme-widget","query":"create client timeout","limit":1}' \
-  http://127.0.0.1:8000/api/query | jq '{engine, hits:(.results|length)}'
+  "${LCF_API_BASE}/api/query" | jq '{engine, hits:(.results|length)}'
 ```
 
 期望 `engine=qmd-hybrid`。Codex MCP 还应设置 `tool_timeout_sec = 660.0`，MCP gateway 的
 `BACKEND_TIMEOUT_SECONDS=660` 是另一层独立超时。
 
-## 完整流程 B：macOS native
+## 历史 inventory B：macOS native browser（unsupported；不得执行）
 
 ### 1. 完全停止 Compose，再安装原生依赖
 
@@ -156,7 +176,7 @@ busy/失败不会回滚已经激活的 Git/SQLite version，运维方应根据 j
 “重建索引”和“重新采集仓库”是两个操作：前者不调用 LLM，只重新索引已审核内容；后者重新运行
 Codex/Cursor/Ollama，产出新 proposal，因此会消耗相应额度并再次进入审核。
 
-## 生成模型：RTX 4060 起点
+## 历史 inventory：RTX 4060/Ollama（unsupported；不再推荐）
 
 建议把 Ollama `qwen3.5:9b` Q4 作为候选起点，条件是当前模型目录确有该 tag 且本机测试稳定。
 不同时间、平台的模型目录会变化，安装脚本不会替你偷偷换模型。

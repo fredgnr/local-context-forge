@@ -5,6 +5,13 @@ the desktop trust boundary, a static `lcf://app/` renderer origin, a versioned
 typed IPC facade, a bounded UDS API proxy, and explicit Python sidecar
 supervision.
 
+Project-wide status and boundaries are maintained in
+[`docs/development/status.md`](../docs/development/status.md) and
+[`docs/17-system-design.md`](../docs/17-system-design.md). The desktop source
+foundation is merged, but the public trust pins, protected release, packaged
+DMG, clean-user install, physical M4 runtime, and `N-1 → N` update gates remain
+`not-run`. Do not present a source launch or CI build as an installable release.
+
 Current status:
 
 - Electron Main owns windows, permissions, IPC validation, the sidecar token,
@@ -33,18 +40,37 @@ npm test
 npm run build
 ```
 
-`resources/renderer/` and `generated/sidecar/` are the renderer and Python
-sidecar staging directories consumed by `electron-builder.yml`; release
-preparation must populate and audit both before packaging.
-`resources/sidecar/README.txt` is only a source-tree marker and is not packaged.
-`electron-builder.yml` targets arm64 DMG
-and ZIP, uses ASAR and hardened Electron fuses, and deliberately keeps
-`hardenedRuntime: false`, no notarization, and the fixed self-signing identity.
+`electron-builder.yml` consumes all of the following audited inputs:
+
+- `resources/renderer/` for the staged static renderer;
+- `generated/sidecar/` for the Python sidecar;
+- `generated/companion/` for the Node stdio MCP companion;
+- `generated/qmd/` for bundled Node/QMD;
+- `resources/update/update-metadata-ed25519-public.pem` and the matching public
+  lock under `../runtime/`.
+
+Release preparation must populate and audit every required input before
+packaging. `resources/sidecar/README.txt` is only a source-tree marker and is
+not packaged; companion notices are copied separately from `companion/`.
+
+The base `electron-builder.yml` produces arm64 DMG/ZIP artifacts with
+`identity: "-"` and the `-UNOFFICIAL` suffix. This is the local ad-hoc path, not
+the formal self-signed release. `electron-builder.release.yml` extends the base,
+forces code signing, and fixes the identity to
+`Local Context Forge Self Signed`. Both configurations use ASAR and hardened
+Electron fuses while deliberately keeping `hardenedRuntime: false` and
+notarization disabled. Current `unprovisioned` trust locks make the formal
+before-pack audit fail closed.
 
 Source-mode tests and CI builds are not evidence that a DMG,
 signing/notarization flow, packaged sidecar, clean-machine install, update
 path, or local-source workflow has passed on physical Apple Silicon hardware.
 Those physical gates remain `not-run`.
+
+The complete developer test matrix is in
+[`docs/development/contributor-handbook.md`](../docs/development/contributor-handbook.md);
+the release procedure is in
+[`docs/development/desktop-release.md`](../docs/development/desktop-release.md).
 
 For a source-mode launch, first build `../web` and use its absolute `dist`
 directory as `LCF_RENDERER_DIR`. Install the backend development environment so

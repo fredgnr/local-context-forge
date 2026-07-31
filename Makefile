@@ -25,20 +25,20 @@ QMD_NODE_HASH_MANIFEST ?=
 
 help:
 	@printf '%s\n' \
-	  'make install     All-in-one macOS install, start, verify and open Web' \
-	  'make doctor      Read-only deployment and provider diagnostics' \
-	  'make status      Show Compose and host runner status' \
-	  'make uninstall   Remove services but preserve data/imports/backups' \
-	  'make bootstrap   Check/install macOS prerequisites' \
-	  'make up          Build and start api/mcp/web' \
+	  'make install     LEGACY Docker/Web install; this is not the Electron installer' \
+	  'make doctor      Read-only LEGACY deployment and provider diagnostics' \
+	  'make status      Show LEGACY Compose and host runner status' \
+	  'make uninstall   Remove LEGACY services; preserve data/imports/backups' \
+	  'make bootstrap   Check/install LEGACY macOS prerequisites' \
+	  'make up          Build and start LEGACY api/mcp/web' \
 	  'make smoke       Run read-only smoke checks' \
 	  'make demo        Seed and publish the deterministic demo' \
-	  'make backup      Create a backup under ./backups' \
-	  'make restore ARCHIVE=... TARGET=...  Restore to the configured data path' \
+	  'make backup      Create a LEGACY data backup under ./backups' \
+	  'make restore ARCHIVE=... TARGET=...  Restore the explicit LEGACY data path' \
 	  'make qmd-embed   Build local hybrid-search embeddings' \
 	  'make qmd-embed-native  Ask the current API to embed (first verify it is native)' \
 	  'make dev-native  Start native api/mcp/web together' \
-	  'make ci-source   Run all Python, Web and desktop source-mode CI gates' \
+	  'make ci-source   Run core Python, Web and Electron source gates (excludes QMD worker and guide-site)' \
 	  'make ci-python   Run frozen Python source tests and repository checks' \
 	  'make ci-ipc-source  Run the source-mode Python desktop IPC contract' \
 	  'make ci-web      Install and run Web source tests, typecheck and build' \

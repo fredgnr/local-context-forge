@@ -4,6 +4,10 @@
 - 日期：2026-07-30
 - 关联需求：REQ-CLI-001、REQ-TRUST-001
 
+> **后续关系：** 本 ADR 仍为 Accepted；保留 legacy browser/Docker provider/Host Runner 的要求
+> 已由 [ADR-0015](0015-electron-only-legacy-retirement.md#对既有-adr-的影响)部分取代。Desktop
+> attempt CAS、preflight-only fallback 与 no-replay 边界继续有效。
+
 ## 上下文
 
 桌面版默认复用用户已经登录的 Codex CLI，Cursor CLI 仅作为可选 fallback。CLI 会读取
@@ -55,4 +59,3 @@ provider 重试，会形成命令注入、重复计费和重复发布风险。�
 - cut-point 测试覆盖 create、claim、select、commit、spawn 和 complete 之间的进程终止；
   commit 之后恢复必须为 `uncertain` 且不得重放。
 - 进程与日志检查不得出现 CLI 凭据、完整环境、私有仓库内容或 renderer 可控命令。
-

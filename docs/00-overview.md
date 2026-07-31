@@ -1,5 +1,9 @@
 # Local Context Forge：本地 Context7 平替
 
+> 自 [ADR-0015](adr/0015-electron-only-legacy-retirement.md) 起，Electron 是唯一目标产品面；
+> Docker/Web/public API/HTTP MCP/Host Runner/container 已弃用并计划删除，不再作为当前可用
+> 回退。实际 Electron Release 仍为 NO-GO。
+
 Local Context Forge（LCF）把代码仓库编译成一套**可审核、可版本化、可检索、可通过 MCP
 消费**的 API Wiki。它不仅建立代码向量索引，还保存页面、结构化元数据、源码引用、审核状态
 和 Git 历史。
@@ -59,20 +63,21 @@ Codex CLI 是桌面版唯一默认生成工具。只有用户在设置中明确�
 | Embedding | EmbeddingGemma 300M Q8 |
 | 备选 embedding | Qwen3-Embedding 0.6B Q8 |
 | 任务并发 | 固定为 1 |
-| 查询降级 | embedding 未就绪时使用 lexical |
+| 查询降级 | desktop scoped 查询先用 QMD BM25；broker/revision 失败或全局查询用 Python lexical |
 
 Embedding 是全局 profile。更换模型或发布新语料会使旧向量变为 stale；“保存并重建全部”
 会创建一个队列任务。索引重建只处理已发布 Wiki，不调用 Codex/Cursor，也不会消耗生成额度。
 
-Windows 32 GB + RTX 4060 仍可作为 legacy Docker/Ollama 部署的可选生成节点，但当前 Electron
-客户端没有实现远程 Windows worker；不要把两条拓扑混为一谈。详见
+Windows 32 GB + RTX 4060 当前不是受支持节点；Electron 没有远程 Windows worker，旧
+Docker/Ollama helper 已进入删除范围。详见
 [硬件与部署](03-hardware-deployment.md)。
 
 ## 当前交付状态
 
-桌面源码已经包含 Electron Main/preload/renderer、Python sidecar、Node/QMD worker、
+`main@fb8bbbc` 已包含 Electron Main/preload/renderer、Python sidecar、Node/QMD worker、
 本地仓库授权、provider 监督、MCP companion、embedding 重建和受保护 Release 工作流。
-这不等于已有可推荐安装包：
+这些是主要 source foundation，不等于 P1–P7 已完成或已有可推荐安装包。权威状态与剩余任务见
+[status](development/status.md)和[TODO](development/todo.md)：
 
 | 门禁 | 当前状态 |
 | --- | --- |
@@ -81,7 +86,7 @@ Windows 32 GB + RTX 4060 仍可作为 legacy Docker/Ollama 部署的可选生成
 | 干净 macOS 用户安装 | `not-run` |
 | 打包应用中的真实 Codex 采集 | `not-run` |
 | 物理 Apple Silicon 模型下载/重建 | `not-run` |
-| 0.0.1 → 0.0.2 物理更新 | `not-run` |
+| 真实 `N-1 → N` 物理更新 | `not-run` |
 
 因此：
 
@@ -89,7 +94,8 @@ Windows 32 GB + RTX 4060 仍可作为 legacy Docker/Ollama 部署的可选生成
   `release-manifest.json` 和签名更新元数据后，再按
   [桌面版完整指南](16-electron-desktop-guide.md)安装。
 - **开发者**：可以运行源码模式验证，但它不能证明 DMG、签名、clean-user 或更新门禁。
-- **需要现在稳定运行**：继续使用 legacy Docker/Web 路径；它不会被桌面开发静默删除。
+- **需要现在稳定运行**：当前没有可推荐的受支持发行；不要新建 legacy 部署。等待 Electron
+  packaged/physical/Release 门禁通过，或仅以开发者身份审查 source mode。
 
 ## 安全边界
 

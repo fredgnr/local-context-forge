@@ -1,11 +1,24 @@
 # HTTP API 与 MCP
 
-以下示例以默认地址 `http://127.0.0.1:8000` 为准。字段以当前实现的 OpenAPI 文档为最终依据：
+> **Deprecated reference：** 本页的 HTTP API/MCP 命令不再是受支持产品接口，将由
+> ITER-0007 删除。Electron 只保留 Main → private UDS sidecar 和 bundled stdio MCP companion。
+> 内容暂留用于实施盘点，不应复制到新部署。
 
-```text
-http://127.0.0.1:8000/docs
-http://127.0.0.1:8000/openapi.json
+本页的 HTTP 示例只适用于 legacy Docker/native browser 配置。Electron desktop 不公开
+localhost HTTP 服务：renderer 的权威接口是 `desktop/src/contracts.ts`、preload facade 和
+Main 的 route/schema/response allowlist；私有 sidecar/provider endpoint 不是用户 API。
+两种配置的完整边界见[系统设计](17-system-design.md)。
+
+Legacy 示例先显式设置 API base，避免写操作意外命中另一个默认端口实例：
+
+```bash
+LCF_API_BASE="http://127.0.0.1:8000"
 ```
+
+这只是未托管/default-port 示例。受管或自定义端口实例必须改用
+[运维手册中从 `.lcf/runtime.env` 校验得到的值](08-operations.md#fifo取消与重试)，不要猜
+`:8000`。字段以目标实例的 `${LCF_API_BASE}/docs` 和 `${LCF_API_BASE}/openapi.json` 为最终
+依据。
 
 ## API 约定
 
@@ -19,7 +32,7 @@ http://127.0.0.1:8000/openapi.json
 ## Health
 
 ```bash
-curl --fail http://127.0.0.1:8000/api/health
+curl --fail "${LCF_API_BASE}/api/health"
 ```
 
 当前 health 返回 API 版本，以及 QMD 的 `enabled/available/hybrid_enabled`；它不探测 Wiki 可写性或 Ollama。生产部署应扩展 readyness，把 generator 离线报告为 degraded，而不是让旧文档查询整体 unhealthy。
@@ -29,7 +42,7 @@ curl --fail http://127.0.0.1:8000/api/health
 ### 列表
 
 ```bash
-curl --fail http://127.0.0.1:8000/api/libraries | jq
+curl --fail "${LCF_API_BASE}/api/libraries" | jq
 ```
 
 ### 创建
@@ -42,7 +55,7 @@ curl --fail-with-body \
     "slug": "acme-widget",
     "source": "https://github.com/acme/widget.git"
   }' \
-  http://127.0.0.1:8000/api/libraries
+  "${LCF_API_BASE}/api/libraries"
 ```
 
 服务返回内部 `id`、`slug` 与 `/local/...` 形式的 `context7_id`。再用内部 id/slug 发起 ingest。
@@ -55,14 +68,14 @@ curl --fail-with-body \
 curl --fail-with-body -X POST \
   -H 'Content-Type: application/json' \
   -d '{"version":"v1.4.0","ref":"v1.4.0","provider":"auto","auto_publish":false}' \
-  "http://127.0.0.1:8000/api/libraries/LIBRARY_ID/ingest"
+  "${LCF_API_BASE}/api/libraries/LIBRARY_ID/ingest"
 ```
 
 轮询：
 
 ```bash
 curl --fail \
-  "http://127.0.0.1:8000/api/jobs/JOB_ID" | jq
+  "${LCF_API_BASE}/api/jobs/JOB_ID" | jq
 ```
 
 响应包含 `queue_position`、`cancellable` 与 `retryable`。任务持久保存在 SQLite FIFO；
@@ -74,10 +87,10 @@ curl --fail \
 
 ```bash
 curl --fail-with-body -X POST \
-  "http://127.0.0.1:8000/api/jobs/JOB_ID/cancel" | jq
+  "${LCF_API_BASE}/api/jobs/JOB_ID/cancel" | jq
 
 curl --fail-with-body -X POST \
-  "http://127.0.0.1:8000/api/jobs/JOB_ID/retry" | jq
+  "${LCF_API_BASE}/api/jobs/JOB_ID/retry" | jq
 ```
 
 queued 可立即取消；running 先进入 `cancelling`，在安全检查点变为 `cancelled`。只有
@@ -91,13 +104,13 @@ Web 的 re-ingest 表单要求操作者重新显式选择 `provider`、`ref` 和
 
 ```bash
 curl --fail \
-  "http://127.0.0.1:8000/api/libraries/LIBRARY_ID/pages?version=v1.4.0"
+  "${LCF_API_BASE}/api/libraries/LIBRARY_ID/pages?version=v1.4.0"
 
 curl --fail \
-  "http://127.0.0.1:8000/api/libraries/LIBRARY_ID/graph?version=v1.4.0"
+  "${LCF_API_BASE}/api/libraries/LIBRARY_ID/graph?version=v1.4.0"
 
 curl --fail \
-  "http://127.0.0.1:8000/api/libraries/LIBRARY_ID/proposals"
+  "${LCF_API_BASE}/api/libraries/LIBRARY_ID/proposals"
 ```
 
 当前图谱只包含 `library → version → page → cited source`，边类型为 `has-version/contains/cites`，都是已发布元数据。未来若增加导入/调用或模型推断关系，应添加 `provenance=extractor/wiki/inferred`，不能把推断伪装成编译器事实。
@@ -106,19 +119,19 @@ curl --fail \
 
 ```bash
 curl --fail-with-body -X POST \
-  "http://127.0.0.1:8000/api/libraries/LIBRARY_ID/lint"
+  "${LCF_API_BASE}/api/libraries/LIBRARY_ID/lint"
 ```
 
 ### publish/reject
 
 ```bash
 curl --fail-with-body -X POST \
-  "http://127.0.0.1:8000/api/proposals/PROPOSAL_ID/publish"
+  "${LCF_API_BASE}/api/proposals/PROPOSAL_ID/publish"
 
 curl --fail-with-body -X POST \
   -H 'Content-Type: application/json' \
   -d '{"reason":"source reference does not support the claim"}' \
-  "http://127.0.0.1:8000/api/proposals/PROPOSAL_ID/reject"
+  "${LCF_API_BASE}/api/proposals/PROPOSAL_ID/reject"
 ```
 
 单页 publish 会把该页写入 Git/SQLite 暂存物化，但不会立刻切默认版本；只有同一版本全部
@@ -133,31 +146,31 @@ proposal 都 published 且没有 rejected 时，最后一次批准才原子激�
 
 ```bash
 # 查看 worker 活动与 queued_count
-curl --fail http://127.0.0.1:8000/api/jobs/active | jq
+curl --fail "${LCF_API_BASE}/api/jobs/active" | jq
 
 # 查看 queue/provider/embedding 综合状态
-curl --fail http://127.0.0.1:8000/api/system/status | jq
+curl --fail "${LCF_API_BASE}/api/system/status" | jq
 
 # 查看全局 provider/embedding 设置
-curl --fail http://127.0.0.1:8000/api/settings | jq
+curl --fail "${LCF_API_BASE}/api/settings" | jq
 
 # 备份前停止接收新 ingest；active_count 必须为 0
 curl --fail -X POST \
-  http://127.0.0.1:8000/api/admin/ingest/drain | jq
+  "${LCF_API_BASE}/api/admin/ingest/drain" | jq
 
 # 备份未停止 API 时重新开放
 curl --fail -X POST \
-  http://127.0.0.1:8000/api/admin/ingest/resume | jq
+  "${LCF_API_BASE}/api/admin/ingest/resume" | jq
 
 # 只重扫失去 runtime owner 的 running/cancelling；queued 保留
 curl --fail -X POST \
-  http://127.0.0.1:8000/api/admin/jobs/recover-orphans | jq
+  "${LCF_API_BASE}/api/admin/jobs/recover-orphans" | jq
 
 # 创建全局 embedding rebuild（进入同一 FIFO，不调用 LLM）
 curl --fail-with-body -X POST \
   -H 'Content-Type: application/json' \
   -d '{}' \
-  http://127.0.0.1:8000/api/rebuilds | jq
+  "${LCF_API_BASE}/api/rebuilds" | jq
 ```
 
 模型目录由 `GET /api/embedding/models` 返回，`PATCH /api/settings` 使用 revision 做乐观并发。
@@ -179,7 +192,7 @@ curl --fail-with-body \
     "query": "create a client with a custom timeout",
     "limit": 5
   }' \
-  http://127.0.0.1:8000/api/query | jq
+  "${LCF_API_BASE}/api/query" | jq
 ```
 
 当前响应示例：
@@ -218,7 +231,7 @@ embedding profile 的 active/desired model 与 corpus/indexed revision 全部一
 
 ## MCP
 
-endpoint：
+Legacy endpoint：
 
 ```text
 POST http://127.0.0.1:8001/mcp
@@ -299,12 +312,17 @@ codex mcp list
 
 不同客户端的 Streamable HTTP 字段名可能不同，请以客户端当前文档为准。
 
+Desktop 使用 bundled stdio companion → Electron Main → private sidecar，不使用上述 URL。
+它要求 App 已运行、每连接 UI 授权，并且同样只公开两个工具；设置页的一键 Codex onboarding
+只对 packaged `/Applications` 应用开放。见
+[desktop MCP 协议](development/mcp-companion-protocol.md)。
+
 ## 信任边界
 
-- MCP 进程不挂载 Codex/OpenAI/Ollama 凭据。
-- MCP 只需要访问 API；默认只读。
+- Legacy MCP 进程不挂载 Codex/OpenAI/Ollama 凭据，只访问 API；
+- Desktop companion 不获得 Python/QMD token、原始路径、provider 或更新能力；
 - API 的 publish/reject 不通过 MCP 暴露，避免任意代理写知识库。
-- 当前只支持受信任 localhost 单用户。对非 localhost/共享部署，必须先在反向代理添加身份认证、
+- Legacy 当前只支持受信任 localhost 单用户。对非 localhost/共享部署，必须先在反向代理添加身份认证、
   TLS、library ACL、速率限制、请求大小和总/逐页响应字节限制。
 - HTTP `limit<=30`、Web/MCP timeout 只约束命中数或等待时间；当前 query/MCP 仍可返回完整
   Markdown，不能把这些值当作共享服务的 response-body guarantee。

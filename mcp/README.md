@@ -1,14 +1,27 @@
 # Local Context Forge MCP
 
+本目录的 Python gateway 是 **legacy HTTP/Docker 路径**，不是 Electron 包内的
+MCP companion；它已 deprecated/unsupported，不能用于新 client 配置，并将在 ITER-0007
+中整体删除。桌面版 companion 源码位于 `desktop/companion/`，构建时暂存到
+`desktop/generated/companion/` 后随 App 打包。它由 Codex/Cursor MCP host 作为
+Node stdio 子进程启动，经 Main-owned MCP bridge UDS（`mcp.sock`）访问运行中的
+应用；该 socket 与检索 worker 使用的 `broker.sock` 相互独立。它不需要也不应
+配置 `BACKEND_URL`。两种模式的合同和信任边界见
+[`docs/06-api-and-mcp.md`](../docs/06-api-and-mcp.md) 与
+[`docs/17-system-design.md`](../docs/17-system-design.md)。
+
 This gateway deliberately exposes the same two tool names used by Context7:
 
 - `resolve-library-id(libraryName, query)`
 - `query-docs(libraryId, query)`
 
-It delegates retrieval to the backend so every result comes from a published
-Wiki page and includes the source commit plus line-level evidence.
+`resolve-library-id` returns published library/version metadata.
+`query-docs` delegates retrieval so every hit comes from a published Wiki page
+and can include that page's complete Markdown, together with the source commit
+and line-level evidence. Treat the MCP host and its model service as an external
+data recipient, not as a renderer-confidential surface.
 
-For a local stdio client:
+For a legacy local stdio client:
 
 First install the gateway into the project virtual environment:
 
@@ -31,7 +44,7 @@ First install the gateway into the project virtual environment:
 }
 ```
 
-For Docker or another network client:
+For legacy Docker or another explicitly protected network client:
 
 ```bash
 BACKEND_URL=http://api:8000 \

@@ -10,6 +10,7 @@ import {
 import { ApiError, api } from "./api";
 import { Icon, type IconName } from "./components/Icon";
 import { MarkdownView } from "./components/MarkdownView";
+import { isDesktopRuntime } from "./desktopBridge";
 import type {
   AppSettings,
   EmbeddingModel,
@@ -157,7 +158,7 @@ function LoadingRows({ count = 3 }: { count?: number }) {
   return (
     <div className="loading-rows" aria-label="正在载入" aria-busy="true">
       {Array.from({ length: count }).map((_, index) => (
-        <span key={index} style={{ width: `${94 - index * 9}%` }} />
+        <span key={index} />
       ))}
     </div>
   );
@@ -581,6 +582,7 @@ export function Overview({
   onIngest: (library: Library) => void;
   onNavigate: (view: View) => void;
 }) {
+  const desktopRuntime = isDesktopRuntime();
   const activeJobs = jobs.filter(isActiveJob);
   const failedJobs = jobs.filter((job) => job.status.toLowerCase() === "failed");
   const fallbackChecks = [
@@ -666,7 +668,14 @@ export function Overview({
           <ol>
             <li>
               <span>1</span>
-              <div><strong>添加仓库</strong><p>粘贴 Git 地址或填写本地目录。</p></div>
+              <div>
+                <strong>添加仓库</strong>
+                <p>
+                  {desktopRuntime
+                    ? "粘贴 GitHub HTTPS 仓库地址。"
+                    : "粘贴 Git 地址或填写本地目录。"}
+                </p>
+              </div>
             </li>
             <li>
               <span>2</span>
@@ -691,7 +700,9 @@ export function Overview({
           </header>
           {loading ? <LoadingRows /> : !libraries.length ? (
             <EmptyState icon="git" title="尚无仓库" action={<button className="button button--small" onClick={onCreate}>添加第一个仓库</button>}>
-              本地目录和远程 Git 地址都可以。
+              {desktopRuntime
+                ? "当前桌面源码版本仅接受 GitHub HTTPS 仓库地址。"
+                : "本地目录和远程 Git 地址都可以。"}
             </EmptyState>
           ) : (
             <div className="compact-list">
@@ -781,6 +792,7 @@ function Repositories({
   onRebuild: (library: Library) => void;
   rebuildingLibraryId: string;
 }) {
+  const desktopRuntime = isDesktopRuntime();
   return (
     <div className="page">
       <PageHeader
@@ -792,7 +804,9 @@ function Repositories({
       <section className="panel">
         {loading ? <LoadingRows count={4} /> : !libraries.length ? (
           <EmptyState icon="git" title="还没有仓库" action={<button className="button button--primary" onClick={onCreate}>提交第一个仓库</button>}>
-            支持 imports 允许目录中的本地仓库以及受信任的 HTTPS Git 地址。
+            {desktopRuntime
+              ? "当前桌面源码版本仅接受 github.com 的 HTTPS 仓库地址；本地目录授权将在后续里程碑提供。"
+              : "支持 imports 允许目录中的本地仓库以及受信任的 HTTPS Git 地址。"}
           </EmptyState>
         ) : (
           <div className="repository-grid">
@@ -891,12 +905,18 @@ function JobsWorkspace({
                       <strong className="phase-label">{job.phase || job.message || "等待调度"}</strong>
                       <div
                         className="progress"
-                        role="progressbar"
-                        aria-label={`${job.id} 任务进度`}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={job.progress === undefined ? undefined : Math.round(job.progress)}
-                      ><span><i style={{ width: `${Math.min(100, Math.max(2, job.progress ?? 0))}%` }} /></span><small>{job.progress === undefined ? "—" : `${Math.round(job.progress)}%`}</small></div>
+                      >
+                        <progress
+                          aria-label={`${job.id} 任务进度`}
+                          max={100}
+                          value={
+                            job.progress === undefined
+                              ? undefined
+                              : Math.min(100, Math.max(0, job.progress))
+                          }
+                        />
+                        <small>{job.progress === undefined ? "—" : `${Math.round(job.progress)}%`}</small>
+                      </div>
                     </td>
                     <td><StatusPill status={job.status} /></td>
                     <td>{formatTime(job.updatedAt || job.createdAt)}</td>
@@ -1468,6 +1488,7 @@ function CreateLibraryDialog({
   const [ingestNow, setIngestNow] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const desktopRuntime = isDesktopRuntime();
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1486,8 +1507,25 @@ function CreateLibraryDialog({
   return (
     <Dialog title="添加代码仓库" onClose={onClose}>
       <form className="form-stack" onSubmit={submit}>
-        <p className="dialog-intro">粘贴受信任的 HTTPS Git 地址；本地仓库请先放入安装目录的 imports，再填写容器路径。添加后可以立即开始采集。</p>
-        <label className="field"><span>仓库地址或 imports 路径 <b>*</b></span><input autoFocus required value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://github.com/org/repo.git 或 /imports/project" /></label>
+        <p className="dialog-intro">
+          {desktopRuntime
+            ? "当前桌面源码版本仅接受 https://github.com/<owner>/<repository>[.git]，不接受凭据、查询参数、本地路径或其他主机。添加后可以立即开始采集。"
+            : "粘贴受信任的 HTTPS Git 地址；本地仓库请先放入安装目录的 imports，再填写容器路径。添加后可以立即开始采集。"}
+        </p>
+        <label className="field">
+          <span>{desktopRuntime ? "GitHub HTTPS 仓库地址" : "仓库地址或 imports 路径"} <b>*</b></span>
+          <input
+            autoFocus
+            required
+            value={sourceUrl}
+            onChange={(event) => setSourceUrl(event.target.value)}
+            placeholder={
+              desktopRuntime
+                ? "https://github.com/org/repo.git"
+                : "https://github.com/org/repo.git 或 /imports/project"
+            }
+          />
+        </label>
         <label className="field"><span>显示名称（可选）</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="不填则从仓库地址推断" /></label>
         <details className="form-advanced"><summary>采集选项</summary><div>
           <label className="field"><span>分支、标签或提交</span><input value={ref} onChange={(event) => setRef(event.target.value)} /></label>

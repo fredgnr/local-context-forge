@@ -1,9 +1,120 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, formatApiError, normalizeJob } from "./api";
+import type { LocalContextForgeBridge } from "./desktopBridge";
 
 afterEach(() => {
+  delete window.localContextForge;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+function installDesktopBridge(
+  request: LocalContextForgeBridge["api"]["request"]
+) {
+  window.localContextForge = { version: "1.0", api: { request } };
+}
+
+describe("API transports", () => {
+  it("keeps browser and Docker deployments on fetch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"status":"ok"}', {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.health()).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/health");
+  });
+
+  it("uses the typed desktop bridge with parsed JSON and route timeout", async () => {
+    const bridgeRequest = vi.fn().mockResolvedValue({
+      status: 202,
+      body: { id: "desktop-job", status: "queued" }
+    });
+    const fetchMock = vi.fn();
+    installDesktopBridge(bridgeRequest);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      api.ingest("library-a", {
+        ref: "main",
+        generator: "mock",
+        version: "1.0.0"
+      })
+    ).resolves.toMatchObject({ id: "desktop-job", status: "queued" });
+
+    expect(bridgeRequest).toHaveBeenCalledWith({
+      method: "POST",
+      path: "/api/libraries/library-a/ingest",
+      body: {
+        ref: "main",
+        provider: "mock",
+        version: "1.0.0"
+      },
+      timeoutMs: 60_000
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never falls back to fetch when the desktop bridge rejects", async () => {
+    const bridgeError = new Error("sidecar unavailable");
+    const fetchMock = vi.fn();
+    installDesktopBridge(vi.fn().mockRejectedValue(bridgeError));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.health()).rejects.toBe(bridgeError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves desktop response status and never retries through fetch", async () => {
+    const fetchMock = vi.fn();
+    installDesktopBridge(
+      vi.fn().mockResolvedValue({
+        status: 409,
+        body: { detail: "Settings revision changed" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await api.settings().catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 409,
+      message: "Settings revision changed"
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the desktop bridge shape is invalid", async () => {
+    const fetchMock = vi.fn();
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: {}
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.health()).rejects.toThrow("桌面 API bridge 不可用");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("caps long desktop operations at the frozen sidecar deadline", async () => {
+    const bridgeRequest = vi.fn().mockResolvedValue({
+      status: 200,
+      body: { query: "needle", engine: "qmd", results: [] }
+    });
+    installDesktopBridge(bridgeRequest);
+
+    await api.query({ libraryId: "library-a", query: "needle" });
+
+    expect(bridgeRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 120_000 })
+    );
+  });
 });
 
 describe("API contract normalization", () => {

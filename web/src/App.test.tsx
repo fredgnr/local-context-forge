@@ -23,6 +23,7 @@ const libraries: Library[] = [
 
 afterEach(() => {
   cleanup();
+  delete window.localContextForge;
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -147,6 +148,31 @@ describe("operational states", () => {
       screen.getByText("ValidationError: source line is outside the file")
     ).not.toBeNull();
     expect(screen.getByText(/显式选择 provider、ref/)).not.toBeNull();
+  });
+
+  it("describes the narrow GitHub source grant in desktop mode", () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
+    render(
+      <Overview
+        libraries={[]}
+        jobs={[]}
+        selectedLibraryId=""
+        loading={false}
+        onSelect={() => undefined}
+        onCreate={() => undefined}
+        onIngest={async () => undefined}
+        onNavigate={() => undefined}
+      />
+    );
+
+    expect(screen.getByText("粘贴 GitHub HTTPS 仓库地址。")).not.toBeNull();
+    expect(
+      screen.getByText("当前桌面源码版本仅接受 GitHub HTTPS 仓库地址。")
+    ).not.toBeNull();
+    expect(screen.queryByText("本地目录和远程 Git 地址都可以。")).toBeNull();
   });
 
   it("presents empty-wiki lint as neutral rather than passed", () => {

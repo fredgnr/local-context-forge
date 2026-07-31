@@ -38,6 +38,7 @@ from .utils import (
     utcnow,
 )
 from .validation import lint_published_wiki, validate_page
+from .version import APP_VERSION
 from .wiki import WikiError, WikiStore
 
 
@@ -655,7 +656,7 @@ class AppService:
         return {
             "ready": ready,
             "initialized": True,
-            "version": "0.2.0",
+            "version": APP_VERSION,
             "queue": {
                 "queued": queue.get("queued", 0),
                 "running": queue.get("running", 0),

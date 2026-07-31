@@ -1,0 +1,35 @@
+appId: dev.local-context-forge.desktop
+productName: Local Context Forge
+asar: true
+npmRebuild: false
+electronVersion: 43.2.0
+afterPack: scripts/afterPack.cjs
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+  - README.md
+extraResources:
+  - from: resources/renderer
+    to: renderer
+    filter:
+      - "**/*"
+  - from: resources/sidecar
+    to: sidecar
+    filter:
+      - "**/*"
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  identity: Local Context Forge Self Signed
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+artifactName: "${productName}-${version}-${arch}.${ext}"

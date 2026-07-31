@@ -1,0 +1,12 @@
+{
+  "productVersion": "0.3.0-alpha.1",
+  "pythonDistributionVersion": "0.3.0a1",
+  "desktopProtocol": {
+    "major": 1,
+    "minor": 0
+  },
+  "databaseSchema": 3,
+  "runnerTask": "wiki_v1",
+  "runnerSchema": 1,
+  "mcpContract": 1
+}

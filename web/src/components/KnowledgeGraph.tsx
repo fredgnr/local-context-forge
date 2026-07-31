@@ -171,7 +171,14 @@ export function KnowledgeGraph({
           .filter(([name]) => name !== "default")
           .map(([name, color]) => (
             <span key={name}>
-              <i style={{ backgroundColor: color }} /> {name}
+              <svg
+                aria-hidden="true"
+                className="graph-legend__swatch"
+                viewBox="0 0 8 8"
+              >
+                <circle cx="4" cy="4" r="4" fill={color} />
+              </svg>{" "}
+              {name}
             </span>
           ))}
       </div>

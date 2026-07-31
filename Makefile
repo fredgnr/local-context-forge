@@ -1,7 +1,12 @@
 SHELL := /bin/sh
 
 .PHONY: help install doctor status uninstall bootstrap up down stop restart build ps logs smoke demo backup restore \
-	qmd-status qmd-embed qmd-embed-native dev-native dev-api dev-mcp dev-web test handbook
+	qmd-status qmd-embed qmd-embed-native dev-native dev-api dev-mcp dev-web test handbook \
+	ci-source ci-python-install ci-python ci-ipc-source ci-web \
+	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci
+
+UV ?= uv
+NPM ?= npm
 
 help:
 	@printf '%s\n' \
@@ -18,6 +23,11 @@ help:
 	  'make qmd-embed   Build local hybrid-search embeddings' \
 	  'make qmd-embed-native  Ask the current API to embed (first verify it is native)' \
 	  'make dev-native  Start native api/mcp/web together' \
+	  'make ci-source   Run all Python, Web and desktop source-mode CI gates' \
+	  'make ci-python   Run frozen Python source tests and repository checks' \
+	  'make ci-ipc-source  Run the source-mode Python desktop IPC contract' \
+	  'make ci-web      Install and run Web source tests, typecheck and build' \
+	  'make desktop-ci  Install and run desktop tests, typecheck and build' \
 	  'make handbook    Build the printable Chinese PDF handbook' \
 	  'make logs        Follow service logs' \
 	  'make down        Remove containers, keep ./data'
@@ -98,6 +108,44 @@ test:
 	cd web && npm test
 	cd web && npm run typecheck
 	cd web && npm run build
+
+ci-source: ci-python ci-web desktop-ci
+
+ci-python-install:
+	cd backend && $(UV) sync --frozen --extra dev
+	$(UV) pip install --python backend/.venv/bin/python --editable ./mcp
+
+ci-python: ci-python-install
+	cd backend && .venv/bin/pytest
+	backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .
+	backend/.venv/bin/python tools/check_version_sync.py
+	backend/.venv/bin/python tools/check_markdown_links.py
+
+ci-ipc-source: ci-python-install
+	cd backend && .venv/bin/pytest ../tests/backend/test_desktop_transport.py
+
+ci-web:
+	cd web && $(NPM) ci
+	cd web && $(NPM) test
+	cd web && $(NPM) run typecheck
+	cd web && $(NPM) run build
+
+desktop-install:
+	cd desktop && ELECTRON_SKIP_BINARY_DOWNLOAD=1 $(NPM) ci --ignore-scripts
+
+desktop-test:
+	cd desktop && $(NPM) test
+
+desktop-typecheck:
+	cd desktop && $(NPM) run typecheck
+
+desktop-build:
+	cd desktop && $(NPM) run build
+
+desktop-ci: desktop-install
+	+$(MAKE) desktop-test
+	+$(MAKE) desktop-typecheck
+	+$(MAKE) desktop-build
 
 handbook:
 	python3 tools/build_handbook.py

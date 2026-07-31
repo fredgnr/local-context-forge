@@ -19,7 +19,8 @@ export type ProviderDiagnosticCode =
   | "cursor-not-installed"
   | "cursor-not-authenticated"
   | "cursor-installation-unsupported"
-  | "cursor-unavailable";
+  | "cursor-unavailable"
+  | "result-uncertain";
 
 export interface CursorFallbackConsent {
   readonly subject: "cursor_cli_fallback";
@@ -101,4 +102,12 @@ export interface ProviderAttemptView {
   readonly fallbackReason?: ProviderSelection["fallbackReason"];
   readonly diagnostic?: ProviderDiagnosticCode;
   readonly requiresExplicitRetry: boolean;
+}
+
+export interface ProviderExecutionCommitReceipt {
+  readonly attemptId: string;
+  readonly claimId: string;
+  readonly selectedProvider: ProviderId;
+  readonly executableSha256: string;
+  readonly executionCommittedAt: string;
 }

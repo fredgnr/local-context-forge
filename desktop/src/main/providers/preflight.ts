@@ -19,6 +19,7 @@ export interface BoundedCommandResult {
   readonly stderr: string;
   readonly timedOut?: boolean;
   readonly spawnErrorCode?: string;
+  readonly outputLimitExceeded?: boolean;
 }
 
 export interface ProviderPreflightRunner {
@@ -72,6 +73,7 @@ export async function preflightCodex(
   if (
     version.timedOut ||
     version.spawnErrorCode ||
+    version.outputLimitExceeded ||
     version.exitCode !== 0
   ) {
     return unavailable("codex_cli");
@@ -93,7 +95,11 @@ export async function preflightCodex(
       outputLimitBytes: PREFLIGHT_OUTPUT_LIMIT
     }
   );
-  if (status.timedOut || status.spawnErrorCode) {
+  if (
+    status.timedOut ||
+    status.spawnErrorCode ||
+    status.outputLimitExceeded
+  ) {
     return unavailable("codex_cli");
   }
   return status.exitCode === 0
@@ -138,6 +144,7 @@ export async function preflightCursor(
   if (
     version.timedOut ||
     version.spawnErrorCode ||
+    version.outputLimitExceeded ||
     version.exitCode !== 0
   ) {
     return unavailable("cursor_cli");
@@ -159,7 +166,11 @@ export async function preflightCursor(
       outputLimitBytes: PREFLIGHT_OUTPUT_LIMIT
     }
   );
-  if (status.timedOut || status.spawnErrorCode) {
+  if (
+    status.timedOut ||
+    status.spawnErrorCode ||
+    status.outputLimitExceeded
+  ) {
     return unavailable("cursor_cli");
   }
   return status.exitCode === 0

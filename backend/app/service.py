@@ -90,11 +90,18 @@ def _status_error(value: object, settings: Settings) -> str | None:
 
 
 class AppService:
-    def __init__(self, settings: Settings | None = None):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        retriever: Any | None = None,
+    ):
         self.settings = settings or Settings.from_env()
         self.settings.ensure_directories()
         self.db = Database(self.settings.database_path)
-        self.retriever = QmdRetriever(self.settings)
+        self.retriever = (
+            retriever if retriever is not None else QmdRetriever(self.settings)
+        )
         self.instance_id = _identifier()
         self._runtime_lock_context = filesystem_lock(
             lock_path(self.settings.locks_dir, self.instance_id, "runtime"),
@@ -1075,7 +1082,7 @@ class AppService:
             (library["id"],),
         )
         versions = self.db.fetchall(
-            "SELECT id, version FROM versions WHERE library_id = ?",
+            "SELECT id, version, status FROM versions WHERE library_id = ?",
             (library["id"],),
         )
         job_ids = {str(item["id"]) for item in jobs}
@@ -1089,6 +1096,18 @@ class AppService:
         )
         with self.db.transaction() as connection:
             connection.execute("DELETE FROM libraries WHERE id = ?", (library["id"],))
+            if any(item["status"] == "published" for item in versions):
+                connection.execute(
+                    """
+                    UPDATE embedding_state
+                    SET status = 'stale',
+                        corpus_revision = corpus_revision + 1,
+                        error = 'Published corpus changed; rebuild required',
+                        updated_at = ?
+                    WHERE id = 1
+                    """,
+                    (utcnow(),),
+                )
         removed_paths: list[str] = []
         missing_paths: list[str] = []
         failed_paths: list[dict[str, str]] = []
@@ -1139,7 +1158,12 @@ class AppService:
                     failed_paths.append(
                         {"path": str(target), "error": str(error)[:1000]}
                     )
-            qmd_results = [self.retriever.remove_collection(name) for name in qmd_names]
+            if not getattr(self.retriever, "desktop_broker", False):
+                qmd_results = [
+                    self.retriever.remove_collection(name) for name in qmd_names
+                ]
+        if getattr(self.retriever, "desktop_broker", False):
+            qmd_results = [self.reconcile_desktop_retrieval()]
         return {
             "deleted": True,
             "id": library["id"],
@@ -2406,6 +2430,16 @@ class AppService:
                     blocking=True,
                     timeout_seconds=60,
                 ):
+                    proposal_before_publish = self.get_proposal(proposal_id)
+                    version_before_publish = self.db.fetchone(
+                        "SELECT status FROM versions WHERE id = ?",
+                        (proposal_before_publish["version_id"],),
+                    )
+                    updates_published_version = bool(
+                        proposal_before_publish["status"] != "published"
+                        and version_before_publish
+                        and version_before_publish["status"] == "published"
+                    )
                     result = self._publish_proposal_locked(
                         proposal_id,
                         reindex=False,
@@ -2417,16 +2451,35 @@ class AppService:
                         version_id=str(current["version_id"]),
                         version=str(current["version"]),
                     )
+                    if updates_published_version:
+                        with self.db.transaction() as connection:
+                            connection.execute(
+                                """
+                                UPDATE embedding_state
+                                SET status = 'stale',
+                                    corpus_revision = corpus_revision + 1,
+                                    error = 'Published corpus changed; rebuild required',
+                                    updated_at = ?
+                                WHERE id = 1
+                                """,
+                                (utcnow(),),
+                            )
                     library = self.resolve_library(str(current["library_id"]))
                     result["activation"] = activation
                     result["index"] = (
                         self._index_version(library, str(current["version"]))
-                        if activation["activated"] and reindex
+                        if (
+                            (activation["activated"] or updates_published_version)
+                            and reindex
+                        )
                         else {
                             "indexed": False,
                             "reason": (
                                 "deferred"
-                                if activation["activated"]
+                                if (
+                                    activation["activated"]
+                                    or updates_published_version
+                                )
                                 else "version-not-active"
                             ),
                         }
@@ -2829,7 +2882,43 @@ class AppService:
                 ) from error
         return published_count
 
+    def _published_retrieval_collections(
+        self,
+    ) -> tuple[list[tuple[Path, str]], int]:
+        rows = self.db.fetchall(
+            """
+            SELECT versions.version, libraries.slug AS library_slug
+            FROM versions
+            JOIN libraries ON libraries.id = versions.library_id
+            WHERE versions.status = 'published'
+            ORDER BY libraries.slug, versions.published_at, versions.version
+            """
+        )
+        collections: list[tuple[Path, str]] = []
+        for row in rows:
+            wiki = WikiStore(self.settings, str(row["library_slug"]))
+            collections.append(
+                (
+                    wiki.version_root(str(row["version"])),
+                    collection_name(
+                        str(row["library_slug"]), str(row["version"])
+                    ),
+                )
+            )
+        state = self.db.fetchone(
+            "SELECT corpus_revision FROM embedding_state WHERE id = 1"
+        )
+        return collections, int(state["corpus_revision"] if state else 0)
+
+    def reconcile_desktop_retrieval(self) -> dict[str, Any]:
+        if not getattr(self.retriever, "desktop_broker", False):
+            return {"indexed": False, "reason": "not-desktop-retrieval"}
+        collections, revision = self._published_retrieval_collections()
+        return self.retriever.reconcile(collections, revision=revision)
+
     def _index_version(self, library: dict[str, Any], version: str) -> dict[str, Any]:
+        if getattr(self.retriever, "desktop_broker", False):
+            return self.reconcile_desktop_retrieval()
         wiki = WikiStore(self.settings, library["slug"])
         return self.retriever.index(
             wiki.version_root(version),
@@ -3181,6 +3270,23 @@ class AppService:
                     ),
                 )
             )
+        if getattr(self.retriever, "desktop_broker", False):
+            all_collections, corpus_revision = (
+                self._published_retrieval_collections()
+            )
+            registrations, refresh = self.retriever.rebuild(
+                all_collections,
+                embed=False,
+                revision=corpus_revision,
+            )
+            return {
+                "library_id": library["id"] if library else None,
+                "requested_version": version,
+                "published_versions": len(all_collections),
+                "registrations": registrations,
+                "refresh": refresh,
+                "embedding_state_managed": False,
+            }
         target_corpus_revision: int | None = None
         if manage_embedding_state:
             with self.db.transaction() as connection:
@@ -3386,7 +3492,18 @@ class AppService:
                 else version or library.get("default_version") or ""
             )
             embedding = self.embedding_status()
-            if embedding["hybrid_ready"]:
+            if getattr(self.retriever, "desktop_broker", False):
+                engine, hits = self.retriever.query(
+                    pages,
+                    query=query,
+                    collection=collection_name(
+                        library["slug"], resolved_version
+                    ),
+                    limit=limit,
+                    hybrid=False,
+                    revision=int(embedding["corpus_revision"]),
+                )
+            elif embedding["hybrid_ready"]:
                 engine, hits = self.retriever.query(
                     pages,
                     query=query,

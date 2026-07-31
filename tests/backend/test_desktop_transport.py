@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -15,6 +16,7 @@ import pytest
 import app.factory as app_factory
 from app.cli import main as cli_main
 from app.config import Settings
+from app.db import SCHEMA_VERSION
 from app.desktop_session import (
     MAX_DESKTOP_REQUEST_BODY_BYTES,
     MAX_STARTUP_TOKEN_BYTES,
@@ -94,9 +96,13 @@ def test_factory_import_has_no_module_level_service_and_cli_is_explicit(
     doctor_status = cli_main(["doctor"])
     doctor = json.loads(capsys.readouterr().out)
     assert doctor_status == (0 if doctor["ok"] else 1)
-    assert doctor["checks"]["python_runtime"] == "ok"
+    assert doctor["checks"]["python_runtime"] == (
+        "ok"
+        if sys.version_info[:3] == (3, 13, 14)
+        else "requires-python-3.13.14"
+    )
     assert doctor["protocol"] == {"major": 1, "minor": 0}
-    assert doctor["schema_version"] == 3
+    assert doctor["schema_version"] == SCHEMA_VERSION
 
     project = tomllib.loads(
         (
@@ -150,11 +156,12 @@ def test_desktop_handshake_and_health_require_complete_headers(
         "protocol": {"major": 1, "minor": 0},
         "launch_id": LAUNCH_ID,
         "transport": "uds",
-        "schema_version": 3,
+        "schema_version": SCHEMA_VERSION,
         "capabilities": [
             "desktop-handshake",
             "health",
             "library-api",
+            "desktop-retrieval-v1",
         ],
     }
     assert health.status_code == 200

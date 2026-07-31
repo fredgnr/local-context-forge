@@ -25,12 +25,27 @@ class FakeChild extends EventEmitter {
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   readonly controlPipe = new PassThrough();
-  readonly stdio = [null, null, null, this.controlPipe] as const;
+  readonly capabilityPipe: PassThrough | undefined;
+  readonly stdio: readonly (null | PassThrough)[];
   readonly signals: Array<NodeJS.Signals | number | undefined> = [];
 
-  constructor(readonly exitsWhenKilled = true, pid: number | null = 101) {
+  constructor(
+    readonly exitsWhenKilled = true,
+    pid: number | null = 101,
+    withCapabilityPipe = false
+  ) {
     super();
     this.pid = pid === null ? undefined : pid;
+    this.capabilityPipe = withCapabilityPipe
+      ? new PassThrough()
+      : undefined;
+    this.stdio = [
+      null,
+      null,
+      null,
+      this.controlPipe,
+      ...(this.capabilityPipe ? [this.capabilityPipe] : [])
+    ];
   }
 
   kill(signal?: NodeJS.Signals | number): boolean {
@@ -65,7 +80,7 @@ const expectedHandshake = (
   protocol: { major: 1, minor: 0 },
   launch_id: connection.launchId,
   transport: "uds",
-  schema_version: 3,
+  schema_version: 4,
   capabilities: ["desktop-handshake", "health", "library-api"],
   ...overrides
 });
@@ -76,7 +91,7 @@ function supervisorOptions() {
     dataDir: "/private/data",
     appVersion: "0.3.0-alpha.1",
     sidecarVersion: "0.3.0-alpha.1",
-    schemaVersion: 3,
+    schemaVersion: 4,
     requiredCapabilities: [
       "desktop-handshake",
       "health",
@@ -93,6 +108,76 @@ afterEach(() => {
 });
 
 describe("SidecarSupervisor", () => {
+  it("sends the broker capability once through fd4, closes fd4, and keeps fd3 for liveness", async () => {
+    const child = new FakeChild(true, 101, true);
+    const capabilityBytes: Buffer[] = [];
+    child.capabilityPipe!.on("data", (chunk) =>
+      capabilityBytes.push(Buffer.from(chunk))
+    );
+    let brokerClosed = 0;
+    const spawnCalls: Array<{
+      args: readonly string[];
+      options: SpawnOptions;
+    }> = [];
+    const capability = "B".repeat(43);
+    const supervisor = new SidecarSupervisor(
+      {
+        ...supervisorOptions(),
+        retrievalBroker: {
+          createSession: async () => ({
+            socketPath: "/tmp/runtime/broker.sock",
+            capability,
+            close: async () => {
+              brokerClosed += 1;
+            }
+          })
+        }
+      },
+      {
+        validateExecutable: async () => undefined,
+        randomUUID: () => "00000000-0000-4000-8000-000000000001",
+        randomBytes: () => Buffer.alloc(32, 1),
+        createRuntime: async () => ({
+          directory: "/tmp/runtime",
+          socketPath: "/tmp/runtime/py.sock"
+        }),
+        inspectSocket: async () => "valid",
+        handshake: async (connection) => expectedHandshake(connection),
+        spawn: (_executable, args, options) => {
+          spawnCalls.push({ args, options });
+          return child as never;
+        },
+        cleanupRuntime: async () => undefined,
+        wait: async () => undefined,
+        now: () => 0
+      }
+    );
+
+    await expect(supervisor.start()).resolves.toMatchObject({ state: "ready" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(Buffer.concat(capabilityBytes).toString("utf8")).toBe(
+      `${capability}\n`
+    );
+    expect(child.capabilityPipe!.writableEnded).toBe(true);
+    expect(child.controlPipe.writableEnded).toBe(false);
+    expect(spawnCalls[0]!.options.stdio).toEqual([
+      "ignore",
+      "ignore",
+      "ignore",
+      "pipe",
+      "pipe"
+    ]);
+    expect(spawnCalls[0]!.args.slice(-4)).toEqual([
+      "--retrieval-broker-uds",
+      "/tmp/runtime/broker.sock",
+      "--retrieval-capability-fd",
+      "4"
+    ]);
+    expect(JSON.stringify(spawnCalls)).not.toContain(capability);
+    await supervisor.shutdown();
+    expect(brokerClosed).toBe(1);
+  });
+
   it("writes one unique framed token to fd3, keeps liveness open, and hides it from argv/env", async () => {
     const children: FakeChild[] = [];
     const spawnCalls: Array<{
@@ -510,6 +595,9 @@ describe("sidecar primitives", () => {
       expect(Buffer.byteLength(runtime.socketPath, "utf8")).toBeLessThanOrEqual(
         100
       );
+      expect(
+        Buffer.byteLength(path.join(runtime.directory, "broker.sock"), "utf8")
+      ).toBeLessThanOrEqual(100);
       expect((await lstat(runtime.directory)).mode & 0o777).toBe(0o700);
 
       const server = net.createServer();

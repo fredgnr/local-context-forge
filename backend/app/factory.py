@@ -37,9 +37,11 @@ class RejectRequest(BaseModel):
 def create_app(
     settings: Settings | None = None,
     desktop_session: DesktopSession | None = None,
+    retriever: Any | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(current_app: FastAPI) -> AsyncIterator[None]:
+        current_app.state.service.reconcile_desktop_retrieval()
         current_app.state.service.start_worker()
         try:
             yield
@@ -55,7 +57,7 @@ def create_app(
         ),
         lifespan=lifespan,
     )
-    application.state.service = AppService(settings)
+    application.state.service = AppService(settings, retriever=retriever)
     if desktop_session is None:
         origins = [
             item.strip()
@@ -112,6 +114,7 @@ def create_app(
                 "desktop-handshake",
                 "health",
                 "library-api",
+                "desktop-retrieval-v1",
             ],
         }
 
@@ -360,4 +363,3 @@ def create_app(
         return service(request).lint(library_id, version)
 
     return application
-

@@ -22,6 +22,11 @@ from .desktop_session import (
     prebound_unix_socket,
     read_startup_token,
 )
+from .desktop_retrieval import (
+    DesktopRetrievalClient,
+    DesktopRetriever,
+    read_broker_capability,
+)
 from .version import (
     APP_VERSION,
     DESKTOP_PROTOCOL_MAJOR,
@@ -42,6 +47,13 @@ def _parser() -> argparse.ArgumentParser:
     api.add_argument("--launch-id", required=True)
     api.add_argument("--token-fd", required=True, type=int, choices=(3,))
     api.add_argument("--data-dir", required=True, type=Path)
+    api.add_argument("--retrieval-broker-uds", required=True, type=Path)
+    api.add_argument(
+        "--retrieval-capability-fd",
+        required=True,
+        type=int,
+        choices=(4,),
+    )
 
     subparsers.add_parser("doctor", help="print a local sidecar diagnostic")
     subparsers.add_parser("version", help="print the product version")
@@ -61,6 +73,7 @@ def _desktop_settings(data_dir: Path) -> Settings:
         database_path=resolved_data_dir / "metadata.sqlite3",
         qmd_config_dir=resolved_data_dir / "qmd" / "config",
         qmd_cache_dir=resolved_data_dir / "qmd" / "cache",
+        qmd_hybrid_enabled=False,
         runner_dir=resolved_data_dir / "runner",
     )
 
@@ -71,20 +84,35 @@ def run_api(
     launch_id: str,
     token_fd: int,
     data_dir: Path,
+    retrieval_broker_uds: Path,
+    retrieval_capability_fd: int,
 ) -> int:
     """Run the desktop API without opening a TCP listener."""
 
-    if token_fd != 3:
+    if token_fd != 3 or retrieval_capability_fd != 4:
         raise DesktopTransportError("Startup token descriptor is invalid")
     token = read_startup_token(token_fd)
     watcher: ParentLivenessWatcher | None = None
     try:
+        capability = read_broker_capability(retrieval_capability_fd)
         session = DesktopSession(token=token, launch_id=launch_id)
         settings = _desktop_settings(data_dir)
+        retriever = DesktopRetriever(
+            DesktopRetrievalClient(
+                socket_path=retrieval_broker_uds,
+                capability=capability,
+                launch_id=launch_id,
+            ),
+            settings.wiki_dir,
+        )
 
         from .factory import create_app
 
-        application = create_app(settings, desktop_session=session)
+        application = create_app(
+            settings,
+            desktop_session=session,
+            retriever=retriever,
+        )
         config = uvicorn.Config(
             application,
             access_log=False,
@@ -93,11 +121,13 @@ def run_api(
             host=None,
             limit_concurrency=64,
             log_level="warning",
+            loop="asyncio",
             proxy_headers=False,
             server_header=False,
             timeout_graceful_shutdown=10,
             timeout_keep_alive=5,
             workers=1,
+            http="h11",
             ws="none",
         )
         server = uvicorn.Server(config)
@@ -129,7 +159,7 @@ def _doctor() -> int:
         else:
             probe.close()
             uds_available = True
-    python_compatible = sys.version_info[:2] == (3, 12)
+    python_compatible = sys.version_info[:3] == (3, 13, 14)
     ok = uds_available and python_compatible
     result = {
         "ok": ok,
@@ -145,7 +175,7 @@ def _doctor() -> int:
         "schema_version": SCHEMA_VERSION,
         "checks": {
             "python_runtime": (
-                "ok" if python_compatible else "requires-python-3.12"
+                "ok" if python_compatible else "requires-python-3.13.14"
             ),
             "unix_domain_sockets": (
                 "ok" if uds_available else "unavailable"
@@ -170,6 +200,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 launch_id=args.launch_id,
                 token_fd=args.token_fd,
                 data_dir=args.data_dir,
+                retrieval_broker_uds=args.retrieval_broker_uds,
+                retrieval_capability_fd=args.retrieval_capability_fd,
             )
         except DesktopTransportError:
             print(

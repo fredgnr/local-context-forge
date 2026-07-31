@@ -28,9 +28,14 @@ import {
   type RuntimeStatus
 } from "../contracts";
 import type { SidecarConnection } from "./apiProxy";
+import type {
+  RetrievalBrokerSession,
+  RetrievalBrokerSessionFactory
+} from "./retrievalBroker";
 
 const RUNTIME_DIRECTORY_NAME = "dev.local-context-forge.desktop";
 const SIDECAR_SOCKET_NAME = "py.sock";
+const BROKER_SOCKET_NAME = "broker.sock";
 const MAX_UDS_PATH_BYTES = 100;
 const HANDSHAKE_PATH = "/api/desktop/handshake";
 const HANDSHAKE_RESPONSE_LIMIT = 64 * 1024;
@@ -78,6 +83,8 @@ interface Session {
   runtime: RuntimePaths;
   child: SidecarChild;
   controlPipe: Writable;
+  capabilityPipe?: Writable;
+  brokerSession?: RetrievalBrokerSession;
   exit: Promise<void>;
   exited: boolean;
   processError: boolean;
@@ -91,6 +98,7 @@ export interface SidecarSupervisorOptions {
   sidecarVersion: string;
   schemaVersion: number;
   requiredCapabilities: readonly string[];
+  retrievalBroker?: RetrievalBrokerSessionFactory;
   tempRoot?: string;
   startupTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -189,14 +197,22 @@ export async function createPrivateRuntime(
   await verifyPrivateDirectory(directory);
   let socketPath = path.join(directory, SIDECAR_SOCKET_NAME);
 
-  if (Buffer.byteLength(socketPath, "utf8") > MAX_UDS_PATH_BYTES) {
+  if (
+    Buffer.byteLength(socketPath, "utf8") > MAX_UDS_PATH_BYTES ||
+    Buffer.byteLength(path.join(directory, BROKER_SOCKET_NAME), "utf8") >
+      MAX_UDS_PATH_BYTES
+  ) {
     await cleanupPrivateRuntime({ directory, socketPath });
     directory = await mkdtemp(path.join(canonicalTempRoot, "lcf-"));
     await verifyPrivateDirectory(directory);
     socketPath = path.join(directory, SIDECAR_SOCKET_NAME);
   }
 
-  if (Buffer.byteLength(socketPath, "utf8") > MAX_UDS_PATH_BYTES) {
+  if (
+    Buffer.byteLength(socketPath, "utf8") > MAX_UDS_PATH_BYTES ||
+    Buffer.byteLength(path.join(directory, BROKER_SOCKET_NAME), "utf8") >
+      MAX_UDS_PATH_BYTES
+  ) {
     await cleanupPrivateRuntime({ directory, socketPath });
     throw new SupervisorFailure("runtime-invalid");
   }
@@ -458,6 +474,21 @@ async function writeControlToken(pipe: Writable, token: string): Promise<void> {
   });
 }
 
+async function writeOneShotCapability(
+  pipe: Writable,
+  capability: string
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    pipe.end(`${capability}\n`, "utf8", (error?: Error | null) => {
+      if (error) {
+        reject(new SupervisorFailure("launch-failed"));
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
 export class SidecarSupervisor {
   private readonly dependencies: Required<SidecarSupervisorDependencies>;
   private readonly listeners = new Set<(status: RuntimeStatus) => void>();
@@ -582,6 +613,7 @@ export class SidecarSupervisor {
     this.updateStatus({ state: "starting", canRetry: false });
     let session: Session | undefined;
     let runtime: RuntimePaths | undefined;
+    let brokerSession: RetrievalBrokerSession | undefined;
     let untrackedChild: SidecarChild | undefined;
     try {
       if (
@@ -608,6 +640,10 @@ export class SidecarSupervisor {
         launchId,
         this.options.tempRoot ?? os.tmpdir()
       );
+      brokerSession = await this.options.retrievalBroker?.createSession(
+        launchId,
+        runtime.directory
+      );
       const args = [
         "api",
         "--uds",
@@ -617,7 +653,15 @@ export class SidecarSupervisor {
         "--token-fd",
         "3",
         "--data-dir",
-        this.options.dataDir
+        this.options.dataDir,
+        ...(brokerSession
+          ? [
+              "--retrieval-broker-uds",
+              brokerSession.socketPath,
+              "--retrieval-capability-fd",
+              "4"
+            ]
+          : [])
       ] as const;
       const child = this.dependencies.spawn(
         this.options.executablePath,
@@ -625,7 +669,13 @@ export class SidecarSupervisor {
         {
           shell: false,
           windowsHide: true,
-          stdio: ["ignore", "ignore", "ignore", "pipe"],
+          stdio: [
+            "ignore",
+            "ignore",
+            "ignore",
+            "pipe",
+            ...(brokerSession ? ["pipe" as const] : [])
+          ],
           env: buildSidecarEnvironment(process.env)
         }
       );
@@ -634,17 +684,33 @@ export class SidecarSupervisor {
       if (!controlPipe || typeof (controlPipe as Writable).write !== "function") {
         throw new SupervisorFailure("launch-failed");
       }
+      const capabilityPipe = brokerSession ? child.stdio[4] : undefined;
+      if (
+        brokerSession &&
+        (!capabilityPipe ||
+          typeof (capabilityPipe as Writable).write !== "function")
+      ) {
+        throw new SupervisorFailure("launch-failed");
+      }
 
       session = this.createSession(
         launchId,
         token,
         runtime,
         child,
-        controlPipe as Writable
+        controlPipe as Writable,
+        capabilityPipe as Writable | undefined,
+        brokerSession
       );
       untrackedChild = undefined;
       this.session = session;
       await writeControlToken(session.controlPipe, token);
+      if (session.capabilityPipe && session.brokerSession) {
+        await writeOneShotCapability(
+          session.capabilityPipe,
+          session.brokerSession.capability
+        );
+      }
       await this.waitUntilReady(session);
       if (session.exited) {
         throw new SupervisorFailure("sidecar-exited");
@@ -668,10 +734,12 @@ export class SidecarSupervisor {
       } else if (untrackedChild) {
         const termination = await this.terminateUntrackedChild(untrackedChild);
         if (runtime && termination.exited) {
+          await brokerSession?.close().catch(() => undefined);
           await this.dependencies.cleanupRuntime(runtime).catch(() => undefined);
         } else if (runtime) {
           this.unconfirmedChild = true;
           void termination.exit.then(async () => {
+            await brokerSession?.close().catch(() => undefined);
             await this.dependencies.cleanupRuntime(runtime!).catch(() => undefined);
             this.unconfirmedChild = false;
             if (!this.session) {
@@ -690,6 +758,7 @@ export class SidecarSupervisor {
           return this.getStatus();
         }
       } else if (runtime) {
+        await brokerSession?.close().catch(() => undefined);
         await this.dependencies.cleanupRuntime(runtime).catch(() => undefined);
       }
       if (this.session === session) {
@@ -705,7 +774,9 @@ export class SidecarSupervisor {
     token: string,
     runtime: RuntimePaths,
     child: SidecarChild,
-    controlPipe: Writable
+    controlPipe: Writable,
+    capabilityPipe?: Writable,
+    brokerSession?: RetrievalBrokerSession
   ): Session {
     const session: Session = {
       generation: ++this.generation,
@@ -714,6 +785,8 @@ export class SidecarSupervisor {
       runtime,
       child,
       controlPipe,
+      ...(capabilityPipe ? { capabilityPipe } : {}),
+      ...(brokerSession ? { brokerSession } : {}),
       exited: child.exitCode !== null,
       processError: false,
       intentionalStop: false,
@@ -760,6 +833,7 @@ export class SidecarSupervisor {
       // Keep a permanent, non-logging listener so no secret-bearing Error can
       // escape as an uncaught exception.
       controlPipe.on("error", processError);
+      capabilityPipe?.on("error", processError);
       if (session.exited) {
         resolve();
       } else {
@@ -852,10 +926,12 @@ export class SidecarSupervisor {
     }
     session.token = "";
     if (session.exited) {
+      await session.brokerSession?.close().catch(() => undefined);
       await this.dependencies.cleanupRuntime(session.runtime);
       return true;
     }
     void session.exit.then(async () => {
+      await session.brokerSession?.close().catch(() => undefined);
       await this.dependencies.cleanupRuntime(session.runtime).catch(() => undefined);
       if (this.session === session) {
         this.session = undefined;
@@ -913,6 +989,7 @@ export class SidecarSupervisor {
       session.controlPipe.end();
     }
     session.token = "";
+    await session.brokerSession?.close().catch(() => undefined);
     await this.dependencies.cleanupRuntime(session.runtime).catch(() => undefined);
     if (this.session === session) {
       this.session = undefined;

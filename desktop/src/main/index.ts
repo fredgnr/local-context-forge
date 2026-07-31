@@ -21,6 +21,12 @@ import {
   installSessionSecurity
 } from "./security";
 import {
+  resolveQmdRuntimeConfiguration,
+  QmdSupervisor,
+  type QmdRuntimeConfiguration
+} from "./qmdSupervisor";
+import { RetrievalBroker } from "./retrievalBroker";
+import {
   resolveSidecarExecutable,
   SidecarSupervisor
 } from "./sidecar";
@@ -30,7 +36,8 @@ const PRODUCT_NAME = "Local Context Forge";
 const REQUIRED_SIDECAR_CAPABILITIES = [
   "desktop-handshake",
   "health",
-  "library-api"
+  "library-api",
+  "desktop-retrieval-v1"
 ] as const;
 
 registerPrivilegedScheme(
@@ -70,6 +77,24 @@ function configuredSidecarExecutable(): string {
   }
 }
 
+async function configuredQmdRuntime(): Promise<QmdRuntimeConfiguration> {
+  try {
+    return await resolveQmdRuntimeConfiguration({
+      packaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      environment: process.env
+    });
+  } catch {
+    // Preserve lexical fallback without discovering a system Node/QMD. The
+    // supervisor will fail this fixed, nonexistent configuration closed.
+    return {
+      nodeExecutable: path.join(dataDir, ".qmd-not-configured", "node"),
+      workerEntry: path.join(dataDir, ".qmd-not-configured", "index.mjs"),
+      buildManifestSha256: "0".repeat(64)
+    };
+  }
+}
+
 async function prepareDataDirectory(): Promise<void> {
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   const info = await lstat(dataDir);
@@ -87,13 +112,24 @@ async function bootstrap(): Promise<void> {
   installSessionSecurity(session.defaultSession);
   await installStaticProtocol(protocol, configuredRendererRoot());
 
+  const qmdSupervisor = new QmdSupervisor({
+    runtime: await configuredQmdRuntime(),
+    appDataDir: dataDir,
+    dataDir: path.join(dataDir, "qmd", "worker"),
+    wikiRoot: path.join(dataDir, "wiki")
+  });
+  const retrievalBroker = new RetrievalBroker(
+    qmdSupervisor,
+    path.join(dataDir, "wiki")
+  );
   const supervisor = new SidecarSupervisor({
     executablePath: configuredSidecarExecutable(),
     dataDir,
     appVersion: app.getVersion(),
     sidecarVersion: app.getVersion(),
-    schemaVersion: 3,
-    requiredCapabilities: REQUIRED_SIDECAR_CAPABILITIES
+    schemaVersion: 4,
+    requiredCapabilities: REQUIRED_SIDECAR_CAPABILITIES,
+    retrievalBroker
   });
   const apiProxy = new ApiProxy(8);
 
@@ -144,13 +180,19 @@ async function bootstrap(): Promise<void> {
       return;
     }
     event.preventDefault();
-    void supervisor.shutdown().finally(() => {
-      quitting = true;
-      app.quit();
-    });
+    void supervisor
+      .shutdown()
+      .catch(() => undefined)
+      .then(() => qmdSupervisor.shutdown())
+      .catch(() => undefined)
+      .finally(() => {
+        quitting = true;
+        app.quit();
+      });
   });
 
   await openMainWindow();
+  void qmdSupervisor.start();
   void supervisor.start();
 }
 

@@ -1,0 +1,1034 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import io
+import json
+import stat
+import sys
+import tarfile
+import time
+from collections import deque
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TOOLS_ROOT = PROJECT_ROOT / "tools"
+if str(TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_ROOT))
+
+import audit_python_sidecar as audit  # noqa: E402
+import build_python_sidecar as build  # noqa: E402
+
+
+INSTALLER_NAME = "python-3.13.14-macos11.pkg"
+ARCHIVE_NAME = "python-3.13.14-darwin-arm64.tar.gz"
+BASE_ARCHIVE_PAYLOADS = {
+    "setup.sh": b"#!/bin/sh\nexit 0\n",
+    "build_output.txt": b"",
+    INSTALLER_NAME: b"synthetic-python-installer-package",
+}
+ArchiveEntry = tuple[str, bytes, str]
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _write_source_archive(
+    path: Path,
+    entries: list[ArchiveEntry],
+) -> None:
+    with tarfile.open(path, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
+        for name, payload, kind in entries:
+            member = tarfile.TarInfo(name)
+            member.mtime = 0
+            member.uid = 0
+            member.gid = 0
+            member.uname = ""
+            member.gname = ""
+            if kind == "file":
+                member.mode = 0o644
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
+            elif kind == "symlink":
+                member.type = tarfile.SYMTYPE
+                member.mode = 0o777
+                member.linkname = payload.decode("utf-8")
+                member.size = 0
+                archive.addfile(member)
+            else:  # pragma: no cover - test helper misuse
+                raise AssertionError(f"unsupported synthetic archive kind: {kind}")
+
+
+def _source_fixture(
+    tmp_path: Path,
+    *,
+    archive_entries: list[ArchiveEntry] | None = None,
+    expected_payloads: dict[str, bytes] | None = None,
+    manifest_text: str | None = None,
+) -> tuple[Path, Path, dict[str, Any]]:
+    expected = expected_payloads or BASE_ARCHIVE_PAYLOADS
+    entries = archive_entries or [
+        (name, payload, "file") for name, payload in expected.items()
+    ]
+    archive_path = tmp_path / ARCHIVE_NAME
+    _write_source_archive(archive_path, entries)
+    archive_bytes = archive_path.read_bytes()
+    archive_sha256 = _sha256_bytes(archive_bytes)
+
+    rendered_manifest = (
+        manifest_text.format(
+            archive_name=ARCHIVE_NAME,
+            archive_sha=archive_sha256,
+        )
+        if manifest_text is not None
+        else f"{archive_sha256}  {ARCHIVE_NAME}\n"
+    )
+    hash_manifest_path = tmp_path / "hashes.sha256"
+    hash_manifest_path.write_text(rendered_manifest, encoding="ascii")
+    hash_manifest_bytes = hash_manifest_path.read_bytes()
+
+    distribution = {
+        "provider": "actions/python-versions",
+        "releaseTag": "synthetic-test-release",
+        "archiveName": ARCHIVE_NAME,
+        "archiveSource": f"https://example.invalid/{ARCHIVE_NAME}",
+        "archiveSha256": archive_sha256,
+        "archiveSize": len(archive_bytes),
+        "archiveMembers": [
+            {
+                "path": name,
+                "size": len(payload),
+                "sha256": _sha256_bytes(payload),
+            }
+            for name, payload in expected.items()
+        ],
+        "installerPackageName": INSTALLER_NAME,
+        "installerPackageSha256": _sha256_bytes(expected[INSTALLER_NAME]),
+        "installMethod": "macos-installer-pkg-direct",
+        "hashManifestName": "hashes.sha256",
+        "hashManifestSource": "https://example.invalid/hashes.sha256",
+        "hashManifestSha256": _sha256_bytes(hash_manifest_bytes),
+        "hashManifestSize": len(hash_manifest_bytes),
+    }
+    toolchain = {
+        "python": {
+            "implementation": "CPython",
+            "version": "3.13.14",
+            "installRoot": "/synthetic/python/3.13",
+            "interpreterRelativePath": "bin/python3.13",
+            "distribution": distribution,
+        }
+    }
+    return archive_path, hash_manifest_path, toolchain
+
+
+def test_distribution_source_verifier_accepts_complete_synthetic_chain(
+    tmp_path: Path,
+) -> None:
+    archive, hashes, toolchain = _source_fixture(tmp_path)
+
+    provenance = build.verify_distribution_files(
+        archive,
+        hashes,
+        toolchain=toolchain,
+    )
+
+    distribution = toolchain["python"]["distribution"]
+    assert provenance == {
+        "implementation": "CPython",
+        "version": "3.13.14",
+        "installRoot": "/synthetic/python/3.13",
+        "provider": "actions/python-versions",
+        "releaseTag": "synthetic-test-release",
+        "archiveName": ARCHIVE_NAME,
+        "archiveSource": f"https://example.invalid/{ARCHIVE_NAME}",
+        "archiveSha256": distribution["archiveSha256"],
+        "installerPackageName": INSTALLER_NAME,
+        "installerPackageSha256": distribution["installerPackageSha256"],
+        "hashManifestName": "hashes.sha256",
+        "hashManifestSource": "https://example.invalid/hashes.sha256",
+        "hashManifestSha256": distribution["hashManifestSha256"],
+    }
+
+
+def test_distribution_source_verifier_rejects_archive_tamper(
+    tmp_path: Path,
+) -> None:
+    archive, hashes, toolchain = _source_fixture(tmp_path)
+    tampered = bytearray(archive.read_bytes())
+    tampered[-1] ^= 0x01
+    archive.write_bytes(tampered)
+
+    with pytest.raises(build.BuildError, match="archive differs"):
+        build.verify_distribution_files(archive, hashes, toolchain=toolchain)
+
+
+@pytest.mark.parametrize(
+    "manifest_text",
+    [
+        "not-a-checksum  {archive_name}\n",
+        "{archive_sha}  path/to/{archive_name}\n",
+        (
+            "{archive_sha}  {archive_name}\n"
+            "{archive_sha}  {archive_name}\n"
+        ),
+    ],
+    ids=["malformed-line", "unsafe-name", "duplicate-target"],
+)
+def test_distribution_source_verifier_rejects_malformed_hash_manifest(
+    tmp_path: Path,
+    manifest_text: str,
+) -> None:
+    archive, hashes, toolchain = _source_fixture(
+        tmp_path,
+        manifest_text=manifest_text,
+    )
+
+    with pytest.raises(build.BuildError, match="hash manifest"):
+        build.verify_distribution_files(archive, hashes, toolchain=toolchain)
+
+
+@pytest.mark.parametrize(
+    "unsafe_name",
+    [
+        "../escape",
+        "/absolute/path",
+        "nested\\windows-path",
+    ],
+    ids=["parent", "absolute", "backslash"],
+)
+def test_distribution_source_verifier_rejects_unsafe_archive_member_path(
+    tmp_path: Path,
+    unsafe_name: str,
+) -> None:
+    entries = [
+        (name, payload, "file") for name, payload in BASE_ARCHIVE_PAYLOADS.items()
+    ]
+    entries.append((unsafe_name, b"untrusted", "file"))
+    archive, hashes, toolchain = _source_fixture(
+        tmp_path,
+        archive_entries=entries,
+    )
+
+    with pytest.raises(build.BuildError, match="unsafe path"):
+        build.verify_distribution_files(archive, hashes, toolchain=toolchain)
+
+
+def test_distribution_source_verifier_rejects_archive_symlink_member(
+    tmp_path: Path,
+) -> None:
+    entries = [
+        ("setup.sh", INSTALLER_NAME.encode("utf-8"), "symlink"),
+        ("build_output.txt", b"", "file"),
+        (INSTALLER_NAME, BASE_ARCHIVE_PAYLOADS[INSTALLER_NAME], "file"),
+    ]
+    archive, hashes, toolchain = _source_fixture(
+        tmp_path,
+        archive_entries=entries,
+    )
+
+    with pytest.raises(build.BuildError, match="non-regular member"):
+        build.verify_distribution_files(archive, hashes, toolchain=toolchain)
+
+
+def test_distribution_source_verifier_rejects_duplicate_archive_member(
+    tmp_path: Path,
+) -> None:
+    entries = [
+        (name, payload, "file") for name, payload in BASE_ARCHIVE_PAYLOADS.items()
+    ]
+    entries.append(("setup.sh", BASE_ARCHIVE_PAYLOADS["setup.sh"], "file"))
+    archive, hashes, toolchain = _source_fixture(
+        tmp_path,
+        archive_entries=entries,
+    )
+
+    with pytest.raises(build.BuildError, match="duplicate members"):
+        build.verify_distribution_files(archive, hashes, toolchain=toolchain)
+
+
+def test_distribution_source_verifier_rejects_inconsistent_inner_package_pin(
+    tmp_path: Path,
+) -> None:
+    archive, hashes, toolchain = _source_fixture(tmp_path)
+    toolchain["python"]["distribution"]["installerPackageSha256"] = "0" * 64
+
+    with pytest.raises(build.BuildError, match="package evidence"):
+        build.verify_distribution_files(archive, hashes, toolchain=toolchain)
+
+
+@pytest.mark.parametrize("unsafe_input", ["relative", "symlink"])
+def test_distribution_source_verifier_requires_real_absolute_input_files(
+    tmp_path: Path,
+    unsafe_input: str,
+) -> None:
+    archive, hashes, toolchain = _source_fixture(tmp_path)
+    if unsafe_input == "relative":
+        rejected_archive = Path(archive.name)
+    else:
+        rejected_archive = tmp_path / "linked-archive.tar.gz"
+        rejected_archive.symlink_to(archive.name)
+
+    with pytest.raises(build.BuildError, match="archive"):
+        build.verify_distribution_files(
+            rejected_archive,
+            hashes,
+            toolchain=toolchain,
+        )
+
+
+def test_installer_extraction_writes_only_reviewed_package_with_private_mode(
+    tmp_path: Path,
+) -> None:
+    archive, hashes, toolchain = _source_fixture(tmp_path)
+    output = tmp_path / "extracted" / INSTALLER_NAME
+
+    result = build.extract_reviewed_installer_package(
+        archive,
+        hashes,
+        output,
+        toolchain=toolchain,
+    )
+
+    assert result == output
+    assert output.read_bytes() == BASE_ARCHIVE_PAYLOADS[INSTALLER_NAME]
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert list(output.parent.iterdir()) == [output]
+
+
+def test_installer_extraction_rejects_relative_output(tmp_path: Path) -> None:
+    archive, hashes, toolchain = _source_fixture(tmp_path)
+
+    with pytest.raises(build.BuildError, match="path must be absolute"):
+        build.extract_reviewed_installer_package(
+            archive,
+            hashes,
+            Path(INSTALLER_NAME),
+            toolchain=toolchain,
+        )
+
+
+def test_installer_extraction_rejects_existing_output_symlink(
+    tmp_path: Path,
+) -> None:
+    archive, hashes, toolchain = _source_fixture(tmp_path)
+    output_directory = tmp_path / "extracted"
+    output_directory.mkdir()
+    sentinel = tmp_path / "sentinel.pkg"
+    sentinel.write_bytes(b"must not be overwritten")
+    output = output_directory / INSTALLER_NAME
+    output.symlink_to("../sentinel.pkg")
+
+    with pytest.raises(build.BuildError, match="not a regular file"):
+        build.extract_reviewed_installer_package(
+            archive,
+            hashes,
+            output,
+            toolchain=toolchain,
+        )
+
+    assert output.is_symlink()
+    assert sentinel.read_bytes() == b"must not be overwritten"
+    assert list(output_directory.iterdir()) == [output]
+
+
+def _valid_build_requirement_lines() -> list[str]:
+    versions = {
+        "altgraph": "0.17.4",
+        "macholib": "1.16.3",
+        "packaging": "26.2",
+        "pyinstaller": "6.21.0",
+        "pyinstaller-hooks-contrib": "2026.6",
+        "setuptools": "83.0.0",
+        "uv": "0.11.29",
+    }
+    return [
+        f"{name}=={version} --hash=sha256:{index:064x}"
+        for index, (name, version) in enumerate(versions.items(), start=1)
+    ]
+
+
+def test_build_requirements_parser_accepts_reviewed_lock() -> None:
+    assert build.parse_build_requirements() == {
+        "altgraph": "0.17.4",
+        "macholib": "1.16.3",
+        "packaging": "26.2",
+        "pyinstaller": "6.21.0",
+        "pyinstaller-hooks-contrib": "2026.6",
+        "setuptools": "83.0.0",
+        "uv": "0.11.29",
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "hashless",
+        "range",
+        "uppercase-hash",
+        "duplicate",
+        "missing-package",
+        "dangling-continuation",
+    ],
+)
+def test_build_requirements_parser_rejects_non_exact_lock(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    lines = _valid_build_requirement_lines()
+    if mutation == "hashless":
+        lines[0] = "altgraph==0.17.4"
+    elif mutation == "range":
+        lines[0] = lines[0].replace("==0.17.4", ">=0.17.4")
+    elif mutation == "uppercase-hash":
+        lines[0] = lines[0][:-64] + ("A" * 64)
+    elif mutation == "duplicate":
+        lines.append(lines[0])
+    elif mutation == "missing-package":
+        lines.pop()
+    elif mutation == "dangling-continuation":
+        lines.append("\\")
+    lock = tmp_path / "build-requirements.lock"
+    lock.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+    with pytest.raises(build.BuildError, match="Build requirements"):
+        build.parse_build_requirements(lock)
+
+
+def test_production_uv_lock_resolves_only_the_reviewed_runtime_closure() -> None:
+    versions = build.runtime_dependency_versions()
+
+    assert {
+        "certifi": "2026.7.22",
+        "dulwich": "1.2.11",
+        "h11": "0.16.0",
+        "urllib3": "2.7.0",
+        "uvicorn": "0.51.0",
+    }.items() <= versions.items()
+    assert not {"httptools", "uvloop", "watchfiles", "websockets"} & versions.keys()
+    assert not {"httpx", "packaging", "pytest"} & versions.keys()
+
+
+def test_uv_lock_resolver_rejects_forbidden_uvicorn_extra(
+    tmp_path: Path,
+) -> None:
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        """\
+version = 1
+
+[[package]]
+name = "local-context-forge-backend"
+version = "0"
+dependencies = [{ name = "websockets" }]
+
+[[package]]
+name = "websockets"
+version = "99"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(build.BuildError, match="forbidden Uvicorn"):
+        build.runtime_dependency_versions(lock)
+
+
+def _install_binding_fixture(
+    tmp_path: Path,
+) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:
+    install_root = (
+        tmp_path / "Library" / "Frameworks" / "Python.framework" / "Versions" / "3.13"
+    )
+    interpreter = install_root / "bin" / "python3.13"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_bytes(b"synthetic interpreter")
+    interpreter.chmod(0o755)
+    toolchain = {
+        "python": {
+            "implementation": "CPython",
+            "version": "3.13.14",
+            "installRoot": str(install_root),
+            "interpreterRelativePath": "bin/python3.13",
+        }
+    }
+    observed = {
+        "toolchain": toolchain,
+        "implementation": "CPython",
+        "version": "3.13.14",
+        "system": "Darwin",
+        "machine": "arm64",
+        "base_prefix": install_root,
+        "base_executable": interpreter,
+        "executable": interpreter,
+        "cache_tag": "cpython-313",
+        "gil_disabled": False,
+    }
+    return install_root, interpreter, toolchain, observed
+
+
+def test_install_root_binding_accepts_fully_injected_reviewed_interpreter(
+    tmp_path: Path,
+) -> None:
+    install_root, _, _, observed = _install_binding_fixture(tmp_path)
+    fingerprinted: list[Path] = []
+
+    def fingerprint(path: Path) -> str:
+        fingerprinted.append(path)
+        return "a" * 64
+
+    result = build.verify_python_install_binding(
+        install_root,
+        **observed,
+        fingerprint=fingerprint,
+    )
+
+    assert result == "a" * 64
+    assert fingerprinted == [install_root.resolve()]
+
+
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [
+        ("implementation", "PyPy"),
+        ("version", "3.13.13"),
+        ("system", "Linux"),
+        ("machine", "x86_64"),
+        ("cache_tag", "cpython-312"),
+        ("gil_disabled", True),
+        ("base_prefix", "outside"),
+        ("base_executable", "outside"),
+        ("executable", "outside"),
+    ],
+)
+def test_install_root_binding_rejects_mismatched_interpreter_evidence(
+    tmp_path: Path,
+    field: str,
+    bad_value: object,
+) -> None:
+    install_root, _, _, observed = _install_binding_fixture(tmp_path)
+    observed[field] = (
+        tmp_path / "outside" / field if bad_value == "outside" else bad_value
+    )
+
+    with pytest.raises(build.BuildError, match="reviewed CPython"):
+        build.verify_python_install_binding(
+            install_root,
+            **observed,
+            fingerprint=lambda _: "a" * 64,
+        )
+
+
+def test_install_root_binding_rejects_alias_of_reviewed_root(
+    tmp_path: Path,
+) -> None:
+    install_root, _, _, observed = _install_binding_fixture(tmp_path)
+    alias = tmp_path / "python-root-alias"
+    alias.symlink_to(install_root, target_is_directory=True)
+
+    with pytest.raises(build.BuildError, match="framework path"):
+        build.verify_python_install_binding(
+            alias,
+            **observed,
+            fingerprint=lambda _: "a" * 64,
+        )
+
+
+def _native_fixture(
+    tmp_path: Path,
+) -> tuple[Path, list[dict[str, Any]]]:
+    root = tmp_path / "sidecar"
+    internal = root / "_internal"
+    internal.mkdir(parents=True)
+    executable = root / audit.EXPECTED_EXECUTABLE
+    executable.write_bytes(b"synthetic Mach-O policy fixture")
+    executable.chmod(0o755)
+    library = internal / "libfixture.dylib"
+    library.write_bytes(b"synthetic dylib policy fixture")
+    records = [
+        {
+            "path": audit.EXPECTED_EXECUTABLE,
+            "architectures": ["arm64"],
+            "dylibs": [
+                "/usr/lib/libSystem.B.dylib",
+                "@rpath/libfixture.dylib",
+            ],
+            "rpaths": ["@executable_path/_internal"],
+            "platform": "macos",
+            "minimumMacosVersion": "14.0",
+            "codeSignature": "valid",
+        },
+        {
+            "path": "_internal/libfixture.dylib",
+            "architectures": ["arm64"],
+            "dylibs": ["/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"],
+            "rpaths": ["@loader_path"],
+            "platform": "macos",
+            "minimumMacosVersion": "11.0",
+            "codeSignature": "valid",
+            "installName": "@rpath/libfixture.dylib",
+        },
+    ]
+    return root, records
+
+
+def test_native_inventory_policy_accepts_arm64_closed_bundle(
+    tmp_path: Path,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+
+    audit.validate_native_inventory(root, records)
+
+
+def test_native_inventory_policy_accepts_three_part_target_equivalent_minimum(
+    tmp_path: Path,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+    records[0]["minimumMacosVersion"] = "14.0.0"
+
+    audit.validate_native_inventory(root, records)
+
+
+@pytest.mark.parametrize(
+    "field,bad_value,error",
+    [
+        ("architectures", ["arm64", "x86_64"], "arm64-only"),
+        ("minimumMacosVersion", "14.1", "minimum macOS"),
+        ("minimumMacosVersion", "14.0.1", "minimum macOS"),
+        ("platform", "ios", "target macOS"),
+        ("codeSignature", "invalid", "valid code signature"),
+    ],
+)
+def test_native_inventory_policy_rejects_invalid_binary_contract(
+    tmp_path: Path,
+    field: str,
+    bad_value: object,
+    error: str,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+    records[0][field] = bad_value
+
+    with pytest.raises(audit.AuditError, match=error):
+        audit.validate_native_inventory(root, records)
+
+
+@pytest.mark.parametrize(
+    "dependency,error",
+    [
+        ("/opt/homebrew/lib/libcrypto.dylib", "Homebrew"),
+        (
+            "/Library/Frameworks/Python.framework/Versions/3.13/Python",
+            "external Python framework",
+        ),
+    ],
+)
+def test_native_inventory_policy_rejects_host_runtime_dependency(
+    tmp_path: Path,
+    dependency: str,
+    error: str,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+    records[0]["dylibs"] = [dependency]
+
+    with pytest.raises(audit.AuditError, match=error):
+        audit.validate_native_inventory(root, records)
+
+
+def test_native_inventory_policy_rejects_unsafe_record_path(
+    tmp_path: Path,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+    records[0]["path"] = "../outside"
+
+    with pytest.raises(audit.AuditError, match="unsafe"):
+        audit.validate_native_inventory(root, records)
+
+
+def test_native_inventory_policy_rejects_escaping_rpath(
+    tmp_path: Path,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+    records[0]["rpaths"] = ["@loader_path/../../outside"]
+    records[0]["dylibs"] = ["/usr/lib/libSystem.B.dylib"]
+
+    with pytest.raises(audit.AuditError, match="RPATH escapes"):
+        audit.validate_native_inventory(root, records)
+
+
+def test_native_inventory_policy_rejects_dependency_missing_from_native_set(
+    tmp_path: Path,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+
+    with pytest.raises(audit.AuditError, match="absent from native inventory"):
+        audit.validate_native_inventory(root, records[:1])
+
+
+def test_native_inventory_policy_rejects_symlinked_native_file(
+    tmp_path: Path,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+    library = root / "_internal" / "libfixture.dylib"
+    real_library = root / "_internal" / "real-libfixture.dylib"
+    library.rename(real_library)
+    library.symlink_to(real_library.name)
+
+    with pytest.raises(audit.AuditError, match="non-regular file"):
+        audit.validate_native_inventory(root, records)
+
+
+def _minimal_audited_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, list[dict[str, Any]]]:
+    root = tmp_path / "audited-sidecar"
+    root.mkdir()
+    executable = root / audit.EXPECTED_EXECUTABLE
+    executable.write_bytes(b"synthetic executable")
+    executable.chmod(0o755)
+    payload = root / "payload.dat"
+    payload.write_bytes(b"reviewed payload")
+    payload.chmod(0o644)
+    native = [
+        {
+            "path": audit.EXPECTED_EXECUTABLE,
+            "architectures": ["arm64"],
+            "dylibs": ["/usr/lib/libSystem.B.dylib"],
+            "rpaths": [],
+            "platform": "macos",
+            "minimumMacosVersion": "14.0",
+            "codeSignature": "valid",
+        }
+    ]
+    files = audit.build_file_inventory(root)
+    manifest = {
+        "files": files,
+        "native": native,
+        "components": [],
+        "audit": {
+            "status": "pass",
+            "policyVersion": 1,
+            "normalizedInventorySha256": audit.normalized_inventory_sha256(
+                files,
+                native,
+            ),
+            "frozenSmoke": copy.deepcopy(audit.EXPECTED_FROZEN_SMOKE),
+        },
+    }
+    (root / audit.MANIFEST_NAME).write_text(
+        json.dumps(manifest, sort_keys=True),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(audit, "_validate_manifest_shape", lambda _: None)
+    monkeypatch.setattr(audit, "_validate_components", lambda _root, _manifest: None)
+    monkeypatch.setattr(audit, "_validate_sbom", lambda _root, _manifest: None)
+    return root, native
+
+
+def test_exact_inventory_audit_accepts_unchanged_linux_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, native = _minimal_audited_bundle(tmp_path, monkeypatch)
+
+    summary = audit.audit_bundle(
+        root,
+        native_scanner=lambda _: copy.deepcopy(native),
+    )
+
+    assert summary == {"files": 2, "nativeFiles": 1, "components": 0}
+
+
+@pytest.mark.parametrize("tamper", ["content", "mode", "unexpected-file"])
+def test_exact_inventory_audit_rejects_payload_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    root, native = _minimal_audited_bundle(tmp_path, monkeypatch)
+    payload = root / "payload.dat"
+    if tamper == "content":
+        payload.write_bytes(b"tampered payload")
+    elif tamper == "mode":
+        payload.chmod(0o600)
+    else:
+        (root / "injected.dat").write_bytes(b"unexpected")
+
+    with pytest.raises(audit.AuditError, match="exact file inventory"):
+        audit.audit_bundle(
+            root,
+            native_scanner=lambda _: copy.deepcopy(native),
+        )
+
+
+def test_exact_inventory_audit_rejects_normalized_digest_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, native = _minimal_audited_bundle(tmp_path, monkeypatch)
+    manifest_path = root / audit.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["audit"]["normalizedInventorySha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(audit.AuditError, match="normalized inventory digest"):
+        audit.audit_bundle(
+            root,
+            native_scanner=lambda _: copy.deepcopy(native),
+        )
+
+
+def test_file_inventory_rejects_symlink_escape(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.dat"
+    outside.write_bytes(b"outside")
+    root = tmp_path / "sidecar"
+    root.mkdir()
+    (root / "escape").symlink_to("../outside.dat")
+
+    with pytest.raises(audit.AuditError, match="escapes the bundle"):
+        audit.build_file_inventory(root)
+
+
+def test_atomic_publish_swaps_verified_staging_without_a_gap(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate"
+    destination = tmp_path / "published"
+    candidate.mkdir()
+    destination.mkdir()
+    (candidate / "state").write_text("new", encoding="utf-8")
+    (destination / "state").write_text("old", encoding="utf-8")
+    verified: list[Path] = []
+
+    def verifier(path: Path) -> None:
+        verified.append(path)
+        assert (path / "state").read_text(encoding="utf-8") == "new"
+
+    build.publish_staging(candidate, destination, verifier=verifier)
+
+    assert verified == [candidate, destination]
+    assert not candidate.exists()
+    assert (destination / "state").read_text(encoding="utf-8") == "new"
+
+
+def test_atomic_publish_rolls_back_when_post_swap_verification_fails(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate"
+    destination = tmp_path / "published"
+    candidate.mkdir()
+    destination.mkdir()
+    (candidate / "state").write_text("new", encoding="utf-8")
+    (destination / "state").write_text("old", encoding="utf-8")
+
+    def verifier(path: Path) -> None:
+        if path == destination:
+            raise RuntimeError("simulated post-swap audit failure")
+        assert (path / "state").read_text(encoding="utf-8") == "new"
+
+    with pytest.raises(build.BuildError, match="post-swap audit"):
+        build.publish_staging(candidate, destination, verifier=verifier)
+
+    assert (candidate / "state").read_text(encoding="utf-8") == "new"
+    assert (destination / "state").read_text(encoding="utf-8") == "old"
+
+
+def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
+    schema = json.loads(audit.MANIFEST_SCHEMA.read_text(encoding="utf-8"))
+    toolchain = json.loads(build.TOOLCHAIN_LOCK.read_text(encoding="utf-8"))
+    properties = schema["properties"]
+    definitions = schema["$defs"]
+    python_lock = toolchain["python"]
+    distribution = python_lock["distribution"]
+
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert properties["schemaVersion"]["const"] == 1
+    assert properties["kind"]["const"] == "local-context-forge-python-sidecar"
+    assert properties["entrypoint"]["const"] == audit.EXPECTED_EXECUTABLE
+    assert properties["target"]["properties"]["os"]["const"] == "darwin"
+    assert properties["target"]["properties"]["architecture"]["const"] == "arm64"
+    assert properties["build"]["properties"]["runnerImage"]["const"] == "macos-15"
+    assert properties["build"]["properties"]["macosDeploymentTarget"]["const"] == "14.0"
+    assert properties["build"]["properties"]["pyinstallerVersion"]["const"] == "6.21.0"
+
+    provenance = definitions["pythonProvenance"]["properties"]
+    assert provenance["implementation"]["const"] == python_lock["implementation"]
+    assert provenance["version"]["const"] == python_lock["version"] == "3.13.14"
+    assert provenance["installRoot"]["const"] == python_lock["installRoot"]
+    for key in (
+        "provider",
+        "releaseTag",
+        "archiveName",
+        "archiveSource",
+        "archiveSha256",
+        "installerPackageName",
+        "installerPackageSha256",
+        "hashManifestName",
+        "hashManifestSource",
+        "hashManifestSha256",
+    ):
+        assert provenance[key]["const"] == distribution[key]
+
+    native = definitions["nativeInventoryEntry"]["properties"]
+    assert native["architectures"]["const"] == ["arm64"]
+    assert native["platform"]["const"] == "macos"
+    assert native["codeSignature"]["const"] == "valid"
+    frozen = properties["audit"]["properties"]["frozenSmoke"]["properties"]
+    assert frozen["status"]["const"] == "pass"
+    assert frozen["pathTrap"]["const"] is True
+    assert frozen["checks"]["const"] == audit.EXPECTED_FROZEN_SMOKE["checks"]
+
+
+def test_frozen_smoke_source_fixture_is_a_real_dulwich_repository(
+    tmp_path: Path,
+) -> None:
+    from dulwich.repo import Repo
+
+    repository = tmp_path / "source-root" / "fixture"
+    build._create_smoke_source_repository(
+        repository,
+        source_date_epoch=1_700_000_000,
+    )
+
+    opened = Repo(repository)
+    try:
+        assert len(opened.head()) == 40
+        assert set(opened.open_index()) == {
+            b"README.md",
+            b"src/widget.py",
+        }
+    finally:
+        opened.close()
+    assert b"build_widget" in (repository / "src" / "widget.py").read_bytes()
+
+
+class _BrokerConnectionFixture:
+    def __init__(self, request: bytes) -> None:
+        self.request = request
+        self.offset = 0
+        self.responses: list[bytes] = []
+
+    def __enter__(self) -> _BrokerConnectionFixture:
+        return self
+
+    def __exit__(self, *_arguments: object) -> None:
+        return None
+
+    def settimeout(self, _timeout: float) -> None:
+        return None
+
+    def recv(self, maximum: int) -> bytes:
+        result = self.request[self.offset : self.offset + maximum]
+        self.offset += len(result)
+        return result
+
+    def sendall(self, payload: bytes) -> None:
+        self.responses.append(payload)
+
+
+class _BrokerListenerFixture:
+    def __init__(
+        self,
+        connection: _BrokerConnectionFixture,
+        stop: Any,
+    ) -> None:
+        self.connection = connection
+        self.stop = stop
+        self.accepted = False
+
+    def settimeout(self, _timeout: float) -> None:
+        return None
+
+    def accept(self) -> tuple[_BrokerConnectionFixture, None]:
+        if not self.accepted:
+            self.accepted = True
+            return self.connection, None
+        self.stop.set()
+        raise OSError("fixture complete")
+
+
+def _broker_request(*, capability: str) -> bytes:
+    payload = b'{"revision":4,"collections":[]}'
+    deadline = int(time.time() * 1000) + 60_000
+    return (
+        b"POST /reconcile HTTP/1.1\r\n"
+        b"Accept: application/json\r\n"
+        b"Content-Type: application/json\r\n"
+        + f"Content-Length: {len(payload)}\r\n".encode("ascii")
+        + f"Authorization: Bearer {capability}\r\n".encode("ascii")
+        + b"X-LCF-Protocol-Version: 1.0\r\n"
+        + b"X-LCF-Launch-Id: 663e210a-f7e0-4e15-826a-25c3ae657eeb\r\n"
+        + b"X-LCF-Request-Id: 13d47b32-9ef7-4ab9-8097-5a4568d43e30\r\n"
+        + f"X-LCF-Deadline-Ms: {deadline}\r\n".encode("ascii")
+        + b"\r\n"
+        + payload
+    )
+
+
+def test_frozen_smoke_broker_accepts_only_capability_scoped_reconcile() -> None:
+    import threading
+
+    capability = "a" * 43
+    stop = threading.Event()
+    connection = _BrokerConnectionFixture(
+        _broker_request(capability=capability)
+    )
+    listener = _BrokerListenerFixture(connection, stop)
+    requests: deque[dict[str, Any]] = deque()
+    failures: deque[str] = deque()
+
+    build._serve_smoke_broker(
+        listener,  # type: ignore[arg-type]
+        capability=capability,
+        launch_id="663e210a-f7e0-4e15-826a-25c3ae657eeb",
+        protocol="1.0",
+        stop=stop,
+        requests=requests,
+        failures=failures,
+    )
+
+    assert not failures
+    assert list(requests) == [
+        {
+            "endpoint": "/reconcile",
+            "revision": 4,
+            "collections": 0,
+        }
+    ]
+    assert connection.responses
+    assert connection.responses[0].startswith(b"HTTP/1.1 200 OK\r\n")
+
+
+def test_frozen_smoke_broker_rejects_wrong_capability() -> None:
+    import threading
+
+    stop = threading.Event()
+    connection = _BrokerConnectionFixture(
+        _broker_request(capability="b" * 43)
+    )
+    listener = _BrokerListenerFixture(connection, stop)
+    requests: deque[dict[str, Any]] = deque()
+    failures: deque[str] = deque()
+
+    build._serve_smoke_broker(
+        listener,  # type: ignore[arg-type]
+        capability="a" * 43,
+        launch_id="663e210a-f7e0-4e15-826a-25c3ae657eeb",
+        protocol="1.0",
+        stop=stop,
+        requests=requests,
+        failures=failures,
+    )
+
+    assert list(failures) == ["request"]
+    assert not requests
+    assert connection.responses
+    assert connection.responses[0].startswith(
+        b"HTTP/1.1 400 Bad Request\r\n"
+    )

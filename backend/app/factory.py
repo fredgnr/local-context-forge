@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Any
 
 from fastapi import FastAPI, Query, Request, status
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .db import SCHEMA_VERSION
+from .desktop_provider_api import install_desktop_provider_routes
 from .desktop_session import DesktopSession
 from .schemas import (
     EmbeddingModelValidate,
@@ -37,9 +39,18 @@ class RejectRequest(BaseModel):
 def create_app(
     settings: Settings | None = None,
     desktop_session: DesktopSession | None = None,
+    retriever: Any | None = None,
 ) -> FastAPI:
+    resolved_settings = settings or Settings.from_env()
+    if desktop_session is not None:
+        resolved_settings = replace(
+            resolved_settings,
+            local_source_owner_check=True,
+        )
+
     @asynccontextmanager
     async def lifespan(current_app: FastAPI) -> AsyncIterator[None]:
+        current_app.state.service.reconcile_desktop_retrieval()
         current_app.state.service.start_worker()
         try:
             yield
@@ -55,7 +66,11 @@ def create_app(
         ),
         lifespan=lifespan,
     )
-    application.state.service = AppService(settings)
+    application.state.service = AppService(
+        resolved_settings,
+        retriever=retriever,
+        desktop_mode=desktop_session is not None,
+    )
     if desktop_session is None:
         origins = [
             item.strip()
@@ -76,6 +91,7 @@ def create_app(
             DesktopSession,
             **desktop_session.middleware_options(),
         )
+        install_desktop_provider_routes(application)
 
     @application.exception_handler(ServiceError)
     async def service_error_handler(
@@ -112,6 +128,8 @@ def create_app(
                 "desktop-handshake",
                 "health",
                 "library-api",
+                "desktop-retrieval-v1",
+                "desktop-provider-v1",
             ],
         }
 
@@ -360,4 +378,3 @@ def create_app(
         return service(request).lint(library_id, version)
 
     return application
-

@@ -13,6 +13,7 @@ import type {
 } from "./types";
 import {
   desktopApiBridge,
+  isDesktopRuntime,
   MAX_DESKTOP_API_TIMEOUT_MS,
   type DesktopApiMethod,
   type DesktopApiResponse
@@ -405,13 +406,39 @@ function normalizeSystemStatus(value: unknown): SystemStatus {
 function normalizeSettings(value: unknown): AppSettings {
   const record = asRecord(asRecord(value).settings ?? value);
   const advanced = asRecord(record.advanced);
-  const providerOrder = Array.isArray(record.provider_order)
-    ? record.provider_order.map(uiProvider).filter((item): item is string => !!item)
+  const rawProviderOrder = Array.isArray(record.provider_order)
+    ? record.provider_order.filter(
+        (item): item is string => typeof item === "string"
+      )
     : [];
+  const providerOrder = rawProviderOrder
+    .map(uiProvider)
+    .filter((item): item is string => !!item);
   const fallbackEnabled =
     typeof record.fallback_enabled === "boolean"
       ? record.fallback_enabled
       : undefined;
+  const rawProviderPolicy = pickString(
+    record,
+    "providerPolicy",
+    "provider_policy"
+  );
+  const providerPolicy =
+    rawProviderPolicy === "codex_then_cursor" ||
+    rawProviderPolicy === "codex_only"
+      ? rawProviderPolicy
+      : fallbackEnabled === true &&
+          rawProviderOrder[0] === "codex_cli" &&
+          rawProviderOrder[1] === "cursor_cli"
+        ? "codex_then_cursor"
+        : "codex_only";
+  const consentRecord = asRecord(
+    record.cursorFallbackConsent ?? record.cursor_fallback_consent
+  );
+  const grantedAt =
+    consentRecord.grantedAt === null || consentRecord.granted_at === null
+      ? null
+      : pickString(consentRecord, "grantedAt", "granted_at") ?? null;
   const rawEmbedding =
     pickString(record, "embeddingModel", "embedding_model", "model") ??
     "embeddinggemma-300m-q8";
@@ -422,9 +449,26 @@ function normalizeSettings(value: unknown): AppSettings {
       : "custom");
   return {
     revision: pickNumber(record, "revision"),
+    providerPolicy,
+    cursorFallbackConsent: {
+      subject: "cursor_cli_fallback",
+      version: 1,
+      granted:
+        consentRecord.subject === "cursor_cli_fallback" &&
+        consentRecord.version === 1 &&
+        consentRecord.granted === true &&
+        grantedAt !== null,
+      grantedAt
+    },
     generator:
       providerOrder[0] ??
-      pickString(record, "generator", "defaultGenerator", "default_generator", "provider") ??
+      pickString(
+        record,
+        "generator",
+        "defaultGenerator",
+        "default_generator",
+        "provider"
+      ) ??
       "codex",
     fallbackGenerator:
       fallbackEnabled === false
@@ -460,20 +504,40 @@ function normalizeSettings(value: unknown): AppSettings {
   };
 }
 
-function settingsPayload(settings: AppSettings) {
-  const primary = apiProvider(settings.generator);
-  const fallback =
-    settings.fallbackGenerator !== "none"
-      ? apiProvider(settings.fallbackGenerator)
-      : undefined;
-  const providerOrder = [primary, fallback].filter(
-    (value, index, values): value is string =>
-      !!value && values.indexOf(value) === index
-  );
+function settingsPayload(settings: AppSettings, desktopRuntime: boolean) {
+  if (!desktopRuntime) {
+    const primary = apiProvider(settings.generator);
+    const fallback =
+      settings.fallbackGenerator !== "none"
+        ? apiProvider(settings.fallbackGenerator)
+        : undefined;
+    const providerOrder = [primary, fallback].filter(
+      (value, index, values): value is string =>
+        !!value && values.indexOf(value) === index
+    );
+    return {
+      expected_revision: settings.revision,
+      provider_order: providerOrder,
+      fallback_enabled: providerOrder.length > 1,
+      concurrency: settings.advanced?.maxConcurrency ?? 1,
+      embedding_model:
+        settings.embeddingModel === "custom"
+          ? settings.customEmbeddingModel
+          : settings.embeddingModel
+    };
+  }
+
+  const cursorFallbackGranted =
+    settings.providerPolicy === "codex_then_cursor" &&
+    settings.cursorFallbackConsent.subject === "cursor_cli_fallback" &&
+    settings.cursorFallbackConsent.version === 1 &&
+    settings.cursorFallbackConsent.granted;
   return {
     expected_revision: settings.revision,
-    provider_order: providerOrder,
-    fallback_enabled: providerOrder.length > 1,
+    provider_policy: cursorFallbackGranted
+      ? "codex_then_cursor"
+      : "codex_only",
+    cursor_fallback_consent: cursorFallbackGranted,
     concurrency: settings.advanced?.maxConcurrency ?? 1,
     embedding_model:
       settings.embeddingModel === "custom"
@@ -499,7 +563,7 @@ export const api = {
   async updateSettings(settings: AppSettings): Promise<AppSettings> {
     const payload = await request<unknown>("/api/settings", {
       method: "PATCH",
-      body: JSON.stringify(settingsPayload(settings))
+      body: JSON.stringify(settingsPayload(settings, isDesktopRuntime()))
     });
     return normalizeSettings(payload);
   },
@@ -599,7 +663,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify({
           ref: input.ref || undefined,
-          provider: input.generator || "mock",
+          provider: input.generator || "auto",
           version: input.version || undefined
         })
       },

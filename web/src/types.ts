@@ -63,8 +63,19 @@ export interface SystemStatus {
   checks: SystemCheck[];
 }
 
+export type ProviderPolicy = "codex_only" | "codex_then_cursor";
+
+export interface CursorFallbackConsent {
+  subject: "cursor_cli_fallback";
+  version: 1;
+  granted: boolean;
+  grantedAt: string | null;
+}
+
 export interface AppSettings {
   revision?: number;
+  providerPolicy: ProviderPolicy;
+  cursorFallbackConsent: CursorFallbackConsent;
   generator: string;
   fallbackGenerator: string;
   embeddingModel: string;

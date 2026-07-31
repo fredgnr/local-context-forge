@@ -3,7 +3,7 @@
 ## 基线与目标
 
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
-- 开发分支：`agent/electron-desktop-foundation`
+- 开发分支：`agent/electron-bundled-runtimes`
 - 平台目标：macOS Apple Silicon
 - 当前总体状态：`in-progress`
 
@@ -32,12 +32,19 @@ P2 与 P3 可在 P1 的 IPC 契约冻结后并行；P4 必须等两类持久数�
 | --- | --- | --- | --- | --- | --- |
 | P0 治理与契约 | `validated` | ITER-0001 | AGENTS、skills、ADR、迭代、追踪矩阵 | 无 | G0 |
 | P1 Electron 壳与信任边界 | `in-progress` | ITER-0001 | Main/preload/renderer 骨架、类型化 IPC | P0 | G1 |
-| P2 Python sidecar | `planned` | ITER-0002 | Python 3.12 PyInstaller `onedir`、生命周期契约 | P1 | G2 |
-| P3 Node/QMD 与 MCP | `planned` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1；与 P2 并行 | G3 |
+| P2 Python sidecar | `in-progress` | ITER-0002 | Python 3.13.14 PyInstaller `onedir`、生命周期契约 | P1 | G2 |
+| P3 Node/QMD 与 MCP | `in-progress` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1；与 P2 并行 | G3 |
 | P4 路径与迁移 | `planned` | ITER-0003 | macOS 路径、原子迁移、回滚与数据验证 | P2、P3 | G4 |
 | P5 DMG 发行基础 | `planned` | ITER-0004 | arm64 DMG、自签名、受保护发布流程 | P1–P4 | G5 |
 | P6 更新实机门禁 | `planned` | ITER-0005 | 0.0.1 → 0.0.2 实机报告、DMG fallback | P5 | G6 |
 | P7 迁移退出 | `planned` | ITER-0006 | 发布判定、legacy Docker 去留决策 | P6 | G7 |
+
+表中状态表示父迭代和完整退出门禁，而不是“是否已有 source 实现”。ITER-0001 的 source
+纵切已验证，但 packaged trust/IPC 尚未运行，所以 P1 仍为 `in-progress`。当前 ITER-0002
+提前实现了 P5 的受保护 release workflow/policy，以及 P6 的独立签名检查和 verified DMG
+fallback source 纵切；ITER-0004/0005 仍保持 `planned`，因为 protected Environment、
+clean-user DMG 和物理跨版本证据均未运行。automatic apply 继续禁用，启用前还需
+`VAL-UPDATE-001` 和新增或 superseding [ADR-0011](../adr/0011-main-owned-signed-update-client.md)。
 
 ## P0：治理与契约
 
@@ -80,7 +87,7 @@ Ubuntu 与 macOS 15 arm64 完成全部 source jobs，包含真实 AF_UNIX bind�
 
 交付：
 
-- 固定 Python 3.12 构建；
+- 固定 Python 3.13.14 构建；
 - PyInstaller `onedir` 包含运行所需模块和资源；
 - Main 通过私有 UDS 启动、探活、停止和恢复 sidecar；
 - 目标 Mac 不使用系统 Python、Git 或 ctags。
@@ -99,11 +106,15 @@ G2：
 - worker 不能获得 renderer 权限或任意命令入口；
 - MCP 保持 Context7 兼容工具名、输入和结果语义；
 - Codex 在任务前 preflight 为默认，Cursor 只可在该阶段替代。
+- packaged Applications 可通过 Main-owned 固定 argv、安全 discovery 与用户确认接入
+  Codex MCP；真实签名 CLI 的物理门禁未运行。
 
 G3：
 
 - `VAL-QMD-001` 在无系统 Node/QMD 环境完成索引与查询生命周期；
 - `VAL-MCP-001` 兼容契约回放通过；
+- `VAL-MCP-ONBOARD-001` 的 source 合同通过，真实官方签名 Codex packaged gate
+  保持 `not-run`；
 - `VAL-CLI-001` 证明任务开始后不发生 Codex → Cursor fallback。
 
 ## P4：运行时路径与旧数据迁移
@@ -130,6 +141,8 @@ G4：
   hardened runtime；
 - 公开仓库的发布秘密只在受保护 `macos-release` Environment 中可用；
 - PR、fork 与普通构建不接触发布秘密。
+- canonical release/update manifest、完整资产集合和独立 Ed25519 信任锚在打包前
+  fail closed。
 
 G5：
 
@@ -138,13 +151,18 @@ G5：
 - `VAL-RELEASE-001` 记录 DMG 内容、签名身份、架构和限制；
 - `VAL-SECRET-001` 证明非发布工作流拿不到 Environment Secrets。
 
+当前 source 进度：release workflow、credential bootstrap、tag/provenance、完整资产集合和
+draft 远端复核合同已通过 `VAL-RELEASE-POLICY-001`；public trust locks 仍为
+`unprovisioned`，protected build、真实签名 DMG 与 Gatekeeper 均为 `not-run`。
+
 ## P6：0.0.1 → 0.0.2 更新实机门禁
 
 交付：
 
 - 物理 Apple Silicon Mac 上的版本跨越报告；
-- 自动更新成功路径；
-- 自动更新失败时，校验后自动下载并打开 DMG 的恢复路径；
+- 独立签名 update check/download 和用户确认后的 verified DMG open；signed 路径不可用时，
+  仅由用户显式打开固定 canonical Release 页面；
+- 物理门禁通过后才设计或启用自动更新成功路径；
 - 两条路径均保留用户数据且不静默执行安装器。
 
 G6：
@@ -153,6 +171,10 @@ G6：
   校验版本/sidecar/数据；
 - 同一报告注入自动更新失败，验证 DMG fallback；
 - G6 通过前，不把自动应用更新列为可交付能力。
+
+当前 source 进度：Main/preload/Web 的签名 manifest、redirect、私有 cache、脱敏 IPC、
+verified DMG open 与固定 Release 页面 no-payload/URL 隐藏/状态保持合同已通过
+`VAL-UPDATE-CLIENT-001`。真实 feed、下载、打开和 0.0.1 → 0.0.2 物理门禁仍为 `not-run`。
 
 ## P7：迁移退出与 legacy Docker 决策
 

@@ -156,6 +156,12 @@ const RESPONSE_FIELDS = {
   settings: new Set([
     "settings",
     "revision",
+    "provider_policy",
+    "cursor_fallback_consent",
+    "subject",
+    "version",
+    "granted",
+    "granted_at",
     "provider_order",
     "fallback_enabled",
     "embedding_model",
@@ -193,10 +199,6 @@ const RESPONSE_FIELDS = {
     "preset"
   ]),
   libraries: new Set([
-    "items",
-    "libraries",
-    "data",
-    "library",
     "id",
     "library_id",
     "slug",
@@ -485,6 +487,17 @@ function filterResponseFields(
     return value;
   }
   if (Array.isArray(value)) {
+    if (
+      profile === "libraries" &&
+      !value.every(
+        (item) =>
+          item !== null &&
+          typeof item === "object" &&
+          !Array.isArray(item)
+      )
+    ) {
+      throw new ApiProxyError("invalid-response");
+    }
     return value.map((item) => filterResponseFields(item, allowed, profile));
   }
   const filtered: Record<string, JsonValue> = {};
@@ -570,10 +583,19 @@ function decodeResponse(
       };
     }
     const sanitized = sanitizeResponseValue(parsed, connection);
+    const profile = responseProfile(request);
+    if (
+      profile === "libraries" &&
+      (sanitized === null ||
+        typeof sanitized !== "object" ||
+        (request.method === "GET" && !Array.isArray(sanitized)) ||
+        (request.method === "POST" && Array.isArray(sanitized)))
+    ) {
+      throw new ApiProxyError("invalid-response");
+    }
     return {
       status,
       body: (() => {
-        const profile = responseProfile(request);
         return filterResponseFields(
           sanitized,
           RESPONSE_FIELDS[profile],
@@ -775,14 +797,28 @@ export class ApiProxy {
 
   async request(
     input: ApiRequest,
-    connection: SidecarConnection | undefined
+    connection: SidecarConnection | undefined,
+    prepareAfterAdmission?: (input: ApiRequest) => Promise<ApiRequest>
   ): Promise<ApiResponse> {
+    if (!connection) {
+      throw new ApiProxyError("unavailable");
+    }
     if (this.activeRequests >= this.maxConcurrentRequests) {
       throw new ApiProxyError("busy");
     }
     this.activeRequests += 1;
     try {
-      return await proxyApiRequest(input, connection, this.dependencies);
+      const reviewed = prepareAfterAdmission
+        ? await prepareAfterAdmission(input)
+        : input;
+      if (
+        reviewed.method !== input.method ||
+        reviewed.path !== input.path ||
+        reviewed.timeoutMs !== input.timeoutMs
+      ) {
+        throw new ApiProxyError("invalid-response");
+      }
+      return await proxyApiRequest(reviewed, connection, this.dependencies);
     } finally {
       this.activeRequests -= 1;
     }

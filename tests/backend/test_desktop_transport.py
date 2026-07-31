@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -13,8 +14,9 @@ from pathlib import Path
 
 import pytest
 import app.factory as app_factory
-from app.cli import main as cli_main
+from app.cli import _desktop_settings, main as cli_main
 from app.config import Settings
+from app.db import SCHEMA_VERSION
 from app.desktop_session import (
     MAX_DESKTOP_REQUEST_BODY_BYTES,
     MAX_STARTUP_TOKEN_BYTES,
@@ -45,6 +47,32 @@ def _settings(tmp_path: Path) -> Settings:
         database_path=data_dir / "metadata.sqlite3",
         qmd_enabled=False,
     )
+
+
+def test_desktop_settings_require_local_source_owner_check(tmp_path: Path) -> None:
+    data_dir = (tmp_path / "data").resolve()
+    source = (tmp_path / "repository").resolve()
+    source.mkdir()
+
+    settings = _desktop_settings(data_dir, (source,))
+
+    assert settings.local_source_owner_check is True
+
+
+def test_desktop_factory_cannot_disable_local_source_owner_check(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    assert settings.local_source_owner_check is False
+
+    application = create_app(
+        settings,
+        desktop_session=DesktopSession(token=TOKEN, launch_id=LAUNCH_ID),
+    )
+
+    assert application.state.service.settings.local_source_owner_check is True
+    assert settings.local_source_owner_check is False
+    application.state.service.close()
 
 
 def _headers(**updates: str) -> dict[str, str]:
@@ -94,9 +122,13 @@ def test_factory_import_has_no_module_level_service_and_cli_is_explicit(
     doctor_status = cli_main(["doctor"])
     doctor = json.loads(capsys.readouterr().out)
     assert doctor_status == (0 if doctor["ok"] else 1)
-    assert doctor["checks"]["python_runtime"] == "ok"
+    assert doctor["checks"]["python_runtime"] == (
+        "ok"
+        if sys.version_info[:3] == (3, 13, 14)
+        else "requires-python-3.13.14"
+    )
     assert doctor["protocol"] == {"major": 1, "minor": 0}
-    assert doctor["schema_version"] == 3
+    assert doctor["schema_version"] == SCHEMA_VERSION
 
     project = tomllib.loads(
         (
@@ -106,6 +138,37 @@ def test_factory_import_has_no_module_level_service_and_cli_is_explicit(
         ).read_text(encoding="utf-8")
     )
     assert project["project"]["scripts"] == {"lcf-service": "app.cli:main"}
+
+
+def test_desktop_settings_use_only_explicit_local_source_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = (tmp_path / "data").resolve()
+    source_root = (tmp_path / "repositories").resolve()
+    source_root.mkdir()
+    monkeypatch.setenv("LCF_LOCAL_SOURCE_ROOTS", str(tmp_path / "ignored"))
+
+    settings = _desktop_settings(data_dir, (source_root,))
+
+    assert settings.local_source_roots == (source_root,)
+    assert settings.ctags_enabled is False
+
+
+@pytest.mark.parametrize(
+    "unsafe_root",
+    [
+        Path("/"),
+        Path("relative"),
+        Path("/tmp/../tmp/repositories"),
+    ],
+)
+def test_desktop_settings_reject_unsafe_local_source_roots(
+    tmp_path: Path,
+    unsafe_root: Path,
+) -> None:
+    with pytest.raises(DesktopTransportError):
+        _desktop_settings((tmp_path / "data").resolve(), (unsafe_root,))
 
 
 @pytest.mark.parametrize("unsupported_command", ["runner", "mcp"])
@@ -150,13 +213,15 @@ def test_desktop_handshake_and_health_require_complete_headers(
         "protocol": {"major": 1, "minor": 0},
         "launch_id": LAUNCH_ID,
         "transport": "uds",
-        "schema_version": 3,
+        "schema_version": SCHEMA_VERSION,
         "capabilities": [
             "desktop-handshake",
             "health",
-            "library-api",
-        ],
-    }
+                "library-api",
+                "desktop-retrieval-v1",
+                "desktop-provider-v1",
+            ],
+        }
     assert health.status_code == 200
     assert health.json()["version"] == APP_VERSION
 

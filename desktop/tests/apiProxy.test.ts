@@ -185,6 +185,71 @@ describe("UDS API proxy", () => {
     });
   });
 
+  it.each([
+    '"/private/repository"',
+    '["/private/repository"]',
+    '[{"id":"safe","name":"Safe"},"/private/repository"]'
+  ])(
+    "rejects a malformed libraries response instead of leaking primitive paths: %s",
+    async (payload) => {
+      const transport = fakeTransport((callback) =>
+        response(callback, 200, payload)
+      );
+      await expect(
+        proxyApiRequest(
+          { method: "GET", path: "/api/libraries", timeoutMs: 1_000 },
+          connection,
+          { request: transport.request }
+        )
+      ).rejects.toMatchObject({ code: "invalid-response" });
+    }
+  );
+
+  it("preserves only the allowlisted provider policy and consent fields", async () => {
+    const transport = fakeTransport((callback) =>
+      response(
+        callback,
+        200,
+        JSON.stringify({
+          revision: 7,
+          provider_policy: "codex_then_cursor",
+          cursor_fallback_consent: {
+            subject: "cursor_cli_fallback",
+            version: 1,
+            granted: true,
+            granted_at: "2026-07-31T08:00:00Z",
+            account: "private@example.com"
+          },
+          provider_order: ["codex_cli", "cursor_cli"],
+          fallback_enabled: true,
+          executable: "/private/bin/cursor"
+        })
+      )
+    );
+
+    await expect(
+      proxyApiRequest(
+        { method: "GET", path: "/api/settings", timeoutMs: 1_000 },
+        connection,
+        { request: transport.request }
+      )
+    ).resolves.toEqual({
+      status: 200,
+      body: {
+        revision: 7,
+        provider_policy: "codex_then_cursor",
+        cursor_fallback_consent: {
+          subject: "cursor_cli_fallback",
+          version: 1,
+          granted: true,
+          granted_at: "2026-07-31T08:00:00Z"
+        },
+        provider_order: ["codex_cli", "cursor_cli"],
+        fallback_enabled: true
+      }
+    });
+  });
+
   it("keeps only canonical repo-relative path and file response fields", async () => {
     for (const safe of [
       "README.md",
@@ -372,12 +437,32 @@ describe("UDS API proxy", () => {
     const proxy = new ApiProxy(1, { request: transport.request });
     const first = proxy.request(healthRequest, connection);
     await Promise.resolve();
-    await expect(proxy.request(healthRequest, connection)).rejects.toMatchObject({
-      code: "busy"
-    });
+    const prepare = vi.fn(async (input: ApiRequest) => input);
+    await expect(
+      proxy.request(healthRequest, connection, prepare)
+    ).rejects.toMatchObject({ code: "busy" });
+    expect(prepare).not.toHaveBeenCalled();
     expect(transport.options).toHaveLength(1);
 
     response(firstCallback!, 200, '{"status":"ok"}');
     await expect(first).resolves.toMatchObject({ status: 200 });
+
+    await expect(
+      proxy.request(healthRequest, undefined, prepare)
+    ).rejects.toMatchObject({ code: "unavailable" });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("allows preparation to rewrite only an admitted request body", async () => {
+    const transport = fakeTransport(() => undefined);
+    const proxy = new ApiProxy(1, { request: transport.request });
+
+    await expect(
+      proxy.request(healthRequest, connection, async (input) => ({
+        ...input,
+        path: "/api/jobs"
+      }))
+    ).rejects.toMatchObject({ code: "invalid-response" });
+    expect(transport.options).toHaveLength(0);
   });
 });

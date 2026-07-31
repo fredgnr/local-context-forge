@@ -4,14 +4,26 @@ import {
   IPC_CHANNELS,
   MAX_RESPONSE_BODY_BYTES,
   DesktopApiError,
+  DesktopLocalSourceError,
+  DesktopMcpSetupError,
+  DesktopUpdateError,
   isJsonValue,
+  isLocalSourceSelection,
+  isMcpSetupStatus,
   isRuntimeStatus,
+  isUpdateStatus,
   serializedByteLength,
   type ApiErrorCode,
   type ApiRequest,
   type ApiResponse,
   type DesktopBridge,
-  type RuntimeStatus
+  type LocalSourceErrorCode,
+  type LocalSourceSelection,
+  type McpSetupErrorCode,
+  type McpSetupStatus,
+  type RuntimeStatus,
+  type UpdateErrorCode,
+  type UpdateStatus
 } from "../contracts";
 import { parseApiRequest } from "../main/ipc";
 
@@ -32,6 +44,48 @@ const API_ERROR_CODES = new Set<ApiErrorCode>([
   "busy",
   "invalid-response",
   "transport"
+]);
+
+const MCP_SETUP_ERROR_CODES = new Set<McpSetupErrorCode>([
+  "busy",
+  "not-installed",
+  "not-authenticated",
+  "unsupported-installation",
+  "move-to-applications",
+  "source-debug",
+  "bundle-invalid",
+  "name-conflict",
+  "timeout",
+  "invalid-response",
+  "unavailable"
+]);
+
+const UPDATE_ERROR_CODES = new Set<UpdateErrorCode>([
+  "unavailable",
+  "busy",
+  "cancelled",
+  "network",
+  "timeout",
+  "response-too-large",
+  "metadata-invalid",
+  "channel-mismatch",
+  "signature-invalid",
+  "manifest-invalid",
+  "asset-invalid",
+  "download-failed",
+  "download-too-large",
+  "digest-mismatch",
+  "cache-unsafe",
+  "open-failed",
+  "external-open-failed",
+  "invalid-response"
+]);
+
+const LOCAL_SOURCE_ERROR_CODES = new Set<LocalSourceErrorCode>([
+  "busy",
+  "unsafe-selection",
+  "invalid-response",
+  "unavailable"
 ]);
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -86,6 +140,90 @@ function validatedApiResult(value: unknown): ApiResponse {
   return value.value as unknown as ApiResponse;
 }
 
+async function mcpSetupStatus(channel: string): Promise<McpSetupStatus> {
+  const value: unknown = await ipcRenderer.invoke(channel);
+  if (
+    !isPlainRecord(value) ||
+    typeof value.ok !== "boolean" ||
+    Object.keys(value).length !== 2
+  ) {
+    throw new DesktopMcpSetupError("invalid-response");
+  }
+  if (value.ok === false) {
+    if (
+      !isPlainRecord(value.error) ||
+      Object.keys(value.error).length !== 1 ||
+      typeof value.error.code !== "string" ||
+      !MCP_SETUP_ERROR_CODES.has(value.error.code as McpSetupErrorCode)
+    ) {
+      throw new DesktopMcpSetupError("invalid-response");
+    }
+    throw new DesktopMcpSetupError(value.error.code as McpSetupErrorCode);
+  }
+  if (!isMcpSetupStatus(value.value)) {
+    throw new DesktopMcpSetupError("invalid-response");
+  }
+  return value.value;
+}
+
+async function updateAction(channel: string): Promise<UpdateStatus> {
+  const value: unknown = await ipcRenderer.invoke(channel);
+  if (
+    !isPlainRecord(value) ||
+    typeof value.ok !== "boolean" ||
+    Object.keys(value).length !== 2
+  ) {
+    throw new DesktopUpdateError("invalid-response");
+  }
+  if (value.ok === false) {
+    if (
+      !isPlainRecord(value.error) ||
+      Object.keys(value.error).length !== 1 ||
+      typeof value.error.code !== "string" ||
+      !UPDATE_ERROR_CODES.has(value.error.code as UpdateErrorCode)
+    ) {
+      throw new DesktopUpdateError("invalid-response");
+    }
+    throw new DesktopUpdateError(value.error.code as UpdateErrorCode);
+  }
+  if (!isUpdateStatus(value.value)) {
+    throw new DesktopUpdateError("invalid-response");
+  }
+  return value.value;
+}
+
+async function selectLocalSource(): Promise<LocalSourceSelection | null> {
+  const value: unknown = await ipcRenderer.invoke(
+    IPC_CHANNELS.localSourceSelect
+  );
+  if (
+    !isPlainRecord(value) ||
+    typeof value.ok !== "boolean" ||
+    Object.keys(value).length !== 2
+  ) {
+    throw new DesktopLocalSourceError("invalid-response");
+  }
+  if (value.ok === false) {
+    if (
+      !isPlainRecord(value.error) ||
+      Object.keys(value.error).length !== 1 ||
+      typeof value.error.code !== "string" ||
+      !LOCAL_SOURCE_ERROR_CODES.has(
+        value.error.code as LocalSourceErrorCode
+      )
+    ) {
+      throw new DesktopLocalSourceError("invalid-response");
+    }
+    throw new DesktopLocalSourceError(
+      value.error.code as LocalSourceErrorCode
+    );
+  }
+  if (value.value !== null && !isLocalSourceSelection(value.value)) {
+    throw new DesktopLocalSourceError("invalid-response");
+  }
+  return value.value;
+}
+
 const bridge: DesktopBridge = Object.freeze({
   version: DESKTOP_BRIDGE_VERSION,
   api: Object.freeze({
@@ -116,6 +254,52 @@ const bridge: DesktopBridge = Object.freeze({
       };
       ipcRenderer.on(IPC_CHANNELS.runtimeChanged, wrapped);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.runtimeChanged, wrapped);
+    }
+  }),
+  mcp: Object.freeze({
+    status(): Promise<McpSetupStatus> {
+      return mcpSetupStatus(IPC_CHANNELS.mcpSetupGet);
+    },
+    configure(): Promise<McpSetupStatus> {
+      return mcpSetupStatus(IPC_CHANNELS.mcpSetupConfigure);
+    },
+    clear(): Promise<McpSetupStatus> {
+      return mcpSetupStatus(IPC_CHANNELS.mcpSetupClear);
+    }
+  }),
+  update: Object.freeze({
+    status(): Promise<UpdateStatus> {
+      return updateAction(IPC_CHANNELS.updateStatus);
+    },
+    check(): Promise<UpdateStatus> {
+      return updateAction(IPC_CHANNELS.updateCheck);
+    },
+    downloadOrOpen(): Promise<UpdateStatus> {
+      return updateAction(IPC_CHANNELS.updateDownloadOrOpen);
+    },
+    cancel(): Promise<UpdateStatus> {
+      return updateAction(IPC_CHANNELS.updateCancel);
+    },
+    openReleasePage(): Promise<UpdateStatus> {
+      return updateAction(IPC_CHANNELS.updateOpenReleasePage);
+    },
+    subscribe(listener: (status: UpdateStatus) => void): () => void {
+      if (typeof listener !== "function") {
+        throw new TypeError("Update listener must be a function");
+      }
+      const wrapped = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        if (isUpdateStatus(value)) {
+          listener(value);
+        }
+      };
+      ipcRenderer.on(IPC_CHANNELS.updateChanged, wrapped);
+      return () =>
+        ipcRenderer.removeListener(IPC_CHANNELS.updateChanged, wrapped);
+    }
+  }),
+  sources: Object.freeze({
+    selectRepository(): Promise<LocalSourceSelection | null> {
+      return selectLocalSource();
     }
   }),
   app: Object.freeze({

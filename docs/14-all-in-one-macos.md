@@ -1,215 +1,228 @@
-# M4 Pro 24 GB：all-in-one 部署
+# M4 Pro 24 GB：all-in-one 桌面部署
 
-## 最短路径
+## 部署决策
 
-准备好 Docker Desktop 或 Colima。推荐在 Mac 上完成：
+Local Context Forge 的目标默认形态是一个 macOS Apple Silicon Electron 应用：
 
-```bash
-codex login
-codex login status
+- DMG 是普通用户唯一默认安装产物；
+- Python 3.13.14 sidecar、Node 22.23.2、QMD 2.5.3、renderer 和 MCP companion 随 App
+  提供；
+- 目标机不需要 Docker、Homebrew、Python、Node、Git、QMD 或 ctags；
+- Wiki 生成默认调用该用户已安装、已登录的 Codex CLI；
+- 模型权重不塞进 DMG，只在用户明确发起 embedding rebuild 后按需准备；
+- 数据保存在 Application Support，替换 App 不应覆盖用户数据。
+
+这套结构适合 M4 Pro 24 GB，但“架构合理”不等于“发行已验证”。当前正式 Release、
+clean-user、真实 Codex、物理模型和更新门禁仍未完成。只有经过审查的 DMG 存在后，才把
+Electron 作为非开发者的推荐路径。
+
+## 最简单的用户路径
+
+经过审查的正式 Release 可用后，安装不需要脚本：
+
+1. 下载 arm64 DMG 与发布摘要；
+2. 核对 `SHA256SUMS`；
+3. 打开 DMG，把 App 拖到 `/Applications`；
+4. 按系统可撤销流程确认首次打开；
+5. 在终端完成 `codex login`；
+6. 在 App 中添加仓库、审核、查询和连接 MCP。
+
+这比要求非技术用户运行 bootstrap 脚本更直接。完整步骤见
+[快速开始](04-quickstart.md)。
+
+## “一个脚本部署”现在指什么
+
+仓库里有两个容易混淆的自动化入口：
+
+### Electron 正式发行
+
+推送符合 `v*.*.*` 的受保护 tag 后，`.github/workflows/desktop-release.yml` 在
+`macos-15` runner 上自动执行整条构建：
+
+```text
+固定 tag/commit
+  → 下载并校验固定 Python/Node 来源
+  → 构建 Python onedir、QMD、renderer、companion
+  → 运行测试和资源审计
+  → 从 macos-release Environment 读取一个 credential bundle
+  → 自签名、组装 DMG/ZIP/更新元数据
+  → 独立复核本地与 GitHub draft 资产摘要
+  → 发布 Release
 ```
 
-这不是安装控制面的硬前提：首次未指定 provider 且没有已登录的 Codex/Cursor 时，安装器会清楚
-提示并进入 `mock` 演示模式。mock 可验证部署、队列、审核和查询，但不生成生产级 Wiki。
+这是**维护者的一次触发、整套产物构建**，不是终端用户安装脚本。仓库当前的 public key 和
+certificate lock 仍是 `unprovisioned`，因此正式发行会 fail closed，不应声称已有可下载版本。
 
-解压后只运行：
+### legacy Docker all-in-one
 
 ```bash
 ./install.sh
 ```
 
-不想输入命令时，解压后双击 `install.command` 即可；它会运行同一个安装器，并在
-失败时保留终端窗口显示下一步。缺少 Python 3 或 `jq` 且已安装 Homebrew 时，安装器会
-自动补齐；Docker runtime 与第三方 CLI 仍需用户明确安装。
+或双击 `install.command`，仍会安装 Docker/Web/host runner 方案。它不是 Electron，不会产生
+DMG，也不会写入桌面 Application Support。legacy 路径在迁移和物理门禁通过前继续保留用于
+回退。
 
-不要用 `sudo` 运行：安装器会拒绝 root。Docker context、`~/Library/LaunchAgents` 与已登录 CLI
-都属于当前图形用户，用 sudo 会指向错误的账号边界。
+当前没有一个把未审查源码直接变成“可推荐桌面安装”的本地脚本；这样可以避免把 source smoke
+误当成签名、clean-user 和更新证据。
 
-安装器不会自动安装 Codex/Cursor，不会读取或复制 token，不会 mount
-`~/.codex`、Cursor 配置或 Docker socket，也不会更改当前 Docker context。
+## 应用内部结构
 
-## 安装阶段
+| 进程 | 职责 | 用户不需要安装 |
+| --- | --- | --- |
+| React renderer | 仓库、任务、审核、查询、设置 UI | Node |
+| Electron Main | 文件选择、IPC、进程、更新和安全边界 | 额外 daemon |
+| Python sidecar | SQLite、采集、Wiki、队列和领域 API | Python/Git/ctags |
+| Node/QMD worker | lexical、embedding 和 hybrid 检索 | Node/QMD |
+| MCP companion | Context7 兼容 stdio 工具 | npm/npx |
+| Codex CLI | 生成待审核 Wiki | 仍由用户单独安装和登录 |
 
-1. 检查非 root 的 Darwin/arm64、内存、至少 10 GiB 磁盘余量、Python 3.9+、Git、curl、tar、
-   `rsync` 与 `jq`；
-2. 读取当前 Docker context，只启动该 context 对应的 Docker Desktop 或已有
-   Colima profile；
-3. 检测 Codex/Cursor 的绝对路径，并用各自的 `status` 命令检查登录状态；
-4. 原子生成 mode `600` 的 `.lcf/runtime.env`；
-5. 创建 mode `700` 的 `data`、`imports`、`backups` 与 runner spool；
-6. `auto`/`codex_cli`/`cursor_cli` 模式生成并校验
-   `~/Library/LaunchAgents/dev.local-context-forge.host-runner.plist`；
-7. CLI 模式启动 host runner 并等待本次启动产生的新 heartbeat；`mock`/`ollama` 确认
-   LaunchAgent 已卸载；
-8. Compose build/up，等待 API、MCP、Web health；
-9. 运行 smoke test、保存安装状态并打开 Web。
+Main 与 sidecar/worker 使用每次启动的私有 Unix domain socket 和能力令牌。Renderer 看不到
+socket、token、完整本地路径、provider executable 或更新下载目录。
 
-重复执行会保留现有 runtime 设置，不会删除源码快照、Wiki、SQLite、imports 或
-backups。失败时恢复之前的 runtime env/LaunchAgent 并尽力恢复原服务；数据目录从不
-参与部署回滚。断电或 `SIGKILL` 留下的 deploy lock 记录 owner PID；owner 不再存活时，下次
-安装会自动清理空的旧锁，意外文件则 fail closed，要求人工检查。
+## 数据位置
 
-## Docker Desktop 与 Colima
-
-自动模式使用 `docker context show` 返回的当前 context。若 Docker Desktop 已安装但
-daemon 未启动，安装器会打开 Docker.app 并等待；若当前 context 是已有 Colima，
-会执行 `colima start`，但不修改 CPU、内存和磁盘。
-
-同时安装两种 runtime 时，先由用户明确选择：
-
-```bash
-docker context ls
-docker context use colima       # 或 desktop-linux
-./install.sh --runtime colima   # 或 docker-desktop
-```
-
-不静默切换 context 可以避免把镜像、容器或数据落到错误 VM。新建 Colima profile 的
-M4 Pro 24 GB 起点可以是 6 CPU、8 GiB 内存、80 GiB 磁盘；安装器不修改已有 profile。
-
-## Host runner spool
-
-runner 使用同一个 `data` bind mount 中的目录通信：
+当前桌面实现使用：
 
 ```text
-data/runner/
-├── inbox/       worker 原子提交请求
-├── working/     LaunchAgent 已 claim 的请求
-├── outbox/      成功或失败响应
-├── failed/      被拒绝/失败的原始请求
-└── heartbeat.json
+~/Library/Application Support/Local Context Forge/
+~/Library/Caches/Local Context Forge/
 ```
 
-唯一任务类型是 `wiki_v1`。请求顶层只接受：
+Application Support 包含数据库、源码快照、facts、提案、任务、Wiki、provider attempt 和
+QMD 状态，应视为私有源码数据。Caches 包含可重建的 QMD runtime/model cache。
 
-- `id`
-- `task`
-- `provider`：`auto`、`codex_cli` 或 `cursor_cli`
-- `evidence` JSON object
-- `output_schema` JSON object
-- 可选 `model`
-- `timeout_seconds`，范围 30–3600 秒
+应用 bundle、Codex/Cursor 登录、release private key 不在这些目录。删除缓存可能要求重新下载
+模型和重建索引，但不应删除已发布 Wiki；移动或删除 Application Support 则会影响真实数据。
 
-未知字段（包括 `command`、`path`、自定义 prompt）、超大文件、symlink、坏 JSON、
-越界 timeout 都拒绝。CLI 工作目录只包含 `evidence.json` 与 `schema.json`，输出会
-再次按 schema 验证。
+当前桌面版没有经过物理验证的一键 backup/restore 或 legacy 自动迁移 UI。更新、卸载和故障
+操作前，应先退出应用并复制整个 Application Support 目录；不要只备份 QMD cache。详细安全
+步骤见[桌面版完整指南](16-electron-desktop-guide.md)。
 
-`auto` 的规则刻意保守：
+## Codex 与 Cursor
 
-1. Codex binary 存在且 `codex login status` 成功：使用 Codex。
-2. Codex 在任务开始前不存在或未登录：可改用已安装的 Cursor。
-3. Codex 一旦开始执行，任何失败都直接结束本任务，不再 fallback。
+应用启动任务前检查受支持的 Codex 安装和登录状态。执行参数固定为只读、ephemeral、
+忽略用户配置和仓库规则，并通过 stdin 提供有界证据；输出必须匹配 schema。
 
-第三条避免超时或响应丢失时重复消费两套订阅额度。每个 response 都记录
-`requested_provider`、`effective_provider` 与 `fallback_reason`。
+桌面设置只有两种策略：
 
-## Cursor 边界
+- `Codex only`：默认；
+- `Codex then Cursor`：用户明确勾选并保存后启用。
 
-Cursor CLI 当前仍是 beta，print/headless 模式具备 Agent 工具能力。LCF 使用
-`cursor-agent -p --output-format json`，并且绝不加 `--force`。这仍不是强隔离；
-高安全项目不要把 Cursor 设成自动备用。
+后者也只在 Codex **开始前**被确认未安装或未登录时生效。Codex installation unsupported、
+临时 unavailable、执行超时、非零退出或输出无效都不会触发 Cursor。Cursor 使用自己的账号
+和额度，应用不会把两个账号视为同一个订阅。
 
-## 生命周期
+## 仓库、队列、审核与重建
+
+- 公开远程地址只接受 `https://github.com/...`；
+- 私有仓库先 clone 到本机，再由系统目录选择器授权；
+- 采集和 embedding rebuild 共用持久 FIFO，固定单 worker；
+- 任务可查看队列位置、取消和显式 retry；
+- 每个新 ref 必须生成新的不可变 version label；
+- 提案逐页批准；整版全部批准后才激活；
+- 更换 embedding 后必须“保存并重建全部”；
+- embedding 未 ready 时自动 lexical fallback；
+- rebuild 不调用 Codex/Cursor。
+
+## MCP
+
+App 位于 `/Applications` 且 Codex 已登录后，在“设置”点击“连接 Codex”。应用调用
+`codex mcp add`，登记 App 内固定 Node、companion 和由应用生成的
+`LCF_MCP_OWNER_ID`，随后再读取配置确认结果。只有 marker、按规范化 `CODEX_HOME` 隔离的
+mode-0600 ownership ledger，以及 exact command/arg 全部匹配时，应用才把 target 视为自有；
+missing/damaged/legacy/mismatch/extra-env/lookalike 状态均 fail closed。marker 不是 secret 或
+MCP capability，companion 在桥接前会删除它。
+
+应用在 add/remove 前会二次读取配置，但 Codex CLI 没有 CAS 或共享配置锁；最终 list 与 mutation
+之间仍有小竞态。恶意 same-UID 进程也能读写 Codex config/ledger，并利用 bundle/state
+check-use 窗口。因此这是单用户、同 UID 非对抗边界，不能无条件保证并发第三方 writer 的配置
+不受影响。
+
+companion 只提供：
+
+- `resolve-library-id`
+- `query-docs`
+
+App 必须运行。当前持久配对、Keychain/client code identity 门禁未完成，所以不要把它用于
+多用户或远程服务。Cursor MCP 只支持用户手工配置，不由 App 管理，也不要复制 Codex ownership
+marker。
+
+## 签名与首次打开
+
+正式发行设计使用固定项目自签名证书：
+
+- 不是 Apple Developer ID；
+- 不 notarize 或 staple；
+- `hardenedRuntime: false`；
+- Electron fuses 仍关闭不需要的 Node/inspect 能力；
+- 发布说明和 UI 必须披露限制。
+
+首次打开只使用 Finder“打开”或“系统设置 → 隐私与安全性 → 仍要打开”。不要关闭 Gatekeeper、
+清除 quarantine 或使用 `sudo`。
+
+## 更新
+
+设置页可以：
+
+- 检查 canonical GitHub Release；
+- 验证内置 Ed25519 公钥签名的 update manifest；
+- 校验版本、架构、大小和 DMG SHA-256；
+- 下载并打开已验证 DMG；
+- 在 source/unprovisioned、校验、网络或打开错误时，由用户显式打开固定的官方 Release 页面。
+
+应用目前不会静默替换 App、运行 ZIP、重启或删除数据。`VAL-UPDATE-001` 的物理
+0.0.1 → 0.0.2 门禁仍未运行，因此“自动应用更新”不是已交付能力；用户需在打开的 DMG 中手工
+拖拽替换。Release 页面操作不接受 Renderer URL，也不会把 signed updater 的候选/错误状态改成
+成功；它只是人工出口，不证明页面已有 Release 或其中资产已验证。
+
+## 高级用户：源码模式
+
+源码模式只用于开发验证，不是 all-in-one 发行。它需要 Node、Python/uv 和源码依赖，也不会让
+MCP onboarding 写入持久 Codex 配置。
 
 ```bash
-./scripts/lcf status
-./scripts/lcf doctor
-./scripts/lcf logs
-./scripts/lcf restart
-./scripts/lcf stop
-./scripts/lcf start
-./scripts/lcf down
+make ci-python-install
+npm --prefix web ci
+npm --prefix web run build
+make renderer-stage
+npm --prefix desktop ci
+
+LCF_RENDERER_DIR="$(pwd)/web/dist" \
+LCF_SIDECAR_BIN="$(pwd)/backend/.venv/bin/lcf-service" \
+npm --prefix desktop run start:source
 ```
 
-`stop` 保留容器；`down` 删除容器但不删除 bind-mounted 数据。停止 runner 时会删除旧 heartbeat，
-下次启动必须等到新的 heartbeat 才通过 doctor。
-
-## 更换生成 provider
-
-重复运行安装器是受支持的切换方式：
+真实启动前仍应运行：
 
 ```bash
-./install.sh --provider codex_cli --no-open
-./install.sh --provider cursor_cli --no-open
-./install.sh --provider mock --no-open
-./install.sh --provider ollama --no-open
+make ci-source
 ```
 
-显式 `codex_cli`、`cursor_cli` 或 `auto` 在没有相应登录时会停止并保留原配置，不会静默改成
-mock。只有**首次、未指定 provider** 且没有可用 CLI 时自动选择 mock。切到 mock/Ollama 会卸载
-LaunchAgent；切回 CLI 会重新写入绝对 binary 路径并等待 provider heartbeat。
+源码模式 QMD staging、签名、DMG、clean-user 和更新能力与正式包不同。不能用一次成功启动替代
+发行门禁。
 
-## 备份与恢复
+## 高级用户：发布管理
 
-在线创建一致备份：
+正式发布需要公开仓库中的受保护 Environment：
+
+1. Environment 名称必须是 `macos-release`；
+2. 必须配置 required reviewer；
+3. custom deployment tag policy 只能允许 `v*.*.*`；
+4. 只保存一个 secret：`DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`；
+5. 公共 update key、update lock 与 certificate fingerprint lock 必须提交并经审查；
+6. PR、fork 和普通 source CI 不能读取该 secret。
+
+管理员初始化命令：
 
 ```bash
-./scripts/lcf backup
+python3 tools/bootstrap_desktop_release_keys.py \
+  --repo fredgnr/local-context-forge \
+  --upload
 ```
 
-脚本会 drain 新任务，拒绝仍在 running/cancelling 的任务，短暂停止 API/MCP，备份 SQLite、
-Wiki、snapshot、facts、proposal 与 queued request，然后恢复服务。备份包含完整私有源码，必须
-放在 FileVault 或其他加密介质；`.lcf/runtime.env`、CLI 登录和 `imports/` 不在数据备份中。
+脚本先验证公开仓库和 Environment policy，通过 `gh` 的 stdin 上传一个版本化 credential
+bundle，再只在仓库工作区写入公共 key 与两个 public lock。它不会打印私钥。管理员必须审查并
+提交这三个公共文件后才能打 tag；当前未 provision 的 marker 会让 Release workflow 拒绝继续。
 
-恢复前停止服务，并把现有数据移入可回退的 quarantine：
-
-```bash
-./scripts/lcf stop
-./scripts/lcf restore \
-  --archive ./backups/lcf-backup-YYYYMMDDTHHMMSSZ.tar.gz \
-  --target ./data \
-  --replace
-./scripts/lcf start
-./scripts/lcf doctor
-```
-
-restore 默认要求相邻 `.sha256`，不会直接删除旧 data；详细边界见
-[备份与恢复](09-backup-restore.md)。
-
-卸载服务但保留全部数据：
-
-```bash
-./scripts/lcf uninstall
-```
-
-该命令执行 Compose `down`（不带 `-v`）、卸载当前用户 LaunchAgent，并保留
-`data`、`imports`、`backups` 与 `.lcf`。它还删除派生 heartbeat，但不删除 runner 中的请求/
-结果审计。要重新启用，直接再次运行 `./install.sh`；若要彻底删除保留数据，先单独备份，再由
-用户明确处理这些目录。
-
-## 高级安装参数
-
-```bash
-./install.sh \
-  --runtime docker-desktop \
-  --provider codex_cli \
-  --web-port 18080 \
-  --api-port 18000 \
-  --mcp-port 18001
-```
-
-可用值：
-
-- runtime：`auto`、`docker-desktop`、`colima`
-- provider：`auto`、`codex_cli`、`cursor_cli`、`mock`、`ollama`
-- `--images build|ghcr`：从当前 checkout 构建，或拉取 GHCR 多架构预构建镜像
-- `--image-tag TAG`：GHCR 标签，默认 `main`；稳定部署建议精确 semver 或 `sha-*`
-- `--ghcr-owner OWNER`：GHCR 用户/组织，默认 `fredgnr`
-- `--skip-build`：使用已有镜像
-- `--no-open`：部署完成不自动打开浏览器
-
-私有 GHCR 模式必须先让当前 Docker context 登录 `ghcr.io`；凭据进入 Docker credential
-store，不进入 runtime env。详见 [GitHub Actions 与 GHCR](15-github-actions-ghcr.md)。
-
-所有端口仍绑定 `127.0.0.1`。本版本没有认证/ACL/TLS；不要通过修改 bind host
-直接暴露到局域网或公网。
-
-## Doctor
-
-`./scripts/lcf doctor` 只读检查 runtime env 权限、记录的 Docker context、
-API/MCP/Web health、host runner heartbeat 与 CLI provider 状态；mock/Ollama 还会确认
-LaunchAgent 没有加载。Heartbeat 不包含用户名、邮箱、token、套餐或完整 CLI 输出。
-
-LaunchAgent 的 plist 与日志目录仅当前用户可读写；容器只看到有界 JSON spool，看不到
-`~/.codex`、Cursor 配置、API key 或 Docker socket。runner 请求不接受任意 command/path/prompt，
-CLI 在临时目录执行。它仍与当前 macOS 用户拥有相同账号权限，因此不要把 loopback Web/API
-暴露给不受信任用户。
+完整发布和恢复操作见[桌面版完整指南](16-electron-desktop-guide.md)。

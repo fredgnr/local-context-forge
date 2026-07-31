@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "os": "darwin",
+    "architecture": "arm64",
+    "runnerLabel": "macos-15",
+    "deploymentTarget": "14.0"
+  },
+  "python": {
+    "implementation": "CPython",
+    "version": "3.13.14",
+    "installRoot": "/Library/Frameworks/Python.framework/Versions/3.13",
+    "interpreterRelativePath": "bin/python3.13",
+    "distribution": {
+      "provider": "actions/python-versions",
+      "releaseTag": "3.13.14-27320626148",
+      "releaseCommit": "25a990ef82051ebb9cba2b6ed6b79e61148a5bfb",
+      "archiveName": "python-3.13.14-darwin-arm64.tar.gz",
+      "archiveSource": "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/python-3.13.14-darwin-arm64.tar.gz",
+      "archiveSha256": "839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34",
+      "archiveSize": 70956513,
+      "archiveMembers": [
+        {
+          "path": "setup.sh",
+          "size": 3615,
+          "sha256": "6a53e0ea174e38a5e5a5ad953d70f47833271c26ade6119cf8b54d4596d720f1"
+        },
+        {
+          "path": "build_output.txt",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "python-3.13.14-macos11.pkg",
+          "size": 71544771,
+          "sha256": "8e58affb218c155a1dfdc27b291f817129669f8760e7a297adb2e4439ba5d2e8"
+        }
+      ],
+      "installerPackageName": "python-3.13.14-macos11.pkg",
+      "installerPackageSha256": "8e58affb218c155a1dfdc27b291f817129669f8760e7a297adb2e4439ba5d2e8",
+      "installMethod": "macos-installer-pkg-direct",
+      "hashManifestName": "hashes.sha256",
+      "hashManifestSource": "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/hashes.sha256",
+      "hashManifestSha256": "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17",
+      "hashManifestSize": 2775
+    }
+  },
+  "tools": {
+    "uv": "0.11.29",
+    "pyinstaller": "6.21.0",
+    "pyinstallerHooksContrib": "2026.6"
+  },
+  "requiredCiInputs": [
+    "GITHUB_SHA",
+    "LCF_SOURCE_DATE_EPOCH",
+    "ImageVersion",
+    "LCF_PYTHON_DISTRIBUTION_ARCHIVE",
+    "LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST",
+    "LCF_PYTHON_INSTALL_ROOT"
+  ]
+}

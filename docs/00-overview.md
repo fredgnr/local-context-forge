@@ -1,103 +1,114 @@
 # Local Context Forge：本地 Context7 平替
 
-Local Context Forge（LCF）把代码仓库转换为一套**可审计、可版本化、可检索、可通过 MCP 消费**的 API 知识库。它不是“把代码切块后做向量搜索”的包装，而是一条从源码事实到发布文档的编译流水线：
+Local Context Forge（LCF）把代码仓库编译成一套**可审核、可版本化、可检索、可通过 MCP
+消费**的 API Wiki。它不仅建立代码向量索引，还保存页面、结构化元数据、源码引用、审核状态
+和 Git 历史。
 
 ```text
-Git/allowlist 本地目录
-    │ 固化 commit、过滤依赖缓存/构建目录
-    ▼
-不可变源码快照 ──► 符号/签名/测试/示例事实层
-                         │ 带 path:line 与 source_sha
-                         ▼
-	                 待审核 Wiki 提案
-	                         │ schema + source SHA/path/line 验证
-                         ▼
-                 Git 版本化 API Wiki
-                         │
-              ┌──────────┴──────────┐
-              ▼                     ▼
-       QMD 本地检索          Context7 兼容 MCP
- BM25；可选 vector/rerank  resolve-library-id/query-docs
+不可变源码快照
+    ↓
+确定性事实与源码范围
+    ↓
+Codex CLI 生成知识提案
+    ↓
+schema / source SHA / 路径 / 行号验证
+    ↓
+人工批准或拒绝
+    ↓
+Git-backed Wiki + SQLite 物化页
+    ↓
+QMD hybrid 或 lexical 查询
+    ↓
+resolve-library-id / query-docs
 ```
 
-## 解决什么问题
+## 它解决什么问题
 
-- **比普通 RAG 更稳定**：答案首先来自持续维护的 Wiki；检索负责导航，不负责临时“重建事实”。
-- **比静态文档生成器更完整**：确定性抽取保留签名与证据，LLM 补齐概念、用法、反例和跨文件关系。
-- **比云端文档服务更私有**：源码、索引和生成模型都可留在局域网；默认不要求 OpenAI API。
-- **比一次性总结更可维护**：ingest 产生带验证结果的提案；显式发布后把页面双写到 SQLite 与 Wiki Git，Git 保留可比较的审计历史。当前不能只靠 `git revert` 改变运行时查询；Wiki link/sidecar lint 是发布后的独立检查。
-- **兼容现有客户端习惯**：MCP 暴露 `resolve-library-id` 与 `query-docs`，便于替换 Context7 工作流。
+普通代码 RAG 往往只保存临时切块，难以回答“这个结论来自哪个提交、哪几行、是否经过
+审核”。LCF 把生成结果先当作提案：
 
-## 推荐拓扑
+- 每次采集绑定确定的 ref、完整 source SHA 和新的不可变版本；
+- 页面必须携带实际提供给生成器的源码引用；
+- 提案不会自动进入查询，必须在 Web 界面批准；
+- 同一版本全部批准后才激活，拒绝或部分成功版本不会冒充正式知识；
+- 发布后的 Wiki 可 diff、可 lint，也能被 Context7 风格 MCP 工具查询。
 
-本仓库为用户的两台机器优化：
+## 桌面版的使用体验
 
-| 设备 | 角色 | 主要组件 | 原因 |
-|---|---|---|---|
-| M4 Pro MacBook / 24 GB | 常驻控制面与默认生成面 | API、Web、MCP、SQLite、QMD、Host Runner、Codex CLI | 低功耗、统一存储，并复用宿主已登录的 Codex CLI |
-| Windows / 32 GB + RTX 4060（可选） | 备用本地生成面 | Ollama、文档生成模型 | 需要完全本地生成或批量实验时使用，不是默认部署前提 |
+目标用户只需要一个 macOS 应用：
 
-没有 ready 的全局 embedding profile 时，查询使用内置 lexical fallback。用户在 Web 选择模型并
-创建持久的 `embedding_rebuild` job；系统注册完整已发布 corpus，再以 `qmd embed -f` 全局重建。
-成功前不会混用旧向量，发布新 corpus 或切换模型都会重新标记为 stale。默认 embedding URI 为
-`hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf`；Hybrid 还会使用约
-640 MB 的 Qwen3 reranker 与约 1.1 GB 的 query expansion 模型。英文代码/文档语料不需要为
-中文兼容额外换模型。索引重建不调用生成模型；重新采集才消耗 Codex/Cursor/Ollama。可选的
-Windows 生成面建议从实际可用的 7B–9B Q4 模型做评测。
+1. 在“仓库”中粘贴公开 GitHub HTTPS 地址，或用系统选择器授权本地仓库；
+2. 选择分支、标签或提交并提交采集；
+3. 在“任务”中查看持久 FIFO 队列、进度、取消、失败和显式重试；
+4. 在“审核”中逐页检查 Markdown 与源码引用，再批准或拒绝；
+5. 在“查询”中检索已发布知识；
+6. 在“设置”中选择 embedding 模型、保存并发起全量重建；
+7. 点击“连接 Codex”，把只读的两个 MCP 工具登记到本机 Codex CLI。
 
-## 四种生成模式
+Codex CLI 是桌面版唯一默认生成工具。只有用户在设置中明确同意，而且任务开始前确认 Codex
+未安装或未登录时，才允许选择已登录的 Cursor CLI。Codex 一旦提交执行，后续超时或失败不会
+再切换到 Cursor，避免重复消耗额度和产生冲突结果。
 
-1. `mock`：不调用模型，生成确定性骨架。适合首次启动、CI、演示和排错。
-2. `codex_cli`：默认高质量分析器。容器通过 Host Runner 把受控任务交给 Mac 上已登录的
-   Codex CLI；CLI 不进入镜像，凭据也不挂载进容器。
-3. `cursor_cli`：Codex CLI 不可用时的备用 Host Runner provider。
-4. `ollama`：可选的完全本地生成面。API 只把经过筛选且有字节上限的 evidence pack 发送给
-   局域网内的 Windows Ollama。
+## M4 Pro 24 GB 推荐配置
 
-## 最短部署路径
+| 项目 | 默认选择 |
+| --- | --- |
+| 桌面平台 | macOS Apple Silicon |
+| 生成工具 | 已登录的 Codex CLI |
+| Cursor | 仅显式同意的 preflight fallback |
+| Embedding | EmbeddingGemma 300M Q8 |
+| 备选 embedding | Qwen3-Embedding 0.6B Q8 |
+| 任务并发 | 固定为 1 |
+| 查询降级 | embedding 未就绪时使用 lexical |
 
-```bash
-./install.sh
-```
+Embedding 是全局 profile。更换模型或发布新语料会使旧向量变为 stale；“保存并重建全部”
+会创建一个队列任务。索引重建只处理已发布 Wiki，不调用 Codex/Cursor，也不会消耗生成额度。
 
-不想输入命令时可双击 `install.command`。安装器完成预检、Host Runner、Compose、
-health 与 smoke 后自动打开 `http://127.0.0.1:8080`。默认端口只绑定回环地址，
-不会直接暴露到局域网。需要离线验证整条审核链路时，再运行 `./scripts/demo-seed.sh`。
+Windows 32 GB + RTX 4060 仍可作为 legacy Docker/Ollama 部署的可选生成节点，但当前 Electron
+客户端没有实现远程 Windows worker；不要把两条拓扑混为一谈。详见
+[硬件与部署](03-hardware-deployment.md)。
 
-当前交付的安全边界是受信任的本地单用户，不是共享服务：尚无认证、library ACL 与
-Markdown 总/逐页响应字节上限；查询命中数和超时不构成 response-body 保证。
+## 当前交付状态
 
-如需 Windows GPU 生成，请先阅读 [硬件与部署](03-hardware-deployment.md)，在 Windows 运行：
+桌面源码已经包含 Electron Main/preload/renderer、Python sidecar、Node/QMD worker、
+本地仓库授权、provider 监督、MCP companion、embedding 重建和受保护 Release 工作流。
+这不等于已有可推荐安装包：
 
-```powershell
-.\scripts\windows-ollama-setup.ps1 -MacAddress 192.168.1.20 -InstallOllama -RestartOllama
-```
+| 门禁 | 当前状态 |
+| --- | --- |
+| 源码单元、合同与构建检查 | 已有自动化证据 |
+| 公开仓库中的正式 DMG | 尚无经过审查的 Release 资产 |
+| 干净 macOS 用户安装 | `not-run` |
+| 打包应用中的真实 Codex 采集 | `not-run` |
+| 物理 Apple Silicon 模型下载/重建 | `not-run` |
+| 0.0.1 → 0.0.2 物理更新 | `not-run` |
 
-随后把 `.env` 中的 `OLLAMA_BASE_URL` 改成 Windows 的私网地址，并重启 API。
+因此：
 
-## 文档地图
+- **普通用户**：等公开 Release 同时提供经过审查的 DMG、`SHA256SUMS`、
+  `release-manifest.json` 和签名更新元数据后，再按
+  [桌面版完整指南](16-electron-desktop-guide.md)安装。
+- **开发者**：可以运行源码模式验证，但它不能证明 DMG、签名、clean-user 或更新门禁。
+- **需要现在稳定运行**：继续使用 legacy Docker/Web 路径；它不会被桌面开发静默删除。
 
-- [架构与流水线](01-architecture.md)
-- [Karpathy “LLM Wiki” 方案如何改变本项目](02-karpathy-wiki.md)
-- [M4 + Windows/4060 部署](03-hardware-deployment.md)
-- [安装与快速开始](04-quickstart.md)
-- [数据模型与磁盘布局](05-data-model.md)
-- [HTTP API 与 MCP](06-api-and-mcp.md)
-- [Codex CLI：登录、额度与合规边界](07-codex-cli.md)
-- [运维、升级与性能](08-operations.md)
-- [备份与恢复](09-backup-restore.md)
-- [威胁模型与安全基线](10-security.md)
-- [排错手册](11-troubleshooting.md)
-- [模型选择与评估](12-model-selection.md)
-- [docs-mcp-server、Context7 与 QMD 的取舍](13-alternatives.md)
+## 安全边界
 
-## 项目边界
+- Renderer 没有 Node、shell、原始文件路径、启动令牌、socket、更新器或任意进程能力；
+- Electron Main 负责系统目录选择、进程生命周期、私有 UDS、provider 和更新校验；
+- 本地仓库选择只向页面返回显示名和单次授权 ID，完整路径不进入 renderer；
+- MCP 只有 `resolve-library-id` 与 `query-docs`，没有采集、审核、发布或设置权限；
+- 仓库内容和模型输出都视为不可信数据，人工审核仍是事实正确性的必要步骤；
+- 产品当前是本机单用户应用，不是带认证、ACL、TLS 的共享服务。
 
-LCF 不承诺：
+自签名发行版不使用 Apple Developer ID、不 notarize，也不启用 hardened runtime。它不应被
+描述为“Apple 已验证”。首次打开应使用 Finder 的“打开”或系统设置中的“仍要打开”，不能
+通过关闭 Gatekeeper、移除 quarantine 或使用 `sudo` 绕过系统保护。
 
-- 自动生成的说明永远正确；发布前的证据审阅仍然必要。
-- 对所有语言进行完整语义解析；不受支持的语言会退化到通用抽取。
-- 与 Context7 的私有服务实现完全相同；兼容目标是常用 MCP 工具语义与调用体验。
-- 让个人 ChatGPT 订阅变成可供多人调用的模型 API。自动化授权必须按官方文档和当前账户条款选择。
+## 从这里继续
 
-本项目把这些不确定性显式化：每页都有版本和来源，提案与发布分离，检索结果可以追溯到发布页和源码。当前 SQLite 是 API/runtime read model，Wiki Git 是同次发布写出的审计副本；两者的自动 reconcile 是后续工作。
+- [安装与第一次查询](04-quickstart.md)
+- [Electron 桌面版完整指南](16-electron-desktop-guide.md)
+- [架构](01-architecture.md)
+- [API 与 MCP](06-api-and-mcp.md)
+- [安全与威胁模型](10-security.md)
+- [开发与验证状态](development/README.md)

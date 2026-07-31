@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-context-forge.dev/schemas/mcp-companion-build-manifest.schema.json",
+  "title": "Local Context Forge MCP companion build manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "entrypoint",
+    "product",
+    "target",
+    "dependencies",
+    "tools",
+    "sourceInputs",
+    "bundle"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "local-context-forge-mcp-companion" },
+    "entrypoint": { "const": "index.mjs" },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["appVersion", "mcpContract", "bridgeProtocol"],
+      "properties": {
+        "appVersion": { "type": "string", "minLength": 1 },
+        "mcpContract": { "type": "integer", "minimum": 1 },
+        "bridgeProtocol": { "const": "1.0" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture", "nodeMajor", "moduleFormat"],
+      "properties": {
+        "os": { "const": "darwin" },
+        "architecture": { "const": "arm64" },
+        "nodeMajor": { "const": 22 },
+        "moduleFormat": { "const": "esm" }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "@modelcontextprotocol/sdk",
+        "ajv",
+        "ajv-formats",
+        "fast-deep-equal",
+        "fast-uri",
+        "json-schema-traverse",
+        "zod",
+        "zod-to-json-schema"
+      ],
+      "properties": {
+        "@modelcontextprotocol/sdk": {
+          "const": { "license": "MIT", "version": "1.30.0" }
+        },
+        "ajv": {
+          "const": { "license": "MIT", "version": "8.20.0" }
+        },
+        "ajv-formats": {
+          "const": { "license": "MIT", "version": "3.0.1" }
+        },
+        "fast-deep-equal": {
+          "const": { "license": "MIT", "version": "3.1.3" }
+        },
+        "fast-uri": {
+          "const": { "license": "BSD-3-Clause", "version": "3.1.4" }
+        },
+        "json-schema-traverse": {
+          "const": { "license": "MIT", "version": "1.0.0" }
+        },
+        "zod": {
+          "const": { "license": "MIT", "version": "4.4.3" }
+        },
+        "zod-to-json-schema": {
+          "const": { "license": "ISC", "version": "3.25.2" }
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "resolve-library-id" },
+        { "const": "query-docs" }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "sourceInputs": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files", "imports", "packages"],
+      "properties": {
+        "files": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "size", "sha256"],
+              "properties": {
+                "path": { "const": "index.mjs" },
+                "size": { "type": "integer", "minimum": 1, "maximum": 4194304 },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          ],
+          "items": false,
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "imports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "kind", "external"],
+            "properties": {
+              "path": { "type": "string", "pattern": "^node:" },
+              "kind": { "type": "string", "minLength": 1 },
+              "external": { "const": true }
+            }
+          }
+        },
+        "packages": {
+          "const": [
+            "@modelcontextprotocol/sdk",
+            "ajv",
+            "ajv-formats",
+            "fast-deep-equal",
+            "fast-uri",
+            "json-schema-traverse",
+            "zod",
+            "zod-to-json-schema"
+          ]
+        }
+      }
+    }
+  }
+}

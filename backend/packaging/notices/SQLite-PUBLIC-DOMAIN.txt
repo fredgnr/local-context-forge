@@ -1,0 +1,3 @@
+SQLite is in the public domain. The SQLite project also publishes a blessing
+that may be used as license evidence for jurisdictions where a dedication is
+not recognized.

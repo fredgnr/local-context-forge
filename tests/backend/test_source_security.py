@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tarfile
 import unicodedata
@@ -19,6 +20,7 @@ from app.source import (
     validate_source_location,
 )
 from app.validation import validate_page
+from conftest import create_fixture_repository
 
 
 def _settings(data_dir: Path, *roots: Path) -> Settings:
@@ -82,6 +84,61 @@ def test_local_source_outside_allowlist_is_rejected(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("configuration_root", "repository_suffix"),
+    [
+        (".codex", "sessions"),
+        (".kube", "clusters"),
+        (".ssh", "worktree"),
+        (".aws", "projects"),
+    ],
+)
+def test_sensitive_configuration_roots_cannot_be_local_sources(
+    tmp_path: Path,
+    configuration_root: str,
+    repository_suffix: str,
+) -> None:
+    source = tmp_path / configuration_root / repository_suffix
+    source.mkdir(parents=True)
+
+    with pytest.raises(SourceError, match="sensitive configuration"):
+        validate_local_source(
+            _settings(tmp_path / "data", tmp_path),
+            str(source),
+        )
+
+
+def test_codex_session_root_is_rejected_before_catalog_or_evidence(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / ".codex"
+    sessions = source / "sessions"
+    sessions.mkdir(parents=True)
+    (source / "config.toml").write_text(
+        'model = "private-model"\n',
+        encoding="utf-8",
+    )
+    (sessions / "conversation.jsonl").write_text(
+        '{"private":"conversation"}\n',
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path / "data", tmp_path)
+    service = AppService(settings)
+
+    with pytest.raises(ValidationError, match="sensitive configuration"):
+        service.create_library(
+            {
+                "name": "must-not-exist",
+                "source": str(source),
+            }
+        )
+
+    assert service.list_libraries() == []
+    assert list(settings.sources_dir.iterdir()) == []
+    assert list(settings.facts_dir.iterdir()) == []
+    service.close()
+
+
 def test_local_source_below_imports_is_allowed(tmp_path: Path) -> None:
     imports = tmp_path / "imports"
     source = imports / "repo"
@@ -91,6 +148,42 @@ def test_local_source_below_imports_is_allowed(tmp_path: Path) -> None:
         str(source),
     )
     assert resolved == source.resolve()
+
+
+def test_desktop_local_source_must_belong_to_effective_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    imports = tmp_path / "imports"
+    source = imports / "repo"
+    source.mkdir(parents=True)
+    settings = _settings(tmp_path / "data", imports)
+    settings.local_source_owner_check = True
+    monkeypatch.setattr(
+        source_module,
+        "_effective_user_id",
+        lambda: source.stat().st_uid + 1,
+    )
+
+    with pytest.raises(SourceError, match="belong to the desktop user"):
+        validate_local_source(settings, str(source))
+
+
+def test_local_source_rejects_a_path_replaced_by_a_symlink(tmp_path: Path) -> None:
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    original = allowed / "repository"
+    original.mkdir()
+    target = allowed / "replacement"
+    target.mkdir()
+    original.rmdir()
+    original.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(SourceError, match="canonical.*symlinks"):
+        validate_local_source(
+            _settings(tmp_path / "data", allowed),
+            str(original),
+        )
 
 
 def test_local_git_subdirectory_is_rejected_instead_of_reusing_root_snapshot(
@@ -178,6 +271,22 @@ def test_local_git_alternate_object_store_is_rejected(tmp_path: Path) -> None:
         create_snapshot(
             _settings(tmp_path / "data", imports),
             "alternates",
+            str(repository),
+        )
+
+
+def test_local_git_core_worktree_indirection_is_rejected(tmp_path: Path) -> None:
+    repository = create_fixture_repository(tmp_path)
+    subprocess.run(
+        ["git", "config", "core.worktree", str(tmp_path / "outside")],
+        cwd=repository,
+        check=True,
+    )
+
+    with pytest.raises(SourceError, match="core.worktree"):
+        create_snapshot(
+            _settings(tmp_path / "data", tmp_path),
+            "worktree-config",
             str(repository),
         )
 
@@ -333,47 +442,101 @@ def test_git_archive_rejects_portable_path_collisions(
         )
 
 
-def test_git_archive_disables_http_redirects(
-    tmp_path: Path, monkeypatch
+def test_git_archive_disables_http_redirects(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_request(_manager, method, url, **kwargs):
+        captured.update({"method": method, "url": url, **kwargs})
+        return object()
+
+    monkeypatch.setattr(source_module.urllib3.PoolManager, "request", fake_request)
+    manager = source_module._DeadlinePoolManager(timeout_seconds=30)
+    manager.request("GET", "https://github.com/example/repository.git/info/refs")
+
+    assert captured["redirect"] is False
+    timeout = captured["timeout"]
+    assert timeout.connect_timeout <= 10
+    assert timeout.read_timeout <= 60
+    retries = manager.connection_pool_kw["retries"]
+    assert retries.total == 0
+    assert retries.redirect == 0
+    assert manager.connection_pool_kw["cert_reqs"] == "CERT_REQUIRED"
+    assert manager.connection_pool_kw["ca_certs"] == source_module.certifi.where()
+    assert isinstance(manager, source_module.urllib3.PoolManager)
+    assert not isinstance(manager, source_module.urllib3.ProxyManager)
+
+
+def test_controlled_remote_transport_enforces_overall_deadline(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository = tmp_path / "repository"
-    destination = tmp_path / "destination"
-    repository.mkdir()
-    destination.mkdir()
-    commands: list[list[str]] = []
+    clock = iter((100.0, 131.0))
+    monkeypatch.setattr(source_module.time, "monotonic", lambda: next(clock))
+    manager = source_module._DeadlinePoolManager(timeout_seconds=30)
 
-    monkeypatch.setattr(source_module, "_resolve_git_commit", lambda *_: "a" * 40)
-    monkeypatch.setattr(
-        source_module,
-        "_safe_extract",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        source_module,
-        "_run_git",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            ["git"], 0, stdout=b"", stderr=b""
-        ),
+    with pytest.raises(
+        source_module.urllib3.exceptions.TimeoutError,
+        match="overall deadline",
+    ):
+        manager.request(
+            "GET", "https://github.com/example/repository.git/info/refs"
+        )
+
+
+def test_https_snapshot_uses_controlled_transport_and_remote_refs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = create_fixture_repository(tmp_path)
+    calls: dict[str, object] = {}
+
+    class FakeHttpsClient(source_module.Urllib3HttpGitClient):
+        def __init__(self):
+            self.closed = False
+
+        def clone(self, path, target, **kwargs):
+            calls["clone_path"] = path
+            calls["clone_kwargs"] = kwargs
+            shutil.copytree(repository, target)
+
+            class Cloned:
+                def close(self):
+                    calls["clone_closed"] = True
+
+            return Cloned()
+
+        def close(self):
+            self.closed = True
+
+    client = FakeHttpsClient()
+
+    def fake_transport(source, **kwargs):
+        calls["source"] = source
+        calls["transport_kwargs"] = kwargs
+        return client, "/example/widgets.git"
+
+    monkeypatch.setattr(source_module, "get_transport_and_path", fake_transport)
+    snapshot = create_snapshot(
+        _settings(tmp_path / "data"),
+        "remote",
+        "https://github.com/example/widgets.git",
+        "main",
     )
 
-    def fake_run(command, **kwargs):
-        commands.append(command)
-        kwargs["stdout"].write(b"archive")
-        return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
-
-    monkeypatch.setattr(source_module.subprocess, "run", fake_run)
-    source_module._archive_git(
-        _settings(tmp_path / "data", tmp_path),
-        repository,
-        "HEAD",
-        destination,
+    assert snapshot.source_kind == "git-remote"
+    assert (snapshot.repo_path / "widgets.py").is_file()
+    assert calls["clone_path"] == "/example/widgets.git"
+    clone_kwargs = calls["clone_kwargs"]
+    assert clone_kwargs["checkout"] is False
+    assert clone_kwargs["origin"] == "origin"
+    assert clone_kwargs["protocol_version"] == 2
+    assert callable(clone_kwargs["progress"])
+    transport = calls["transport_kwargs"]
+    assert isinstance(transport["config"], source_module.ConfigFile)
+    assert isinstance(
+        transport["pool_manager"], source_module._DeadlinePoolManager
     )
-
-    assert any(
-        command[index : index + 2] == ["-c", "http.followRedirects=false"]
-        for command in commands
-        for index in range(len(command) - 1)
-    )
+    assert transport["operation"] == "pull"
+    assert calls["clone_closed"] is True
+    assert client.closed is True
 
 
 def test_git_snapshot_rejects_submodules(tmp_path: Path) -> None:
@@ -507,7 +670,20 @@ def test_source_refs_reject_sensitive_files_and_symlink_components(
     assert {item["code"] for item in symlinked} >= {"missing-source-path"}
 
 
-@pytest.mark.parametrize("ref", ["", "--help", "develop\n--help", "bad\0ref"])
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "",
+        "--help",
+        "develop\n--help",
+        "bad\0ref",
+        "HEAD~1",
+        "refs/heads/../escape",
+        "refs/replace/1234",
+        "refs/remotes/upstream/main",
+        "release@{1}",
+    ],
+)
 def test_invalid_git_refs_are_rejected(tmp_path: Path, ref: str) -> None:
     with pytest.raises(SourceError, match="Invalid Git ref"):
         _resolve_git_commit(tmp_path, ref)
@@ -563,3 +739,147 @@ def test_remote_tracking_branch_resolves_after_no_checkout_clone(
         stdout=subprocess.PIPE,
     )
     assert _resolve_git_commit(clone, "develop") == expected
+
+
+def test_annotated_tag_peels_and_conflicting_branch_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    repository = create_fixture_repository(tmp_path)
+    tagged = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "tag", "-a", "release", "-m", "release"],
+        cwd=repository,
+        check=True,
+    )
+
+    assert _resolve_git_commit(repository, "release") == tagged
+    assert _resolve_git_commit(repository, "refs/tags/release") == tagged
+
+    (repository / "README.md").write_text("# later\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-am", "later"], cwd=repository, check=True)
+    branch = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "branch", "release"], cwd=repository, check=True)
+
+    assert _resolve_git_commit(repository, "refs/heads/release") == branch
+    assert _resolve_git_commit(repository, "refs/tags/release") == tagged
+    with pytest.raises(SourceError, match="Ambiguous Git ref"):
+        _resolve_git_commit(repository, "release")
+
+
+def test_sha256_git_repository_snapshot_keeps_full_commit_identity(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "sha256-repository"
+    subprocess.run(
+        ["git", "init", "--object-format=sha256", "-b", "main", str(repository)],
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Fixture"], cwd=repository, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "fixture@example.invalid"],
+        cwd=repository,
+        check=True,
+    )
+    (repository / "README.md").write_text("# SHA-256\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "sha256 fixture"],
+        cwd=repository,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+
+    snapshot = create_snapshot(
+        _settings(tmp_path / "data", tmp_path),
+        "sha256",
+        str(repository),
+    )
+
+    assert len(snapshot.source_sha) == 64
+    assert (snapshot.repo_path / "README.md").read_text(encoding="utf-8") == (
+        "# SHA-256\n"
+    )
+
+
+def test_local_snapshot_does_not_expand_repository_config_includes(
+    tmp_path: Path,
+) -> None:
+    repository = create_fixture_repository(tmp_path)
+    sentinel = tmp_path / "config-program-ran"
+    included = tmp_path / "included.gitconfig"
+    included.write_text(
+        (
+            "[core]\n"
+            f"\tworktree = {tmp_path / 'outside'}\n"
+            "[filter \"unsafe\"]\n"
+            f"\tclean = sh -c 'touch {sentinel}'\n"
+        ),
+        encoding="utf-8",
+    )
+    with (repository / ".git" / "config").open("a", encoding="utf-8") as handle:
+        handle.write(f"\n[include]\n\tpath = {included}\n")
+
+    snapshot = create_snapshot(
+        _settings(tmp_path / "data", tmp_path),
+        "included-config",
+        str(repository),
+    )
+
+    assert (snapshot.repo_path / "README.md").is_file()
+    assert not sentinel.exists()
+
+
+def test_git_snapshot_rejects_symlink_that_escapes_tree(tmp_path: Path) -> None:
+    repository = create_fixture_repository(tmp_path)
+    (repository / "escape").symlink_to("../../outside")
+    subprocess.run(["git", "add", "escape"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "unsafe symlink"],
+        cwd=repository,
+        check=True,
+    )
+
+    with pytest.raises(SourceError, match="Unsafe symlink"):
+        source_module._archive_git(
+            _settings(tmp_path / "data", tmp_path),
+            repository,
+            "HEAD",
+            tmp_path / "destination",
+        )
+
+
+def test_git_snapshot_rejects_missing_required_object(tmp_path: Path) -> None:
+    repository = create_fixture_repository(tmp_path)
+    blob = subprocess.run(
+        ["git", "rev-parse", "HEAD:widgets.py"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    object_path = repository / ".git" / "objects" / blob[:2] / blob[2:]
+    assert object_path.is_file()
+    object_path.unlink()
+
+    with pytest.raises(SourceError, match="missing.*required.*object"):
+        source_module._archive_git(
+            _settings(tmp_path / "data", tmp_path),
+            repository,
+            "HEAD",
+            tmp_path / "destination",
+        )

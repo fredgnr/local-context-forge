@@ -1,0 +1,97 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""Reviewed PyInstaller onedir definition for the arm64 Python sidecar."""
+
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+
+
+SPEC_DIR = Path(SPECPATH).resolve()
+BACKEND_DIR = SPEC_DIR.parent
+ENTRYPOINT = SPEC_DIR / "frozen_entrypoint.py"
+
+datas = []
+for distribution in (
+    "certifi",
+    "dulwich",
+    "fastapi",
+    "h11",
+    "pydantic",
+    "pydantic-core",
+    "starlette",
+    "urllib3",
+    "uvicorn",
+):
+    datas += copy_metadata(distribution)
+datas += collect_data_files("certifi")
+
+hidden_imports = [
+    "app.cli",
+    "app.factory",
+    "certifi",
+    "dulwich._diff_tree",
+    "dulwich._objects",
+    "dulwich._pack",
+    "dulwich.client",
+    "dulwich.config",
+    "dulwich.objects",
+    "dulwich.pack",
+    "dulwich.repo",
+    "pydantic_core",
+    "uvicorn.lifespan.on",
+    "uvicorn.loops.asyncio",
+    "uvicorn.protocols.http.h11_impl",
+]
+
+analysis = Analysis(
+    [str(ENTRYPOINT)],
+    pathex=[str(BACKEND_DIR)],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hidden_imports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        "httptools",
+        "uvloop",
+        "watchfiles",
+        "websockets",
+        "uvicorn.loops.uvloop",
+        "uvicorn.protocols.http.httptools_impl",
+        "uvicorn.protocols.websockets",
+    ],
+    noarchive=False,
+    optimize=0,
+)
+
+pyz = PYZ(analysis.pure)
+
+executable = EXE(
+    pyz,
+    analysis.scripts,
+    [],
+    exclude_binaries=True,
+    name="lcf-service",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch="arm64",
+    codesign_identity=None,
+    entitlements_file=None,
+    contents_directory="_internal",
+)
+
+bundle = COLLECT(
+    executable,
+    analysis.binaries,
+    analysis.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="lcf-service",
+)

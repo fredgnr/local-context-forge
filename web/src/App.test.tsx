@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App, {
+  DesktopUpdatePanel,
   LintBanner,
   Overview,
   QueryWorkspace,
@@ -150,7 +151,7 @@ describe("operational states", () => {
     expect(screen.getByText(/显式选择 provider、ref/)).not.toBeNull();
   });
 
-  it("describes the narrow GitHub source grant in desktop mode", () => {
+  it("describes public GitHub and native local repository sources in desktop mode", () => {
     Object.defineProperty(window, "localContextForge", {
       configurable: true,
       value: undefined
@@ -168,11 +169,109 @@ describe("operational states", () => {
       />
     );
 
-    expect(screen.getByText("粘贴 GitHub HTTPS 仓库地址。")).not.toBeNull();
     expect(
-      screen.getByText("当前桌面源码版本仅接受 GitHub HTTPS 仓库地址。")
+      screen.getByText("粘贴公开 GitHub HTTPS 地址，或选择 Mac 上已克隆的仓库。")
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "支持公开 GitHub HTTPS 地址，以及经系统选择器授权的本地仓库。"
+      )
     ).not.toBeNull();
     expect(screen.queryByText("本地目录和远程 Git 地址都可以。")).toBeNull();
+  });
+
+  it("offers only the default policy or Codex when adding a repository", async () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
+    vi.spyOn(api, "libraries").mockResolvedValue([]);
+    vi.spyOn(api, "jobs").mockResolvedValue([]);
+    vi.spyOn(api, "health").mockResolvedValue(true);
+
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "添加代码仓库" })
+    );
+    await screen.findByRole("heading", { name: "添加代码仓库" });
+    fireEvent.click(screen.getByText("采集选项"));
+
+    const providerSelect = screen.getByLabelText("文档生成器");
+    expect(
+      [...(providerSelect as HTMLSelectElement).options].map(
+        (option) => option.value
+      )
+    ).toEqual(["auto", "codex"]);
+  });
+
+  it("submits an opaque one-time grant without exposing the local path", async () => {
+    const selectRepository = vi.fn().mockResolvedValue({
+      grantId: `lcf-local:${"ab".repeat(32)}`,
+      displayName: "private-repository"
+    });
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: {
+        version: "1.0",
+        api: { request: vi.fn() },
+        sources: { selectRepository }
+      }
+    });
+    vi.spyOn(api, "libraries").mockResolvedValue([]);
+    vi.spyOn(api, "jobs").mockResolvedValue([]);
+    vi.spyOn(api, "health").mockResolvedValue(true);
+    const create = vi.spyOn(api, "createLibrary").mockResolvedValue({
+      id: "private-repository",
+      name: "private-repository"
+    });
+    const ingest = vi.spyOn(api, "ingest").mockResolvedValue({
+      id: "job-local",
+      status: "queued"
+    });
+
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "添加代码仓库" })
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "选择本地仓库" })
+    );
+    await screen.findByText("private-repository");
+    expect(screen.queryByText(/\/Users\//)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "添加并采集" }));
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith({
+        name: "private-repository",
+        sourceUrl: `lcf-local:${"ab".repeat(32)}`
+      })
+    );
+    await waitFor(() =>
+      expect(ingest).toHaveBeenCalledWith("private-repository", {
+        generator: "auto",
+        ref: "HEAD"
+      })
+    );
+    expect(selectRepository).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps legacy provider choices in browser and Docker mode", async () => {
+    vi.spyOn(api, "libraries").mockResolvedValue([]);
+    vi.spyOn(api, "jobs").mockResolvedValue([]);
+    vi.spyOn(api, "health").mockResolvedValue(true);
+
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "添加代码仓库" })
+    );
+    fireEvent.click(screen.getByText("采集选项"));
+
+    const providerSelect = screen.getByLabelText("文档生成器");
+    expect(
+      [...(providerSelect as HTMLSelectElement).options].map(
+        (option) => option.value
+      )
+    ).toEqual(["auto", "codex", "cursor", "mock", "ollama"]);
   });
 
   it("presents empty-wiki lint as neutral rather than passed", () => {
@@ -194,7 +293,11 @@ describe("operational states", () => {
     expect(screen.queryByText("Wiki 校验通过")).toBeNull();
   });
 
-  it("requires explicit provider, ref, and version for re-ingest", async () => {
+  it("offers only the default policy or Codex for re-ingest", async () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
     vi.spyOn(api, "libraries").mockResolvedValue([libraries[0]]);
     vi.spyOn(api, "jobs").mockResolvedValue([]);
     vi.spyOn(api, "health").mockResolvedValue(true);
@@ -217,13 +320,16 @@ describe("operational states", () => {
       target: { value: "2.0.0" }
     });
     fireEvent.change(screen.getByLabelText(/文档生成器/), {
-      target: { value: "mock" }
+      target: { value: "codex" }
     });
+    expect(screen.queryByRole("option", { name: /Cursor/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Mock/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Ollama/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "开始采集" }));
 
     await waitFor(() =>
       expect(ingest).toHaveBeenCalledWith("library-a", {
-        generator: "mock",
+        generator: "codex",
         ref: "release/v2",
         version: "2.0.0"
       })
@@ -234,6 +340,13 @@ describe("operational states", () => {
 describe("runtime settings", () => {
   const currentSettings: AppSettings = {
     revision: 4,
+    providerPolicy: "codex_then_cursor",
+    cursorFallbackConsent: {
+      subject: "cursor_cli_fallback",
+      version: 1,
+      granted: true,
+      grantedAt: "2026-07-31T08:00:00Z"
+    },
     generator: "codex",
     fallbackGenerator: "cursor",
     embeddingModel: "embeddinggemma-300m-q8",
@@ -241,6 +354,10 @@ describe("runtime settings", () => {
   };
 
   it("keeps the saved revision and reports a rebuild enqueue failure precisely", async () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
     vi.spyOn(api, "settings").mockResolvedValue(currentSettings);
     vi.spyOn(api, "embeddingModels").mockResolvedValue([
       {
@@ -287,8 +404,21 @@ describe("runtime settings", () => {
     await waitFor(() => expect(update).toHaveBeenLastCalledWith(saved));
   });
 
-  it("deduplicates concurrent save clicks and explains the Host Runner requirement", async () => {
-    vi.spyOn(api, "settings").mockResolvedValue(currentSettings);
+  it("requires explicit Cursor fallback consent and deduplicates saves", async () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
+    const codexOnlySettings: AppSettings = {
+      ...currentSettings,
+      providerPolicy: "codex_only",
+      cursorFallbackConsent: {
+        ...currentSettings.cursorFallbackConsent,
+        granted: false,
+        grantedAt: null
+      }
+    };
+    vi.spyOn(api, "settings").mockResolvedValue(codexOnlySettings);
     vi.spyOn(api, "embeddingModels").mockResolvedValue([]);
     let resolveSave!: (settings: AppSettings) => void;
     const pendingSave = new Promise<AppSettings>((resolve) => {
@@ -306,12 +436,168 @@ describe("runtime settings", () => {
       />
     );
     const save = await screen.findByRole("button", { name: "仅保存" });
-    expect(screen.getByText(/重新运行 installer/)).not.toBeNull();
+    const consent = screen.getByRole("checkbox", {
+      name: /Codex 预检不可用时，允许改用 Cursor CLI/
+    });
+    expect((consent as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/单独登录的 Cursor 账户和额度/)).not.toBeNull();
+    expect(screen.getByText(/绝不会切换到 Cursor/)).not.toBeNull();
+    expect(screen.queryByRole("radio", { name: /Cursor/ })).toBeNull();
+    expect(screen.queryByText("Mock")).toBeNull();
+    expect(screen.queryByText("Ollama")).toBeNull();
+    fireEvent.click(consent);
+    expect((consent as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(save);
     fireEvent.click(save);
     expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({
+      ...codexOnlySettings,
+      providerPolicy: "codex_then_cursor",
+      cursorFallbackConsent: {
+        ...codexOnlySettings.cursorFallbackConsent,
+        granted: true
+      }
+    });
 
     await act(async () => resolveSave({ ...currentSettings, revision: 5 }));
+  });
+});
+
+describe("desktop update settings", () => {
+  const idle = {
+    state: "idle" as const,
+    currentVersion: "1.0.0",
+    channel: "latest",
+    availableVersion: null,
+    progress: null,
+    errorCode: null,
+    unavailableReason: null,
+    canCheck: true,
+    canDownloadOrOpen: false,
+    canOpenReleasePage: false,
+    automaticApply: false as const,
+    automaticApplyReason: "val-update-001-not-passed" as const
+  };
+
+  it("states that automatic apply is not deliverable and opens only a verified DMG on user action", async () => {
+    const available = {
+      ...idle,
+      state: "available" as const,
+      availableVersion: "1.1.0",
+      canDownloadOrOpen: true
+    };
+    const opened = {
+      ...available,
+      state: "opened" as const
+    };
+    const check = vi.fn().mockResolvedValue(available);
+    const downloadOrOpen = vi.fn().mockResolvedValue(opened);
+    let listener: ((status: typeof idle) => void) | undefined;
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: {
+        version: "1.0",
+        api: { request: vi.fn() },
+        update: {
+          status: vi.fn().mockResolvedValue(idle),
+          check,
+          downloadOrOpen,
+          cancel: vi.fn().mockResolvedValue(idle),
+          openReleasePage: vi.fn().mockResolvedValue(idle),
+          subscribe: vi.fn((next) => {
+            listener = next;
+            return () => undefined;
+          })
+        }
+      }
+    });
+
+    render(<DesktopUpdatePanel />);
+    expect(await screen.findByText("自动应用未交付")).not.toBeNull();
+    expect(screen.getByText(/不会静默安装/)).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
+    await screen.findByText(/有可用更新/);
+    fireEvent.click(
+      screen.getByRole("button", { name: "下载并打开已验证 DMG" })
+    );
+    await screen.findByText(/请在系统打开的 DMG 中手动拖拽替换应用/);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(downloadOrOpen).toHaveBeenCalledTimes(1);
+    expect(listener).toBeTypeOf("function");
+  });
+
+  it("offers the fixed manual release fallback when signed checking is unavailable", async () => {
+    const unavailable = {
+      ...idle,
+      state: "unavailable" as const,
+      unavailableReason: "key-unprovisioned" as const,
+      canCheck: false,
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true
+    };
+    const openReleasePage = vi.fn().mockResolvedValue(unavailable);
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: {
+        version: "1.0",
+        api: { request: vi.fn() },
+        update: {
+          status: vi.fn().mockResolvedValue(unavailable),
+          check: vi.fn().mockRejectedValue(new Error("unavailable")),
+          downloadOrOpen: vi.fn().mockRejectedValue(new Error("unavailable")),
+          cancel: vi.fn().mockResolvedValue(unavailable),
+          openReleasePage,
+          subscribe: vi.fn(() => () => undefined)
+        }
+      }
+    });
+
+    render(<DesktopUpdatePanel />);
+    const check = await screen.findByRole("button", { name: "检查更新" });
+    expect((check as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: "下载并打开已验证 DMG" })
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "手动打开官方 Release 页面" })
+    );
+    await waitFor(() => expect(openReleasePage).toHaveBeenCalledWith());
+    expect(screen.getByText("自动应用未交付")).not.toBeNull();
+  });
+
+  it("shows a manual fixed-release escape only after Main permits it", async () => {
+    const failed = {
+      ...idle,
+      state: "error" as const,
+      errorCode: "open-failed" as const,
+      availableVersion: "1.1.0",
+      canOpenReleasePage: true
+    };
+    const openReleasePage = vi.fn().mockResolvedValue(failed);
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: {
+        version: "1.0",
+        api: { request: vi.fn() },
+        update: {
+          status: vi.fn().mockResolvedValue(failed),
+          check: vi.fn().mockResolvedValue(failed),
+          downloadOrOpen: vi.fn().mockRejectedValue(new Error("open failed")),
+          cancel: vi.fn().mockResolvedValue(failed),
+          openReleasePage,
+          subscribe: vi.fn(() => () => undefined)
+        }
+      }
+    });
+
+    render(<DesktopUpdatePanel />);
+    const manual = await screen.findByRole("button", {
+      name: "手动打开官方 Release 页面"
+    });
+    fireEvent.click(manual);
+    await waitFor(() => expect(openReleasePage).toHaveBeenCalledWith());
+    expect(screen.queryByText(/github\.com/)).toBeNull();
+    expect(screen.queryByText(/\.dmg/)).toBeNull();
   });
 });

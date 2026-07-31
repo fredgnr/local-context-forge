@@ -1,0 +1,3 @@
+The PyInstaller bootloader is distributed under GPL-2.0-or-later with the
+PyInstaller bootloader exception, which permits distribution of programs
+bundled by PyInstaller. The build also copies PyInstaller's upstream license.

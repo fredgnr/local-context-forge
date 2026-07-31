@@ -6,6 +6,9 @@ const {
   FuseVersion,
   FuseV1Options
 } = require("@electron/fuses");
+const {
+  resealPackagedRuntimes
+} = require("./resealPackagedRuntimes.cjs");
 
 module.exports = async function hardenElectronFuses(context) {
   if (context.electronPlatformName !== "darwin") {
@@ -31,4 +34,5 @@ module.exports = async function hardenElectronFuses(context) {
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
     [FuseV1Options.GrantFileProtocolExtraPrivileges]: false
   });
+  resealPackagedRuntimes(context);
 };

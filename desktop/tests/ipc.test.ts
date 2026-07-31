@@ -10,6 +10,7 @@ import {
 import {
   isAllowedApiRoute,
   isAllowedLibrarySource,
+  isAllowedLibrarySourceInput,
   isTrustedIpcSender,
   parseApiRequest,
   registerIpcHandlers
@@ -133,8 +134,32 @@ describe("renderer IPC validation", () => {
         path: "/api/settings",
         body: {
           expected_revision: 0,
-          provider_order: ["codex_cli"],
+          provider_policy: "codex_only",
           concurrency: 2
+        }
+      })
+    ).toThrow(/invalid-payload/);
+    expect(
+      parseApiRequest({
+        method: "PATCH",
+        path: "/api/settings",
+        body: {
+          expected_revision: 1,
+          provider_policy: "codex_then_cursor",
+          cursor_fallback_consent: true,
+          concurrency: 1,
+          embedding_model: "embeddinggemma-300m-q8"
+        }
+      })
+    ).toMatchObject({ timeoutMs: 30_000 });
+    expect(() =>
+      parseApiRequest({
+        method: "PATCH",
+        path: "/api/settings",
+        body: {
+          expected_revision: 1,
+          provider_policy: "cursor_only",
+          cursor_fallback_consent: true
         }
       })
     ).toThrow(/invalid-payload/);
@@ -144,10 +169,46 @@ describe("renderer IPC validation", () => {
         path: "/api/settings",
         body: {
           expected_revision: 1,
-          provider_order: ["codex_cli", "codex_cli"]
+          provider_order: ["codex_cli", "cursor_cli"],
+          fallback_enabled: true
         }
       })
     ).toThrow(/invalid-payload/);
+    expect(() =>
+      parseApiRequest({
+        method: "PATCH",
+        path: "/api/settings",
+        body: {
+          expected_revision: 1,
+          provider_policy: "codex_then_cursor",
+          cursor_fallback_consent: "yes"
+        }
+      })
+    ).toThrow(/invalid-payload/);
+    expect(
+      parseApiRequest({
+        method: "POST",
+        path: "/api/libraries/library-1/ingest",
+        body: {
+          ref: "main",
+          provider: "codex",
+          version: "1.0.0"
+        }
+      })
+    ).toMatchObject({ timeoutMs: 30_000 });
+    for (const provider of ["cursor", "cursor_cli", "mock", "ollama"]) {
+      expect(() =>
+        parseApiRequest({
+          method: "POST",
+          path: "/api/libraries/library-1/ingest",
+          body: {
+            ref: "main",
+            provider,
+            version: "1.0.0"
+          }
+        })
+      ).toThrow(/invalid-payload/);
+    }
     expect(
       parseApiRequest({
         method: "POST",
@@ -203,6 +264,17 @@ describe("renderer IPC validation", () => {
     ]) {
       expect(isAllowedLibrarySource(source), source).toBe(false);
     }
+    const grant = `lcf-local:${"a".repeat(64)}`;
+    expect(isAllowedLibrarySource(grant)).toBe(false);
+    expect(isAllowedLibrarySourceInput(grant)).toBe(true);
+    expect(
+      parseApiRequest({
+        method: "POST",
+        path: "/api/libraries",
+        body: { name: "private", source: grant }
+      })
+    ).toMatchObject({ body: { source: grant } });
+    expect(isAllowedLibrarySourceInput("lcf-local:predictable")).toBe(false);
   });
 
   it("rejects headers, GET bodies, cyclic and oversized payloads", () => {
@@ -273,13 +345,16 @@ describe("renderer IPC validation", () => {
   it("returns a stable IPC error code without propagating transport details", async () => {
     const handlers = new Map<
       string,
-      (event: IpcMainInvokeEvent, value?: unknown) => unknown
+      (event: IpcMainInvokeEvent, ...values: unknown[]) => unknown
     >();
     const ipcMain = {
       handle: vi.fn(
         (
           channel: string,
-          handler: (event: IpcMainInvokeEvent, value?: unknown) => unknown
+          handler: (
+            event: IpcMainInvokeEvent,
+            ...values: unknown[]
+          ) => unknown
         ) => handlers.set(channel, handler)
       )
     } as unknown as IpcMain;
@@ -289,6 +364,35 @@ describe("renderer IPC validation", () => {
       },
       runtimeGet: () => ({ state: "ready", canRetry: false }),
       runtimeRetry: async () => ({ state: "ready", canRetry: false }),
+      mcpSetupGet: async () => ({
+        provider: "codex_cli",
+        codexState: "ready",
+        configurationState: "not-configured",
+        installState: "ready",
+        canConfigure: true,
+        canClear: false,
+        restartRequired: false
+      }),
+      mcpSetupConfigure: async () => {
+        throw {
+          code: "name-conflict",
+          executablePath: "/private/codex",
+          arguments: ["private"]
+        };
+      },
+      mcpSetupClear: async () => ({
+        provider: "codex_cli",
+        codexState: "ready",
+        configurationState: "not-configured",
+        installState: "ready",
+        canConfigure: true,
+        canClear: false,
+        restartRequired: true
+      }),
+      localSourceSelect: async () => ({
+        grantId: `lcf-local:${"b".repeat(64)}`,
+        displayName: "private-repository"
+      }),
       appVersion: () => "0.3.0-alpha.1"
     });
 
@@ -306,5 +410,55 @@ describe("renderer IPC validation", () => {
       ok: false,
       error: { code: "result-uncertain" }
     });
+    await expect(
+      handlers.get(IPC_CHANNELS.apiRequest)?.(
+        event,
+        {
+          method: "GET",
+          path: "/api/health"
+        },
+        { ignored: "x".repeat(MAX_REQUEST_BODY_BYTES + 1) }
+      )
+    ).rejects.toThrow(/invalid-payload/);
+
+    await expect(
+      handlers.get(IPC_CHANNELS.mcpSetupGet)?.(event)
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        provider: "codex_cli",
+        codexState: "ready",
+        configurationState: "not-configured",
+        installState: "ready",
+        canConfigure: true,
+        canClear: false,
+        restartRequired: false
+      }
+    });
+    await expect(
+      handlers.get(IPC_CHANNELS.mcpSetupConfigure)?.(event)
+    ).resolves.toEqual({
+      ok: false,
+      error: { code: "name-conflict" }
+    });
+    await expect(
+      handlers.get(IPC_CHANNELS.mcpSetupClear)?.(event, {
+        executablePath: "/arbitrary/path"
+      })
+    ).rejects.toThrow(/invalid-payload/);
+    await expect(
+      handlers.get(IPC_CHANNELS.localSourceSelect)?.(event)
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        grantId: `lcf-local:${"b".repeat(64)}`,
+        displayName: "private-repository"
+      }
+    });
+    await expect(
+      handlers.get(IPC_CHANNELS.localSourceSelect)?.(event, {
+        path: "/private/repository"
+      })
+    ).rejects.toThrow(/invalid-payload/);
   });
 });

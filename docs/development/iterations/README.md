@@ -13,7 +13,7 @@
 | [ITER-0002/R09](0002-r09-signed-update-client.md) | `in-progress`（继承） | 独立签名更新、候选 Draft 与 trusted-main/fixed-ID promotion policy |
 | [ITER-0002/R10](0002-r10-local-repositories.md) | `in-progress`（继承） | 原生本地/私有仓库选择与不透明路径授权 |
 | [ITER-0002/R11](0002-r11-documentation-handoff.md) | `in-progress`（继承） | 状态、系统设计、部署、开发、TODO 与 evidence 交接 |
-| [ITER-0002/R12](0002-r12-legacy-retirement-scope.md) | `in-progress`（继承） | Electron-only 决策、严格 legacy removal 范围与后续任务冻结 |
+| [ITER-0002/R12](0002-r12-legacy-retirement-scope.md) | `completed`（父迭代继续） | Electron-only 决策、严格 legacy removal 范围与后续任务冻结 |
 | [ITER-0003](0003-runtime-data-models.md) | `planned` | macOS 路径、Desktop backup/restore 与模型管理；不含 legacy importer |
 | [ITER-0004](0004-macos-release.md) | `planned` | arm64 DMG、双 Environment、ruleset/Immutable Releases 与物理 promotion |
 | [ITER-0005](0005-updater-physical-gate.md) | `planned` | 真实单调 `N-1 → N` 实机更新与 DMG fallback |

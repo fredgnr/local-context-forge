@@ -9,8 +9,10 @@
 | Gate | Source commit | 结果 | 记录 |
 | --- | --- | --- | --- |
 | `VAL-DOC-HANDOFF-001` | `625db7647d47fb6ff8f23c3136c4f45ded80384f` | `pass`（文档 source checkpoint） | [2026-07-31-625db76](VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) |
+| `VAL-LEGACY-SCOPE-001` | `64ec3c232d08f1e843d81dc7c4972dc5ebf96c9b` | `pass`（planning/documentation scope） | [2026-07-31-64ec3c2](VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) |
 
-该记录不代表最终 PR head、packaged、physical、GitHub settings 或 release gate 已通过。
+这些记录不代表最终 PR head、packaged、physical、GitHub settings、legacy absence 或 release
+gate 已通过。
 
 ## 1. 证据原则
 

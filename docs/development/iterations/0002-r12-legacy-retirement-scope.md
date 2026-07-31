@@ -1,6 +1,6 @@
 # ITER-0002/R12：Electron-only 与 legacy retirement 范围冻结
 
-- 状态：`in-progress`（继承 ITER-0002）
+- 状态：`completed`（父 ITER-0002 继续 `in-progress`）
 - 日期：2026-07-31
 - 类型：治理、架构决策与后续实施计划；不删除产品代码
 - 关联需求：REQ-ELECTRON-ONLY-001、REQ-PRE1-BREAKING-001、REQ-GOV-001
@@ -62,7 +62,7 @@ Sites identity 只记录为后续阻塞任务，不在未知 lifecycle checkout 
 - [x] **R12-03 决策落盘**：接受 ADR-0015，并更新 ADR 索引。
 - [x] **R12-04 实施计划**：新增严格 retirement 清单、ITER-0007 与分阶段 TODO。
 - [x] **R12-05 全局同步**：更新 roadmap、status、traceability、system design 和入口文档。
-- [ ] **R12-06 文档验证**：相对链接、稳定 ID、task roll-up 与 legacy 冲突审计通过。
+- [x] **R12-06 文档验证**：相对链接、稳定 ID、task roll-up 与 legacy 冲突审计通过。
 
 ## 验收
 
@@ -71,3 +71,14 @@ Sites identity 只记录为后续阻塞任务，不在未知 lifecycle checkout 
 - “不兼容”明确不等于“允许自动删除用户数据”；
 - 旧任务/验证保持可追溯且不伪造完成；
 - `VAL-LEGACY-SCOPE-001` 与 `VAL-GOV-001` 有 commit-bound evidence 后，本 R12 才可完成。
+
+## Validation log
+
+- 内容 checkpoint：`64ec3c232d08f1e843d81dc7c4972dc5ebf96c9b`；
+- 证据：[VAL-LEGACY-SCOPE-001 / 2026-07-31-64ec3c2](../evidence/VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md)；
+- clean detached checkout：link check 81 files、version sync、skill validation、diff check、36/36
+  stable task IDs、28 planned / 5 blocked / 3 superseded、52 changed Markdown fence/scope check 均
+  `pass`；
+- 独立最终审计：R12 planning-only scope 无剩余 High/Medium；
+- `guide-site`、GitHub Actions、runtime deletion、packaged/physical/release/absence 均未包含，按
+  TODO 继续 `not-run` / blocked。

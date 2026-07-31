@@ -129,9 +129,59 @@ CREATE TABLE IF NOT EXISTS embedding_state (
     indexed_revision INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS provider_attempts (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    version_id TEXT REFERENCES versions(id) ON DELETE SET NULL,
+    corpus_revision INTEGER NOT NULL,
+    policy TEXT NOT NULL CHECK (
+        policy IN ('codex_only', 'codex_then_cursor')
+    ),
+    candidates_json TEXT NOT NULL,
+    cursor_consent_version INTEGER,
+    cursor_consent_granted_at TEXT,
+    status TEXT NOT NULL CHECK (
+        status IN (
+            'pending', 'claimed', 'selected', 'executing',
+            'succeeded', 'failed', 'cancelled', 'uncertain'
+        )
+    ),
+    input_sha256 TEXT NOT NULL,
+    evidence_path TEXT NOT NULL,
+    selected_provider TEXT CHECK (
+        selected_provider IS NULL OR
+        selected_provider IN ('codex_cli', 'cursor_cli')
+    ),
+    executable_identity_json TEXT,
+    fallback_reason TEXT CHECK (
+        fallback_reason IS NULL OR
+        fallback_reason IN (
+            'codex_not_installed', 'codex_not_authenticated'
+        )
+    ),
+    diagnostic TEXT,
+    claim_id TEXT,
+    claimed_at TEXT,
+    claim_expires_at TEXT,
+    selected_at TEXT,
+    execution_committed_at TEXT,
+    finished_at TEXT,
+    output_sha256 TEXT,
+    output_size INTEGER,
+    error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_attempts_job
+ON provider_attempts(job_id);
+
+CREATE INDEX IF NOT EXISTS idx_provider_attempts_recovery
+ON provider_attempts(status, execution_committed_at);
 """
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _JOB_COLUMNS: dict[str, str] = {
     "kind": "TEXT NOT NULL DEFAULT 'ingest'",

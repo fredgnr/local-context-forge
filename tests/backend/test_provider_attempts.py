@@ -287,6 +287,62 @@ def test_expired_precommit_claim_is_recoverable_but_commit_is_uncertain(
         store.claim(str(attempt["id"]))
 
 
+def test_cancel_is_terminal_before_commit_and_cooperative_after_commit(
+    attempt_store: tuple[ProviderAttemptStore, Database, Clock],
+) -> None:
+    store, _, _ = attempt_store
+    attempt = create_attempt(store)
+    cancelled = store.request_cancel(str(attempt["id"]))
+    assert cancelled["status"] == "cancelled"
+    assert store.claim_next() is None
+
+    # Use a separate seeded database because one job has exactly one attempt.
+    _, database, clock = attempt_store
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO jobs (
+                id, library_id, version_id, version, provider, queue_seq,
+                status, stage, created_at, updated_at
+            ) VALUES (?, ?, ?, 'v2', 'codex_cli', 2, 'running',
+                      'generate', ?, ?)
+            """,
+            ("f" * 32, "a" * 32, "b" * 32, clock(), clock()),
+        )
+    running = store.create(
+        job_id="f" * 32,
+        version_id="b" * 32,
+        corpus_revision=8,
+        policy="codex_only",
+        candidates=["codex_cli"],
+        cursor_consent_version=None,
+        cursor_consent_granted_at=None,
+        input_sha256="a" * 64,
+        evidence_path="provider-attempts/attempt-2",
+    )
+    claimed = store.claim(str(running["id"]))
+    store.select(
+        str(running["id"]),
+        claim_id=str(claimed["claim_id"]),
+        provider="codex_cli",
+        executable_identity=identity(),
+    )
+    store.commit_execution(
+        str(running["id"]),
+        claim_id=str(claimed["claim_id"]),
+    )
+    requested = store.request_cancel(str(running["id"]))
+    assert requested["status"] == "executing"
+    assert store.cancellation_state(
+        str(running["id"]),
+        claim_id=str(claimed["claim_id"]),
+    ) == {
+        "attempt_id": running["id"],
+        "cancel_requested": True,
+        "status": "executing",
+    }
+
+
 def test_public_view_never_exposes_execution_material(
     attempt_store: tuple[ProviderAttemptStore, Database, Clock],
 ) -> None:

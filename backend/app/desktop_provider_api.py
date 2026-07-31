@@ -66,6 +66,7 @@ class ProviderPreflightFailurePayload(ProviderClaimTokenPayload):
         "cursor-not-authenticated",
         "cursor-installation-unsupported",
         "cursor-unavailable",
+        "attempt-input-invalid",
     ]
 
 
@@ -289,5 +290,22 @@ def install_desktop_provider_routes(application: FastAPI) -> None:
                 error_code=payload.error_code,
             )
             return _provider_store(request).public_view(str(row["id"]))
+        except Exception as error:
+            raise _translate_provider_error(error) from error
+
+    @application.post(
+        "/api/desktop/provider-attempts/{attempt_id}/cancellation-state",
+        tags=["desktop-internal"],
+    )
+    def cancellation_state(
+        request: Request,
+        attempt_id: str,
+        payload: ProviderClaimTokenPayload,
+    ) -> dict[str, Any]:
+        try:
+            return _provider_store(request).cancellation_state(
+                attempt_id,
+                claim_id=payload.claim_id,
+            )
         except Exception as error:
             raise _translate_provider_error(error) from error

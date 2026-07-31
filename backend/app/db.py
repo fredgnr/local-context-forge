@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS provider_attempts (
     claim_expires_at TEXT,
     selected_at TEXT,
     execution_committed_at TEXT,
+    cancel_requested_at TEXT,
     finished_at TEXT,
     output_sha256 TEXT,
     output_size INTEGER,
@@ -200,6 +201,10 @@ _JOB_COLUMNS: dict[str, str] = {
 _EMBEDDING_COLUMNS: dict[str, str] = {
     "corpus_revision": "INTEGER NOT NULL DEFAULT 0",
     "indexed_revision": "INTEGER NOT NULL DEFAULT 0",
+}
+
+_PROVIDER_ATTEMPT_COLUMNS: dict[str, str] = {
+    "cancel_requested_at": "TEXT",
 }
 
 
@@ -272,6 +277,18 @@ class Database:
             if name not in embedding_columns:
                 connection.execute(
                     "ALTER TABLE embedding_state "
+                    f"ADD COLUMN {name} {declaration}"
+                )
+        provider_attempt_columns = {
+            str(row["name"])
+            for row in connection.execute(
+                "PRAGMA table_info(provider_attempts)"
+            ).fetchall()
+        }
+        for name, declaration in _PROVIDER_ATTEMPT_COLUMNS.items():
+            if name not in provider_attempt_columns:
+                connection.execute(
+                    "ALTER TABLE provider_attempts "
                     f"ADD COLUMN {name} {declaration}"
                 )
 

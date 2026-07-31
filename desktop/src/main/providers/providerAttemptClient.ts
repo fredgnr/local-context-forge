@@ -469,4 +469,39 @@ export class ProviderAttemptClient {
       }
     );
   }
+
+  async cancellationRequested(
+    connection: SidecarConnection | undefined,
+    attempt: ClaimedProviderAttempt
+  ): Promise<boolean> {
+    const response = await this.request(
+      connection,
+      `/api/desktop/provider-attempts/${attempt.attemptId}/cancellation-state`,
+      { claim_id: attempt.claimId }
+    );
+    const value = response.value;
+    if (
+      !plainRecord(value) ||
+      !exactKeys(value, [
+        "attempt_id",
+        "cancel_requested",
+        "status"
+      ]) ||
+      value.attempt_id !== attempt.attemptId ||
+      typeof value.cancel_requested !== "boolean" ||
+      ![
+        "pending",
+        "claimed",
+        "selected",
+        "executing",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "uncertain"
+      ].includes(String(value.status))
+    ) {
+      throw new ProviderAttemptClientError("invalid-response");
+    }
+    return value.cancel_requested;
+  }
 }

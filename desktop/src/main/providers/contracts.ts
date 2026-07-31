@@ -20,6 +20,7 @@ export type ProviderDiagnosticCode =
   | "cursor-not-authenticated"
   | "cursor-installation-unsupported"
   | "cursor-unavailable"
+  | "attempt-input-invalid"
   | "result-uncertain";
 
 export interface CursorFallbackConsent {

@@ -137,6 +137,16 @@ def test_desktop_provider_route_replays_the_cas_contract(tmp_path: Path) -> None
     )
     assert committed.status_code == 200
     assert committed.json()["executable_sha256"] == "d" * 64
+    cancellation = client.post(
+        f"/api/desktop/provider-attempts/{attempt_id}/cancellation-state",
+        json={"claim_id": claim_id},
+    )
+    assert cancellation.status_code == 200
+    assert cancellation.json() == {
+        "attempt_id": attempt_id,
+        "cancel_requested": False,
+        "status": "executing",
+    }
     duplicate = client.post(
         f"/api/desktop/provider-attempts/{attempt_id}/commit",
         json={"claim_id": claim_id},

@@ -39,6 +39,7 @@ _DIAGNOSTICS = {
     "cursor-not-authenticated",
     "cursor-installation-unsupported",
     "cursor-unavailable",
+    "attempt-input-invalid",
     "result-uncertain",
 }
 
@@ -535,6 +536,54 @@ class ProviderAttemptStore:
                     "Provider completion lost a compare-and-swap race"
                 )
         return self.get(attempt_id)
+
+    def request_cancel(self, attempt_id: str) -> dict[str, Any]:
+        now = self._now()
+        _parse_instant(now)
+        with self._database.transaction() as connection:
+            row = self._row(connection, attempt_id)
+            if row["status"] in _TERMINAL:
+                pass
+            elif row["execution_committed_at"] is None:
+                connection.execute(
+                    """
+                    UPDATE provider_attempts
+                    SET status = 'cancelled', cancel_requested_at = ?,
+                        error_code = 'cancelled', finished_at = ?, updated_at = ?
+                    WHERE id = ? AND execution_committed_at IS NULL
+                      AND status IN ('pending', 'claimed', 'selected')
+                    """,
+                    (now, now, now, attempt_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE provider_attempts
+                    SET cancel_requested_at = COALESCE(cancel_requested_at, ?),
+                        updated_at = ?
+                    WHERE id = ? AND status = 'executing'
+                      AND execution_committed_at IS NOT NULL
+                    """,
+                    (now, now, attempt_id),
+                )
+        return self.get(attempt_id)
+
+    def cancellation_state(
+        self,
+        attempt_id: str,
+        *,
+        claim_id: str,
+    ) -> dict[str, Any]:
+        row = self.get(attempt_id)
+        if row["claim_id"] != claim_id:
+            raise ProviderAttemptConflict(
+                "Provider cancellation check lost its claim"
+            )
+        return {
+            "attempt_id": attempt_id,
+            "cancel_requested": row["cancel_requested_at"] is not None,
+            "status": row["status"],
+        }
 
     def recover_interrupted(self) -> dict[str, int]:
         now = self._now()

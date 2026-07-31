@@ -3,6 +3,7 @@ export const MCP_BRIDGE_SOCKET_NAME = "mcp.sock" as const;
 export const MCP_LAUNCH_FILE_NAME = "launch.json" as const;
 export const MCP_RENDEZVOUS_FILE_NAME = "mcp-rendezvous.json" as const;
 export const MCP_RUNTIME_DIRECTORY_PREFIX = "lcf-mcp-" as const;
+export const MCP_TARGET_OWNER_ENV = "LCF_MCP_OWNER_ID" as const;
 
 export const MAX_MCP_BRIDGE_REQUEST_BYTES = 16 * 1024;
 export const MAX_MCP_BRIDGE_RESPONSE_BYTES = 4 * 1024 * 1024;

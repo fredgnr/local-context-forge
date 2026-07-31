@@ -1085,7 +1085,7 @@ function initialStatus(
     unavailableReason: reason,
     canCheck: false,
     canDownloadOrOpen: false,
-    canOpenReleasePage: false,
+    canOpenReleasePage: true,
     automaticApply: false,
     automaticApplyReason: "val-update-001-not-passed"
   };
@@ -1504,16 +1504,14 @@ export class UpdateClient {
         {
           availableVersion: candidate?.version ?? null,
           errorCode: error.code,
-          canCheck: !this.shuttingDown,
+          canCheck: !this.shuttingDown && this.trustAnchor !== undefined,
           canDownloadOrOpen:
             !this.shuttingDown &&
             candidate !== undefined &&
             !["signature-invalid", "manifest-invalid", "asset-invalid"].includes(
               error.code
             ),
-          canOpenReleasePage:
-            !this.shuttingDown &&
-            !["busy", "cancelled", "unavailable"].includes(error.code)
+          canOpenReleasePage: !this.shuttingDown
         }
       )
     );
@@ -1865,10 +1863,7 @@ export class UpdateClient {
   }
 
   openReleasePage(): Promise<UpdateStatus> {
-    if (
-      this.status.state === "unavailable" ||
-      !this.status.canOpenReleasePage
-    ) {
+    if (!this.status.canOpenReleasePage) {
       return Promise.reject(new UpdateClientError("unavailable"));
     }
     return this.runOperation("open-release-page", async () => {
@@ -1876,9 +1871,7 @@ export class UpdateClient {
         await this.options.openExternal(CANONICAL_RELEASES_URL);
         return this.getStatus();
       } catch {
-        const error = new UpdateClientError("external-open-failed");
-        this.publishFailure(error);
-        throw error;
+        throw new UpdateClientError("external-open-failed");
       }
     });
   }

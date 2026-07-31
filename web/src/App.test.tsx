@@ -527,6 +527,45 @@ describe("desktop update settings", () => {
     expect(listener).toBeTypeOf("function");
   });
 
+  it("offers the fixed manual release fallback when signed checking is unavailable", async () => {
+    const unavailable = {
+      ...idle,
+      state: "unavailable" as const,
+      unavailableReason: "key-unprovisioned" as const,
+      canCheck: false,
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true
+    };
+    const openReleasePage = vi.fn().mockResolvedValue(unavailable);
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: {
+        version: "1.0",
+        api: { request: vi.fn() },
+        update: {
+          status: vi.fn().mockResolvedValue(unavailable),
+          check: vi.fn().mockRejectedValue(new Error("unavailable")),
+          downloadOrOpen: vi.fn().mockRejectedValue(new Error("unavailable")),
+          cancel: vi.fn().mockResolvedValue(unavailable),
+          openReleasePage,
+          subscribe: vi.fn(() => () => undefined)
+        }
+      }
+    });
+
+    render(<DesktopUpdatePanel />);
+    const check = await screen.findByRole("button", { name: "检查更新" });
+    expect((check as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: "下载并打开已验证 DMG" })
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "手动打开官方 Release 页面" })
+    );
+    await waitFor(() => expect(openReleasePage).toHaveBeenCalledWith());
+    expect(screen.getByText("自动应用未交付")).not.toBeNull();
+  });
+
   it("shows a manual fixed-release escape only after Main permits it", async () => {
     const failed = {
       ...idle,
@@ -557,7 +596,7 @@ describe("desktop update settings", () => {
       name: "手动打开官方 Release 页面"
     });
     fireEvent.click(manual);
-    await waitFor(() => expect(openReleasePage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(openReleasePage).toHaveBeenCalledWith());
     expect(screen.queryByText(/github\.com/)).toBeNull();
     expect(screen.queryByText(/\.dmg/)).toBeNull();
   });

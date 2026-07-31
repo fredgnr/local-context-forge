@@ -2,7 +2,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CompanionBridgeClient,
   CompanionBridgeError,
-  configuredMcpBridgeEndpoint
+  configuredMcpBridgeEndpoint,
+  discardMcpTargetOwnerMarker
 } from "./bridgeClient";
 import { createCompanionServer } from "./server";
 
@@ -14,6 +15,7 @@ function diagnosticCode(error: unknown): string {
 }
 
 async function main(): Promise<void> {
+  discardMcpTargetOwnerMarker();
   const bridge = new CompanionBridgeClient(
     await configuredMcpBridgeEndpoint()
   );

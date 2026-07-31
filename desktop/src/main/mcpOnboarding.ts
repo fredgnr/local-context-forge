@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants as fsConstants, type Stats } from "node:fs";
 import { access, lstat, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -16,6 +17,14 @@ import {
   BoundedProcessRunner,
   type BoundedProcessResult
 } from "./providers/processRunner";
+import {
+  FileMcpTargetOwnershipStore,
+  MCP_TARGET_OWNER_ENV,
+  isMcpTargetOwned,
+  type McpOwnedTarget,
+  type McpTargetOwnership,
+  type McpTargetOwnershipStore
+} from "./mcpTargetOwnership";
 
 export const MCP_SERVER_NAME = "local-context-forge" as const;
 
@@ -32,6 +41,7 @@ export interface BundledCompanionTarget {
 
 interface TargetFileDependencies {
   readonly access?: typeof access;
+  readonly effectiveUid?: number;
   readonly lstat?: (filePath: string) => Promise<Stats>;
   readonly realpath?: (filePath: string) => Promise<string>;
 }
@@ -49,19 +59,46 @@ function isInside(root: string, candidate: string): boolean {
 async function requireDirectoryChain(
   root: string,
   parts: readonly string[],
-  stat: (filePath: string) => Promise<Stats>
+  stat: (filePath: string) => Promise<Stats>,
+  resolveRealpath: (filePath: string) => Promise<string>,
+  effectiveUid: number
 ): Promise<void> {
   let current = root;
-  const rootInfo = await stat(current);
-  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
-    throw new TypeError("Bundled resources root is invalid");
-  }
+  await requireTrustedDirectory(
+    current,
+    stat,
+    resolveRealpath,
+    effectiveUid,
+    "Bundled resources root"
+  );
   for (const part of parts.slice(0, -1)) {
     current = path.join(current, part);
-    const info = await stat(current);
-    if (!info.isDirectory() || info.isSymbolicLink()) {
-      throw new TypeError("Bundled companion path is invalid");
-    }
+    await requireTrustedDirectory(
+      current,
+      stat,
+      resolveRealpath,
+      effectiveUid,
+      "Bundled companion path"
+    );
+  }
+}
+
+async function requireTrustedDirectory(
+  directory: string,
+  stat: (filePath: string) => Promise<Stats>,
+  resolveRealpath: (filePath: string) => Promise<string>,
+  effectiveUid: number,
+  label: string
+): Promise<void> {
+  const info = await stat(directory);
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    (info.uid !== 0 && info.uid !== effectiveUid) ||
+    (info.mode & 0o7022) !== 0 ||
+    (await resolveRealpath(directory)) !== directory
+  ) {
+    throw new TypeError(`${label} is invalid`);
   }
 }
 
@@ -71,13 +108,20 @@ async function requireTargetFile(
   parts: readonly string[],
   maximumBytes: number,
   accessMode: number,
+  effectiveUid: number,
   dependencies: TargetFileDependencies
 ): Promise<string> {
   const stat = dependencies.lstat ?? (lstat as (filePath: string) => Promise<Stats>);
   const resolveRealpath =
     dependencies.realpath ?? (realpath as (filePath: string) => Promise<string>);
   const checkAccess = dependencies.access ?? access;
-  await requireDirectoryChain(resourcesPath, parts, stat);
+  await requireDirectoryChain(
+    resourcesPath,
+    parts,
+    stat,
+    resolveRealpath,
+    effectiveUid
+  );
   const lexicalPath = path.join(resourcesPath, ...parts);
   const info = await stat(lexicalPath);
   if (
@@ -85,12 +129,16 @@ async function requireTargetFile(
     info.isSymbolicLink() ||
     info.size <= 0 ||
     info.size > maximumBytes ||
-    (info.mode & 0o022) !== 0
+    (info.uid !== 0 && info.uid !== effectiveUid) ||
+    (info.mode & 0o7022) !== 0
   ) {
     throw new TypeError("Bundled companion file is invalid");
   }
   const canonicalPath = await resolveRealpath(lexicalPath);
-  if (!isInside(canonicalResourcesPath, canonicalPath)) {
+  if (
+    canonicalPath !== lexicalPath ||
+    !isInside(canonicalResourcesPath, canonicalPath)
+  ) {
     throw new TypeError("Bundled companion file escapes resources");
   }
   await checkAccess(canonicalPath, accessMode);
@@ -110,13 +158,49 @@ export async function resolveBundledCompanionTarget(
   }
   const resolveRealpath =
     dependencies.realpath ?? (realpath as (filePath: string) => Promise<string>);
+  const effectiveUid =
+    dependencies.effectiveUid ??
+    process.geteuid?.() ??
+    process.getuid?.() ??
+    -1;
+  if (!Number.isSafeInteger(effectiveUid) || effectiveUid < 0) {
+    throw new TypeError("Effective uid is unavailable");
+  }
+  const contentsPath = path.dirname(resourcesPath);
+  const bundlePath = path.dirname(contentsPath);
+  if (
+    path.basename(resourcesPath) !== "Resources" ||
+    path.basename(contentsPath) !== "Contents" ||
+    path.basename(bundlePath) !== APPLICATION_BUNDLE_NAME
+  ) {
+    throw new TypeError("Bundled resources layout is invalid");
+  }
+  const stat = dependencies.lstat ?? (lstat as (filePath: string) => Promise<Stats>);
+  await requireTrustedDirectory(
+    bundlePath,
+    stat,
+    resolveRealpath,
+    effectiveUid,
+    "Application bundle"
+  );
+  await requireTrustedDirectory(
+    contentsPath,
+    stat,
+    resolveRealpath,
+    effectiveUid,
+    "Application Contents"
+  );
   const canonicalResourcesPath = await resolveRealpath(resourcesPath);
+  if (canonicalResourcesPath !== resourcesPath) {
+    throw new TypeError("Bundled resources path is not canonical");
+  }
   const nodeExecutable = await requireTargetFile(
     resourcesPath,
     canonicalResourcesPath,
     ["qmd", "node", "bin", "node"],
     NODE_MAX_BYTES,
     fsConstants.R_OK | fsConstants.X_OK,
+    effectiveUid,
     dependencies
   );
   const companionEntry = await requireTargetFile(
@@ -125,6 +209,7 @@ export async function resolveBundledCompanionTarget(
     ["companion", "index.mjs"],
     COMPANION_MAX_BYTES,
     fsConstants.R_OK,
+    effectiveUid,
     dependencies
   );
   return { nodeExecutable, companionEntry };
@@ -135,6 +220,7 @@ interface McpCommandRunner {
     executablePath: string,
     arguments_: readonly string[],
     options: {
+      readonly cwd?: string;
       readonly environment: NodeJS.ProcessEnv;
       readonly timeoutMs: number;
       readonly outputLimitBytes: number;
@@ -149,7 +235,9 @@ export interface McpOnboardingDependencies {
   readonly environment?: NodeJS.ProcessEnv;
   readonly packaged: boolean;
   readonly isInApplicationsFolder: () => boolean;
+  readonly dataDirectory: string;
   readonly resourcesPath: string;
+  readonly ownershipStore?: McpTargetOwnershipStore;
   readonly resolveTarget?: (
     resourcesPath: string
   ) => Promise<BundledCompanionTarget>;
@@ -161,12 +249,27 @@ export interface McpOnboardingDependencies {
 interface CodexMcpConfig {
   readonly command: string;
   readonly arguments_: readonly string[];
+  readonly ownerMarker?: string;
+}
+
+type OwnershipInspection =
+  | { readonly kind: "missing" }
+  | {
+      readonly kind: "valid";
+      readonly state: McpTargetOwnership;
+    }
+  | { readonly kind: "invalid" };
+
+interface ConfigurationInspection {
+  readonly config?: CodexMcpConfig;
+  readonly ownership: OwnershipInspection;
 }
 
 interface Inspection {
   readonly status: McpSetupStatus;
   readonly installation?: CodexInstallation;
   readonly target?: BundledCompanionTarget;
+  readonly configuration?: ConfigurationInspection;
 }
 
 export class McpOnboardingError extends Error {
@@ -186,20 +289,36 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   );
 }
 
-function isEmptyRecord(value: unknown): boolean {
-  return (
-    value === undefined ||
-    value === null ||
-    (isPlainRecord(value) && Object.keys(value).length === 0)
-  );
-}
-
 function isEmptyArray(value: unknown): boolean {
   return value === undefined || value === null || (Array.isArray(value) && value.length === 0);
 }
 
 function isUnset(value: unknown): boolean {
   return value === undefined || value === null;
+}
+
+function parseTransportEnvironment(
+  value: unknown
+): Readonly<Record<string, string>> {
+  if (value === undefined || value === null) {
+    return {};
+  }
+  if (!isPlainRecord(value) || Object.keys(value).length > 16) {
+    throw new McpOnboardingError("invalid-response");
+  }
+  const result = Object.create(null) as Record<string, string>;
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key) ||
+      typeof entry !== "string" ||
+      Buffer.byteLength(entry, "utf8") > 8_192 ||
+      entry.includes("\0")
+    ) {
+      throw new McpOnboardingError("invalid-response");
+    }
+    result[key] = entry;
+  }
+  return result;
 }
 
 function parseCodexMcpConfig(value: unknown): CodexMcpConfig {
@@ -243,15 +362,22 @@ function parseCodexMcpConfig(value: unknown): CodexMcpConfig {
         argument.length <= 8_192 &&
         !argument.includes("\0")
     ) ||
-    !isEmptyRecord(value.transport.env) ||
     !isEmptyArray(value.transport.env_vars) ||
     !isUnset(value.transport.cwd)
   ) {
     throw new McpOnboardingError("invalid-response");
   }
+  const environment = parseTransportEnvironment(value.transport.env);
+  const environmentKeys = Object.keys(environment);
+  const ownerMarker =
+    environmentKeys.length === 1 &&
+    environmentKeys[0] === MCP_TARGET_OWNER_ENV
+      ? environment[MCP_TARGET_OWNER_ENV]
+      : undefined;
   return {
     command: value.transport.command,
-    arguments_: value.transport.args as string[]
+    arguments_: value.transport.args as string[],
+    ...(ownerMarker === undefined ? {} : { ownerMarker })
   };
 }
 
@@ -309,10 +435,20 @@ function codexState(resolved: ResolvedCodex): McpSetupCodexState {
 
 function configurationState(
   config: CodexMcpConfig | undefined,
-  target: BundledCompanionTarget | undefined
+  target: BundledCompanionTarget | undefined,
+  ownership: OwnershipInspection
 ): McpSetupConfigurationState {
   if (!config) {
+    if (ownership.kind === "invalid") {
+      return "unknown";
+    }
     return "not-configured";
+  }
+  if (
+    ownership.kind !== "valid" ||
+    !isOwnedConfiguration(config, ownership.state)
+  ) {
+    return "name-conflict";
   }
   if (
     target &&
@@ -322,19 +458,18 @@ function configurationState(
   ) {
     return "configured";
   }
-  if (isRecognizableLcfTarget(config)) {
-    return "needs-reconnect";
-  }
-  return "name-conflict";
+  return "needs-reconnect";
 }
 
-function isRecognizableLcfTarget(config: CodexMcpConfig): boolean {
+function configuredTarget(
+  config: CodexMcpConfig
+): McpOwnedTarget | undefined {
   if (
     !path.isAbsolute(config.command) ||
     path.normalize(config.command) !== config.command ||
     config.arguments_.length !== 1
   ) {
-    return false;
+    return undefined;
   }
   const companion = config.arguments_[0];
   if (
@@ -342,19 +477,59 @@ function isRecognizableLcfTarget(config: CodexMcpConfig): boolean {
     !path.isAbsolute(companion) ||
     path.normalize(companion) !== companion
   ) {
-    return false;
+    return undefined;
   }
-  const nodeResources = path.resolve(config.command, "..", "..", "..", "..");
-  const companionResources = path.resolve(companion, "..", "..");
+  return {
+    command: config.command,
+    arguments_: [companion]
+  };
+}
+
+function bundledTarget(target: BundledCompanionTarget): McpOwnedTarget {
+  return {
+    command: target.nodeExecutable,
+    arguments_: [target.companionEntry]
+  };
+}
+
+function isOwnedConfiguration(
+  config: CodexMcpConfig,
+  ownership: McpTargetOwnership
+): boolean {
+  const target = configuredTarget(config);
   return (
-    nodeResources === companionResources &&
-    path.basename(nodeResources) === "Resources" &&
-    path.basename(path.dirname(nodeResources)) === "Contents" &&
-    path.basename(path.dirname(path.dirname(nodeResources))) ===
-      APPLICATION_BUNDLE_NAME &&
-    config.command ===
-      path.join(nodeResources, "qmd", "node", "bin", "node") &&
-    companion === path.join(nodeResources, "companion", "index.mjs")
+    target !== undefined &&
+    isMcpTargetOwned(ownership, config.ownerMarker, target)
+  );
+}
+
+function uniqueTargets(
+  targets: readonly McpOwnedTarget[]
+): readonly McpOwnedTarget[] {
+  return targets.filter(
+    (target, index) =>
+      targets.findIndex(
+        (candidate) =>
+          candidate.command === target.command &&
+          candidate.arguments_[0] === target.arguments_[0]
+      ) === index
+  );
+}
+
+function sameCodexMcpConfig(
+  left: CodexMcpConfig | undefined,
+  right: CodexMcpConfig | undefined
+): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+  return (
+    left.command === right.command &&
+    left.ownerMarker === right.ownerMarker &&
+    left.arguments_.length === right.arguments_.length &&
+    left.arguments_.every(
+      (argument, index) => argument === right.arguments_[index]
+    )
   );
 }
 
@@ -372,6 +547,43 @@ function installState(
   }
 }
 
+function normalizedConfigurationPath(
+  value: unknown
+): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    Buffer.byteLength(value, "utf8") > 4_096 ||
+    value.includes("\0") ||
+    !path.isAbsolute(value) ||
+    path.normalize(value) !== value ||
+    value === path.parse(value).root
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+export function resolveCodexOwnershipScope(
+  environment: NodeJS.ProcessEnv
+): string | undefined {
+  const explicit = environment.CODEX_HOME;
+  const home = normalizedConfigurationPath(environment.HOME);
+  const codexHome =
+    explicit === undefined
+      ? home
+        ? path.join(home, ".codex")
+        : undefined
+      : normalizedConfigurationPath(explicit);
+  if (!codexHome) {
+    return undefined;
+  }
+  return createHash("sha256")
+    .update("lcf-codex-config-scope-v1\0", "utf8")
+    .update(codexHome, "utf8")
+    .digest("hex");
+}
+
 export class McpOnboardingService {
   private readonly runner: McpCommandRunner;
   private readonly environment: NodeJS.ProcessEnv;
@@ -381,6 +593,8 @@ export class McpOnboardingService {
   private readonly revalidateCodex: NonNullable<
     McpOnboardingDependencies["revalidateCodex"]
   >;
+  private readonly ownershipStore: McpTargetOwnershipStore;
+  private readonly configurationScopeAvailable: boolean;
   private active:
     | {
         readonly controller: AbortController;
@@ -397,6 +611,13 @@ export class McpOnboardingService {
       dependencies.resolveTarget ?? resolveBundledCompanionTarget;
     this.revalidateCodex =
       dependencies.revalidateCodex ?? revalidateCodexInstallation;
+    const scopeId = resolveCodexOwnershipScope(this.environment);
+    this.configurationScopeAvailable = scopeId !== undefined;
+    this.ownershipStore =
+      dependencies.ownershipStore ??
+      new FileMcpTargetOwnershipStore(dependencies.dataDirectory, {
+        scopeId: scopeId ?? "0".repeat(64)
+      });
   }
 
   status(): Promise<McpSetupStatus> {
@@ -407,13 +628,44 @@ export class McpOnboardingService {
     return this.exclusive(async (signal) => {
       const inspection = await this.inspect(signal);
       this.assertConfigurable(inspection);
-      if (inspection.status.configurationState === "configured") {
-        return inspection.status;
-      }
       const installation = inspection.installation;
       const target = inspection.target;
-      if (!installation || !target) {
+      const configuration = inspection.configuration;
+      if (!installation || !target || !configuration) {
         throw new McpOnboardingError("unavailable");
+      }
+      const currentTarget = bundledTarget(target);
+      if (inspection.status.configurationState === "configured") {
+        if (configuration.ownership.kind !== "valid") {
+          throw new McpOnboardingError("unavailable");
+        }
+        await this.stageOwnership(
+          configuration.ownership.state,
+          [currentTarget]
+        );
+        return inspection.status;
+      }
+      const previousOwnership =
+        configuration.ownership.kind === "valid"
+          ? configuration.ownership.state
+          : undefined;
+      const configured = configuration.config
+        ? configuredTarget(configuration.config)
+        : undefined;
+      const staged = await this.stageOwnership(
+        previousOwnership,
+        uniqueTargets([
+          ...(configured ? [configured] : []),
+          currentTarget
+        ])
+      );
+      const rechecked = await this.getConfig(installation, signal);
+      if (
+        !sameCodexMcpConfig(configuration.config, rechecked) ||
+        (rechecked !== undefined &&
+          !isOwnedConfiguration(rechecked, staged))
+      ) {
+        throw new McpOnboardingError("name-conflict");
       }
       await this.runCodex(
         installation,
@@ -421,17 +673,25 @@ export class McpOnboardingService {
           "mcp",
           "add",
           MCP_SERVER_NAME,
+          "--env",
+          `${MCP_TARGET_OWNER_ENV}=${staged.marker}`,
           "--",
           target.nodeExecutable,
           target.companionEntry
         ],
         signal
       );
+      this.restartRequired = true;
       const config = await this.getConfig(installation, signal);
-      if (configurationState(config, target) !== "configured") {
+      if (
+        configurationState(config, target, {
+          kind: "valid",
+          state: staged
+        }) !== "configured"
+      ) {
         throw new McpOnboardingError("invalid-response");
       }
-      this.restartRequired = true;
+      await this.stageOwnership(staged, [currentTarget]);
       return this.buildStatus(
         inspection.status.codexState,
         inspection.status.installState,
@@ -445,6 +705,10 @@ export class McpOnboardingService {
     return this.exclusive(async (signal) => {
       const inspection = await this.inspect(signal);
       const state = inspection.status.configurationState;
+      const configuration = inspection.configuration;
+      if (inspection.status.installState !== "ready") {
+        throw new McpOnboardingError(inspection.status.installState);
+      }
       if (!inspection.installation) {
         throw new McpOnboardingError(
           inspection.status.codexState === "not-installed"
@@ -458,25 +722,47 @@ export class McpOnboardingService {
         throw new McpOnboardingError("name-conflict");
       }
       if (state === "not-configured") {
+        if (configuration?.ownership.kind === "valid") {
+          await this.removeOwnership(configuration.ownership.state);
+        }
         return inspection.status;
       }
       if (state !== "configured" && state !== "needs-reconnect") {
         throw new McpOnboardingError("unavailable");
+      }
+      if (
+        !configuration ||
+        configuration.ownership.kind !== "valid"
+      ) {
+        throw new McpOnboardingError("unavailable");
+      }
+      const ownership = configuration.ownership.state;
+      const rechecked = await this.getConfig(
+        inspection.installation,
+        signal
+      );
+      if (
+        !sameCodexMcpConfig(configuration.config, rechecked) ||
+        !rechecked ||
+        !isOwnedConfiguration(rechecked, ownership)
+      ) {
+        throw new McpOnboardingError("name-conflict");
       }
       await this.runCodex(
         inspection.installation,
         ["mcp", "remove", MCP_SERVER_NAME],
         signal
       );
+      this.restartRequired = true;
       const config = await this.getConfig(inspection.installation, signal);
       if (config) {
         throw new McpOnboardingError(
-          isRecognizableLcfTarget(config)
+          isOwnedConfiguration(config, ownership)
             ? "invalid-response"
             : "name-conflict"
         );
       }
-      this.restartRequired = true;
+      await this.removeOwnership(ownership);
       return this.buildStatus(
         inspection.status.codexState,
         inspection.status.installState,
@@ -516,6 +802,16 @@ export class McpOnboardingService {
       this.dependencies.packaged,
       this.dependencies.isInApplicationsFolder
     );
+    if (!this.configurationScopeAvailable) {
+      return {
+        status: this.buildStatus(
+          "unavailable",
+          initialInstallState,
+          "unknown",
+          false
+        )
+      };
+    }
     let resolved: ResolvedCodex;
     try {
       resolved = await this.dependencies.resolver.codex();
@@ -552,7 +848,30 @@ export class McpOnboardingService {
       };
     }
     const config = await this.getConfig(installation, signal);
-    const currentConfigurationState = configurationState(config, target);
+    let ownership = await this.inspectOwnership();
+    if (
+      target &&
+      config &&
+      ownership.kind === "valid" &&
+      ownership.state.targets.length > 1 &&
+      isOwnedConfiguration(config, ownership.state) &&
+      config.command === target.nodeExecutable &&
+      config.arguments_.length === 1 &&
+      config.arguments_[0] === target.companionEntry
+    ) {
+      ownership = {
+        kind: "valid",
+        state: await this.stageOwnership(
+          ownership.state,
+          [bundledTarget(target)]
+        )
+      };
+    }
+    const currentConfigurationState = configurationState(
+      config,
+      target,
+      ownership
+    );
     return {
       status: this.buildStatus(
         currentCodexState,
@@ -564,8 +883,44 @@ export class McpOnboardingService {
             currentConfigurationState === "needs-reconnect")
       ),
       installation,
-      ...(target ? { target } : {})
+      ...(target ? { target } : {}),
+      configuration: {
+        ...(config ? { config } : {}),
+        ownership
+      }
     };
+  }
+
+  private async inspectOwnership(): Promise<OwnershipInspection> {
+    try {
+      const state = await this.ownershipStore.read();
+      return state
+        ? { kind: "valid", state }
+        : { kind: "missing" };
+    } catch {
+      return { kind: "invalid" };
+    }
+  }
+
+  private async stageOwnership(
+    expected: McpTargetOwnership | undefined,
+    targets: readonly McpOwnedTarget[]
+  ): Promise<McpTargetOwnership> {
+    try {
+      return await this.ownershipStore.stage(expected, targets);
+    } catch {
+      throw new McpOnboardingError("unavailable");
+    }
+  }
+
+  private async removeOwnership(
+    expected: McpTargetOwnership
+  ): Promise<void> {
+    try {
+      await this.ownershipStore.remove(expected);
+    } catch {
+      throw new McpOnboardingError("unavailable");
+    }
   }
 
   private buildStatus(
@@ -581,8 +936,10 @@ export class McpOnboardingService {
       installState: currentInstallState,
       canConfigure,
       canClear:
-        currentConfigurationState === "configured" ||
-        currentConfigurationState === "needs-reconnect",
+        currentInstallState === "ready" &&
+        currentCodexState === "ready" &&
+        (currentConfigurationState === "configured" ||
+          currentConfigurationState === "needs-reconnect"),
       restartRequired: this.restartRequired
     };
   }
@@ -643,6 +1000,7 @@ export class McpOnboardingService {
       installation.executable.canonicalPath,
       arguments_,
       {
+        cwd: this.dependencies.dataDirectory,
         environment: buildProviderEnvironment({
           provider: "codex_cli",
           source: this.environment,

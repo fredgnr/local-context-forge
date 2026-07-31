@@ -84,6 +84,18 @@ describe("typed update IPC", () => {
     ).toThrow(/invalid-payload/);
     expect(dependencies.downloadOrOpen).not.toHaveBeenCalled();
 
+    expect(() =>
+      handlers.get(IPC_CHANNELS.updateOpenReleasePage)?.(event, {
+        url: "https://evil.example/releases"
+      })
+    ).toThrow(/invalid-payload/);
+    expect(dependencies.openReleasePage).not.toHaveBeenCalled();
+
+    await expect(
+      handlers.get(IPC_CHANNELS.updateOpenReleasePage)?.(event)
+    ).resolves.toEqual({ ok: true, value: idle });
+    expect(dependencies.openReleasePage).toHaveBeenCalledTimes(1);
+
     const child = { url: "lcf://app/frame.html" };
     expect(() =>
       handlers.get(IPC_CHANNELS.updateStatus)?.(

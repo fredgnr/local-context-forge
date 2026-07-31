@@ -3,6 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CompanionBridgeError,
+  discardMcpTargetOwnerMarker,
   type CompanionBridgePort
 } from "../companion/src/bridgeClient";
 import { createCompanionServer } from "../companion/src/server";
@@ -47,6 +48,18 @@ afterEach(async () => {
 });
 
 describe("Context7-compatible MCP companion", () => {
+  it("discards the onboarding ownership marker before bridge startup", () => {
+    const environment = {
+      LCF_MCP_OWNER_ID: "marker-must-not-reach-runtime",
+      SAFE_VALUE: "preserved"
+    };
+    discardMcpTargetOwnerMarker(environment);
+    expect(environment).toEqual({ SAFE_VALUE: "preserved" });
+    expect(JSON.stringify(environment)).not.toContain(
+      "marker-must-not-reach-runtime"
+    );
+  });
+
   it("replays list/call through the official SDK with exactly two read-only tools", async () => {
     const bridge = new FakeBridge();
     const { client } = await fixture(bridge);

@@ -15,6 +15,7 @@ import {
   MCP_LAUNCH_FILE_NAME,
   MCP_RENDEZVOUS_FILE_NAME,
   MCP_RUNTIME_DIRECTORY_PREFIX,
+  MCP_TARGET_OWNER_ENV,
   hasExactKeys,
   isBoundedText,
   isCorpusRevision,
@@ -321,6 +322,12 @@ export async function configuredMcpBridgeEndpoint(
     throw new CompanionBridgeError("unavailable");
   }
   return await resolveDefaultMcpBridgeEndpoint();
+}
+
+export function discardMcpTargetOwnerMarker(
+  environment: NodeJS.ProcessEnv = process.env
+): void {
+  delete environment[MCP_TARGET_OWNER_ENV];
 }
 
 export async function verifyMcpBridgeEndpoint(

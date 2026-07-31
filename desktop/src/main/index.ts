@@ -232,6 +232,7 @@ async function bootstrap(): Promise<void> {
     environment: process.env,
     packaged: app.isPackaged,
     isInApplicationsFolder: () => app.isInApplicationsFolder(),
+    dataDirectory: dataDir,
     resourcesPath: process.resourcesPath
   });
   const mcpBridge = new McpBridgeServer({

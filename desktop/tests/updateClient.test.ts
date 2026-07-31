@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CANONICAL_RELEASES_URL,
   MAX_DMG_BYTES,
   UpdateClient,
   UpdateClientError,
@@ -249,7 +250,7 @@ afterEach(async () => {
 });
 
 describe("Main-owned signed update client", () => {
-  it("is stably unavailable in source, unsupported, and unprovisioned modes", async () => {
+  it("keeps signed updates unavailable but permits only the fixed manual release fallback", async () => {
     const fixture = releaseFixture();
     const base = await createClient(fixture, {
       packaged: false
@@ -259,19 +260,44 @@ describe("Main-owned signed update client", () => {
       unavailableReason: "source-build",
       automaticApply: false,
       automaticApplyReason: "val-update-001-not-passed",
-      canCheck: false
+      canCheck: false,
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true
     });
     await expect(base.client.check()).rejects.toMatchObject({
       code: "unavailable"
     });
+    await expect(base.client.downloadOrOpen()).rejects.toMatchObject({
+      code: "unavailable"
+    });
     expect(base.fetchBytes).not.toHaveBeenCalled();
+    expect(base.streamAsset).not.toHaveBeenCalled();
+    expect(base.opened).toEqual([]);
+    expect(base.external).toEqual([]);
+    await expect(base.client.openReleasePage()).resolves.toMatchObject({
+      state: "unavailable",
+      canCheck: false,
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true,
+      automaticApply: false
+    });
+    expect(base.external).toEqual([CANONICAL_RELEASES_URL]);
+    await expect(base.client.downloadOrOpen()).rejects.toMatchObject({
+      code: "unavailable"
+    });
 
     const unsupported = await createClient(fixture, {
       platform: "linux"
     });
-    expect(unsupported.client.getStatus().unavailableReason).toBe(
-      "unsupported-platform"
-    );
+    expect(unsupported.client.getStatus()).toMatchObject({
+      unavailableReason: "unsupported-platform",
+      canCheck: false,
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true,
+      automaticApply: false
+    });
+    await unsupported.client.openReleasePage();
+    expect(unsupported.external).toEqual([CANONICAL_RELEASES_URL]);
 
     const invalidVersion = await createClient(fixture, {
       currentVersion:
@@ -280,18 +306,73 @@ describe("Main-owned signed update client", () => {
     expect(invalidVersion.client.getStatus()).toMatchObject({
       state: "unavailable",
       currentVersion: "0.0.0",
-      unavailableReason: "version-invalid"
+      unavailableReason: "version-invalid",
+      canOpenReleasePage: true
     });
     expect(invalidVersion.fetchBytes).not.toHaveBeenCalled();
+    await invalidVersion.client.openReleasePage();
+    expect(invalidVersion.external).toEqual([CANONICAL_RELEASES_URL]);
 
     const unprovisioned = await createClient(fixture, {
       loadTrustAnchor: async () => {
         throw new UpdateClientError("unavailable");
       }
     });
-    expect(unprovisioned.client.getStatus().unavailableReason).toBe(
-      "key-unprovisioned"
-    );
+    expect(unprovisioned.client.getStatus()).toMatchObject({
+      unavailableReason: "key-unprovisioned",
+      canCheck: false,
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true,
+      automaticApply: false
+    });
+    expect(unprovisioned.fetchBytes).not.toHaveBeenCalled();
+    await unprovisioned.client.openReleasePage();
+    expect(unprovisioned.external).toEqual([CANONICAL_RELEASES_URL]);
+
+    const fallbackFailure = await createClient(fixture, {
+      packaged: false,
+      openExternal: async () => {
+        throw new Error("browser unavailable");
+      }
+    });
+    await expect(
+      fallbackFailure.client.openReleasePage()
+    ).rejects.toMatchObject({ code: "external-open-failed" });
+    expect(fallbackFailure.client.getStatus()).toMatchObject({
+      state: "unavailable",
+      unavailableReason: "source-build",
+      canCheck: false,
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true,
+      automaticApply: false
+    });
+    expect(fallbackFailure.fetchBytes).not.toHaveBeenCalled();
+  });
+
+  it("preserves signed-update status when opening the fixed release page fails and then succeeds", async () => {
+    const fixture = releaseFixture();
+    let attempts = 0;
+    const value = await createClient(fixture, {
+      packaged: false,
+      openExternal: async (url) => {
+        attempts += 1;
+        expect(url).toBe(
+          "https://github.com/fredgnr/local-context-forge/releases"
+        );
+        if (attempts === 1) {
+          throw new Error("browser unavailable");
+        }
+      }
+    });
+    const before = value.client.getStatus();
+
+    await expect(value.client.openReleasePage()).rejects.toMatchObject({
+      code: "external-open-failed"
+    });
+    expect(value.client.getStatus()).toEqual(before);
+    await expect(value.client.openReleasePage()).resolves.toEqual(before);
+    expect(value.client.getStatus()).toEqual(before);
+    expect(attempts).toBe(2);
   });
 
   it("verifies canonical signed metadata, downloads only the DMG, and opens it after revalidation", async () => {
@@ -348,12 +429,50 @@ describe("Main-owned signed update client", () => {
   });
 
   it("rejects signature, canonical-shape, digest, and same/downgrade replay failures without opening", async () => {
+    const checkFailureFixture = releaseFixture();
+    const checkFailureClient = await createClient(checkFailureFixture, {
+      fetchBytes: async () => {
+        throw new UpdateClientError("network");
+      }
+    });
+    await expect(checkFailureClient.client.check()).rejects.toMatchObject({
+      code: "network"
+    });
+    expect(checkFailureClient.client.getStatus()).toMatchObject({
+      state: "error",
+      errorCode: "network",
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true,
+      automaticApply: false
+    });
+    expect(checkFailureClient.streamAsset).not.toHaveBeenCalled();
+    expect(checkFailureClient.opened).toEqual([]);
+    expect(checkFailureClient.external).toEqual([]);
+    await checkFailureClient.client.openReleasePage();
+    expect(checkFailureClient.external).toEqual([CANONICAL_RELEASES_URL]);
+    await expect(
+      checkFailureClient.client.downloadOrOpen()
+    ).rejects.toMatchObject({ code: "asset-invalid" });
+
     const badSignature = releaseFixture({ tamperSignature: true });
     const signatureClient = await createClient(badSignature);
     await expect(signatureClient.client.check()).rejects.toMatchObject({
       code: "signature-invalid"
     });
+    expect(signatureClient.client.getStatus()).toMatchObject({
+      state: "error",
+      errorCode: "signature-invalid",
+      canDownloadOrOpen: false,
+      canOpenReleasePage: true,
+      automaticApply: false
+    });
     expect(signatureClient.opened).toEqual([]);
+    expect(signatureClient.external).toEqual([]);
+    await signatureClient.client.openReleasePage();
+    expect(signatureClient.external).toEqual([CANONICAL_RELEASES_URL]);
+    await expect(
+      signatureClient.client.downloadOrOpen()
+    ).rejects.toMatchObject({ code: "asset-invalid" });
 
     const extraKey = releaseFixture({
       mutateManifest: (manifest) => {
@@ -558,6 +677,9 @@ describe("Main-owned signed update client", () => {
   });
 
   it("offers only the fixed release page after explicit user action", async () => {
+    expect(CANONICAL_RELEASES_URL).toBe(
+      "https://github.com/fredgnr/local-context-forge/releases"
+    );
     const fixture = releaseFixture();
     const value = await createClient(fixture, {
       openPath: async () => "Finder refused"
@@ -573,9 +695,44 @@ describe("Main-owned signed update client", () => {
     });
     expect(value.external).toEqual([]);
     await value.client.openReleasePage();
-    expect(value.external).toEqual([
-      "https://github.com/fredgnr/local-context-forge/releases"
-    ]);
+    expect(value.external).toEqual([CANONICAL_RELEASES_URL]);
+  });
+
+  it("deduplicates the fixed release action and rejects it during another operation or shutdown", async () => {
+    const fixture = releaseFixture();
+    let finishOpen!: () => void;
+    const openGate = new Promise<void>((resolve) => {
+      finishOpen = resolve;
+    });
+    const openedUrls: string[] = [];
+    const value = await createClient(fixture, {
+      fetchBytes: async () => {
+        throw new UpdateClientError("network");
+      },
+      openExternal: async (url) => {
+        openedUrls.push(url);
+        await openGate;
+      }
+    });
+    await expect(value.client.check()).rejects.toMatchObject({
+      code: "network"
+    });
+
+    const first = value.client.openReleasePage();
+    const duplicate = value.client.openReleasePage();
+    expect(duplicate).toBe(first);
+    await expect(value.client.check()).rejects.toMatchObject({
+      code: "busy"
+    });
+    finishOpen();
+    await first;
+    expect(openedUrls).toEqual([CANONICAL_RELEASES_URL]);
+
+    await value.client.shutdown();
+    await expect(value.client.openReleasePage()).rejects.toMatchObject({
+      code: "cancelled"
+    });
+    expect(openedUrls).toEqual([CANONICAL_RELEASES_URL]);
   });
 });
 

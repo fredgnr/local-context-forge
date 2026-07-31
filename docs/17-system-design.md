@@ -23,14 +23,13 @@
 
 Accepted ADR 只代表决定已接受；它不自动把能力变成 `validated`。
 
-系统有两种部署配置：
+唯一目标和受支持的产品配置是 **Electron desktop**。Docker/Compose、独立 browser Web、
+公开 TCP API、Python HTTP MCP、Host Runner 与 container/GHCR 是仓库中尚未删除的
+`deprecated/unsupported legacy`，不再是回退路径，也不承诺迁移或兼容窗口。严格的保留、
+拆分和删除清单见 [legacy retirement manifest](development/legacy-retirement.md)。
 
-- **Electron desktop**：目标产品；本章的主要对象；
-- **legacy Docker/Web**：当前稳定回退；复用领域层和 React UI，但网络、进程、凭据和运维
-  边界不同。
-
-两种配置不得同时写同一数据目录，也不得把 legacy HTTP/API 操作描述成 desktop renderer
-拥有的能力。
+当前过渡期不得让 Electron 与旧部署写同一数据目录，也不得把 legacy HTTP/API 操作描述成
+desktop renderer 拥有的能力。删除支持代码不授权应用或脚本自动删除用户 data/volume/backup。
 
 ## 2. 产品目标
 
@@ -63,7 +62,7 @@ Context7-compatible read-only MCP
 4. QMD stale、模型失败或 worker 崩溃时，不得使用旧向量；必须明确返回
    `qmd-bm25` 或 Python `lexical`；
 5. renderer 不拥有原始路径、任意网络、进程、凭据、更新器或内部 socket；
-6. legacy 数据退出必须等待可回滚迁移和独立 ADR。
+6. unknown/legacy data layout 必须 fail closed；应用不自动读取、迁移、覆盖或删除旧数据。
 
 ## 3. Electron 运行拓扑
 
@@ -117,7 +116,8 @@ Renderer 只负责显示和用户意图：
 - 禁用 Node integration，启用 context isolation 与 sandbox；
 - CSP、导航、新窗口、`webview`、下载和权限请求默认拒绝；
 - 不接收 token、socket、PID、原始 stderr、CLI argv、完整本地路径、更新 URL 或公钥；
-- 同一 React 代码在 browser 模式可使用 HTTP transport，但 desktop 模式只走 preload。
+- Electron renderer 只允许使用 preload bridge。源码中尚存的 browser HTTP transport 是
+  deprecated/unsupported 的待拆分分支，不能作为开发、测试或产品回退模式使用。
 
 权威实现：
 
@@ -372,7 +372,7 @@ renderer、日志或诊断导出。稳定 Application Support 中的 MCP ownersh
 | Wiki | `wiki/` | Git 审计副本与 QMD corpus |
 | Jobs/locks | `jobs/`、`locks/` | request/control evidence 与 advisory lifecycle |
 | Desktop provider evidence | `provider-attempts/<job-id>/` | bounded evidence、schema、prompt、request/result；attempt 状态以 SQLite 为准 |
-| Legacy runner compatibility | `runner/inbox/`、`runner/outbox/` | 共享 Settings 会创建；供 legacy host runner，非 desktop provider spool |
+| Legacy runner compatibility（待删除） | `runner/inbox/`、`runner/outbox/` | 仅供 legacy host runner；先从共享 Settings/service 拆出，再由 ITER-0007 删除 |
 | QMD worker DB/state | `qmd/worker/` | 可重建，但需 revision/profile 约束 |
 | MCP metadata | `mcp-target-ownership-<scope>.json`、`mcp-rendezvous.json` | ownership ledger 持久且非 secret；rendezvous 是当前 bridge 的短期路径指针 |
 | Update downloads | `updates/` | 可重下载；当前位于 Application Support |
@@ -382,19 +382,21 @@ renderer、日志或诊断导出。稳定 Application Support 中的 MCP ownersh
 
 ### 6.2 已接受目标与当前差距
 
-[ADR-0004](adr/0004-runtime-paths-legacy-data-migration.md) 还要求更细的
-`state/libraries/wiki/indexes/imports/backups/migration` 分层、独立日志、更新 DMG 不进入数据
-备份，以及可回滚 legacy migration。当前只完成 Application Support、Caches 和 temp 的部分
-适配：
+[ADR-0004](adr/0004-runtime-paths-legacy-data-migration.md) 仍要求更细的 Desktop
+`state/libraries/wiki/indexes/backups` 分层、独立日志和更新 DMG 不进入数据备份；其 legacy
+input/migration/lifecycle 部分已由
+[ADR-0015](adr/0015-electron-only-legacy-retirement.md) 取代。当前只完成 Application Support、
+Caches 和 temp 的部分适配：
 
 - 目录结构尚未与 ADR 目标完全一致；
 - 没有独立 desktop Logs/doctor/support bundle；
 - update DMG 位于 Application Support，手工整目录备份会一并复制；
 - desktop backup/restore 没有 manifest/checksum/schema/integrity/物理恢复门禁；
-- legacy migration inventory/journal/staging/atomic switch/rollback 未实现。
+- unknown/legacy layout 的显式拒绝与 fresh/reset UX 尚未实现。
 
-因此“当前路径可用”不能写成 `VAL-DATA-001 pass`。后续必须在实现前明确兼容和迁移策略，不能
-直接搬目录或覆盖旧 `data/`。
+因此“当前路径可用”不能写成 `VAL-DATA-001 pass`。后续不开发 legacy importer；必须建立
+desktop-only layout、backup/restore 和 fail-closed reset UX，不能直接搬目录、解释或覆盖旧
+`data/`。
 
 ## 7. 故障、取消与恢复语义
 
@@ -409,14 +411,14 @@ renderer、日志或诊断导出。稳定 Application Support 中的 MCP ownersh
 | App 未运行时 MCP | 明确失败 | companion 偷启第二套 writer |
 | update 验签/摘要失败 | 删除或隔离 partial，停止 | 打开旁路 DMG/ZIP |
 | local source 被移动/删除 | 明确不可用，重新选择/修复 | 猜测新路径 |
-| legacy migration 失败（`planned`；实现尚不存在） | 目标：保留原数据，回滚 active switch | 原地破坏或删除 source |
+| 发现 unknown/legacy layout | 拒绝启动该数据根，提示使用 fresh/current desktop data | 猜测 schema、原地升级、覆盖或自动删除 source |
 
 超时只代表调用者停止等待，不必然证明同步 Backend handler 已停止；后续需要对长任务硬取消、
 child 退出确认和 packaged lifecycle 做物理观察。
 
-## 8. Desktop 与 legacy 对照
+## 8. Electron 目标与待删除 legacy surface
 
-| 维度 | Electron desktop | Legacy Docker/Web |
+| 维度 | 保留的 Electron desktop | 待删除 legacy surface |
 | --- | --- | --- |
 | UI transport | preload → Main | browser HTTP |
 | Python | bundled sidecar 目标 | API container |
@@ -426,10 +428,11 @@ child 退出确认和 packaged lifecycle 做物理观察。
 | 本地仓库 | native picker + opaque grant | 显式 imports/root mount |
 | 网络监听 | desktop 不公开 HTTP TCP | 默认 loopback 8000/8001/8080 |
 | 数据根 | Application Support | `LOCAL_DATA_DIR`，默认 `./data` |
-| 安装 | 将来的 reviewed DMG | 当前 `./install.sh` |
-| Windows 4060 | 不支持远程 worker | 可选 Ollama 节点 |
+| 安装 | 将来的 reviewed DMG | `./install.sh` / `install.command` |
+| Windows 4060 | 不支持远程 worker | Ollama helper；无替代、直接退出 |
 
-共享的是领域模型、Wiki pipeline 和部分 React UI，不共享部署信任假设。
+右栏当前仍存在于仓库，但已经 unsupported；必须在左栏逐能力门禁通过后删除。领域模型、Wiki
+pipeline 和 React UI 是左栏的共享实现，不能随 legacy 外壳一起删除。
 
 ## 9. 代码所有权地图
 
@@ -444,8 +447,8 @@ child 退出确认和 packaged lifecycle 做物理观察。
 | Retrieval | QMD worker/broker/fallback | `desktop/workers/qmd/`、`desktop/src/main/qmd*`、`backend/app/desktop_retrieval.py` |
 | MCP | companion、bridge、onboarding | `desktop/companion/`、`desktop/src/main/mcp*` |
 | Update/release | signed client、packaging | `desktop/src/main/update*`、`desktop/scripts/`、`.github/workflows/desktop-release.yml` |
-| Web | 双 transport UI | `web/src/` |
-| Legacy | Compose、HTTP MCP、host runner | `docker-compose.yml`、`mcp/`、`host_runner/`、`scripts/lcf` |
+| Renderer | Electron React UI；后续移除 browser fetch fallback | `web/src/` |
+| Legacy removal candidates | Compose、Nginx/Web container、public TCP/CORS、HTTP MCP、host runner、container CI | `docker-compose.yml`、`docker/`、`web/{Dockerfile,nginx.conf}`、`mcp/`、`host_runner/`、`scripts/lcf`、`.github/workflows/container-images.yml` |
 | Governance | ADR、迭代、证据、TODO | `docs/adr/`、`docs/development/`、`TODO.md` |
 
 ## 10. 能力边界
@@ -463,8 +466,8 @@ child 退出确认和 packaged lifecycle 做物理观察。
 
 ### Planned
 
-- ADR-0004 完整路径布局和 desktop backup/restore；
-- legacy inventory/staging/journal/atomic migration/rollback；
+- desktop-only 完整路径布局和 desktop backup/restore；
+- unknown/legacy layout fail-closed 与显式 fresh/reset UX；
 - fixed model publisher digest/signature、可靠 resume、cache eviction、shadow index；
 - QMD physical compaction；
 - durable MCP pairing/Keychain/client identity；
@@ -472,7 +475,8 @@ child 退出确认和 packaged lifecycle 做物理观察。
 - automatic update apply/install/restart/rollback；
 - diagnostics/support bundle；
 - fixed evaluation corpus、增量 Wiki 生成；
-- legacy Docker 退出。
+- Electron capability cutover、共享代码解耦和 legacy deploy/transport/release/docs 删除；
+- permanent `VAL-LEGACY-ABSENCE-001` gate。
 
 ### Unsupported
 

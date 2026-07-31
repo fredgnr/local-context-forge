@@ -1,7 +1,8 @@
 # Local Context Forge MCP
 
 本目录的 Python gateway 是 **legacy HTTP/Docker 路径**，不是 Electron 包内的
-MCP companion。桌面版 companion 源码位于 `desktop/companion/`，构建时暂存到
+MCP companion；它已 deprecated/unsupported，不能用于新 client 配置，并将在 ITER-0007
+中整体删除。桌面版 companion 源码位于 `desktop/companion/`，构建时暂存到
 `desktop/generated/companion/` 后随 App 打包。它由 Codex/Cursor MCP host 作为
 Node stdio 子进程启动，经 Main-owned MCP bridge UDS（`mcp.sock`）访问运行中的
 应用；该 socket 与检索 worker 使用的 `broker.sock` 相互独立。它不需要也不应

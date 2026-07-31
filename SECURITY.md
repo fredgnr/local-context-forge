@@ -1,5 +1,12 @@
 # Security policy
 
+> **Current product boundary:** Electron desktop is the only target supported surface. Docker/Compose,
+> browser Web, public loopback API, Python HTTP MCP, Host Runner, and GHCR/container release paths that
+> remain in this repository are deprecated/unsupported retirement inventory under ADR-0015. Any later
+> container/shared-deployment wording on this page is historical risk context, not deployment guidance.
+> Removing source never authorizes deleting local data, Docker volumes/images, backups, Releases, or
+> packages.
+
 ## Supported versions
 
 This repository is a reference implementation. Security fixes are applied to

@@ -8,6 +8,10 @@
 - [详细 TODO](todo.md)
 - [需求—决策—验证矩阵](traceability.md)
 
+> Electron source 是唯一受支持的开发运行面。仓库中的 native browser、Docker/Compose、
+> public HTTP、Host Runner 和 legacy MCP 只用于静态 retirement inventory；不要运行它们建立
+> 新实例。实际删除受 ADR-0015 的全局 packaged cutover gate 与严格路径矩阵约束。
+
 ## 1. Checkout 后先建立坐标
 
 在运行安装器、测试或修改文件前：
@@ -52,8 +56,8 @@ npm --version
 make --version
 ```
 
-缺少任一工具时，先按该工具的官方安装方式补齐。`./scripts/macos-bootstrap.sh --native`
-会准备 native browser 开发环境，但不是 Electron 开发机、正式 bundle 或 CI 工具链安装器。
+缺少任一工具时，先按该工具的官方安装方式补齐。不要使用待删除的
+`./scripts/macos-bootstrap.sh --native` 准备 Electron 开发环境。
 正式 bundle 的 Python 3.13.14 和 Node 22.23.2 由 release workflow 的锁定供应链负责，不应
 替换本节的 source 工具。
 
@@ -63,7 +67,7 @@ make --version
 2. [开发索引](README.md)和[状态快照](status.md)；
 3. [迭代索引](iterations/README.md)与活动
    [ITER-0002](iterations/0002-bundled-runtimes.md)；
-4. 你的改动对应的 R07–R11 记录；
+4. 你的改动对应的 R07–R12 记录；
 5. [追踪矩阵](traceability.md)；
 6. 所有相关 Accepted ADR；
 7. 与目录最接近的 `AGENTS.md`/`AGENTS.override.md`；
@@ -94,13 +98,13 @@ ADR、迭代、需求、证据、发布状态：
 | `desktop/companion/` | 内置 stdio MCP | SDK contract、packaging、MCP lifecycle |
 | `desktop/workers/qmd/` | Node/QMD index/search/embed | worker tests、native staging、model gates |
 | `desktop/scripts/` | staging/audit/release | tamper、manifest、release policy |
-| `web/src/` | React renderer 与 browser UI | Web tests/build、desktop bridge |
+| `web/src/` | Electron React renderer；browser HTTP fallback 待拆 | Web tests/build、desktop bridge |
 | `backend/app/` | Domain、SQLite、queue、source、Wiki、query | Backend tests、schema/data impact |
 | `backend/packaging/` | PyInstaller、locks、notices | macOS staging、SBOM/native closure |
-| `mcp/` | **legacy** HTTP/stdio gateway | legacy API/MCP tests，不是 desktop companion |
-| `host_runner/` | **legacy** 宿主 CLI spool | legacy provider/security |
-| `docker/`、`docker-compose.yml` | **legacy** containers | container CI、migration compatibility |
-| `scripts/` | legacy deploy/backup/restore/native dev | shell safety、real context/data |
+| `mcp/` | **deprecated / remove** Python HTTP/stdio gateway | 不得与 `desktop/companion/` 混淆 |
+| `host_runner/` | **deprecated / remove** 宿主 CLI spool | 先证明 Main provider 已替代 |
+| `docker/`、`docker-compose.yml` | **deprecated / remove** containers | 由 ITER-0007 删除 |
+| `scripts/` | 混合；legacy deploy/backup/restore/native dev 待删除 | 逐文件按 retirement manifest 处理 |
 | `runtime/` | 跨层版本、schema、public trust locks | version sync、packaging fail-closed |
 | `docs/adr/` | Accepted decisions | 架构历史，不是完成证据 |
 | `docs/development/` | 状态、迭代、证据、TODO | 每个 scoped change |
@@ -120,17 +124,11 @@ ADR、迭代、需求、证据、发布状态：
 
 ## 4. 运行模式
 
-### 4.1 Native API/MCP/Web
+### 4.1 Native API/MCP/Web（unsupported inventory）
 
-用于不经过 Electron 的领域/UI 开发：
-
-```bash
-./scripts/macos-bootstrap.sh --native
-make dev-native
-```
-
-该脚本使用仓库根 `.venv` 和 `.native` QMD。它是 native browser 配置，不等同于 desktop
-private UDS。
+该路径属于 `split` / `remove` 范围，不是可选开发模式。不要运行
+`scripts/macos-bootstrap.sh --native` 或 `make dev-native`；需要定位 owner 时使用 `rg`、调用者
+清单和 focused tests，不能启动 public listener 代替 Electron source 验证。
 
 ### 4.2 Electron source mode
 
@@ -149,32 +147,15 @@ npm --prefix desktop run start:source
 这条路径使用 `backend/.venv`。Main 不从 PATH 发现 sidecar。没有显式、受审计的 source QMD
 配置时，QMD fail closed 并使用 lexical。
 
-### 4.3 Legacy Docker/Web
+### 4.3 Legacy Docker/Web（deprecated historical）
 
-需要验证旧部署时优先：
+> 不要新建或扩展此运行面。只允许静态 caller/path inventory；
+> `TODO-LEGACY-CONTROL-001` 已被取代。实际删除必须遵循
+> [strict retirement manifest](legacy-retirement.md)。
 
-```bash
-LCF_CONTROL_BIN="$(pwd -P)/scripts/lcf"
-lcf_managed() {
-  env -i HOME="$HOME" PATH="$PATH" "$LCF_CONTROL_BIN" "$@"
-}
-
-lcf_managed install
-lcf_managed doctor
-lcf_managed status
-```
-
-开发中的临时 Compose 可以使用：
-
-```bash
-docker compose config --quiet
-docker compose up -d --build
-./scripts/smoke-test.sh
-```
-
-但已配置的受管实例必须通过上面的 `lcf_managed` 使用 `scripts/lcf`。当前脚本会读取 Docker
-context 和 `.lcf/runtime.env`，却未自行清除优先级更高的 shell/Compose 变量；直接调用仍可能
-选错 project/data/port。详见[部署总手册](../18-deployment-operations.md#22-安装)。
+不要调用 `scripts/lcf`、`install.sh`、`docker compose up` 或 `smoke-test.sh`。这些命令会改变
+本机/container 状态，既不是“只读盘点”，也不能证明 Electron replacement。若维护者必须访问
+既有旧实例，应在固定旧 commit 和数据副本上自行承担风险；当前开发流程不提供操作 runbook。
 
 ### 4.4 正式打包
 
@@ -211,7 +192,7 @@ context 和 `.lcf/runtime.env`，却未自行清除优先级更高的 shell/Comp
 | Provider | attempt/discovery/process tests | Backend + Desktop + Web |
 | Local source | localSource + source_security | Backend + Desktop + Web |
 | Update/release | update/release policy focused | Desktop + Backend policy + YAML/shell audit |
-| Legacy Docker | relevant Backend/Web/shell | `docker compose config --quiet` + smoke |
+| Legacy split/removal | caller/path focused tests | Electron aggregate + cutover/absence gate；不运行 Docker smoke |
 | Docs only | link checker、diff check | 无需伪跑 packaged gate |
 | Version/manifest | version sync + audit scripts | packaging gate |
 | Schema/data | migration focused tests | backup/restore/migration evidence |
@@ -292,7 +273,7 @@ Mock、fake store、source UDS、ad-hoc DMG 或 CI runner 不能替代这些条�
 - validation log；
 - changed files。
 
-大型追加纵切可以像 R07–R11 一样建立子记录，但父迭代仍是状态权威。
+大型追加纵切可以像 R07–R12 一样建立子记录，但父迭代仍是状态权威。
 
 ### 7.3 更新追踪矩阵
 
@@ -398,7 +379,9 @@ Schema 变更必须：
 7. 记录是否触发 QMD stale/rebuild；
 8. 不在生产数据上首次试验。
 
-Legacy → desktop migration 是独立事务，不得被普通 DB schema migration 偷偷代替。
+Legacy → desktop migration 已由 ADR-0015 取代，不开发 importer/converter。当前 Electron schema
+migration 只能处理明确支持的 desktop layout；unknown/legacy layout 必须 fail closed，且不能
+静默覆盖或删除旧数据。
 
 ## 10. 依赖与生成文件
 
@@ -445,13 +428,13 @@ evidence 不能自动代表新 bytes。
 3. **把 `mcp/` 当 desktop companion**：前者是 legacy gateway。
 4. **把 `make test` 当全量**：它不覆盖 Desktop/QMD/Host Runner/governance。
 5. **忘记 QMD worker**：当前不在 `make ci-source`。
-6. **混用 venv**：native bootstrap 用根 `.venv`，Electron CI/source 用 `backend/.venv`。
-7. **裸 Compose 管理已安装实例**：可能用错 context/env/data。
-8. **移动 release tag**：immutable policy 下不可恢复；tag 同时影响 container/desktop。
+6. **使用 native bootstrap**：它属于待删除 browser surface；Electron CI/source 用 `backend/.venv`。
+7. **运行 Compose/legacy installer**：它们已 unsupported，且可能改变旧 data/volume。
+8. **移动 release tag**：immutable policy 下不可恢复；container workflow 删除前禁止创建新 tag。
 9. **把 Draft 当公开授权**：它只是物理测试候选。
 10. **自动 fallback provider**：commit 后绝对不能换 CLI 重放。
 11. **把 QMD failure 当 publish failure**：published page 仍有效，query lexical fallback。
-12. **直接覆盖 legacy 数据**：迁移事务尚未完成。
+12. **直接覆盖 legacy 数据**：不提供迁移；unknown/legacy layout fail closed 且不自动删除。
 13. **改写 Accepted ADR**：使用 superseding ADR 保留历史。
 14. **记录“当前工作树 pass”**：必须绑定 commit/Actions。
 

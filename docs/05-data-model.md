@@ -1,5 +1,9 @@
 # 数据模型与磁盘布局
 
+> Electron 只保证当前 desktop schema/layout；旧 Docker/alpha data、volume 与 backup 不提供
+> importer、converter、downgrade 或兼容窗口，也不会被应用自动删除。下方 `/data` 仅是待退役
+> owner inventory。当前 layout/backup 工作见 `TODO-DATA-LAYOUT-001` / `TODO-DATA-BACKUP-001`。
+
 ## 数据根目录
 
 以下 `/data` 图是 legacy Docker/native domain 的逻辑布局。Electron 把同一类 domain 文件
@@ -311,14 +315,15 @@ shell 命令以非零码退出，JSON 用于定位具体失败。review/rejected
 schema migration 不等于 legacy Docker → Electron 数据迁移，也不提供自动 downgrade 或完整
 backup/restore。
 
-任何 schema 变化仍必须先：
+任何**当前 Electron schema** 变化仍必须先：
 
 - 备份并在数据副本验证专用迁移脚本。
 - 覆盖并发启动、重复运行、中断、损坏和 unknown-version。
-- 明确旧/新应用的读写兼容窗口。
+- 明确支持的当前 desktop schema 范围；unknown/legacy version fail closed，不建立兼容窗口。
 - 同步迁移 SQLite、sidecar 与 Wiki index。
 - embedding 模型变化后通过全局 rebuild job 强制 re-embed；完成前只走上述非向量路径，不混用向量。
 - 失败时恢复同一备份 manifest 的 SQLite、Wiki Git 与快照。
 
-Desktop 完整 layout、backup/restore 和 legacy transaction 仍是
-[TODO-DATA-*](development/todo.md)，`VAL-DATA-001` 保持 `not-run`。
+Desktop 完整 layout 与当前格式 backup/restore 仍是
+[TODO-DATA-*](development/todo.md)，`VAL-DATA-001` 保持 `not-run`；legacy transaction/import
+已由 ADR-0015 明确取代，不再实施。

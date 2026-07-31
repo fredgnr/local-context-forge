@@ -45,12 +45,13 @@ packaged/physical gate。
 | --- | --- | --- | --- |
 | Electron 源码模式 | 可用于开发和 source 验证 | 开发者 | 借用开发机 Python/Node；不是正式包 |
 | Electron 正式 DMG | `not-run` / 不推荐 | 将来的普通用户 | trust pins、签名、真机和 promotion 未完成 |
-| Legacy Docker/Web | 当前稳定回退路径 | 需要立即使用系统的人 | 需要 checkout、Docker/Compose 和宿主 CLI |
-| Windows + Ollama | legacy 可选生成节点 | 有 RTX 4060 的高级用户 | Electron 不支持远程 Windows worker |
+| Legacy Docker/Web | 已弃用、unsupported、待删除 | 仅用于解释当前仓库残留 | 不承诺修复、迁移、兼容窗口或继续可用 |
+| Windows + Ollama | unsupported | — | Electron 不支持远程 Windows worker；legacy 路径将删除 |
+| 公开 Sites guide | stale / 未验证 | 暂不作为使用入口 | 仍含 legacy 可复制命令；本 checkout 缺 hosting identity，禁止猜站点或误部署 |
 
-不要让 Electron 与 legacy Docker 同时写同一数据目录。不要把 `./install.sh`、
-`install.command` 或 `make install` 当作 Electron 安装器；它们都进入 legacy Docker/Web
-路径。
+不要新建 legacy 部署。仓库中暂存的 `./install.sh`、`install.command`、`make install`、
+Compose 和 localhost HTTP 路径尚未从代码删除，但不再是受支持交付路径；它们会由
+ITER-0007 移除。此状态变化不自动停止现有容器，也不读取、迁移或删除旧数据。
 
 ## 阶段状态
 
@@ -60,10 +61,10 @@ packaged/physical gate。
 | P1 Electron 信任边界 | `in-progress` | Main/preload/renderer source 合同 | packaged renderer/IPC 审计 |
 | P2 Python sidecar | `in-progress` | PyInstaller/Dulwich/source 打包合同 | clean M4 bundled runtime |
 | P3 QMD/MCP/provider | `in-progress` | worker、broker、companion、attempt source 合同 | native QMD、真实模型、真实 CLI/MCP |
-| P4 数据、模型与迁移 | `planned` | 标准路径部分落地、迁移 ADR | backup/restore、迁移事务、完整模型供应链 |
+| P4 Desktop 数据、模型 | `planned` | 标准路径部分落地 | Desktop backup/restore、完整模型供应链、unknown layout fail-closed |
 | P5 DMG 与发布 | `planned` | 两阶段 workflow/source policy | GitHub settings、trust pins、签名 Draft、clean-user |
 | P6 更新实机门禁 | `planned` | signed check/download/open-DMG source client | 真实 `N-1 → N`、失败注入；automatic apply 尚未设计 |
-| P7 Legacy 退出决策 | `planned` | 保留 legacy 的边界 | 代表性迁移、回滚和独立弃用 ADR |
+| P7 Electron-only 退出 | `planned` | ADR-0015 与严格删除计划 | capability cutover、解耦、removal、absence gate |
 
 P2/P3 的实现依赖 P1 已冻结的 source IPC contract，而不是 P1 的完整 packaged gate。
 P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物理退出门禁。
@@ -96,18 +97,21 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 | `VAL-CLI-001` | 已安装并登录的真实 Codex/Cursor |
 | `VAL-MCP-001`、`VAL-MCP-ONBOARD-001` | `/Applications` packaged App + 官方签名 Codex |
 | `VAL-LOCAL-SOURCE-003` | home、外置卷、私有仓库和重启物理矩阵 |
-| `VAL-DATA-001`、`VAL-MODEL-001` | 可恢复迁移、完整模型下载/激活 |
+| `VAL-DATA-001`、`VAL-MODEL-001` | Desktop backup/restore、完整模型下载/激活 |
 | `VAL-SECRET-001` | 真实 GitHub Environments/rulesets/Immutable Releases |
 | `VAL-RELEASE-001`、`VAL-INSTALL-001` | 真实签名 Draft 与 clean-user Gatekeeper/smoke |
 | `VAL-UPDATE-001` | 两个真实单调版本的 `N-1 → N` 与失败恢复 |
-| `VAL-LEGACY-001` | 代表性 legacy 数据迁移和回滚 |
+| `VAL-ELECTRON-CUTOVER-001` | source + clean M4 packaged capability replacement matrix |
+| `VAL-LEGACY-ABSENCE-001` | final removal commit + packaged inventory + active-doc audit |
+
+`VAL-LEGACY-001` 与 `VAL-LEGACY-CONTROL-001` 从未运行，并由 ADR-0015 取代；它们保持
+`not-run (superseded)`，不再是退出或发布门禁。
 
 完整 REQ/ADR/ITER/VAL 映射见[追踪矩阵](traceability.md)。
 
 ## 当前阻塞
 
-1. Desktop 数据布局、backup/restore、legacy migration 和完整模型供应链尚未达到 P4
-   退出条件。
+1. Desktop 数据布局、backup/restore 和完整模型供应链尚未达到 P4 退出条件。
 2. `macos-signing`、`macos-release`、三组 ruleset 和 Immutable Releases 的真实设置没有
    证据。
 3. `runtime/update-metadata-key.lock.json` 和
@@ -116,6 +120,11 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 5. 没有 clean-user M4、真实 Codex、native QMD/model、local source 和 MCP 的完整证据。
 6. 更新客户端当前只支持签名检查、下载和打开 DMG；automatic apply/install/restart/
    rollback 没有已接受设计和实现。
+7. Electron capability replacement、shared-code decoupling 和 legacy absence gate 均为
+   `not-run`；因此既不能直接粗暴删目录，也不能公开首个 Electron-only Release。
+8. `guide-site` 源和现有公开说明仍包含 legacy 安装/localhost/Host Runner 内容，且本 checkout
+   没有可验证的 `.openai/hosting.json`；必须先恢复 exact Sites identity，再改写、测试和留下
+   checkpoint deployment evidence。当前站点不是权威使用入口。
 
 ## 下一步工作分组
 
@@ -123,15 +132,17 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 1. `TODO-GOV-EVIDENCE-001`：把剩余 source 结论统一绑定到公开 commit/Actions；
 2. `TODO-CI-COVERAGE-001`：决定并机器化 QMD worker/guide-site 的 source CI 覆盖；
-3. `TODO-LEGACY-CONTROL-001`：固定 Compose project/环境优先级，并修复 lifecycle、
-   backup/restore 与外置数据的实例控制。
+3. `TODO-ELECTRON-CUTOVER-001`：建立逐能力替代矩阵并补齐可在 source 环境运行的子门禁；
+4. `TODO-LEGACY-DECOUPLE-001`：在删除目录前拆开 renderer/sidecar 与 browser/TCP/spool 分支。
 
 ### Dependency-blocked：先取得前序设计/格式证据
 
-1. `TODO-DATA-LAYOUT-001` 需要先证明 ITER-0002 持久格式已经冻结到可迁移程度；
-2. Desktop backup/restore 与 legacy migration 依赖冻结后的 layout；
+1. `TODO-DATA-LAYOUT-001` 需要先证明 ITER-0002 持久格式已经冻结到可建立新 desktop-only
+   baseline 的程度；
+2. Desktop backup/restore 依赖冻结后的 layout；不再开发 legacy migration；
 3. 完整 model supply、formal staging 和后续物理门禁依赖上述数据合同；
-4. Draft、promotion 与真实 `N-1 → N` 依赖唯一正式候选和相应前序 gate。
+4. legacy deploy/transport/release/docs 删除依赖 Electron replacement 与共享代码解耦；
+5. Draft、promotion 与真实 `N-1 → N` 依赖唯一正式候选、legacy absence 和相应前序 gate。
 
 ### Admin-blocked：需要仓库控制面权限或独立 reviewer
 

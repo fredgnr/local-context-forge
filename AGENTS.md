@@ -59,6 +59,8 @@ work to the maintained sources below.
 - Deployment and operations: `docs/18-deployment-operations.md`
 - Contributor workflow: `docs/development/contributor-handbook.md`
 - Remaining work: `docs/development/todo.md`
+- Electron-only remove/retain/split boundary:
+  `docs/development/legacy-retirement.md`
 - Evidence format: `docs/development/evidence/README.md`
 - Migration planning and evidence: `docs/development/README.md`
 - Architectural decisions: `docs/adr/README.md`

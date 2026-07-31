@@ -1,10 +1,13 @@
 # GitHub Actions 与 GHCR
 
-> `vX.Y.Z` 是**统一产品发行事件**，不是“只给容器打标签”。同一个 tag 还会触发
-> `.github/workflows/desktop-release.yml` 的受保护 macOS 候选构建。创建 tag 前必须完成
-> [桌面发行 runbook](development/desktop-release.md)中的版本同步、Environment、ruleset、
-> trust pins 和审批准备；当前 public locks 为 `unprovisioned`，整体仍是
-> **source merge GO / release NO-GO**。GHCR SemVer 镜像出现不代表桌面 Draft/Release 已通过。
+> **Deprecated historical runbook：** container/GHCR workflow 已进入
+> `TODO-LEGACY-REMOVE-RELEASE-001`，将在 Electron cutover 后删除。本页记录当前尚存行为与
+> 风险，不再承诺继续发布镜像，也不授权删除远端已有 GHCR package。
+
+> **操作停止：** 当前 tag 仍会同时触发 container 与 desktop，且 public locks 为
+> `unprovisioned`；在 `TODO-LEGACY-REMOVE-RELEASE-001`、最终 removal candidate 的完整 M4
+> 复验和 `VAL-LEGACY-ABSENCE-001` 通过前，禁止创建任何新 release tag。本页后续命令仅用于
+> 审计现存 workflow，不是发布步骤。整体仍是 **source merge GO / release NO-GO**。
 
 仓库通过 `.github/workflows/container-images.yml` 构建并托管三个镜像：
 

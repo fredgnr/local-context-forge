@@ -3,7 +3,9 @@
 本页汇总共享领域与 legacy 安全控制；Electron 的完整进程/capability/data flow 和同 UID
 残余风险以[系统设计](17-system-design.md)为准，当前验证状态以
 [status](development/status.md)为准。Source policy 通过不等于 packaged/physical 安全门禁
-通过。
+通过。Docker/Compose、browser/public HTTP、Host Runner、legacy MCP 和 GHCR 已
+deprecated/unsupported；后文 container baseline 只保留为 retirement 风险 inventory，不能
+作为部署或“生产加固”指南。删除源码也不授权删除用户 data/volume/backup/package。
 
 ## 保护目标
 

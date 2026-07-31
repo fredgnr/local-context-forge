@@ -23,6 +23,7 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 | 安装、运维、备份、GitHub settings 和 Release | [部署与运维总手册](../18-deployment-operations.md) |
 | 新贡献者搭环境、测试和提 PR | [开发者手册](contributor-handbook.md) |
 | 查看所有剩余任务、owner、依赖和验收 | [详细 TODO](todo.md) |
+| 查看 Electron-only 的 remove/retain/split 与删除门禁 | [Legacy retirement 计划](legacy-retirement.md) |
 | 建立可复现、脱敏的验证记录 | [证据规范](evidence/README.md) |
 | 查看 P0–P7 顺序、依赖和门禁 | [迁移路线图](roadmap.md) |
 | 从需求追到 ADR、迭代、验证和文件 | [可追溯矩阵](traceability.md) |
@@ -34,6 +35,7 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 | 查看 tag-only 候选与 trusted-main promotion 决策 | [ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) |
 | 查看本地/私有仓库证据 | [ITER-0002/R10](iterations/0002-r10-local-repositories.md) |
 | 查看文档交接记录 | [ITER-0002/R11](iterations/0002-r11-documentation-handoff.md) |
+| 查看 Electron-only 范围冻结记录 | [ITER-0002/R12](iterations/0002-r12-legacy-retirement-scope.md) |
 | 查看 MCP companion 私有协议 | [MCP companion 协议](mcp-companion-protocol.md) |
 | 执行或审计正式桌面发布 | [macOS release runbook](desktop-release.md) |
 | 使用安装后的 Electron 桌面应用 | [桌面用户指南](../16-electron-desktop-guide.md) |
@@ -58,6 +60,7 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 | `blocked` | 有明确阻塞项，必须记录解除条件 |
 | `validated` | 指定门禁已有可复现证据 |
 | `done` | 范围、文档和全部必需门禁均完成 |
+| `superseded` | 被后续 Accepted ADR 取代且不再实施；验证保持 `not-run` |
 
 验证结果统一使用 `pass`、`fail`、`not-run`。只有附有命令、环境和产物位置的
 `pass` 才能支撑 `validated` 或 `done`。

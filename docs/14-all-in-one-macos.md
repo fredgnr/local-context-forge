@@ -4,6 +4,8 @@
 > [系统设计](17-system-design.md)，实际部署/发行/回滚步骤见
 > [部署与运维](18-deployment-operations.md)。本章解释目标体验，不代表仓库现在已有可推荐
 > 的 DMG。
+>
+> Docker all-in-one 小节是待删除历史内容，不再是回退建议。Electron 是唯一目标产品面。
 
 ## 部署决策
 
@@ -77,8 +79,8 @@ lcf_managed install
 或双击 `install.command`，仍会安装 Docker/Web/host runner 方案。它不是 Electron，不会产生
 DMG，也不会写入桌面 Application Support。终端入口使用最小环境包装，是因为当前控制脚本尚未
 自行隔离 Compose project/data/port 等调用者覆盖；详情见
-[部署总手册](18-deployment-operations.md#22-安装)。legacy 路径在迁移和物理门禁通过前继续
-保留用于回退。
+[部署总手册](18-deployment-operations.md#22-安装)。该路径当前尚在源码树，但已经 unsupported，
+不要新建部署；它会在 Electron capability cutover 后删除。
 
 当前没有一个把未审查源码直接变成“可推荐桌面安装”的本地脚本；这样可以避免把 source smoke
 误当成签名、clean-user 和更新证据。

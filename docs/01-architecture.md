@@ -2,7 +2,9 @@
 
 本文重点描述共享的 Wiki 编译领域流水线。当前 Electron 的组合进程、UDS/capability、MCP
 companion、provider、更新和数据边界以[系统设计](17-system-design.md)为权威；legacy
-Docker/Web 是另一部署配置，不能从下图推断 renderer 拥有 HTTP 或系统命令能力。
+Docker/Web 是 deprecated/unsupported 的待删除历史实现，不是另一项可选部署配置。本文后续
+出现的 HTTP/container 拓扑只用于 owner inventory，不能据此启动新实例或推断 renderer 拥有
+HTTP、socket 或系统命令能力。
 
 ## 核心原则
 

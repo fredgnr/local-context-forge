@@ -1,5 +1,11 @@
 # Handbook builder
 
+> **Do not regenerate or distribute the handbook yet.** `build_handbook.py` still embeds unsupported
+> Docker/Compose, Windows/Ollama, public HTTP MCP and legacy installation content. ADR-0015 assigns the
+> builder to `TODO-LEGACY-REMOVE-DOCS-001`; until that task rewrites the embedded source and generated
+> output passes the active-doc absence gate, `make handbook` is for retirement inspection only and its PDF
+> must not be published as current guidance.
+
 The printable Chinese handbook is generated from every numbered
 `docs/[0-9][0-9]-*.md` file, in lexical order. At the current documentation
 revision that is `docs/00-*.md` through `docs/18-*.md`.

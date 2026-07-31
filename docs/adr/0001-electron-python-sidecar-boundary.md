@@ -5,6 +5,10 @@
 - 关联需求：REQ-PLATFORM-001、REQ-TRUST-001、REQ-PY-001、REQ-QMD-001、
   REQ-CLI-001、REQ-MCP-001
 
+> **后续关系：** 本 ADR 仍为 Accepted；其中迁移期保留两套启动路径的条款已由
+> [ADR-0015](0015-electron-only-legacy-retirement.md#对既有-adr-的影响)部分取代。进程拓扑与
+> 信任边界继续有效。
+
 ## 上下文
 
 现有系统由 Python API、Web UI、MCP、QMD 与宿主 CLI/Docker 组合运行。目标发行物是

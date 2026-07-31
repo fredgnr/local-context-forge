@@ -1,19 +1,25 @@
 # 部署与运维总手册
 
-本文把 Electron、源码开发、legacy Docker/Web 和正式 Release 四条路径放在同一决策树中。
+本文记录 Electron、源码开发、历史 legacy Docker/Web 和正式 Release。legacy 小节已弃用，
+仅为后续 removal 盘点保留，不再是一条可选择的受支持路径。
 它回答“现在应该运行什么”，而不是把尚未通过的门禁写成安装教程。当前状态以
 [项目状态快照](development/status.md)为准，详细桌面 UI 使用见
 [Electron 完整指南](16-electron-desktop-guide.md)。
+
+> **操作停止：** 不要执行本文 legacy 安装/Compose/localhost/GHCR 命令；它们只描述待删除
+> owner。当前 container tag 双触发和未配置 trust locks 使所有新 release tag、Draft 与公开
+> Release 均为 NO-GO。只有最终 removal bytes 的完整 M4 能力复验、absence gate 和独立发行
+> 门禁全部通过后，才能按改写后的 Electron-only runbook 发布。
 
 ## 1. 先选择路径
 
 | 你的目标 | 现在使用的路径 | 入口 |
 | --- | --- | --- |
-| 立即在本机稳定使用 | Legacy Docker/Web | 第 2.2 节的 `lcf_managed install` |
+| 立即在本机稳定使用 | 暂停 | 等经过审查的 Electron DMG；当前没有受支持稳定发行 |
 | 开发 Electron UI/Main/Python 合同 | Electron source mode | 本文第 3 节 |
 | 验证正式候选 | 受保护 Draft + 物理 M4 | 本文第 6–8 节 |
 | 普通用户安装 Electron | 暂停 | 等经过审查的公开 DMG |
-| 使用 Windows 4060 加速生成 | Legacy Ollama 节点 | [硬件部署](03-hardware-deployment.md) |
+| 使用 Windows 4060 加速生成 | 不支持 | future remote-worker 需独立 ADR |
 
 三个容易误用的入口：
 
@@ -25,7 +31,10 @@
 不要让 desktop 与 legacy 同时写同一目录。不要把 legacy `./data` 直接覆盖到 Application
 Support。
 
-## 2. 路径 A：当前稳定的 Legacy Docker/Web
+## 2. 历史路径 A：已弃用的 Legacy Docker/Web
+
+> 本节命令不得用于新部署。它们将在 ITER-0007 删除，只用于确认 removal scope；项目不提供
+> 修复、迁移或兼容窗口，也不会自动清理用户已有 container/volume/data。
 
 ### 2.1 前置条件
 

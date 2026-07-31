@@ -2,6 +2,11 @@
 
 > 本页根据 OpenAI 官方 Codex 文档核对，最后检查日期为 2026-07-28。产品套餐、限额、功能和条款会变化；实际使用前应再次查看链接页面。本页是工程风险建议，不是法律意见。
 
+> **Electron-only precedence：** 当前产品只允许 Main-owned、用户已登录的 Codex CLI，以及
+> 用户预先同意且只发生在执行前的 Cursor fallback。本文后续 Compose、LaunchAgent/Host Runner、
+> Windows/Ollama 和“默认本地生成”文字是待删除的历史实现说明，不是推荐或可执行步骤；若与
+> 本段冲突，以 ADR-0015 和[系统设计](17-system-design.md)为准。
+
 ## 先给结论
 
 Codex CLI 可以作为 LCF 在**受信任个人 Mac**上的默认、单次、受控代码库分析器；
@@ -77,7 +82,7 @@ CODEX_API_KEY='...' codex exec --json "..."
 
 LCF 不要求 OpenAI API key：all-in-one 默认复用当前 macOS 用户已经完成的 ChatGPT/Codex
 登录。只有你明确改用 API key 自动化时才配置，并应使用 secret manager、独立低权限项目、
-预算与轮换策略。若要求生成也完全本地，可显式选择 Ollama。
+预算与轮换策略。当前 Electron 不支持 Ollama 或远程 Windows generator。
 
 ## all-in-one 的宿主调用模式
 
@@ -164,7 +169,7 @@ codex exec --help
 | 公共/开源仓库 runner 复制 `auth.json` | 不应 | 禁止 | 官方明确不建议该账户 auth 流程用于公共/开源仓库 |
 | 多人共享一个个人 ChatGPT 登录 | 技术上可能被滥用 | 禁止作为产品设计 | 凭据共享、责任与条款风险 |
 | 把 CLI 包成公开/收费模型 API | 不作为支持方案 | 使用正式 API 或本地模型 | 订阅访问不是通用转售 API |
-| 默认用 Ollama，Codex 仅人工补强 | 是 | 本项目推荐 | 隐私、稳定性、可控成本最好 |
+| 默认用远程 Ollama，Codex 仅人工补强 | legacy 曾可行 | 当前不支持 | 需要新的 remote-worker 安全/协议 ADR |
 
 ## 用户协议风险怎么判断
 
@@ -183,7 +188,8 @@ codex exec --help
 - 不把 subscription auth 当成一般用途的后端 API。
 - 不让 LCF 的其他用户间接消费你的个人账号。
 - 不把第三方仓库发送到 OpenAI，除非你有权这样处理并接受对应数据政策。
-- 对持续生产自动化，优先 Ollama 或正式 API 组织凭据。
+- 对持续生产自动化，不要服务化共享个人登录；另行评估正式 API 组织凭据。远程 Ollama 需先有
+  Accepted remote-worker ADR，不能复用 legacy 路径。
 - 套餐/条款不清楚时，向组织管理员或 OpenAI 支持确认，不做无依据的“肯定没问题”承诺。
 
 ## 凭据处理
@@ -201,13 +207,11 @@ Codex 的认证缓存可能包含 access token，应像密码一样处理：
 ## 推荐决策
 
 ```text
-是否需要完全离线/源码不出局域网？
-  ├─ 是 → Ollama
-  └─ 否
-      是否是本人手动、低频、一机一用户？
-        ├─ 是 → 可选 ChatGPT 登录的 codex exec
-        └─ 否
-            是否有正式 API 组织、预算和 secret 管理？
-              ├─ 是 → API key / 正式自动化
-              └─ 否 → 继续用 Ollama，不做共享 Codex 后端
+是否是本人、受信任 Mac、单用户和有权发送的源码？
+  ├─ 是 → Electron Main 调用已登录 Codex；仅 preflight 阶段可用已同意的 Cursor fallback
+  └─ 否 → 当前产品不支持；不要共享个人登录或复用 legacy Host Runner/Ollama
+
+是否要做组织级持续自动化？
+  ├─ 是 → 先另立 API credential / remote-worker 架构与安全决策
+  └─ 否 → 保持本机、单用户、受控 evidence 流程
 ```

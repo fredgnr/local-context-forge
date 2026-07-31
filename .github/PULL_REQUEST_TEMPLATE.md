@@ -19,7 +19,7 @@
 - Security/privacy:
 - Runtime/dependency/packaging:
 - QMD rebuild required: yes / no / not applicable
-- Legacy compatibility:
+- Legacy retirement / breaking scope / external-data side effects:
 
 ## Validation
 

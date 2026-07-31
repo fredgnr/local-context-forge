@@ -1,7 +1,8 @@
 # Local Context Forge backend
 
-This package is the shared domain engine used by both the legacy HTTP/Docker
-deployment and the Electron Python sidecar. The desktop build does not expose
+This package is the domain engine used by the Electron Python sidecar. It still
+contains deprecated/unsupported legacy HTTP/Docker adapters pending ITER-0007;
+those adapters are retirement inventory, not a second supported mode. The desktop build does not expose
 its FastAPI routes on TCP: Electron Main reaches a private Unix-domain-socket
 sidecar through an allowlisted IPC proxy. See
 [`docs/17-system-design.md`](../docs/17-system-design.md) for the authoritative
@@ -15,7 +16,7 @@ The backend turns a repository into a reviewable, Git-backed API Wiki:
 1. Archive an exact Git commit (or hash a plain directory) into an immutable
    source snapshot.
 2. Extract a deterministic manifest, symbols, README/tests/examples, and
-   source-line evidence. Desktop ingestion disables Ctags; the legacy/native
+   source-line evidence. Desktop ingestion disables Ctags; the historical legacy/native
    deployment can invoke Universal Ctags with `--options=NONE --links=no`, with
    Python AST and conservative regex extraction as the fallback.
 3. Generate typed Wiki proposals through the deployment's provider adapter.

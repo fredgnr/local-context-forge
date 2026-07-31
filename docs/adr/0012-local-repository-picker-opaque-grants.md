@@ -5,6 +5,10 @@
 - 关联需求：REQ-LOCAL-SOURCE-001、REQ-TRUST-001、REQ-GIT-001、REQ-IPC-001
 - 依赖：ADR-0001、ADR-0002、ADR-0006
 
+> **后续关系：** 本 ADR 仍为 Accepted；Docker/browser 环境配置和 explicit imports 兼容要求
+> 已由 [ADR-0015](0015-electron-only-legacy-retirement.md#对既有-adr-的影响)部分取代。Main picker、
+> opaque grant、路径保密与 Backend 复验继续有效。
+
 ## 上下文
 
 桌面端原有 IPC 只接受无凭据的公开 GitHub HTTPS URL。这能阻止 renderer 把任意本地路径

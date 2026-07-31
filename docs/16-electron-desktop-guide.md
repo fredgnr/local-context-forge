@@ -1,5 +1,10 @@
 # Electron 桌面版完整指南
 
+> **Release stop：** 仓库仍含会被 release tag 触发的 legacy container workflow。首个受支持
+> Electron-only Release 必须等待 `VAL-ELECTRON-CUTOVER-001`、legacy removal、最终 removal
+> candidate 的完整 M4 能力复验和 `VAL-LEGACY-ABSENCE-001`。在此之前不要创建 tag、Draft 或
+> 公开 Release；后文任何 GHCR 检查都只是待删除风险 inventory。
+
 本文面向两类读者：
 
 - 不写代码、只希望在 M4 Pro MacBook 上安装并使用 Local Context Forge 的个人用户；
@@ -28,11 +33,11 @@
 | 打包 App 的真实 Codex 采集 | `not-run` | 不能用 mock/provider 单测替代 |
 | 物理 M4 模型下载、embedding、hybrid | `not-run` | lexical fallback 可用不代表模型门禁通过 |
 | 真实 `N-1 → N` 物理更新与故障注入 | `not-run` | 自动应用更新尚未交付 |
-| legacy Docker 数据迁移 | `not-run` | 不能直接覆盖或共用数据目录 |
+| legacy Docker 数据迁移 | `superseded` / 不提供 | 不能直接覆盖或共用数据目录 |
 
 因此，本文所称“推荐桌面安装”始终带一个前提：GitHub Releases 已出现由维护者审查的完整正式
-资产，并且 release notes 没有说明阻断门禁。当前分支适合开发和审查；需要现在稳定运行时，
-继续使用 legacy Docker/Web。
+资产，并且 release notes 没有说明阻断门禁。当前分支适合开发和审查；legacy Docker/Web
+已弃用，不再作为当前稳定 fallback。
 
 ## 2. 桌面版包含什么
 
@@ -687,19 +692,18 @@ test -d "$CACHE" &&
 
 普通文件删除不是 SSD、Time Machine、云备份或外置盘上的 secure erase。
 
-## 14. Legacy Docker 数据与回退
+## 14. Legacy Docker 数据（不迁移、不自动删除）
 
 `./install.sh`、Compose、host runner、HTTP MCP、`data/`、`imports/` 和 `backups/` 属于
-legacy 路径。当前桌面迁移 UI 和代表性数据门禁未完成：
+legacy 路径。项目不再计划桌面迁移 UI：
 
 - 不要把 legacy `data/` 复制到 Application Support 后直接启动；
 - 不要让 legacy API 和 Electron sidecar 同时写同一目录；
 - Docker named volume 不能由桌面 App 自动读取；
-- 保留 legacy checkout、备份和原数据，直到桌面迁移另有已验证工具。
+- 如需历史留档，自行保留 legacy checkout、备份和原数据；项目不提供导入工具或兼容承诺。
 
-需要回退时，退出 Electron，再从原 legacy checkout 按
-[部署与运维总手册的 legacy 路径](18-deployment-operations.md)和
-[备份与恢复](09-backup-restore.md)运行旧路径。两套数据目前是独立的。
+源码 retirement 不会自动停止旧容器或删除这些资产。若用户自行固定旧 commit/image 访问
+历史副本，这是 unsupported 的独立操作；不得与 Electron 同时写同一数据目录。
 
 ## 15. 常见问题
 
@@ -1141,7 +1145,8 @@ GitHub Actions 成功本身不能把最后四项标记为 `pass`。
 - [ ] PR/fork/source CI 无 secret；
 - [ ] tag、source commit、version、architecture 一致；
 - [ ] desktop tag 路径只创建 Draft，未出现自动公开 desktop Release 的路径；
-- [ ] 同一 tag 的 GHCR 与 desktop workflow 已分别核对 run/digest，任何非原子部分成功已记录；
+- [ ] `.github/workflows/container-images.yml` 已删除，tag 不再触发 GHCR/container；
+- [ ] `VAL-LEGACY-ABSENCE-001=pass`，且证据绑定最终 removal commit 与 candidate digest；
 - [ ] promotion 以 `--ref main` 运行，trusted verifier、隔离 tag worktree、fresh peel 和固定
       Release ID 证据齐全；
 - [ ] `verifyPromotionOrder` 的 comparison ref 是 `PATCH` 前 fresh-fetched `origin/main`，

@@ -1,6 +1,10 @@
 # 备份与恢复
 
-> **适用范围：legacy Docker/Web 数据树。** Electron 使用
+> **Deprecated historical runbook：** 下方 legacy Docker/Web backup/restore 不再受支持，
+> Electron 不会导入它们；内容暂留用于 retirement 盘点，也不授权删除旧 archive/volume。
+> 不要执行本页 `lcf_managed`、Compose、copy/restore 或清理命令；它们是可变更操作，不是当前
+> 产品 runbook。只能在固定旧 commit 和独立数据副本上自行研究。
+> Electron 使用
 > `~/Library/Application Support/Local Context Forge/`，当前还没有完成物理验证的桌面
 > backup/restore UI；见[部署与运维](18-deployment-operations.md#5-desktop-数据备份恢复和卸载)。
 > 对 `./install.sh` 创建的 legacy 实例，脚本默认读取 `.lcf/runtime.env`；但调用者环境中的
@@ -129,7 +133,8 @@ SQLite/Wiki。脚本不提供加密；`0600` 只限制同机其他账号，不�
 
 当前受管安装器没有 `--data-dir`，并会把 `LOCAL_DATA_DIR` 固定回 checkout `data/`；只支持
 通过上例把 **backup archive** 写到外置加密卷。手工外置 active data 属于未托管配置，重跑
-安装器可能启动第二个数据树；由 `TODO-LEGACY-CONTROL-001` 跟踪。未托管部署中
+安装器可能启动第二个数据树；该缺口不再修复，`TODO-LEGACY-CONTROL-001` 已被 ADR-0015
+supersede。未托管部署中
 `LOCAL_DATA_DIR` 仍是 Compose/备份使用的宿主路径，容器内为 `/data`，但操作者必须自己保存
 context/env/runner 一致性。当前
 `scripts/dev-native.sh` 固定使用项目 `./data`，不会读取这个宿主映射变量；外置数据根应使用

@@ -5,6 +5,15 @@ macOS arm64 release workflow。当前 public trust locks 为 `unprovisioned`，�
 release 会 fail closed。source tests 或普通 macOS CI 不能替代 protected build、干净用户
 安装和物理更新证据。
 
+> [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) 已决定删除 container/GHCR 发布面。
+> 本页的同-tag GHCR 说明只记录删除前的当前风险；`TODO-LEGACY-REMOVE-RELEASE-001` 完成后
+> 必须移除这些步骤。首个受支持 Electron-only 公开 Release 还要求
+> `VAL-LEGACY-ABSENCE-001=pass`。
+
+> **操作停止：** 在 container workflow 删除、最终 removal commit/candidate 上完整重跑
+> Electron cutover 能力矩阵并取得 `VAL-LEGACY-ABSENCE-001=pass` 前，不得执行本页 tag、Draft
+> 或 promotion 命令。下文同-tag/GHCR 段落是审计现状，不是当前可执行 runbook。
+
 决策与证据：
 
 - [当前状态](status.md)

@@ -53,8 +53,9 @@ onboarding 和 GitHub Release workflow 的主要 source 纵切，但 P1–P3 的
 | 物理 Apple Silicon 模型下载/重建 | `not-run` |
 | 真实 `N-1 → N` 物理更新 | `not-run` |
 
-因此，**Electron 只在经过审查的 Release 资产出现后成为推荐安装路径**。当前需要稳定运行时，
-legacy Docker/Web 部署仍保留；`./install.sh` 安装的是 legacy 路径，不是 Electron。
+因此，**Electron 只在经过审查的 Release 资产出现后成为推荐安装路径**。legacy Docker/Web
+虽然尚未从当前源码树删除，但已经弃用且 unsupported；不要新建部署。`./install.sh` 不是
+Electron 安装器，并将在 ITER-0007 删除。
 
 完整安装、首次打开、MCP、恢复与发布说明：
 [Electron 桌面版完整指南](docs/16-electron-desktop-guide.md)。
@@ -80,8 +81,8 @@ legacy Docker/Web 部署仍保留；`./install.sh` 安装的是 legacy 路径，
 更换模型后必须“保存并重建全部”。Embedding rebuild 只处理已发布 Wiki，不调用
 Codex/Cursor，也不消耗生成额度；重新采集仓库才会生成新提案。
 
-Windows 32 GB + RTX 4060 可继续作为 legacy Docker/Ollama 的可选生成节点，但当前 Electron
-客户端没有远程 Windows worker。详见
+Windows 32 GB + RTX 4060 当前不是受支持节点；Electron 客户端没有远程 Windows worker，
+legacy Docker/Ollama helper 也已进入删除范围。未来是否支持远程 worker 需单独 ADR。详见
 [硬件与部署](docs/03-hardware-deployment.md)。
 
 ## 桌面版第一次使用
@@ -172,8 +173,9 @@ Cursor MCP 当前只支持用户手工配置，不由应用管理；不要把 Co
 ```
 
 Application Support 包含私有源码快照、SQLite、facts、proposal、任务和 Wiki。故障、替换应用
-或更新前先退出 App，并备份整个目录。当前 desktop backup/legacy migration 的物理门禁没有
-完成，不能把 legacy `data/` 直接覆盖到这里。恢复与可回退缓存重置见
+或更新前先退出 App，并备份整个目录。当前 desktop backup/restore 的物理门禁没有完成；项目
+不提供 legacy migration，不能把旧 `data/` 直接覆盖到这里。未知 layout 会按目标设计拒绝，
+不会自动转换或删除。恢复与可回退缓存重置见
 [桌面版完整指南](docs/16-electron-desktop-guide.md)。
 
 ## Release 与更新
@@ -244,39 +246,29 @@ npm --prefix desktop run start:source
 
 打包、签名、clean-user、真实 Codex 和更新必须使用各自门禁，不能以 source smoke 代替。
 
-## Legacy Docker/Web
+## Legacy Docker/Web retirement
 
-原有路径继续保留用于当前运行和回退：
+[ADR-0015](docs/adr/0015-electron-only-legacy-retirement.md) 已决定：Electron 完成能力替代后，
+彻底删除 Docker/Compose、browser Web、公开 TCP API、Python HTTP MCP、Host Runner、旧安装/
+运维脚本和 container/GHCR 发布。项目处于 pre-1.0 早期阶段，不提供旧数据、配置、API 或部署
+兼容，也不建设 migration importer。
 
-```bash
-LCF_CONTROL_BIN="$(pwd -P)/scripts/lcf"
-lcf_managed() {
-  env -i HOME="$HOME" PATH="$PATH" "$LCF_CONTROL_BIN" "$@"
-}
-
-lcf_managed install
-lcf_managed doctor
-lcf_managed status
-```
-
-当前控制脚本尚未自行隔离优先级更高的 shell/Compose 变量；上面的最小环境包装避免错误
-project/context/data/port 覆盖。完整说明和高级变量 allowlist 见
-[部署与运维](docs/18-deployment-operations.md#22-安装)。
-
-GitHub Actions/GHCR、多机 Ollama、HTTP MCP、legacy backup/restore 等旧操作仍在编号文档中。
-不要让 legacy 与 Electron 同时写同一数据目录。后续只有完成代表性迁移、更新和回滚门禁，并
-接受新的弃用 ADR 后，才会决定是否移除 legacy。
+当前仓库仍包含这些路径仅表示删除任务尚未实施，不表示它们继续受支持。严格 `remove` /
+`retain` / `split` 清单、门禁和任务见
+[legacy retirement manifest](docs/development/legacy-retirement.md) 与
+[详细 TODO](docs/development/todo.md)。删除代码不会自动删除用户已有 container、volume、
+image、`data/`、imports 或 backup。
 
 ## 目录
 
 ```text
 desktop/          Electron Main、preload、companion、QMD worker 与打包
-web/              React + TypeScript renderer / legacy Web
+web/              Electron React renderer；container/browser 外壳待拆除
 backend/          Python sidecar、SQLite、队列、Wiki 与检索
-mcp/              legacy streamable HTTP MCP gateway
+mcp/              待删除的 legacy Python MCP；Desktop companion 在 desktop/companion
 runtime/          版本、runtime provenance、update/certificate public locks
-host_runner/      legacy Docker 的宿主 CLI runner
-scripts/          legacy 部署、备份、恢复与开发脚本
+host_runner/      待删除的 legacy Host Runner
+scripts/          混合脚本；legacy 部署/备份/恢复项待删除
 docs/             产品、运维、ADR、迭代和验证记录
 tests/            后端与跨边界回归
 ```

@@ -28,8 +28,11 @@ path.
 - Select Codex CLI by default during preflight. Select Cursor CLI only as a
   preflight fallback; never switch provider after a job starts.
 - Keep the MCP surface compatible with the documented Context7-style tools.
-- Preserve legacy Docker behavior until the migration exit gate explicitly
-  retires it.
+- Treat legacy Docker/browser/public-HTTP/Host-Runner/container surfaces as
+  deprecated and scheduled for removal under ADR-0015. Before the packaged
+  cutover gate passes, only split Electron dependencies and add evidence; do
+  not delete a legacy capability. Never infer removal from a top-level name:
+  `web/src` is the renderer and `backend/app` contains the private UDS sidecar.
 - Keep self-signing, lack of notarization, and lack of hardened runtime visible
   as release limitations; do not imply Apple trust or notarization.
 
@@ -41,21 +44,24 @@ path.
   error shape?
 - Are child-process arguments constructed from allowlisted values without a
   shell?
-- Does a crash, stale socket, partial download, or interrupted migration fail
-  closed and leave recoverable state?
+- Does a crash, stale socket, partial download, or interrupted current-format
+  backup/restore fail closed and leave recoverable state?
 - Does the change work without user-installed runtimes and without network
   access except for an explicitly requested model/update download?
-- Does it preserve data ownership and prevent simultaneous legacy/desktop
-  writers?
+- Does it preserve data ownership, reject unknown/legacy layouts without
+  guessing, and avoid automatically deleting data, volumes, backups, packages,
+  or releases?
 
 ## Decision sources
 
 - [Process boundary ADR](../../../../docs/adr/0001-electron-python-sidecar-boundary.md)
 - [UDS and startup-token ADR](../../../../docs/adr/0002-uds-startup-token-protocol.md)
 - [Release and update ADR](../../../../docs/adr/0003-macos-release-signing-update-policy.md)
-- [Runtime paths and migration ADR](../../../../docs/adr/0004-runtime-paths-legacy-data-migration.md)
+- [Runtime paths and historical migration ADR](../../../../docs/adr/0004-runtime-paths-legacy-data-migration.md)
 - [CLI provider attempt ADR](../../../../docs/adr/0005-provider-attempt-execution-boundary.md)
 - [Product Git boundary ADR](../../../../docs/adr/0006-dulwich-product-git-boundary.md)
 - [QMD broker ADR](../../../../docs/adr/0007-qmd-retrieval-broker-runtime.md)
 - [MCP companion ADR](../../../../docs/adr/0008-mcp-companion-main-bridge.md)
 - [Bundled runtime provenance ADR](../../../../docs/adr/0009-bundled-runtime-provenance.md)
+- [Electron-only legacy retirement ADR](../../../../docs/adr/0015-electron-only-legacy-retirement.md)
+- [Strict retirement manifest](../../../../docs/development/legacy-retirement.md)

@@ -8,7 +8,9 @@
 
 ## 1. 使用规则
 
-- 状态只使用 `planned`、`in-progress`、`blocked`、`validated`、`done`。
+- 状态只使用 `planned`、`in-progress`、`blocked`、`validated`、`done`、`superseded`。
+- `superseded` 只用于被后续 Accepted ADR 明确取代、不会继续实施的历史任务；对应验证保持
+  `not-run`，不得写成 `pass` 或 `done`。
 - 验证只使用 `pass`、`fail`、`not-run`。
 - Owner 先用 owning component，不凭空指派个人。
 - 开始任务时在 PR/issue 声明 task ID、owner、branch 和 scope，避免重复执行。
@@ -24,24 +26,24 @@ Governance/evidence cleanup
         ├─────────────── GitHub release controls ── trust pins
         │
         ▼
-Desktop data layout ── backup/restore ── legacy migration fixtures
+Desktop data layout ── desktop backup/restore
         │
         ├── model supply-chain completion
         │
         ▼
-Formal arm64 staging ── packaged component matrix ── unique Draft
+Formal arm64 staging ── packaged component matrix ── shared-code decoupling
                                                     │
                                                     ▼
-                                         clean M4 physical gate
+                                         clean M4 replacement gate
                                                     │
                                                     ▼
-                                         trusted-main promotion
+                                     legacy removal + absence gate
+                                                    │
+                                                    ▼
+                                      unique Draft → promotion
                                                     │
                                                     ▼
                                         real N-1 → N update gate
-                                                    │
-                                                    ▼
-                                          legacy exit decision
 ```
 
 GitHub settings 可以与数据实现并行准备，但真实公开 Release 必须等待所有阻断门禁。
@@ -55,10 +57,10 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 | --- | --- | --- | --- | --- | --- | --- |
 | TODO-GOV-EVIDENCE-001 | Priority-0 | P0 | `planned` | Governance/CI | 无 | commit-bound evidence |
 | TODO-CI-COVERAGE-001 | Priority-0 | P0 | `planned` | CI/QMD/Sites | 无 | `VAL-CI-COVERAGE-001` |
-| TODO-LEGACY-CONTROL-001 | Priority-0 | legacy/P7 support | `planned` | Legacy Operations/Installer | REQ-LEGACY-001、REQ-DATA-001 | `VAL-LEGACY-CONTROL-001` |
+| TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-0 | P4 | `planned` | Desktop runtime/Data | ADR-0004 | `VAL-DATA-001` foundation |
 | TODO-DATA-BACKUP-001 | Priority-0 | P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
-| TODO-DATA-MIGRATION-001 | Priority-0 | P4/P7 | `planned` | Backend/Desktop migration | layout、backup | `VAL-DATA-001` |
+| TODO-DATA-MIGRATION-001 | — | historical | `superseded` | Backend/Desktop migration | ADR-0015 | `not-run` |
 | TODO-MODEL-SUPPLY-001 | Priority-0 | P4 | `planned` | QMD/Model/Release | layout | `VAL-MODEL-001` |
 | TODO-REL-GOV-001 | Priority-0 | P5 | `blocked` | Release governance | GitHub admin | `VAL-SECRET-001` settings |
 | TODO-REL-KEYS-001 | Priority-0 | P5 | `blocked` | Release admin/Security | release controls | provisioned public pins |
@@ -69,7 +71,9 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 | TODO-PHYS-CLI-001 | Priority-1 | P3/P5 | `planned` | Provider/QA | packaged candidate、real CLIs | `VAL-CLI-001` |
 | TODO-PHYS-MCP-001 | Priority-1 | P3/P5 | `planned` | MCP/QA | packaged candidate、Codex | MCP gates |
 | TODO-PHYS-LOCAL-001 | Priority-1 | P1/P4/P5 | `planned` | Local source/QA | packaged candidate | `VAL-LOCAL-SOURCE-003` |
-| TODO-REL-DRAFT-001 | Priority-1 | P5 | `blocked` | Release engineering | all Priority-0 release prerequisites | unique verified Draft |
+| TODO-ELECTRON-CUTOVER-001 | Priority-1 | P7 | `planned` | Desktop/Product/QA | packaged candidate、model、CLI/MCP | `VAL-ELECTRON-CUTOVER-001` |
+| TODO-LEGACY-DECOUPLE-001 | Priority-1 | P7 | `planned` | Desktop/Backend/Web | cutover source subgate | focused + aggregate source |
+| TODO-REL-DRAFT-001 | Priority-1 | P5 | `blocked` | Release engineering | all Priority-0 release prerequisites + legacy absence | unique verified Draft |
 | TODO-REL-PROMOTE-001 | Priority-1 | P5 | `blocked` | Release reviewer/Security | Draft physical pass | public immutable Release |
 | TODO-UPDATE-NMINUS1-001 | Priority-1 | P6 | `blocked` | Update/Data QA | two real releases | `VAL-UPDATE-001` |
 | TODO-UPDATE-APPLY-001 | Priority-2 | P6 | `planned` | Architecture/Update | superseding ADR | `VAL-UPDATE-APPLY-001` |
@@ -80,10 +84,16 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 | TODO-QMD-COMPACT-001 | Priority-2 | P3/P4 | `planned` | QMD/Data | real corpus fixtures | `VAL-QMD-COMPACT-001` |
 | TODO-EVAL-CORPUS-001 | Priority-2 | P3/P5 | `planned` | Retrieval/Wiki QA | stable packaged stack | `VAL-EVAL-001` |
 | TODO-WIKI-INCREMENTAL-001 | Priority-3 | post-P3 | `planned` | Backend/Wiki | eval corpus | `VAL-WIKI-INCREMENTAL-001` |
-| TODO-LEGACY-EXIT-001 | Priority-3 | P7 | `blocked` | Migration/Product/Operations | roadmap P0–P6 pass | `VAL-LEGACY-001` + ADR |
+| TODO-LEGACY-REMOVE-DEPLOY-001 | Priority-2 | P7 | `planned` | Desktop/Build/Operations | decoupling + cutover pass | absence inventory |
+| TODO-LEGACY-REMOVE-TRANSPORT-001 | Priority-2 | P7 | `planned` | Backend/Web/MCP | decoupling + cutover pass | private-UDS-only gate |
+| TODO-LEGACY-REMOVE-RELEASE-001 | Priority-2 | P7 | `planned` | CI/Release | deploy removal | no container/GHCR trigger |
+| TODO-LEGACY-REMOVE-DOCS-001 | Priority-2 | P7 | `planned` | Docs/Sites/Operations | deploy + transport + release removal | active-doc audit |
+| TODO-LEGACY-ABSENCE-001 | Priority-2 | P7 | `planned` | CI/Governance | all removal tasks | `VAL-LEGACY-ABSENCE-001` |
+| TODO-LEGACY-EXIT-001 | — | historical | `superseded` | Migration/Product/Operations | ADR-0015 | `not-run` |
 | TODO-REMOTE-WORKER-001 | Priority-3 | future | `planned` | Product/Architecture | desktop GA | `VAL-REMOTE-WORKER-DECISION-001` |
 
-`blocked` 表示需要仓库管理员、真实 Release 或先行门禁；不是建议绕过。
+`blocked` 表示需要仓库管理员、真实 Release 或先行门禁；不是建议绕过。`superseded` 行是
+可追溯 tombstone，不再进入执行队列。
 
 ## 4. Priority-0：先消除证据、数据和发布阻塞
 
@@ -135,51 +145,17 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 
 ### TODO-LEGACY-CONTROL-001：Legacy 实例控制与外置数据
 
-- 状态：`planned`
-- 优先级：Priority-0
-- Roadmap：legacy/P7 support
+- 状态：`superseded`
+- 优先级：不再排期
+- Roadmap：历史任务
 - Owner：Legacy Operations/Installer
-- 关联：REQ-LEGACY-001、REQ-DATA-001、ADR-0004
-- 依赖：legacy runtime manifest 和 backup/restore 格式保持可判定
+- 关联：REQ-LEGACY-001、REQ-DATA-001、ADR-0004；由 ADR-0015 取代
+- Disposition：不再实施；只允许在实际删除前修复立即可触发的数据丢失或高危安全问题
 
-当前问题：
-
-- `scripts/lcf` 的 Compose 生命周期以及 `backup`/`restore` 子脚本会继承调用进程中的
-  Compose 插值变量；shell 的 `LOCAL_DATA_DIR`、`LCF_BIND_HOST`、端口、镜像等可覆盖
-  `--env-file`，`COMPOSE_PROJECT_NAME` 还可覆盖 compose 顶层 `name:`。污染环境可能把
-  start/stop/down/backup/restore 指向错误 project、context、端口、数据根、监听地址、镜像或
-  backup 位置；
-- 受管安装器每次运行都会把 `data/`、`imports/` 和 `runner/` 强制设回当前 checkout，
-  且没有受支持的外置 data 参数，重跑安装器可能创建或操作错误实例；
-- 文档中的最小 `env -i` allowlist 是临时运维缓解，不是脚本的 fail-closed 控制面。
-
-交付：
-
-1. 修改 `scripts/lcf`、`scripts/backup.sh`、`scripts/restore.sh` 与 legacy installer，使实例
-   选择只来自显式参数或经过校验的 `.lcf/runtime.env`，不直接信任调用者污染环境；
-2. 为 installer 增加受支持、规范化且持久记录的外置 data/imports/runner 配置，重跑时保持
-   已安装实例的 target，不静默改回 checkout；
-3. 固定 Compose project identity，并为 custom Docker context、bind host、API/Web/MCP port、
-   API URL、image、data/imports/runner root 和 backup root 定义优先级、canonicalization、
-   owner/mode/symlink、冲突与缺失行为；
-4. backup/restore manifest 绑定实例 identity、Docker context、resolved data root、API target
-   与 archive digest；restore 在 target 或 manifest 不一致时 fail closed；
-5. 增加隔离 Docker context/临时目录的 shell/integration tests，以及安装、升级、backup、
-   restore、回滚和故障注入 fixtures；
-6. 同步安装、部署、backup/restore、troubleshooting 和 security 文档，不再要求操作者靠
-   `env -i` 包装才能安全选择实例。
-
-验收：
-
-- 在预置全部 Compose 插值变量、`COMPOSE_PROJECT_NAME`、错误 context/API/data/image 变量时，
-  默认操作仍只使用目标实例 manifest，或因歧义明确拒绝；
-- custom port/context/data/imports/runner/backup 配置在安装、重跑、升级、backup 和 restore
-  后保持一致；
-- 错误 checkout、错误 Docker context、错误 API、活动 writer、manifest 漂移、symlink、
-  wrong owner/mode 和 archive target mismatch 均 fail closed；
-- backup 与 restore 对同一 manifest target 的 identity、resolved paths、port/context 和
-  digest 核对一致，不会跨实例 drain、覆盖或恢复；
-- 脚本、测试与用户/运维文档同一变更交付，`VAL-LEGACY-CONTROL-001` 为 `pass`。
+原任务曾计划加固 `scripts/lcf`、installer、Compose instance identity 和 legacy backup/restore。
+这会扩大即将删除的维护面，与 Electron-only 决策冲突。`VAL-LEGACY-CONTROL-001` 保持
+`not-run (superseded)`；不得为了关闭任务伪造通过。对应删除范围转入
+`TODO-LEGACY-REMOVE-DEPLOY-001`。
 
 ### TODO-DATA-LAYOUT-001：冻结实际 Desktop 数据布局
 
@@ -187,13 +163,13 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 - Owner：Desktop runtime/Data
 - 关联：REQ-DATA-001、ADR-0004、ITER-0003/D01
 - 目的：消除 ADR 目标布局与当前 Application Support 根目录布局的差异。
-- 依赖：ITER-0002 持久格式/version 已冻结到可迁移程度
+- 依赖：ITER-0002 持久格式/version 已冻结到可建立新 desktop-only baseline 的程度
 
 当前差距：
 
 - 当前有 `metadata.sqlite3`、`sources/`、`facts/`、`proposals/`、`wiki/`、`jobs/`、
   `locks/`、`runner/`、`qmd/`、`updates/`；
-- ADR 目标为更清晰的 state/libraries/wiki/indexes/imports/backups/migration；
+- 目标为更清晰的 state/libraries/wiki/indexes/backups 分层；不建立 legacy migration area；
 - 未配置独立 `~/Library/Logs/Local Context Forge/`；
 - update DMG 位于持久数据根；
 - 没有路径 layout version。
@@ -202,7 +178,7 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 
 1. inventory 当前所有文件/目录和 producer/consumer；
 2. 定义不可替代、可重建、临时、日志、凭据五类；
-3. 决定保留当前布局还是迁移到 ADR 分层；若改变，新增 superseding ADR 或兼容修订；
+3. 决定保留当前布局还是切换到新的 desktop-only 分层；旧 alpha layout 不提供 converter；
 4. 增加 layout/schema version 和启动 preflight；
 5. update download 移到可重建 cache 或从 backup manifest 排除；
 6. 实现 Logs 路径、rotation/retention/redaction；
@@ -211,10 +187,10 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 
 验收：
 
-- fresh/old layout 可判定且未知 layout fail closed；
+- fresh/current layout 可判定且 unknown/legacy layout fail closed；
 - renderer/日志不暴露绝对私有路径；
 - update/cache 不进入不可替代 backup；
-- 重启和中断不留下半迁移 active；
+- 重启和中断不留下半切换 active；
 - 更新系统设计、部署手册、数据模型和 traceability。
 
 ### TODO-DATA-BACKUP-001：Desktop backup/restore
@@ -252,30 +228,15 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 
 ### TODO-DATA-MIGRATION-001：Legacy → Desktop 可回滚迁移
 
-- 状态：`planned`
+- 状态：`superseded`
 - Owner：Backend/Desktop migration
-- 关联：REQ-DATA-001、REQ-LEGACY-001、ADR-0004、ITER-0003/D02–D03
-- 依赖：layout、backup/restore
+- 关联：REQ-DATA-001、REQ-LEGACY-001、ADR-0004、ITER-0003/D02–D03；由 ADR-0015 取代
+- Disposition：不开发 legacy importer、converter、journal、compatibility shim 或回滚流程
 
-交付：
-
-- 只支持 legacy backup archive 或用户显式选择、已停 writer 的 bind-mount root；
-- named volume 必须先在 legacy 环境导出；
-- read-only inventory：format/schema、owner、size、checksum、SQLite、Git、counts；
-- source fingerprint、migration ID 和 durable journal；
-- unique staging、逐版本 converter、恢复点；
-- 不执行 hooks/config/helper/repository code；
-- atomic activate、post-start smoke、rollback；
-- 默认保留 source、journal、quarantine；
-- 防止 legacy 与 desktop writer 并发。
-
-验收矩阵：
-
-- fresh、repeat、interrupt、corrupt、unknown-version、symlink、active-writer、low-disk；
-- 不同历史 schema、不同 corpus/index state；
-- page/ref/job/settings/model counts；
-- 失败后旧版本仍读取原数据；
-- `VAL-DATA-001` 与迁移子门禁为 `pass`。
+Desktop 自身的数据布局、backup/restore、unknown-layout fail-closed 仍由
+`TODO-DATA-LAYOUT-001` 与 `TODO-DATA-BACKUP-001` 交付；这两项不能随 legacy migration 一起
+删除。旧 Docker data、volume、archive 或配置不会被读取、迁移，也不会被应用自动删除。
+迁移子门禁保持 `not-run (superseded)`。
 
 ### TODO-MODEL-SUPPLY-001：完整模型供应链与原子 index
 
@@ -529,15 +490,16 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 - 状态：`blocked`
 - Owner：Release engineering
-- 依赖：所有 release P0、formal staging、目标版本同步
+- 依赖：所有 release P0、formal staging、目标版本同步、`VAL-LEGACY-ABSENCE-001=pass`
 
 执行前：
 
 - clean protected `main`；
 - runtime/package/QMD version 完全一致；
-- unified product tag review：同一 `vX.Y.Z` 也发布 container SemVer；
+- 确认 container workflow/GHCR tag 耦合已删除，同一 `vX.Y.Z` 只进入 desktop candidate path；
 - source/policy CI success；
-- release notes 明示 self-signed/not notarized/not hardened/automatic apply disabled。
+- release notes 明示 self-signed/not notarized/not hardened/automatic apply disabled，以及 legacy
+  no-migration/no-compatibility 边界。
 
 验收：
 
@@ -789,25 +751,171 @@ gh workflow run desktop-release.yml \
 - 与 full generation 的质量/引用/成本基线对比达到 Accepted ADR 阈值；
 - `VAL-WIKI-INCREMENTAL-001` 为 `pass`。
 
-## 7. Priority-3：Legacy 与未来范围
+## 7. Electron-only cutover、Legacy 删除与未来范围
 
-### TODO-LEGACY-EXIT-001：Legacy 去留决策
+本节受 [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) 和
+[严格 removal manifest](legacy-retirement.md) 约束。项目允许无兼容窗口的大范围删除，但
+**不允许用目录名判断归属**：`web/src/**` 是 Electron renderer，`backend/app/**` 包含 private
+UDS sidecar 和领域层。任何实现 PR 必须先逐项声明 `remove`、`retain` 或 `split`，并引用本节
+task ID。
 
-- 状态：`blocked`
-- Owner：Migration/Product/Operations
-- 依赖：P0–P6 所有阻断 gate `pass`
+### TODO-ELECTRON-CUTOVER-001：证明 Electron 已替代 legacy 能力
+
+- 状态：`planned`
+- 优先级：Priority-1
+- Owner：Desktop/Product/QA
+- 关联：REQ-ELECTRON-ONLY-001、ADR-0015、ITER-0007/E01
+- 依赖：packaged candidate、真实 embedding、Codex/Cursor、MCP 和本地仓库 gate
 
 交付：
 
-1. 脱敏、代表性的 legacy 样本和 counts；
-2. migration/rollback rehearsal；
-3. 页面、引用、任务、索引、设置和恢复核对；
-4. 用户成本、失败率、已知不支持版本；
-5. 独立 legacy retention/deprecation ADR；
-6. 用户公告和时间表；
-7. 只有 ADR Accepted 后才清理 Docker/Compose/host runner/installers。
+1. 用 source 与 packaged/physical 两层矩阵分别验证仓库创建/导入、索引、任务提交、排队、
+   取消、重试、审核、发布和查询；
+2. 验证 embedding 模型选择、状态、全局/单仓 rebuild 和 stale-index fallback；
+3. 验证 Codex 默认、Cursor 仅 preflight fallback、attempt audit 和取消语义；
+4. 验证 Context7 `resolve-library-id` / `query-docs`、Codex onboarding 和 stdio companion；
+5. 验证上述流程不调用 Docker、public TCP API、legacy `mcp/` 或 Host Runner spool；
+6. 为每个将删除的 legacy capability 指向唯一 Electron owner 和 failure UX。
 
-验收：`VAL-LEGACY-001 pass`。在此之前 legacy 必须保留。
+验收：`VAL-ELECTRON-CUTOVER-001` 为 `pass`。source `pass` 不能替代至少一次 clean M4
+packaged candidate smoke；该门禁也不替代 P5 的公开发行或 P6 的跨版本更新门禁。
+
+### TODO-LEGACY-DECOUPLE-001：解耦共享 Renderer、Backend 与 provider
+
+- 状态：`planned`
+- 优先级：Priority-1
+- Owner：Desktop/Backend/Web
+- 关联：REQ-ELECTRON-ONLY-001、ITER-0007/E02
+- 依赖：TODO-ELECTRON-CUTOVER-001 的 source 子门禁
+
+交付：
+
+- renderer 只通过版本化 desktop bridge 调用；先隔离 `fetch()`/`VITE_API_BASE` browser fallback，
+  但在聚合 cutover `pass` 前不删除；保留 `web/src/**`、Vite/TypeScript build 和 renderer
+  staging/audit；
+- Python app 只由 Main 以认证 private UDS 启动；先隔离 public TCP ASGI 入口和 CORS/browser
+  分支，聚合 gate 后由 transport task 删除；保留 FastAPI/uvicorn/h11、`backend/app/cli.py`、
+  factory/domain/desktop routes；
+- provider 只使用 Main-owned Codex/Cursor attempt；拆出 Host Runner spool、heartbeat、direct
+  CLI/Ollama/browser-only provider 分支，聚合 gate 后再删除；
+- Context7 MCP 只保留 `desktop/companion/**` 与 Main bridge；
+- mixed tests 拆分后仍覆盖 queue/review/publish/query/Wiki/source-ref 和 cancellation。
+
+验收：renderer 的 Electron path 测试证明不会调用网络 fetch；sidecar packaged path 不监听
+TCP；Electron production path 不 import/call `mcp_server`/`host_runner`；legacy 分支仍在时由
+caller inventory 证明隔离；Web/Desktop/Backend/QMD focused 和 aggregate 均通过。实际删除
+继续等待 `VAL-ELECTRON-CUTOVER-001=pass`。
+
+### TODO-LEGACY-REMOVE-DEPLOY-001：删除 Docker、Web 容器与旧安装/运维面
+
+- 状态：`planned`
+- 优先级：Priority-2
+- Owner：Desktop/Build/Operations
+- 关联：REQ-ELECTRON-ONLY-001、ITER-0007/E03
+- 依赖：TODO-LEGACY-DECOUPLE-001；`VAL-ELECTRON-CUTOVER-001=pass`
+
+删除清单：
+
+- `docker-compose.yml`、`docker/**`；
+- `install.sh`、`install.command`；
+- `host_runner/**`；`mcp/**` gateway/tests/dependencies 由 transport task 唯一负责；
+- `web/Dockerfile`、`web/nginx.conf`、`web/.dockerignore`；
+- `backend/.dockerignore`、重复的 `backend/requirements*.txt`（保留 `pyproject.toml`/`uv.lock`）；
+- `scripts/lcf`、legacy backup/restore/demo/reindex/smoke/native scripts 和 Windows/Ollama setup；
+- `scripts/macos-bootstrap.sh` 的 legacy 内容；若仍需开发引导，改为 Electron-only bootstrap；
+- legacy HTTP/MCP examples 和只服务上述路径的环境模板。
+
+严格不做：不删除 `web/`、`backend/`、`desktop/companion/`、QMD worker；不停止或删除用户
+container/image/volume/LaunchAgent；不删除 `data/`、imports、backup 或 Application Support；
+不删除 GHCR 历史 package。最后两类外部清理需要独立管理员授权，且不属于本任务。
+
+验收：清单路径不存在，Electron clean checkout 仍可构建；Make targets 和 CI 不引用被删路径；
+不产生用户数据副作用。
+
+### TODO-LEGACY-REMOVE-TRANSPORT-001：删除公开 API、browser adapter 与兼容分支
+
+- 状态：`planned`
+- 优先级：Priority-2
+- Owner：Backend/Web/MCP
+- 关联：REQ-ELECTRON-ONLY-001、REQ-PRE1-BREAKING-001、ITER-0007/E04
+- 依赖：TODO-LEGACY-DECOUPLE-001；`VAL-ELECTRON-CUTOVER-001=pass`
+
+“删除 API”只表示删除 host TCP listener、browser CORS、公开 REST/OpenAPI 部署和 HTTP MCP；
+Electron Main ↔ Python sidecar 的认证 UDS HTTP 协议及领域 service 必须保留。“删除 Web”只
+表示删除独立 browser/container 运行形态，React renderer 必须保留。
+
+交付：删除 `backend/app/main.py`、public-mode factory/config 分支、legacy runner/Ollama fields、
+renderer HTTP adapter、Vite localhost proxy、legacy MCP/tests/dependencies；旧 schema/layout 直接
+fail closed，不实现 converter 或 compatibility shim。
+
+验收：生产进程没有 8000/8001/8080 TCP bind、CORS 或 browser transport；只有 Main-owned
+private UDS sidecar 和 bundled stdio MCP companion；核心 Desktop API/queue/Wiki/MCP 回归通过。
+
+### TODO-LEGACY-REMOVE-RELEASE-001：删除 container CI、GHCR 与 tag 耦合
+
+- 状态：`planned`
+- 优先级：Priority-2
+- Owner：CI/Release
+- 关联：REQ-ELECTRON-ONLY-001、REQ-RELEASE-002、ITER-0007/E05
+- 依赖：TODO-LEGACY-REMOVE-DEPLOY-001
+
+交付：删除 `.github/workflows/container-images.yml`、container Docker build/cache、GHCR SemVer
+发布、container-only Make/CI targets，以及 desktop release 文档中的同-tag 非原子警告；保留
+desktop Draft/promotion、签名、trust pins、Environment 和 update safety chain。已发布 GHCR
+package 保留为 unsupported historical artifact，删除它需要另行、明确、不可逆管理员授权。
+
+验收：PR/main/tag 不构建或发布 container；release tag 只进入 desktop candidate path；CI 的
+Python aggregate 不再安装 `mcp/` 或运行 Host Runner 测试；Desktop release policy 回归通过。
+
+### TODO-LEGACY-REMOVE-DOCS-001：把活跃文档与 Sites 收敛到 Electron
+
+- 状态：`planned`
+- 优先级：Priority-2
+- Owner：Docs/Sites/Operations
+- 关联：REQ-ELECTRON-ONLY-001、ITER-0007/E06
+- 依赖：deploy/transport/release removal 已完成；最终路径集合已冻结
+
+交付：README、SECURITY、CONTRIBUTING、AGENTS、project skills、guide-site、quickstart、
+architecture、API/MCP、operations、backup、GHCR、troubleshooting 和 component README 不再
+给出可执行 legacy 命令或旧 migration gate。编号文档优先改写为 Electron 对应主题；
+Accepted/Superseded ADR、iteration 和 evidence 保留历史事实并明确状态。同步公开 Sites 另列
+部署证据，不以本任务文字假装已发布。
+
+Sites 安全前置：先恢复并验证现有公开站点的 exact project identity/slug 与 lifecycle checkout；
+当前仓库副本没有 `.openai/hosting.json`，因此不得猜 slug、创建第二个站点或把源码推到未知
+项目。身份恢复前可盘点 `guide-site/**`，但不能宣称生产站已更新。身份确认后先把旧 Docker/
+localhost/Host Runner 一键命令改成 Electron-only 内容并更新 tests，再按 Sites checkpoint /
+deployment-status 流程留下公开部署证据。
+
+验收：活跃用户文档不存在 `docker compose`、`./install.sh`、`scripts/lcf` 或 localhost HTTP
+使用路径；Markdown links、guide-site tests/build 通过；历史命中只出现在 allowlist。
+
+### TODO-LEGACY-ABSENCE-001：永久防止 legacy 回流
+
+- 状态：`planned`
+- 优先级：Priority-2
+- Owner：CI/Governance
+- 关联：REQ-ELECTRON-ONLY-001、ITER-0007/E07
+- 依赖：全部 legacy removal task
+
+交付机器门禁，检查 forbidden paths 缺失、protected paths 存在、workflow/Make/package 无旧
+引用、产品代码无 legacy import/env/listener、活跃文档无旧命令、release tag 无 container path。
+历史 ADR/evidence 通过固定 allowlist 保留，不能用全仓库“零字符串命中”误删历史。
+
+验收：`VAL-LEGACY-ABSENCE-001` 在最终 removal commit 为 `pass`；从该 exact commit 构建新的
+candidate，并在同一 digest 上重跑完整核心 packaged capability matrix（仓库/队列/审核/发布/
+查询、Wiki、model switch/rebuild、Codex/Cursor、MCP、当前数据 backup/recovery、无 listener）。
+只做启动 smoke 或复用删除前 candidate 证据均不合格。
+
+### TODO-LEGACY-EXIT-001：历史 Legacy 去留决策
+
+- 状态：`superseded`
+- Owner：Migration/Product/Operations
+- 关联：REQ-LEGACY-001、ADR-0004、ITER-0006；由 ADR-0015/ITER-0007 取代
+- Disposition：不再实施 migration rehearsal、compatibility window 或 retention decision
+
+原任务的 `VAL-LEGACY-001` 保持 `not-run (superseded)`。实际删除由上面的稳定任务拆分执行；
+不能把新的 absence gate 冒充旧 migration gate 的 `pass`。
 
 ### TODO-REMOTE-WORKER-001：Windows/4060 Desktop worker 决策
 
@@ -815,7 +923,8 @@ gh workflow run desktop-release.yml \
 - Owner：Product/Architecture
 - 优先级：Priority-3
 - 依赖：desktop GA、TODO-EVAL-CORPUS-001；若进入实现还依赖新的安全/协议 ADR
-- 当前边界：Electron 明确不支持远程 Windows/Ollama worker；legacy 可用。
+- 当前边界：Electron 明确不支持远程 Windows/Ollama worker；legacy 路径已弃用并计划删除，
+  不能再作为 future worker 的实现依赖。
 
 产物：先形成 threat/cost study 与明确的 accept/reject ADR：
 
@@ -832,7 +941,7 @@ gh workflow run desktop-release.yml \
 验收：
 
 - ADR 明确数据是否离开 Mac、认证/传输、故障/更新成本和 all-in-one UX 影响；
-- 若拒绝，status/guide/TODO 继续把 Windows 限定为 legacy；
+- 若拒绝，status/guide/TODO 继续明确 Windows worker 不受支持；
 - 若接受，另拆实现、协议、安全、Windows 安装/更新和物理矩阵任务，本任务本身不伪装成交付；
 - 无论结论为何，用户都能从硬件/系统设计文档看到唯一一致边界；
 - `VAL-REMOTE-WORKER-DECISION-001` 只验证决策与边界同步，不把 accept 决策冒充实现 `pass`。

@@ -1,11 +1,10 @@
 # 排错手册
 
-> **先确认部署模式。** 本页主体针对 legacy Docker/Web。Electron source/packaged 的入口见
-> [部署与运维：快速排障](18-deployment-operations.md#10-快速排障)。对 `./install.sh` 创建的
-> legacy 实例，通过下方 `lcf_managed` 调用 `scripts/lcf`，不要让调用者变量或裸 Compose
-> 命中错误 project/context、默认数据目录或错误端口。
-> 下列构建命令只适用于未托管开发 checkout；高级只读 Compose 诊断必须按
-> [固定 context/env 模板](18-deployment-operations.md#29-高级诊断与裸-compose)执行。
+> **Deprecated historical runbook：** 本页主体针对 unsupported legacy Docker/Web。不要执行
+> 下方 `lcf_managed`、installer、Compose、localhost 或端口改写命令；它们会改变旧实例，且
+> 不能用于 Electron 排障。Electron source/packaged 的入口见
+> [部署与运维：快速排障](18-deployment-operations.md#10-快速排障)。历史内容只用于静态 owner
+> inventory 或固定旧 commit/数据副本上的自担风险研究。
 
 受管实例先在仓库根目录定义 clean-environment 控制入口和经过校验的实际 API 地址：
 
@@ -372,7 +371,8 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN
 
 受管实例不要只改 `.env`。先确认冲突进程是否属于另一实例。只有标准 checkout
 `data/`/`imports/`/`data/runner/` 布局才能安全重跑当前安装器；若手工使用了外置 active
-data，不要执行下列命令，先完成 `TODO-LEGACY-CONTROL-001` 或按未托管部署自行维护。标准布局
+data，不要执行下列命令；`TODO-LEGACY-CONTROL-001` 已由 ADR-0015 supersede，项目不会再提供
+外置 legacy instance-control 修复。标准布局
 确需改端口时运行：
 
 ```bash

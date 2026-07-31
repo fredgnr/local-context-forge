@@ -1,11 +1,11 @@
 # 运维、升级与性能
 
-> **适用范围：legacy Docker/Web。** Electron 桌面版使用不同的数据目录、进程和更新模型，
-> 参见[部署与运维](18-deployment-operations.md)。对 `./install.sh` 创建的实例，生命周期命令
-> 必须通过下方 `lcf_managed` 调用 `scripts/lcf`。脚本会读取安装时记录的 Docker context、
-> Compose project root 和 mode-`0600` 的 `.lcf/runtime.env`，但当前不会自行隔离优先级更高的
-> shell/Compose 变量。本页出现的裸 `docker compose` 命令只适用于明确配置好的未托管开发
-> checkout，不能直接复制到已安装实例。实现缺口见 `TODO-LEGACY-CONTROL-001`。
+> **Deprecated historical runbook：** legacy Docker/Web 已 unsupported 并计划删除。不要执行
+> 本页 `lcf_managed`、installer、Compose、localhost、backup/restore 或清理命令；它们会改变
+> 本机/容器状态，并非只读 inventory。Electron 桌面版使用不同的数据目录、进程和更新模型，
+> 参见[部署与运维](18-deployment-operations.md)。维护者只可在固定旧 commit 和数据副本上自行
+> 研究历史行为；当前项目不再修复或扩展该 runbook。删除计划见
+> `TODO-LEGACY-REMOVE-DEPLOY-001`，且不授权删除现有 data/volume/package。
 
 ## all-in-one 生命周期
 
@@ -372,7 +372,8 @@ df -h .
 上面也是当前受管安装器唯一支持的数据布局：checkout 内的 `data/`。安装器没有
 `--data-dir`，重跑时会把路径写回 checkout。旧的手工外置数据实例属于未托管配置；不要在其上
 重跑安装器，也不要拿容器内 `/data` 去检查 Mac 磁盘。该缺口由
-`TODO-LEGACY-CONTROL-001` 跟踪。
+`TODO-LEGACY-CONTROL-001` 已由 ADR-0015 supersede；该缺口不再修复，相关源码将按严格
+retirement gate 删除。
 
 当前没有内置 retention/garbage-collection 命令。安全清理原则：
 

@@ -1,20 +1,21 @@
 # Local Context Forge Web
 
-本目录是管理工作台，使用 Vite、React 和 TypeScript。
+本目录是 Electron renderer 的管理工作台，使用 Vite、React 和 TypeScript。独立 browser
+hosting 已 deprecated/unsupported，并将在 ITER-0007 中删除。
 
-同一套静态 renderer 有两种宿主：
+当前源码尚可观察到两种宿主，但只有第一种属于目标产品：
 
 - Electron 桌面模式由 `lcf://app/` 加载，只能通过 typed preload IPC 调用 Main；
-- legacy Web/Docker 模式由 Nginx 提供并通过 loopback HTTP 调用 FastAPI。
+- legacy Web/Docker 模式由 Nginx 提供并通过 loopback HTTP 调用 FastAPI；只作为 removal
+  inventory，不得用于新开发或部署。
 
 不要在桌面 renderer 中恢复任意 HTTP base URL、Node integration 或直接 socket 访问。系统边界见
 [`docs/17-system-design.md`](../docs/17-system-design.md)，当前可交付状态见
 [`docs/development/status.md`](../docs/development/status.md)。
 
-```bash
-npm install
-npm run dev
-```
+依赖安装、build/test 和 Electron source 启动以根 `CONTRIBUTING.md` 为准。`npm run dev` /
+`preview` 当前会建立 browser listener，属于 `web/package.json` 的 `split` 范围，不是受支持
+产品入口。
 
 提交前可运行契约测试、类型检查和生产构建：
 

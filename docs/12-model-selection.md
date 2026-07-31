@@ -1,11 +1,16 @@
 # 模型选择、QMD 重建与评估
 
+> **Electron-only precedence：** 支持的目标是 Mac 内置 QMD/embedding + 用户已登录 Codex，
+> 可选 Cursor 仅按 Main provider policy 在执行前 fallback。下文 Compose/native-browser、
+> `scripts/reindex.sh`、Windows/Ollama、localhost API 和环境变量流程是待删除的历史 inventory，
+> 不得用于新部署、性能建议或兼容实现；远程 worker 必须先有独立 Accepted ADR。
+
 ## 两类模型、两个职责
 
 LCF 把模型分开：
 
 - **检索模型（Mac）**：embedding；只导航已发布 Wiki。
-- **生成模型**：Electron 默认调用 Mac 上已登录的 Codex CLI；legacy 可选 Windows/Ollama。
+- **生成模型**：Electron 默认调用 Mac 上已登录的 Codex CLI；当前不支持 Windows/Ollama。
 
 不要用一个“大模型”同时承担所有任务，也不要把 embedding 分数当作事实置信度。没有 ready
 的全局 embedding profile 时，产品使用不含旧向量的 lexical-only 路径；只有真实评测证明自然
@@ -70,7 +75,7 @@ Web/API 只操作当前 runtime 的 config。`reindex.sh`、`make qmd-embed` 与
 `make qmd-embed-native` 也都只调用 `LCF_API_URL` 指向的当前 API；target 名不会选择 runtime。
 不要同时运行两个 API，也不要把一套 config/cache 交给另一套 runtime。
 
-## 完整流程 A：Docker Compose
+## 历史 inventory A：Docker Compose（unsupported；不得执行）
 
 以下是 legacy/development 配置。若实例由安装器创建，先按
 [部署总手册](18-deployment-operations.md#22-安装)定义 `lcf_managed`，再运行
@@ -117,7 +122,7 @@ curl --fail-with-body --max-time 650 \
 期望 `engine=qmd-hybrid`。Codex MCP 还应设置 `tool_timeout_sec = 660.0`，MCP gateway 的
 `BACKEND_TIMEOUT_SECONDS=660` 是另一层独立超时。
 
-## 完整流程 B：macOS native
+## 历史 inventory B：macOS native browser（unsupported；不得执行）
 
 ### 1. 完全停止 Compose，再安装原生依赖
 
@@ -171,7 +176,7 @@ busy/失败不会回滚已经激活的 Git/SQLite version，运维方应根据 j
 “重建索引”和“重新采集仓库”是两个操作：前者不调用 LLM，只重新索引已审核内容；后者重新运行
 Codex/Cursor/Ollama，产出新 proposal，因此会消耗相应额度并再次进入审核。
 
-## 生成模型：RTX 4060 起点
+## 历史 inventory：RTX 4060/Ollama（unsupported；不再推荐）
 
 建议把 Ollama `qwen3.5:9b` Q4 作为候选起点，条件是当前模型目录确有该 tag 且本机测试稳定。
 不同时间、平台的模型目录会变化，安装脚本不会替你偷偷换模型。

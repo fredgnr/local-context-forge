@@ -1,5 +1,9 @@
 # HTTP API 与 MCP
 
+> **Deprecated reference：** 本页的 HTTP API/MCP 命令不再是受支持产品接口，将由
+> ITER-0007 删除。Electron 只保留 Main → private UDS sidecar 和 bundled stdio MCP companion。
+> 内容暂留用于实施盘点，不应复制到新部署。
+
 本页的 HTTP 示例只适用于 legacy Docker/native browser 配置。Electron desktop 不公开
 localhost HTTP 服务：renderer 的权威接口是 `desktop/src/contracts.ts`、preload facade 和
 Main 的 route/schema/response allowlist；私有 sidecar/provider endpoint 不是用户 API。

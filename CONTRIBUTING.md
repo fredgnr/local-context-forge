@@ -1,7 +1,8 @@
 # Contributing
 
-Local Context Forge 同时包含 Electron desktop、Python domain、React renderer、QMD/MCP 和
-legacy Docker。开始前先读：
+Local Context Forge 的唯一目标产品面是 Electron desktop；仓库暂时还包含待解耦、待删除的
+legacy Docker/browser/public-HTTP 代码。legacy 文件只用于 removal inventory 和回归定位，
+不构成可选择的开发、部署或发布模式。开始前先读：
 
 1. [AGENTS.md](AGENTS.md)
 2. [项目状态](docs/development/status.md)
@@ -31,7 +32,7 @@ make --version
 `scripts/macos-bootstrap.sh` 当成完整的 Electron 开发机 bootstrap。正式打包使用另一组固定
 runtime，详见[开发者手册](docs/development/contributor-handbook.md#5-工具链版本矩阵)。
 
-## 选择开发模式
+## Electron-only 源码开发
 
 Electron source：
 
@@ -47,30 +48,12 @@ LCF_SIDECAR_BIN="$(pwd)/backend/.venv/bin/lcf-service" \
 npm --prefix desktop run start:source
 ```
 
-Native API/MCP/Web：
-
-```bash
-./scripts/macos-bootstrap.sh --native
-make dev-native
-```
-
-Legacy Docker/Web：
-
-```bash
-LCF_CONTROL_BIN="$(pwd -P)/scripts/lcf"
-lcf_managed() {
-  env -i HOME="$HOME" PATH="$PATH" "$LCF_CONTROL_BIN" "$@"
-}
-
-lcf_managed install
-lcf_managed doctor
-lcf_managed status
-```
-
-`make install`/`install.sh` 不是 Electron 安装器。当前 `scripts/lcf` 尚未自行隔离调用者
-shell/Compose 覆盖；受管 legacy 实例使用上述最小环境入口，不要用直接调用或裸 Compose
-绕过已记录的 Docker context 和 `.lcf/runtime.env`。详见
-[部署总手册](docs/18-deployment-operations.md#22-安装)。
+不要使用 `make dev-native`、`scripts/macos-bootstrap.sh --native`、`make install`、
+`install.sh`、`scripts/lcf` 或裸 Compose 建立新的开发/测试实例。这些入口属于
+[legacy retirement manifest](docs/development/legacy-retirement.md) 的 `remove` / `split`
+范围。若 removal PR 需要确认旧 owner，只做静态 caller/path inventory；在聚合
+`VAL-ELECTRON-CUTOVER-001` 通过前不得借机删除 capability，在任何阶段都不得操作用户现有
+container、volume、data、backup 或远端 GHCR package。
 
 ## 变更规则
 
@@ -111,12 +94,9 @@ python3 tools/check_version_sync.py
 git diff --check
 ```
 
-Legacy 变更还需：
-
-```bash
-docker compose config --quiet
-./scripts/smoke-test.sh
-```
+Legacy 解耦/删除变更还必须执行实施时固定的 focused Electron 回归、最终
+`tools/check_legacy_absence.py`（创建前为 `not-run`）和要求 packaged 的 M4 门禁。不要再用
+Docker smoke 证明目标产品正确；它只能证明已弃用运行面仍可运行，不能解除删除门禁。
 
 记录 exact command、commit、环境、pass/fail/skip 和所有 `not-run`。证据格式见
 [evidence README](docs/development/evidence/README.md)。Mock/source 不得替代 packaged/
@@ -136,5 +116,7 @@ physical gate。
 - QMD rebuild；
 - source merge 与 public release disposition。
 
-最终 head 发生变化后重新运行 CI。Release tag 是统一产品事件：同一个 `vX.Y.Z` 会触发
-container SemVer 和 desktop Draft，不能作为只发布一个组件的随意 tag。
+最终 head 发生变化后重新运行 CI。目标 release tag 只服务 desktop Draft → physical review →
+trusted-main promotion。当前 `container-images.yml` 尚未删除，因此在
+`TODO-LEGACY-REMOVE-RELEASE-001` 与 `VAL-LEGACY-ABSENCE-001` 完成前禁止创建新 release tag；
+不得把现存的双触发行为解释成受支持的 container 发布合同。

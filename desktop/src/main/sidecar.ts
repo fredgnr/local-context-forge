@@ -94,6 +94,7 @@ interface Session {
 export interface SidecarSupervisorOptions {
   executablePath: string;
   dataDir: string;
+  localSourceRoots?: readonly string[];
   appVersion: string;
   sidecarVersion: string;
   schemaVersion: number;
@@ -131,6 +132,31 @@ const SIDECAR_ENVIRONMENT_KEYS = [
   "LC_CTYPE",
   "TZ"
 ] as const;
+
+export function validatedLocalSourceRoots(
+  roots: readonly string[] | undefined
+): readonly string[] {
+  const reviewed = roots ?? [];
+  if (reviewed.length > 8) {
+    throw new Error("Too many local source roots");
+  }
+  const unique = new Set<string>();
+  for (const root of reviewed) {
+    if (
+      typeof root !== "string" ||
+      !path.isAbsolute(root) ||
+      path.resolve(root) !== root ||
+      root === path.parse(root).root ||
+      root.includes("\0") ||
+      Buffer.byteLength(root, "utf8") > 4_096 ||
+      unique.has(root)
+    ) {
+      throw new Error("Invalid local source root");
+    }
+    unique.add(root);
+  }
+  return Object.freeze([...unique]);
+}
 
 export function buildSidecarEnvironment(
   source: NodeJS.ProcessEnv
@@ -616,6 +642,14 @@ export class SidecarSupervisor {
     let brokerSession: RetrievalBrokerSession | undefined;
     let untrackedChild: SidecarChild | undefined;
     try {
+      let localSourceRoots: readonly string[];
+      try {
+        localSourceRoots = validatedLocalSourceRoots(
+          this.options.localSourceRoots
+        );
+      } catch {
+        throw new SupervisorFailure("configuration");
+      }
       if (
         !path.isAbsolute(this.options.dataDir) ||
         !path.isAbsolute(this.options.executablePath)
@@ -654,6 +688,9 @@ export class SidecarSupervisor {
         "3",
         "--data-dir",
         this.options.dataDir,
+        ...localSourceRoots.flatMap(
+          (root) => ["--local-source-root", root]
+        ),
         ...(brokerSession
           ? [
               "--retrieval-broker-uds",

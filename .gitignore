@@ -19,6 +19,9 @@ packaging/stage/
 .python-sidecar-build-venv/
 desktop/generated/sidecar/
 desktop/generated/python-sidecar-evidence/
+desktop/generated/companion/
+desktop/generated/qmd/
+desktop/resources/renderer/
 runtime-archives/
 .vinext/
 data/

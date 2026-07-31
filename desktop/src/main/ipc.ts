@@ -12,8 +12,15 @@ import {
   type ApiIpcResult,
   type ApiRequest,
   type ApiResponse,
+  type LocalSourceErrorCode,
+  type LocalSourceIpcResult,
+  type LocalSourceSelection,
+  type McpSetupErrorCode,
+  type McpSetupIpcResult,
+  type McpSetupStatus,
   type RuntimeStatus
 } from "../contracts";
+import { isLocalSourceGrant } from "./localSourceGrants";
 
 const ENCODED_SEGMENT = "(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+";
 const route = (source: string): RegExp => new RegExp(`^${source}$`);
@@ -353,6 +360,10 @@ export function isAllowedLibrarySource(value: unknown): boolean {
   );
 }
 
+export function isAllowedLibrarySourceInput(value: unknown): boolean {
+  return isAllowedLibrarySource(value) || isLocalSourceGrant(value);
+}
+
 function validateRequestBody(
   method: ApiRequest["method"],
   requestPath: string,
@@ -411,7 +422,7 @@ function validateRequestBody(
         body,
         {
           name: boundedString(160),
-          source: isAllowedLibrarySource
+          source: isAllowedLibrarySourceInput
         },
         {
           slug: boundedString(180),
@@ -557,6 +568,10 @@ export interface IpcDependencies {
   apiRequest(input: ApiRequest): Promise<ApiResponse>;
   runtimeGet(): RuntimeStatus;
   runtimeRetry(): Promise<RuntimeStatus>;
+  mcpSetupGet(): Promise<McpSetupStatus>;
+  mcpSetupConfigure(): Promise<McpSetupStatus>;
+  mcpSetupClear(): Promise<McpSetupStatus>;
+  localSourceSelect(): Promise<LocalSourceSelection | null>;
   appVersion(): string;
 }
 
@@ -587,12 +602,67 @@ function assertTrusted(event: IpcMainInvokeEvent): void {
   }
 }
 
+function assertNoArguments(values: readonly unknown[]): void {
+  if (values.length !== 0) {
+    throw new IpcValidationError("invalid-payload");
+  }
+}
+
+function stableMcpSetupErrorCode(error: unknown): McpSetupErrorCode {
+  const code =
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof error.code === "string"
+      ? error.code
+      : "unavailable";
+  const allowed = new Set<McpSetupErrorCode>([
+    "busy",
+    "not-installed",
+    "not-authenticated",
+    "unsupported-installation",
+    "move-to-applications",
+    "source-debug",
+    "bundle-invalid",
+    "name-conflict",
+    "timeout",
+    "invalid-response",
+    "unavailable"
+  ]);
+  return allowed.has(code as McpSetupErrorCode)
+    ? (code as McpSetupErrorCode)
+    : "unavailable";
+}
+
+function stableLocalSourceErrorCode(error: unknown): LocalSourceErrorCode {
+  const code =
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof error.code === "string"
+      ? error.code
+      : "unavailable";
+  const allowed = new Set<LocalSourceErrorCode>([
+    "busy",
+    "unsafe-selection",
+    "invalid-response",
+    "unavailable"
+  ]);
+  return allowed.has(code as LocalSourceErrorCode)
+    ? (code as LocalSourceErrorCode)
+    : "unavailable";
+}
+
 export function registerIpcHandlers(
   ipcMain: IpcMain,
   dependencies: IpcDependencies
 ): void {
-  ipcMain.handle(IPC_CHANNELS.apiRequest, async (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.apiRequest, async (event, ...values: unknown[]) => {
     assertTrusted(event);
+    if (values.length !== 1) {
+      throw new IpcValidationError("invalid-payload");
+    }
+    const [value] = values;
     try {
       const response = await dependencies.apiRequest(parseApiRequest(value));
       return { ok: true, value: response } satisfies ApiIpcResult;
@@ -606,16 +676,74 @@ export function registerIpcHandlers(
       } satisfies ApiIpcResult;
     }
   });
-  ipcMain.handle(IPC_CHANNELS.runtimeGet, (event) => {
+  ipcMain.handle(IPC_CHANNELS.runtimeGet, (event, ...values: unknown[]) => {
     assertTrusted(event);
+    assertNoArguments(values);
     return dependencies.runtimeGet();
   });
-  ipcMain.handle(IPC_CHANNELS.runtimeRetry, async (event) => {
+  ipcMain.handle(IPC_CHANNELS.runtimeRetry, async (event, ...values: unknown[]) => {
     assertTrusted(event);
+    assertNoArguments(values);
     return dependencies.runtimeRetry();
   });
-  ipcMain.handle(IPC_CHANNELS.appVersion, (event) => {
+  const mcpSetupHandler =
+    (
+      operation: () => Promise<McpSetupStatus>
+    ) =>
+    async (
+      event: IpcMainInvokeEvent,
+      ...values: unknown[]
+    ): Promise<McpSetupIpcResult> => {
+      assertTrusted(event);
+      assertNoArguments(values);
+      try {
+        return {
+          ok: true,
+          value: await operation()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: { code: stableMcpSetupErrorCode(error) }
+        };
+      }
+    };
+  ipcMain.handle(
+    IPC_CHANNELS.mcpSetupGet,
+    mcpSetupHandler(dependencies.mcpSetupGet)
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.mcpSetupConfigure,
+    mcpSetupHandler(dependencies.mcpSetupConfigure)
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.mcpSetupClear,
+    mcpSetupHandler(dependencies.mcpSetupClear)
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.localSourceSelect,
+    async (
+      event: IpcMainInvokeEvent,
+      ...values: unknown[]
+    ): Promise<LocalSourceIpcResult> => {
+      assertTrusted(event);
+      assertNoArguments(values);
+      try {
+        return {
+          ok: true,
+          value: await dependencies.localSourceSelect()
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: { code: stableLocalSourceErrorCode(error) }
+        };
+      }
+    }
+  );
+  ipcMain.handle(IPC_CHANNELS.appVersion, (event, ...values: unknown[]) => {
     assertTrusted(event);
+    assertNoArguments(values);
     return dependencies.appVersion();
   });
 }

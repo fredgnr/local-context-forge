@@ -10,7 +10,14 @@ import {
 import { ApiError, api } from "./api";
 import { Icon, type IconName } from "./components/Icon";
 import { MarkdownView } from "./components/MarkdownView";
-import { isDesktopRuntime } from "./desktopBridge";
+import {
+  desktopSourcesBridge,
+  desktopUpdateBridge,
+  isDesktopRuntime,
+  type DesktopLocalSourceSelection,
+  type DesktopUpdateStatus
+} from "./desktopBridge";
+import { McpOnboarding } from "./McpOnboarding";
 import type {
   AppSettings,
   EmbeddingModel,
@@ -679,7 +686,7 @@ export function Overview({
                 <strong>添加仓库</strong>
                 <p>
                   {desktopRuntime
-                    ? "粘贴 GitHub HTTPS 仓库地址。"
+                    ? "粘贴公开 GitHub HTTPS 地址，或选择 Mac 上已克隆的仓库。"
                     : "粘贴 Git 地址或填写本地目录。"}
                 </p>
               </div>
@@ -708,7 +715,7 @@ export function Overview({
           {loading ? <LoadingRows /> : !libraries.length ? (
             <EmptyState icon="git" title="尚无仓库" action={<button className="button button--small" onClick={onCreate}>添加第一个仓库</button>}>
               {desktopRuntime
-                ? "当前桌面源码版本仅接受 GitHub HTTPS 仓库地址。"
+                ? "支持公开 GitHub HTTPS 地址，以及经系统选择器授权的本地仓库。"
                 : "本地目录和远程 Git 地址都可以。"}
             </EmptyState>
           ) : (
@@ -812,7 +819,7 @@ function Repositories({
         {loading ? <LoadingRows count={4} /> : !libraries.length ? (
           <EmptyState icon="git" title="还没有仓库" action={<button className="button button--primary" onClick={onCreate}>提交第一个仓库</button>}>
             {desktopRuntime
-              ? "当前桌面源码版本仅接受 github.com 的 HTTPS 仓库地址；本地目录授权将在后续里程碑提供。"
+              ? "支持公开 github.com HTTPS 地址；私有仓库请先克隆到本机，再通过系统选择器授权。"
               : "支持 imports 允许目录中的本地仓库以及受信任的 HTTPS Git 地址。"}
           </EmptyState>
         ) : (
@@ -1192,6 +1199,195 @@ export function QueryWorkspace({
   );
 }
 
+function updateStateLabel(status: DesktopUpdateStatus): string {
+  const labels: Record<DesktopUpdateStatus["state"], string> = {
+    unavailable: "此构建不可检查更新",
+    idle: "尚未检查",
+    checking: "正在检查签名更新",
+    "up-to-date": "已是当前 channel 的最新版本",
+    available: "有可用更新",
+    downloading: "正在下载并校验 DMG",
+    ready: "DMG 已校验",
+    opening: "正在打开已校验 DMG",
+    opened: "已打开 DMG",
+    error: "更新操作失败"
+  };
+  return labels[status.state];
+}
+
+export function DesktopUpdatePanel() {
+  const [status, setStatus] = useState<DesktopUpdateStatus>();
+  const [actionError, setActionError] = useState("");
+  const [bridgeUnavailable, setBridgeUnavailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: () => void = () => undefined;
+    try {
+      const bridge = desktopUpdateBridge();
+      if (!bridge) {
+        setBridgeUnavailable(true);
+        return;
+      }
+      unsubscribe = bridge.subscribe((next) => {
+        if (active) setStatus(next);
+      });
+      void bridge
+        .status()
+        .then((next) => {
+          if (active) setStatus(next);
+        })
+        .catch(() => {
+          if (active) setBridgeUnavailable(true);
+        });
+    } catch {
+      setBridgeUnavailable(true);
+    }
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const act = async (
+    operation: "check" | "download" | "cancel" | "release"
+  ) => {
+    setActionError("");
+    try {
+      const bridge = desktopUpdateBridge();
+      if (!bridge) throw new Error("unavailable");
+      const next =
+        operation === "check"
+          ? await bridge.check()
+          : operation === "download"
+            ? await bridge.downloadOrOpen()
+            : operation === "cancel"
+              ? await bridge.cancel()
+              : await bridge.openReleasePage();
+      setStatus(next);
+    } catch {
+      setActionError(
+        operation === "release"
+          ? "无法打开官方 Release 页面，请稍后重试。"
+          : operation === "cancel"
+            ? "取消未完成；退出应用会再次终止并清理 partial 下载。"
+            : "操作失败。不会打开或安装未经校验的文件。"
+      );
+    }
+  };
+
+  const busy =
+    status?.state === "checking" ||
+    status?.state === "downloading" ||
+    status?.state === "opening";
+  const progress = status?.progress
+    ? Math.min(
+        100,
+        Math.floor(
+          (status.progress.receivedBytes / status.progress.totalBytes) * 100
+        )
+      )
+    : undefined;
+
+  return (
+    <section className="panel settings-section update-settings">
+      <header className="panel__header">
+        <div>
+          <h2>应用更新</h2>
+          <p>只信任内置 Ed25519 公钥验证的 canonical manifest 与 DMG 摘要。</p>
+        </div>
+      </header>
+      <div className="update-policy">
+        <span className="status-pill status-pill--muted">
+          <i aria-hidden="true" />
+          自动应用未交付
+        </span>
+        <p>
+          VAL-UPDATE-001 的物理 0.0.1 → 0.0.2 门禁尚未通过。应用不会静默安装、
+          替换当前 App、运行 ZIP、重启或删除数据。
+        </p>
+      </div>
+      {bridgeUnavailable || !status ? (
+        <p role="status">
+          {bridgeUnavailable ? "此桌面构建无法使用更新检查。" : "正在读取更新状态…"}
+        </p>
+      ) : (
+        <div className="update-status" aria-live="polite">
+          <div>
+            <strong>{updateStateLabel(status)}</strong>
+            <small>
+              当前 {status.currentVersion} · {status.channel} channel
+              {status.availableVersion
+                ? ` · 可用 ${status.availableVersion}`
+                : ""}
+            </small>
+          </div>
+          {progress !== undefined && (
+            <div
+              className="update-progress"
+            >
+              <progress
+                aria-label="DMG 下载进度"
+                max={100}
+                value={progress}
+              />
+              <small>{progress}%</small>
+            </div>
+          )}
+          {status.state === "opened" && (
+            <p>
+              请在系统打开的 DMG 中手动拖拽替换应用；本应用不会代替你执行安装。
+            </p>
+          )}
+          {status.errorCode && (
+            <p className="inline-error">
+              更新失败（{status.errorCode}）。未经验证的文件未被打开。
+            </p>
+          )}
+          <div className="button-row">
+            <button
+              className="button button--small"
+              disabled={!status.canCheck || busy}
+              onClick={() => void act("check")}
+            >
+              {status.state === "checking" ? "检查中…" : "检查更新"}
+            </button>
+            {status.canDownloadOrOpen && (
+              <button
+                className="button button--small button--primary"
+                disabled={busy}
+                onClick={() => void act("download")}
+              >
+                {status.state === "opened"
+                  ? "再次打开已验证 DMG"
+                  : "下载并打开已验证 DMG"}
+              </button>
+            )}
+            {busy && status.state !== "opening" && (
+              <button
+                className="button button--small"
+                onClick={() => void act("cancel")}
+              >
+                取消
+              </button>
+            )}
+            {status.canOpenReleasePage && (
+              <button
+                className="button button--small"
+                disabled={busy}
+                onClick={() => void act("release")}
+              >
+                手动打开官方 Release 页面
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {actionError && <p className="inline-error">{actionError}</p>}
+    </section>
+  );
+}
+
 export function SettingsWorkspace({
   libraries,
   onJob,
@@ -1354,8 +1550,11 @@ export function SettingsWorkspace({
             {desktopRuntime && <p className="settings-note"><Icon name="terminal" size={16} /><span>一旦 Codex 已确认并提交执行，即使随后超时或失败也绝不会切换到 Cursor，以免重复消耗额度或生成两份冲突结果。</span></p>}
           </section>
 
+          {desktopRuntime && <McpOnboarding />}
+          {desktopRuntime && <DesktopUpdatePanel />}
+
           <section className="panel settings-section">
-            <header className="panel__header"><div><span className="step-badge">2</span><h2>Embedding 模型</h2><p>决定语义检索的速度、内存占用和效果。</p></div></header>
+            <header className="panel__header"><div><span className="step-badge">{desktopRuntime ? "3" : "2"}</span><h2>Embedding 模型</h2><p>决定语义检索的速度、内存占用和效果。</p></div></header>
             <div className="model-grid">
               {models.map((model) => (
                 <label className={settings.embeddingModel === model.id ? "model-card is-selected" : "model-card"} key={model.id}>
@@ -1530,23 +1729,64 @@ function CreateLibraryDialog({
 }) {
   const [name, setName] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
+  const [localSelection, setLocalSelection] =
+    useState<DesktopLocalSourceSelection | null>(null);
   const [ref, setRef] = useState("HEAD");
   const [generator, setGenerator] = useState("auto");
   const [ingestNow, setIngestNow] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [selectingLocal, setSelectingLocal] = useState(false);
   const [error, setError] = useState("");
   const desktopRuntime = isDesktopRuntime();
+  const selectedSource = localSelection?.grantId ?? sourceUrl.trim();
+
+  const selectLocalRepository = async () => {
+    setSelectingLocal(true);
+    setError("");
+    try {
+      const selection = await desktopSourcesBridge()?.selectRepository();
+      if (selection) {
+        setLocalSelection(selection);
+        setSourceUrl("");
+      }
+    } catch (selectionError) {
+      setError(getError(selectionError));
+    } finally {
+      setSelectingLocal(false);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!sourceUrl.trim()) return;
+    if (!selectedSource) return;
     setBusy(true);
     setError("");
     try {
-      const library = await api.createLibrary({ name: name.trim() || undefined, sourceUrl: sourceUrl.trim() });
+      const library = await api.createLibrary({
+        name: name.trim() || localSelection?.displayName || undefined,
+        sourceUrl: selectedSource
+      });
       await onCreated(library, ingestNow, generator, ref.trim() || "HEAD");
     } catch (submitError) {
-      setError(getError(submitError));
+      const errorCode =
+        submitError &&
+        typeof submitError === "object" &&
+        "code" in submitError &&
+        typeof submitError.code === "string"
+          ? submitError.code
+          : "";
+      const grantCanBeRetried =
+        errorCode === "busy" || errorCode === "unavailable";
+      if (localSelection && !grantCanBeRetried) {
+        setLocalSelection(null);
+      }
+      setError(
+        `${getError(submitError)}${
+          localSelection && !grantCanBeRetried
+            ? "；本地授权已失效，请重新选择仓库。"
+            : ""
+        }`
+      );
       setBusy(false);
     }
   };
@@ -1556,16 +1796,55 @@ function CreateLibraryDialog({
       <form className="form-stack" onSubmit={submit}>
         <p className="dialog-intro">
           {desktopRuntime
-            ? "当前桌面源码版本仅接受 https://github.com/<owner>/<repository>[.git]，不接受凭据、查询参数、本地路径或其他主机。添加后可以立即开始采集。"
+            ? "可填写公开 https://github.com/<owner>/<repository>[.git]，或通过系统选择器授权 Mac 上的目录。私有仓库请先用熟悉的 Git 工具克隆到本机；应用不会索取 GitHub 凭据。"
             : "粘贴受信任的 HTTPS Git 地址；本地仓库请先放入安装目录的 imports，再填写容器路径。添加后可以立即开始采集。"}
         </p>
+        {desktopRuntime && (
+          <div className="local-source-picker">
+            <button
+              type="button"
+              className="button"
+              disabled={busy || selectingLocal}
+              onClick={selectLocalRepository}
+            >
+              <Icon name="git" size={15} />
+              {selectingLocal
+                ? "正在打开选择器…"
+                : localSelection
+                  ? "改选本地仓库"
+                  : "选择本地仓库"}
+            </button>
+            {localSelection && (
+              <div className="local-source-selection" aria-live="polite">
+                <span>
+                  <strong>已授权本地仓库</strong>
+                  <small>{localSelection.displayName}</small>
+                </span>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => setLocalSelection(null)}
+                >
+                  清除
+                </button>
+              </div>
+            )}
+            <p className="form-help">
+              只向页面返回一次性授权编号和目录名称，不暴露完整路径；授权会在提交后失效。
+            </p>
+          </div>
+        )}
         <label className="field">
-          <span>{desktopRuntime ? "GitHub HTTPS 仓库地址" : "仓库地址或 imports 路径"} <b>*</b></span>
+          <span>{desktopRuntime ? "公开 GitHub HTTPS 地址（与本地仓库二选一）" : "仓库地址或 imports 路径"} <b>*</b></span>
           <input
-            autoFocus
-            required
+            autoFocus={!desktopRuntime}
+            required={!localSelection}
             value={sourceUrl}
-            onChange={(event) => setSourceUrl(event.target.value)}
+            onChange={(event) => {
+              setSourceUrl(event.target.value);
+              setLocalSelection(null);
+            }}
             placeholder={
               desktopRuntime
                 ? "https://github.com/org/repo.git"
@@ -1580,7 +1859,7 @@ function CreateLibraryDialog({
         </div></details>
         <label className="check-field"><input type="checkbox" checked={ingestNow} onChange={(event) => setIngestNow(event.target.checked)} /><span><strong>添加后立即采集</strong><small>任务会进入队列，不会阻塞当前页面。</small></span></label>
         {error && <p className="form-error" role="alert">{error}</p>}
-        <div className="dialog__actions"><button type="button" className="button" onClick={onClose}>取消</button><button className="button button--primary" disabled={busy || !sourceUrl.trim()}>{busy ? "正在提交…" : ingestNow ? "添加并采集" : "添加仓库"}</button></div>
+        <div className="dialog__actions"><button type="button" className="button" onClick={onClose}>取消</button><button className="button button--primary" disabled={busy || selectingLocal || !selectedSource}>{busy ? "正在提交…" : ingestNow ? "添加并采集" : "添加仓库"}</button></div>
       </form>
     </Dialog>
   );

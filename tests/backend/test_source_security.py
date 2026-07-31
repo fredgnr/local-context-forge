@@ -84,6 +84,61 @@ def test_local_source_outside_allowlist_is_rejected(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("configuration_root", "repository_suffix"),
+    [
+        (".codex", "sessions"),
+        (".kube", "clusters"),
+        (".ssh", "worktree"),
+        (".aws", "projects"),
+    ],
+)
+def test_sensitive_configuration_roots_cannot_be_local_sources(
+    tmp_path: Path,
+    configuration_root: str,
+    repository_suffix: str,
+) -> None:
+    source = tmp_path / configuration_root / repository_suffix
+    source.mkdir(parents=True)
+
+    with pytest.raises(SourceError, match="sensitive configuration"):
+        validate_local_source(
+            _settings(tmp_path / "data", tmp_path),
+            str(source),
+        )
+
+
+def test_codex_session_root_is_rejected_before_catalog_or_evidence(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / ".codex"
+    sessions = source / "sessions"
+    sessions.mkdir(parents=True)
+    (source / "config.toml").write_text(
+        'model = "private-model"\n',
+        encoding="utf-8",
+    )
+    (sessions / "conversation.jsonl").write_text(
+        '{"private":"conversation"}\n',
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path / "data", tmp_path)
+    service = AppService(settings)
+
+    with pytest.raises(ValidationError, match="sensitive configuration"):
+        service.create_library(
+            {
+                "name": "must-not-exist",
+                "source": str(source),
+            }
+        )
+
+    assert service.list_libraries() == []
+    assert list(settings.sources_dir.iterdir()) == []
+    assert list(settings.facts_dir.iterdir()) == []
+    service.close()
+
+
 def test_local_source_below_imports_is_allowed(tmp_path: Path) -> None:
     imports = tmp_path / "imports"
     source = imports / "repo"
@@ -93,6 +148,42 @@ def test_local_source_below_imports_is_allowed(tmp_path: Path) -> None:
         str(source),
     )
     assert resolved == source.resolve()
+
+
+def test_desktop_local_source_must_belong_to_effective_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    imports = tmp_path / "imports"
+    source = imports / "repo"
+    source.mkdir(parents=True)
+    settings = _settings(tmp_path / "data", imports)
+    settings.local_source_owner_check = True
+    monkeypatch.setattr(
+        source_module,
+        "_effective_user_id",
+        lambda: source.stat().st_uid + 1,
+    )
+
+    with pytest.raises(SourceError, match="belong to the desktop user"):
+        validate_local_source(settings, str(source))
+
+
+def test_local_source_rejects_a_path_replaced_by_a_symlink(tmp_path: Path) -> None:
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    original = allowed / "repository"
+    original.mkdir()
+    target = allowed / "replacement"
+    target.mkdir()
+    original.rmdir()
+    original.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(SourceError, match="canonical.*symlinks"):
+        validate_local_source(
+            _settings(tmp_path / "data", allowed),
+            str(original),
+        )
 
 
 def test_local_git_subdirectory_is_rejected_instead_of_reusing_root_snapshot(

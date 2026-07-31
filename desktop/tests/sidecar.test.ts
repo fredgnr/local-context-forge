@@ -89,6 +89,7 @@ function supervisorOptions() {
   return {
     executablePath: "/opt/lcf/lcf-service",
     dataDir: "/private/data",
+    localSourceRoots: ["/Users/test", "/Volumes"],
     appVersion: "0.3.0-alpha.1",
     sidecarVersion: "0.3.0-alpha.1",
     schemaVersion: 5,
@@ -245,7 +246,11 @@ describe("SidecarSupervisor", () => {
       "--token-fd",
       "3",
       "--data-dir",
-      "/private/data"
+      "/private/data",
+      "--local-source-root",
+      "/Users/test",
+      "--local-source-root",
+      "/Volumes"
     ]);
     expect(JSON.stringify(spawnCalls[0])).not.toContain(tokens[0]);
 
@@ -540,6 +545,27 @@ describe("SidecarSupervisor", () => {
       reason: "launch-failed"
     });
     expect(cleanups).toEqual(["/tmp/runtime-before-spawn"]);
+  });
+
+  it("fails closed before spawn when a local source root is unsafe", async () => {
+    const spawn = vi.fn();
+    const supervisor = new SidecarSupervisor(
+      {
+        ...supervisorOptions(),
+        localSourceRoots: ["/"]
+      },
+      {
+        spawn,
+        validateExecutable: async () => undefined
+      }
+    );
+
+    await expect(supervisor.start()).resolves.toEqual({
+      state: "failed",
+      canRetry: true,
+      reason: "configuration"
+    });
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
 

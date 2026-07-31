@@ -817,13 +817,43 @@ def _paths_overlap(left: Path, right: Path) -> bool:
     return common == left or common == right
 
 
+def _effective_user_id() -> int | None:
+    getter = getattr(os, "geteuid", None)
+    if getter is None:
+        return None
+    try:
+        return int(getter())
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _inside_sensitive_configuration_root(source_path: Path) -> bool:
+    return any(
+        part.lower() in SENSITIVE_DIRECTORY_NAMES for part in source_path.parts
+    )
+
+
 def validate_local_source(settings: Settings, source: str) -> Path:
     """Resolve and authorize a read-only local import directory."""
 
-    source_path = Path(source).expanduser().resolve()
+    lexical_source = Path(os.path.abspath(Path(source).expanduser()))
+    if lexical_source == Path(lexical_source.anchor):
+        raise SourceError("Refusing to ingest a filesystem root")
+    if _inside_sensitive_configuration_root(lexical_source):
+        raise SourceError(
+            "Local source may not be inside a sensitive configuration directory"
+        )
+    data_dir = settings.data_dir.expanduser().resolve()
+    if _paths_overlap(lexical_source, data_dir):
+        raise SourceError("Local source and LCF_DATA_DIR must not contain one another")
+    try:
+        source_path = lexical_source.resolve(strict=True)
+    except OSError as error:
+        raise SourceError("Local source directory is unavailable") from error
+    if source_path != lexical_source or lexical_source.is_symlink():
+        raise SourceError("Local source path must be canonical and contain no symlinks")
     if source_path == Path(source_path.anchor):
         raise SourceError("Refusing to ingest a filesystem root")
-    data_dir = settings.data_dir.expanduser().resolve()
     if _paths_overlap(source_path, data_dir):
         raise SourceError("Local source and LCF_DATA_DIR must not contain one another")
     authorized_roots: list[Path] = []
@@ -849,8 +879,18 @@ def validate_local_source(settings: Settings, source: str) -> Path:
         raise SourceError(
             f"Local source is outside LCF_LOCAL_SOURCE_ROOTS: {source_path}"
         )
-    if not source_path.exists() or not source_path.is_dir():
-        raise SourceError(f"Source directory does not exist: {source_path}")
+    if not source_path.is_dir():
+        raise SourceError("Local source is not a directory")
+    if settings.local_source_owner_check:
+        effective_uid = _effective_user_id()
+        try:
+            source_uid = source_path.stat(follow_symlinks=False).st_uid
+        except (AttributeError, OSError) as error:
+            raise SourceError("Local source directory is unavailable") from error
+        if effective_uid is None or source_uid != effective_uid:
+            raise SourceError(
+                "Local source directory must belong to the desktop user"
+            )
     return source_path
 
 

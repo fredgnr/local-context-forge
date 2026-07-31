@@ -4,7 +4,10 @@ import type {
   ProviderExecutionCommitReceipt,
   ProviderInstallation
 } from "./contracts";
-import { revalidateExecutableIdentity } from "./discovery";
+import {
+  revalidateCodexInstallation,
+  revalidateExecutableIdentity
+} from "./discovery";
 import { buildProviderEnvironment } from "./environment";
 import {
   buildCodexExecutionArguments,
@@ -117,7 +120,11 @@ export async function executeCommittedProviderAttempt(
     // The database commit point must already exist when this function is
     // entered. Revalidation immediately before spawn closes the common update
     // race; a crash after commit remains uncertain and is never replayed.
-    await revalidateExecutableIdentity(installation.executable);
+    if (installation.provider === "codex_cli") {
+      await revalidateCodexInstallation(installation);
+    } else {
+      await revalidateExecutableIdentity(installation.executable);
+    }
   } catch {
     return {
       ok: false,

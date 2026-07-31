@@ -3,7 +3,10 @@ import type {
   CursorInstallation,
   ProviderPreflight
 } from "./contracts";
-import { revalidateExecutableIdentity } from "./discovery";
+import {
+  revalidateCodexInstallation,
+  revalidateExecutableIdentity
+} from "./discovery";
 import { buildProviderEnvironment } from "./environment";
 import {
   buildCodexLoginStatusArguments,
@@ -49,7 +52,7 @@ export async function preflightCodex(
   sourceEnvironment: NodeJS.ProcessEnv
 ): Promise<ProviderPreflight> {
   try {
-    await revalidateExecutableIdentity(installation.executable);
+    await revalidateCodexInstallation(installation);
   } catch {
     return {
       provider: "codex_cli",
@@ -79,7 +82,11 @@ export async function preflightCodex(
     return unavailable("codex_cli");
   }
   const reportedVersion = VERSION_PATTERN.exec(version.stdout)?.[1];
-  if (reportedVersion !== installation.packageVersion) {
+  if (
+    !reportedVersion ||
+    (installation.packageVersion !== undefined &&
+      reportedVersion !== installation.packageVersion)
+  ) {
     return {
       provider: "codex_cli",
       state: "unsupported_installation"

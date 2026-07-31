@@ -47,7 +47,9 @@ export class ProviderResolver {
     for (const command of commands) {
       let installation: CodexInstallation;
       try {
-        installation = await discoverCodexInstallation(command);
+        installation = await discoverCodexInstallation(command, {
+          environment: this.environment
+        });
       } catch {
         continue;
       }

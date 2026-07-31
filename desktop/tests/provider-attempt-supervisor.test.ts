@@ -345,11 +345,13 @@ describe("ProviderAttemptSupervisor", () => {
     const executable = await executableFixture("#!/bin/sh\nexit 7\n");
     const codex: CodexInstallation = {
       provider: "codex_cli",
+      installationKind: "npm",
       packageVersion: "0.146.0",
       packageRoot: "/opt/codex",
       managedPackageRoot: "/opt/codex",
       wrapperPath: "/opt/codex/bin/codex.js",
-      executable: executable.executable
+      executable: executable.executable,
+      auxiliaryExecutables: []
     };
     const cursor = vi.fn();
     const resolver: ProviderResolutionSource = {

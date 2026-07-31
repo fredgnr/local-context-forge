@@ -1,5 +1,6 @@
 import {
   chmod,
+  lstat as fsLstat,
   mkdir,
   mkdtemp,
   rm,
@@ -14,6 +15,7 @@ import {
   discoverCursorInstallation,
   findCommandCandidates,
   findCommandOnPath,
+  revalidateCodexInstallation,
   revalidateExecutableIdentity
 } from "../src/main/providers/discovery";
 import { ProviderResolver } from "../src/main/providers/providerResolver";
@@ -101,6 +103,53 @@ async function createCodexFixture(): Promise<{
   return { commandPath, nativePath };
 }
 
+async function createStandaloneCodexFixture(): Promise<{
+  commandPath: string;
+  executablePath: string;
+  home: string;
+  hostPath: string;
+}> {
+  const home = await mkdtemp(
+    path.join(os.tmpdir(), "lcf-codex-standalone-")
+  );
+  temporaryDirectories.push(home);
+  const releasesRoot = path.join(
+    home,
+    ".codex",
+    "packages",
+    "standalone",
+    "releases"
+  );
+  const releaseRoot = path.join(
+    releasesRoot,
+    "0.146.0-aarch64-apple-darwin"
+  );
+  const executablePath = path.join(releaseRoot, "bin", "codex");
+  const hostPath = path.join(
+    releaseRoot,
+    "bin",
+    "codex-code-mode-host"
+  );
+  const commandPath = path.join(home, ".local", "bin", "codex");
+  await mkdir(path.dirname(executablePath), { recursive: true });
+  await mkdir(path.dirname(commandPath), { recursive: true });
+  await writeFile(executablePath, "signed codex fixture\n", {
+    mode: 0o755
+  });
+  await writeFile(hostPath, "signed host fixture\n", { mode: 0o755 });
+  await writeFile(
+    path.join(releaseRoot, "codex-package.json"),
+    JSON.stringify({ version: "0.146.0" }),
+    { mode: 0o644 }
+  );
+  await symlink(
+    releaseRoot,
+    path.join(home, ".codex", "packages", "standalone", "current")
+  );
+  await symlink(executablePath, commandPath);
+  return { commandPath, executablePath, home, hostPath };
+}
+
 class QueueRunner implements ProviderPreflightRunner {
   readonly calls: Array<{
     executablePath: string;
@@ -138,6 +187,7 @@ describe("provider discovery", () => {
     const installation = await discoverCodexInstallation(fixture.commandPath);
     expect(installation).toMatchObject({
       provider: "codex_cli",
+      installationKind: "npm",
       packageVersion: "0.146.0",
       wrapperPath: expect.stringMatching(/codex\/bin\/codex\.js$/),
       executable: {
@@ -148,6 +198,157 @@ describe("provider discovery", () => {
     await expect(
       revalidateExecutableIdentity(installation.executable)
     ).resolves.toBeUndefined();
+  });
+
+  it("accepts the official install.sh standalone layout only after injected macOS signature and Mach-O checks", async () => {
+    const fixture = await createStandaloneCodexFixture();
+    const signed: string[] = [];
+    const arm64: string[] = [];
+    const trust = {
+      environment: { HOME: fixture.home },
+      platform: "darwin" as const,
+      architecture: "arm64",
+      verifyOfficialSignature: async (filePath: string) => {
+        signed.push(filePath);
+      },
+      verifyArm64MachO: async (filePath: string) => {
+        arm64.push(filePath);
+      }
+    };
+    const installation = await discoverCodexInstallation(
+      fixture.commandPath,
+      trust
+    );
+    expect(installation).toMatchObject({
+      provider: "codex_cli",
+      installationKind: "standalone",
+      packageVersion: "0.146.0",
+      wrapperPath: fixture.commandPath,
+      executable: { canonicalPath: fixture.executablePath }
+    });
+    expect(installation.auxiliaryExecutables).toHaveLength(1);
+    expect(installation.auxiliaryExecutables[0]?.canonicalPath).toBe(
+      fixture.hostPath
+    );
+    expect(signed).toEqual([fixture.executablePath, fixture.hostPath]);
+    expect(arm64).toEqual([fixture.executablePath, fixture.hostPath]);
+
+    signed.length = 0;
+    arm64.length = 0;
+    await expect(
+      revalidateCodexInstallation(installation, trust)
+    ).resolves.toBeUndefined();
+    expect(signed).toEqual([fixture.executablePath, fixture.hostPath]);
+    expect(arm64).toEqual([fixture.executablePath, fixture.hostPath]);
+  });
+
+  it("supports only the fixed Homebrew cask and GitHub release entries", async () => {
+    const fixtureRoot = await mkdtemp(
+      path.join(os.tmpdir(), "lcf-codex-virtual-")
+    );
+    temporaryDirectories.push(fixtureRoot);
+    const realDirectory = path.join(fixtureRoot, "directory");
+    const realFile = path.join(fixtureRoot, "file");
+    const realLink = path.join(fixtureRoot, "link");
+    await mkdir(realDirectory);
+    await writeFile(realFile, "fixture\n", { mode: 0o755 });
+    await symlink(realFile, realLink);
+    const directoryInfo = await fsLstat(realDirectory);
+    const fileInfo = await fsLstat(realFile);
+    const linkInfo = await fsLstat(realLink);
+
+    const caskRoot = "/opt/homebrew/Caskroom/codex/0.146.0";
+    const caskExecutable = path.join(caskRoot, "bin", "codex");
+    const caskHost = path.join(
+      caskRoot,
+      "bin",
+      "codex-code-mode-host"
+    );
+    const caskMetadata = path.join(caskRoot, "codex-package.json");
+    const virtualStats = new Map([
+      ["/opt/homebrew/bin/codex", linkInfo],
+      [caskRoot, directoryInfo],
+      [caskExecutable, fileInfo],
+      [caskHost, fileInfo],
+      [caskMetadata, fileInfo],
+      ["/usr/local/bin/codex", fileInfo]
+    ]);
+    const virtualRealpaths = new Map([
+      ["/opt/homebrew/bin/codex", caskExecutable],
+      [caskRoot, caskRoot],
+      [caskExecutable, caskExecutable],
+      [caskHost, caskHost],
+      [caskMetadata, caskMetadata],
+      ["/usr/local/bin/codex", "/usr/local/bin/codex"]
+    ]);
+    const common = {
+      platform: "darwin" as const,
+      architecture: "arm64",
+      lstat: (async (filePath: string) => {
+        const info = virtualStats.get(filePath);
+        if (!info) {
+          throw new Error("missing");
+        }
+        return info;
+      }) as typeof fsLstat,
+      realpath: (async (filePath: string) => {
+        const resolved = virtualRealpaths.get(filePath);
+        if (!resolved) {
+          throw new Error("missing");
+        }
+        return resolved;
+      }) as typeof import("node:fs/promises").realpath,
+      access: async () => undefined,
+      hashFile: async () => "a".repeat(64),
+      verifyOfficialSignature: async () => undefined,
+      verifyArm64MachO: async () => undefined,
+      readFile: async (filePath: string) => {
+        if (filePath !== caskMetadata) {
+          throw new Error("missing");
+        }
+        return JSON.stringify({ version: "0.146.0" });
+      }
+    };
+
+    await expect(
+      discoverCodexInstallation("/opt/homebrew/bin/codex", common)
+    ).resolves.toMatchObject({
+      installationKind: "homebrew-cask",
+      packageVersion: "0.146.0",
+      executable: { canonicalPath: caskExecutable }
+    });
+    await expect(
+      discoverCodexInstallation("/usr/local/bin/codex", common)
+    ).resolves.toMatchObject({
+      installationKind: "signed-binary",
+      packageVersion: undefined,
+      executable: { canonicalPath: "/usr/local/bin/codex" }
+    });
+    await expect(
+      discoverCodexInstallation(
+        path.join(fixtureRoot, "arbitrary", "codex"),
+        common
+      )
+    ).rejects.toThrow(/official npm wrapper layout|missing/);
+  });
+
+  it("does not bypass the native macOS gate for signed layouts in tests", async () => {
+    const fixture = await createStandaloneCodexFixture();
+    let verificationCalls = 0;
+    await expect(
+      discoverCodexInstallation(fixture.commandPath, {
+        environment: { HOME: fixture.home },
+        platform: "linux",
+        architecture: "arm64",
+        verifyOfficialSignature: async () => {
+          verificationCalls += 1;
+        },
+        verifyArm64MachO: async () => {
+          verificationCalls += 1;
+        }
+      })
+    ).rejects.toThrow(/native macOS arm64/);
+    expect(verificationCalls).toBe(0);
   });
 
   it("rejects metadata spoofing and executable identity drift", async () => {

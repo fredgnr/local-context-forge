@@ -41,7 +41,10 @@ describe("versioned preload facade", () => {
     expect(Object.keys(bridge).sort()).toEqual([
       "api",
       "app",
+      "mcp",
       "runtime",
+      "sources",
+      "update",
       "version"
     ]);
     expect(Object.keys(bridge.api)).toEqual(["request"]);
@@ -50,6 +53,20 @@ describe("versioned preload facade", () => {
       "retry",
       "subscribe"
     ]);
+    expect(Object.keys(bridge.mcp).sort()).toEqual([
+      "clear",
+      "configure",
+      "status"
+    ]);
+    expect(Object.keys(bridge.update).sort()).toEqual([
+      "cancel",
+      "check",
+      "downloadOrOpen",
+      "openReleasePage",
+      "status",
+      "subscribe"
+    ]);
+    expect(Object.keys(bridge.sources)).toEqual(["selectRepository"]);
     expect(Object.keys(bridge.app)).toEqual(["version"]);
     expect(bridge).not.toHaveProperty("ipcRenderer");
     expect(bridge).not.toHaveProperty("filesystem");
@@ -122,5 +139,196 @@ describe("versioned preload facade", () => {
     await expect(
       bridge.api.request({ method: "GET", path: "/api/health" })
     ).rejects.toMatchObject({ code: "invalid-response" });
+  });
+
+  it("exposes fixed MCP setup operations and validates their exact result", async () => {
+    const status = {
+      provider: "codex_cli" as const,
+      codexState: "ready" as const,
+      configurationState: "configured" as const,
+      installState: "ready" as const,
+      canConfigure: false,
+      canClear: true,
+      restartRequired: true
+    };
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, value: status });
+    await expect(bridge.mcp.status()).resolves.toEqual(status);
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.mcpSetupGet
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "name-conflict",
+        executablePath: "/private/codex"
+      }
+    });
+    await expect(bridge.mcp.configure()).rejects.toMatchObject({
+      name: "DesktopMcpSetupError",
+      code: "invalid-response"
+    });
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "move-to-applications" }
+    });
+    await expect(bridge.mcp.configure()).rejects.toMatchObject({
+      name: "DesktopMcpSetupError",
+      code: "move-to-applications"
+    });
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.mcpSetupConfigure
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: true,
+      value: { ...status, executablePath: "/private/node" }
+    });
+    await expect(bridge.mcp.clear()).rejects.toMatchObject({
+      code: "invalid-response"
+    });
+  });
+
+  it("validates bounded update status and errors without exposing updater internals", async () => {
+    const status = {
+      state: "available" as const,
+      currentVersion: "1.0.0",
+      channel: "latest",
+      availableVersion: "1.1.0",
+      progress: null,
+      errorCode: null,
+      unavailableReason: null,
+      canCheck: true,
+      canDownloadOrOpen: true,
+      canOpenReleasePage: false,
+      automaticApply: false as const,
+      automaticApplyReason: "val-update-001-not-passed" as const
+    };
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, value: status });
+    await expect(bridge.update.status()).resolves.toEqual(status);
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.updateStatus
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "digest-mismatch" }
+    });
+    await expect(bridge.update.downloadOrOpen()).rejects.toMatchObject({
+      name: "DesktopUpdateError",
+      code: "digest-mismatch"
+    });
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.updateDownloadOrOpen
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        ...status,
+        localPath: "/private/update.dmg"
+      }
+    });
+    await expect(bridge.update.check()).rejects.toMatchObject({
+      code: "invalid-response"
+    });
+  });
+
+  it("returns only an opaque local-source grant and validates the exact envelope", async () => {
+    const selection = {
+      grantId: `lcf-local:${"c".repeat(64)}`,
+      displayName: "private-repository"
+    };
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: true,
+      value: selection
+    });
+    await expect(bridge.sources.selectRepository()).resolves.toEqual(
+      selection
+    );
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.localSourceSelect
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, value: null });
+    await expect(bridge.sources.selectRepository()).resolves.toBeNull();
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "unsafe-selection" }
+    });
+    await expect(bridge.sources.selectRepository()).rejects.toMatchObject({
+      name: "DesktopLocalSourceError",
+      code: "unsafe-selection"
+    });
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        ...selection,
+        absolutePath: "/Users/test/private-repository"
+      }
+    });
+    await expect(bridge.sources.selectRepository()).rejects.toMatchObject({
+      code: "invalid-response"
+    });
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        ...selection,
+        displayName: "/Users/test/private-repository"
+      }
+    });
+    await expect(bridge.sources.selectRepository()).rejects.toMatchObject({
+      code: "invalid-response"
+    });
+  });
+
+  it("filters update progress events and supports explicit cancellation", async () => {
+    const listener = vi.fn();
+    const unsubscribe = bridge.update.subscribe(listener);
+    const registration = electronMocks.on.mock.calls.find(
+      ([channel]) => channel === IPC_CHANNELS.updateChanged
+    );
+    const wrapped = registration?.[1] as
+      | ((_event: unknown, value: unknown) => void)
+      | undefined;
+    wrapped?.(undefined, {
+      state: "downloading",
+      currentVersion: "1.0.0",
+      channel: "latest",
+      availableVersion: "1.1.0",
+      progress: { receivedBytes: 4, totalBytes: 10 },
+      errorCode: null,
+      unavailableReason: null,
+      canCheck: false,
+      canDownloadOrOpen: false,
+      canOpenReleasePage: false,
+      automaticApply: false,
+      automaticApplyReason: "val-update-001-not-passed"
+    });
+    wrapped?.(undefined, {
+      url: "https://evil.example",
+      progress: { receivedBytes: 999, totalBytes: 1 }
+    });
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    expect(electronMocks.removeListener).toHaveBeenCalledWith(
+      IPC_CHANNELS.updateChanged,
+      wrapped
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "cancelled" }
+    });
+    await expect(bridge.update.cancel()).rejects.toMatchObject({
+      code: "cancelled"
+    });
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.updateCancel
+    );
   });
 });

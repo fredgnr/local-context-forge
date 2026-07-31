@@ -27,6 +27,7 @@ class Settings:
     qmd_config_dir: Path | None = None
     qmd_cache_dir: Path | None = None
     local_source_roots: tuple[Path, ...] = ()
+    local_source_owner_check: bool = False
     remote_source_hosts: tuple[str, ...] = (
         "github.com",
         "gitlab.com",

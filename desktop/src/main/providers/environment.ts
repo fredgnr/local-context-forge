@@ -33,7 +33,10 @@ export function buildProviderEnvironment(input: {
   ) {
     environment.CODEX_HOME = input.source.CODEX_HOME;
   }
-  if (input.provider === "codex_cli" && input.codex) {
+  if (
+    input.provider === "codex_cli" &&
+    input.codex?.installationKind === "npm"
+  ) {
     environment.CODEX_MANAGED_PACKAGE_ROOT =
       input.codex.managedPackageRoot;
     environment.CODEX_MANAGED_BY_NPM = "1";

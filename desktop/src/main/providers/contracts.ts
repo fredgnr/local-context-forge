@@ -46,13 +46,21 @@ export interface FileIdentity {
   readonly mode: number;
 }
 
+export type CodexInstallationKind =
+  | "npm"
+  | "standalone"
+  | "homebrew-cask"
+  | "signed-binary";
+
 export interface CodexInstallation {
   readonly provider: "codex_cli";
-  readonly packageVersion: string;
+  readonly installationKind: CodexInstallationKind;
+  readonly packageVersion: string | undefined;
   readonly packageRoot: string;
   readonly managedPackageRoot: string;
   readonly wrapperPath: string;
   readonly executable: FileIdentity;
+  readonly auxiliaryExecutables: readonly FileIdentity[];
 }
 
 export interface CursorInstallation {

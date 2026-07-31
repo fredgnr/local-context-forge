@@ -219,6 +219,24 @@ describe("fixed provider invocation", () => {
   });
 
   it("passes saved-login locations but strips API keys and user PATH", () => {
+    const codex = {
+      provider: "codex_cli" as const,
+      installationKind: "npm" as const,
+      packageVersion: "0.146.0",
+      packageRoot: "/opt/codex",
+      managedPackageRoot: "/opt/codex",
+      wrapperPath: "/opt/codex/bin/codex.js",
+      executable: {
+        canonicalPath: "/opt/codex/vendor/codex",
+        sha256: "a".repeat(64),
+        size: 1,
+        mtimeMs: 1,
+        device: 1,
+        inode: 1,
+        mode: 0o100755
+      },
+      auxiliaryExecutables: []
+    };
     const environment = buildProviderEnvironment({
       provider: "codex_cli",
       source: {
@@ -228,22 +246,7 @@ describe("fixed provider invocation", () => {
         OPENAI_API_KEY: "secret",
         CURSOR_API_KEY: "also-secret"
       },
-      codex: {
-        provider: "codex_cli",
-        packageVersion: "0.146.0",
-        packageRoot: "/opt/codex",
-        managedPackageRoot: "/opt/codex",
-        wrapperPath: "/opt/codex/bin/codex.js",
-        executable: {
-          canonicalPath: "/opt/codex/vendor/codex",
-          sha256: "a".repeat(64),
-          size: 1,
-          mtimeMs: 1,
-          device: 1,
-          inode: 1,
-          mode: 0o100755
-        }
-      }
+      codex
     });
     expect(environment).toMatchObject({
       HOME: "/Users/test",
@@ -254,5 +257,22 @@ describe("fixed provider invocation", () => {
     });
     expect(environment).not.toHaveProperty("OPENAI_API_KEY");
     expect(environment).not.toHaveProperty("CURSOR_API_KEY");
+
+    const signedEnvironment = buildProviderEnvironment({
+      provider: "codex_cli",
+      source: {
+        HOME: "/Users/test",
+        CODEX_HOME: "/Users/test/.codex"
+      },
+      codex: {
+        ...codex,
+        installationKind: "signed-binary",
+        packageVersion: undefined
+      }
+    });
+    expect(signedEnvironment).not.toHaveProperty(
+      "CODEX_MANAGED_PACKAGE_ROOT"
+    );
+    expect(signedEnvironment).not.toHaveProperty("CODEX_MANAGED_BY_NPM");
   });
 });

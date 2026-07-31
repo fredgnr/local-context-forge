@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Any
 
 from fastapi import FastAPI, Query, Request, status
@@ -40,6 +41,13 @@ def create_app(
     desktop_session: DesktopSession | None = None,
     retriever: Any | None = None,
 ) -> FastAPI:
+    resolved_settings = settings or Settings.from_env()
+    if desktop_session is not None:
+        resolved_settings = replace(
+            resolved_settings,
+            local_source_owner_check=True,
+        )
+
     @asynccontextmanager
     async def lifespan(current_app: FastAPI) -> AsyncIterator[None]:
         current_app.state.service.reconcile_desktop_retrieval()
@@ -59,7 +67,7 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.service = AppService(
-        settings,
+        resolved_settings,
         retriever=retriever,
         desktop_mode=desktop_session is not None,
     )

@@ -52,6 +52,12 @@
 6. 更新安装前停止 sidecars、flush 状态并记录当前版本；数据 schema 不可逆升级需要独立迁移/
    rollback 门禁。
 
+当前实现边界不改写上述未来物理门禁：在 automatic apply 尚未设计或通过门禁时，signed
+check/download 和用户确认后的 verified DMG open 均 fail closed；source/unprovisioned、
+校验或网络错误不会自动下载或打开旁路资产。用户只能通过显式操作让 Main 打开固定 canonical
+Release 页面，renderer 无 URL，该操作也不改变 signed updater 状态。真实 fallback/download/
+open、protected Release 与 0.0.1 → 0.0.2 仍是 `not-run`。
+
 ## 后果
 
 正面后果：

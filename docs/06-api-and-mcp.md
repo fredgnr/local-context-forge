@@ -274,6 +274,11 @@ tool_timeout_sec = 660.0
 
 这个值略高于 API 内部 hybrid QMD 的 600 秒上限，避免 Codex 先截断冷查询。
 
+以上是 legacy Streamable HTTP endpoint 的用户手工配置，不由 Electron App 管理，也不使用
+桌面版的 `LCF_MCP_OWNER_ID`。桌面 bundled stdio companion 的 Main-owned 示例必须包含
+`--env LCF_MCP_OWNER_ID=<由应用生成的所有权标记>`；不要把该 marker 手工复制或伪造。详见
+[桌面版指南](16-electron-desktop-guide.md)。
+
 确认：
 
 ```bash

@@ -29,6 +29,23 @@ flowchart TB
 
 仓库、LLM 输出、检索到的 Markdown、MCP 客户端输入都视为不可信。只有通过验证和审核的 Wiki 是“已发布知识”，它仍不是可执行指令。
 
+桌面模式另有一条只允许 Main 持有绝对路径的边界：
+
+```mermaid
+flowchart LR
+    UI[Sandboxed renderer] -->|无参数 select IPC| M[Electron Main]
+    M -->|native directory picker| FS[Local repository]
+    M -->|opaque grantId + displayName| UI
+    UI -->|POST opaque grant| M
+    M -->|single-use consume + Main-only path rewrite| A[Private UDS sidecar]
+    A -->|filtered response| M
+    M --> UI
+```
+
+Renderer 不能传入候选路径，picker 选择出的绝对路径也不会返回 Renderer。grant 只是一次请求的
+临时能力，不是可持久化路径句柄；sidecar 中持久化的 library source 只存在于私有应用数据中，并在
+后续 snapshot 时重新校验。
+
 ## 主要威胁
 
 ### T1：仓库提示注入
@@ -79,6 +96,105 @@ RFC1918、云 metadata 地址分类/固定，也没有限制 clone 临时对象�
 - 阻断云 metadata 地址。
 - 若未来允许重定向，限制跳数并对每跳重新执行 host 与解析后 IP 校验。
 - 在现有 snapshot 文件/字节上限之外，增加 clone 传输字节、对象数和深度限制。
+
+### T2A：桌面本地/私有仓库授权、路径与凭据泄漏
+
+桌面私库的支持模型是“由操作者先 clone，再选择工作树”。应用不请求、保存、代理或导入 GitHub
+token、SSH key、cookie、Keychain credential，也不接受带凭据的 URL；clone 所需凭据只由操作者
+现有的 Git/SSH 工具处理。
+
+选择和导入流程：
+
+1. Sandboxed Renderer 只能调用 typed preload 的无参数 `sources.selectRepository()`；Main 还会
+   验证调用来自受信任的主 frame 且参数数量为零。
+2. Main 打开原生单目录 picker。绝对路径、父路径、device 和 inode 留在 Main，Renderer 只得到
+   安全的 `displayName` 与不可推导路径的 `lcf-local:<64 位小写十六进制>` grant。
+3. grant 使用 256-bit 随机数，只保存在 Main 内存中；以单调 `performance.now()` 计算五分钟
+   TTL。每次成功签发新 grant 前清除旧 grant，应用 shutdown 时全部清除；若 picker/签发与
+   shutdown 竞态，也会清除刚签发的 grant。consume 会先删除记录再校验，因此错误、过期、重放
+   或 identity 改变都不能重试同一 grant。
+4. Renderer 把 grant 作为 create-library 的 `source` 提交。只有 API proxy 已完成 method/path/
+   schema/size allowlist 后，Main 才 consume grant，并仅在发往 private UDS sidecar 的请求中把它
+   改写成绝对路径。Renderer 的 schema 不接受任意本地路径。
+
+Main 在签发和消费时都重新检查：输入必须是长度有界、无 NUL 的绝对 canonical 路径，`realpath`
+必须与 lexical path 一致；目标必须是当前 effective UID 拥有的非 symlink 目录，且消费时
+device/inode 必须与签发时一致。只接受 user home 的严格后代，或
+`/Volumes/<volume>/...` 中 volume root 以下的严格后代；filesystem root、home、`/Volumes`、
+单个 volume root，以及与父目录 device 不同的选中 mount root 都拒绝。
+
+选择还不得与桌面私有 data root 或产品 cache 重叠，也不得落在 `.aws`、`.azure`、`.codex`、
+`.gcp`、`.kube`、`.secrets`、`.ssh`、`secrets` 等敏感根中。若 `CODEX_HOME` 是可验证的
+canonical absolute 路径，它也会被排除；这些排除同时保留 lexical 与 resolved path，避免把
+symlink 形式的配置根当作仓库。
+
+Main 只把校验过的 home 与 `/Volumes` 作为固定 `--local-source-root` 参数传给 sidecar；desktop
+sidecar 不从 Renderer 或环境继承 `LCF_LOCAL_SOURCE_ROOTS`。为了重启后继续工作，绝对 source
+可以保存在 mode `0700` 的 desktop data root 内；每次创建 snapshot 都会重新验证路径仍存在且
+canonical、不是 symlink、位于固定 root 内、不与 data/sensitive root 重叠，并仍属于当前
+effective UID。仓库移动、删除、替换或 ownership 改变时 fail closed，而不是沿用旧 grant。
+
+返回方向也有独立 disclosure gate：library 响应中的本地 `source`/URL 字段被删除，`path`/`file`
+仅保留安全的 repository-relative 值，sidecar 错误会归一化。绝对 repository path 不应出现在
+Renderer status、library、error 或日志字段中。
+
+**残余风险**：这些检查不是 macOS App Sandbox。与应用同一 UID 的恶意进程仍可能在校验之后、
+snapshot 读取之前替换目录，形成 same-UID TOCTOU 窗口。完整关闭它需要 security-scoped
+bookmark、基于已打开 file descriptor 的 snapshot，或更强 OS sandbox。packaged macOS arm64
+实机门（home、外接 volume、private repo、restart、move/delete 与路径脱敏）当前状态仍为
+`not-run`，不能用 source-mode 单元测试或 CI 构建替代。
+
+### T2B：桌面 Codex MCP target ownership 与 bundle check-use
+
+桌面 App 不根据 server name 或“路径看起来像 LCF”推断 ownership。Main 先确定有效配置根：
+显式、规范化 absolute `CODEX_HOME`，否则是规范化 `$HOME/.codex`；使用带
+`lcf-codex-config-scope-v1\0` domain separation 的 SHA-256 形成 64 位小写十六进制 scope。
+Application Support 数据根必须是当前 effective UID 拥有、canonical non-symlink 且 exact
+mode `0700`。每个 scope 对应
+`mcp-target-ownership-<scope>.json`；该 regular/single-link 文件必须同 UID、canonical
+non-symlink 且 exact mode `0600`，检查包含 setuid/setgid/sticky 等 special bits。
+
+ledger exact schema 保存：
+
+- 应用以 256-bit CSPRNG 生成的 `lcf-mcp-v1-<64 位小写十六进制>` marker；
+- 当前 bundle Node command 与唯一 companion arg；
+- 仅在 App move/reconnect 事务中同时保留 old/new 两个 exact target，完成后收敛到一个。
+
+Codex target 只有在其 `env` **仅**含
+`LCF_MCP_OWNER_ID=<同一 marker>`，ledger marker/target 完全匹配，并且 command/arg 也完全
+匹配时才算 owned。ledger 缺失、损坏、旧版无 scope 文件、marker mismatch、extra env、
+command/arg mismatch 或仅路径形状相似全部 fail closed。marker 是 ownership metadata，不是
+secret、认证 token 或 bridge capability；它不进入 Renderer/bridge，companion 启动后在
+发现 rendezvous 之前先从自己的环境删除该值。
+
+自动修改还要求 packaged App 位于 `/Applications`。从
+`Local Context Forge.app/Contents/Resources` 到 `qmd/node/bin/node` 和
+`companion/index.mjs` 的 bundle、`Contents`、`Resources`、每个中间目录与两个文件都必须是
+canonical non-symlink，由 root 或当前 effective UID 拥有，并拒绝 group/world write 与
+setuid/setgid/sticky。source/debug、非 `/Applications` 或任何 bundle 校验错误只返回有限状态，
+不能 `add/remove`。
+
+**残余风险**：Main 会串行化自身操作，并在 mutation 前重新执行 Codex installation、ledger 和
+`mcp list --json` 检查，但 Codex CLI 没有 CAS，也没有与 App 共享的配置锁。最终 list 与
+`codex mcp add/remove` 之间仍有小窗口，另一个配置 writer 可以改变同名 target。恶意 same-UID
+进程本来就能读取/修改 Codex config 与 ledger，也可能在 bundle/state check 后、使用前替换对象。
+因此这里保护的是单用户、同 UID 非对抗环境中的误操作和常见篡改，不是 OS sandbox，也不能把
+并发第三方 target 不受影响写成无条件保证。真实 packaged `/Applications` + 官方签名 Codex
+门禁仍为 `not-run`。
+
+### T2C：桌面更新与手工 Release 出口
+
+Main-owned signed updater 固定 repository/channel/architecture、Ed25519 trust anchor、
+manifest schema、redirect 和 cache policy。source/unpackaged、非目标平台或 unprovisioned
+trust anchor 不联网；signature/schema/asset/cache/digest/network 错误不会降级成未验证
+download/open。Renderer 只能调用无参数、类型化 check/download/open/cancel。
+
+用户还可显式触发一个独立、无 payload 的 `openReleasePage` 操作。Main 只允许编译期固定的
+canonical `https://github.com/fredgnr/local-context-forge/releases`，Renderer 不提供也不读取
+URL。页面打开失败只返回稳定错误，不覆盖 signed updater 已有 candidate/error 状态。这条路径
+不是下载完整性证明，也不表示已有 Release、签名 DMG、Developer ID/notarization 或 automatic
+apply；用户仍必须核对资产集合和摘要。真实 protected release、clean-user 和物理
+0.0.1 → 0.0.2 门禁均为 `not-run`。
 
 ### T3：归档穿越与符号链接
 
@@ -139,11 +255,16 @@ MCP 客户端可能把查询结果继续发送给它自己的模型服务。
 
 当前实现：
 
-- MCP 默认绑定 `127.0.0.1`。
+- legacy HTTP MCP 默认绑定 `127.0.0.1`。
 - 明确告知用户“LCF 本地”不等于“MCP 消费端也本地”。
 - HTTP query 的 `limit` 最大 30，结果带 source refs。
+- desktop companion 只公开 `resolve-library-id`、`query-docs`，经 Main 的 per-connection
+  UI 授权与私有 UDS bridge 调用；它不获得 updater、路径、provider 或写接口。
 
-**当前缺口**：没有身份认证、library ACL、敏感级别或响应字节上限；MCP 还会返回命中页的完整 Markdown。只适合 localhost 单用户。共享前应加 auth/TLS/ACL、总响应大小与每页裁剪。
+**当前缺口**：legacy HTTP MCP 没有身份认证、library ACL、敏感级别或响应字节上限，还会
+返回命中页的完整 Markdown；desktop production 持久配对、Keychain 与 client code-identity
+绑定也未完成。两者都只适合 localhost/同一可信用户。共享前应加 auth/TLS/ACL、总响应大小、
+每页裁剪和与部署模型相符的客户端身份。
 
 HTTP query 的 `limit<=30`、Web/MCP 超时只是命中数/等待边界，不是 response-body 保证；不能据此
 把当前实现描述成可安全共享的服务。
@@ -238,6 +359,9 @@ Compose 默认：
 - 反向代理 OIDC client secret。
 - 备份加密密钥。
 
+桌面导入私库时，支持路径是由操作者使用现有 Git/SSH 凭据预先 clone；LCF 不读取或复制这些凭据，
+也不把它们放入 grant 或 sidecar 请求。预先 clone 不会降低工作树本身和其 snapshot/备份的敏感度。
+
 它们不得进入：
 
 - `.env.example`
@@ -267,6 +391,10 @@ Docker Compose 本地可使用只读 secret file；生产使用系统 keychain/s
 - [ ] 不存在/越界/跨 source SHA 或超出生成器实际 evidence 范围的 source_ref 无法发布；共享上线前
       再增加逐引用 content hash 与 claim-support 验证。
 - [ ] MCP 没有 publish/delete/restore 工具。
+- [ ] desktop MCP ownership 只有 scope ledger + sole marker env + exact command/arg 全匹配时
+      才允许 reconnect/clear；missing/damaged/legacy/mismatch/extra-env/lookalike 均 fail closed。
+- [ ] desktop bundle chain 拒绝 symlink、非 canonical、非 root/effective-UID owner、
+      group/world write 及任意 setuid/setgid/sticky；真实 packaged/Codex gate 仍为 `not-run`。
 - [ ] API/MCP/Web 容器看不到 Codex/OpenAI 凭据。
 - [ ] 共享部署有 TLS、身份认证、library ACL、响应字节上限和非 root 运行（当前未实现）。
 - [ ] 部署 auth/key 不在 `/data`；备份 archive/checksum 为 `0600` 且存放在加密、受控介质。
@@ -279,6 +407,10 @@ Docker Compose 本地可使用只读 secret file；生产使用系统 keychain/s
 - [ ] 带内部安全 symlink 的 snapshot 经 backup/restore 后文件树与内容摘要不变。
 - [ ] 恢复脚本默认不覆盖非空目录。
 - [ ] 依赖与镜像版本可追踪。
+- [ ] packaged macOS arm64 的桌面本地源实机门覆盖 home、外接 volume、private repo、
+      restart、move/delete 与绝对路径脱敏；当前状态为 `not-run`。
+- [ ] source/unprovisioned/更新校验或网络失败只能由用户显式打开固定 canonical Release 页面；
+      Renderer 无 URL，signed updater 状态不被手工出口污染，物理更新仍为 `not-run`。
 
 ## 事件响应
 

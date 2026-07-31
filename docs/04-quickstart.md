@@ -1,294 +1,221 @@
 # 安装与快速开始
 
-## 前提
+本页按未来经过审查的 Electron DMG 描述普通用户流程，同时明确当前限制。更完整的签名、
+MCP、更新、恢复和开发者说明见
+[Electron 桌面版完整指南](16-electron-desktop-guide.md)。
 
-Compose 路径：
+## 0. 先确认你拿到的是可审查发行物
 
-- macOS 14+（Apple Silicon 推荐）
-- Docker Desktop 与 Compose v2
-- Git
-- `curl`、`tar`、`jq`、Python 3、`rsync`
-- 首次 QMD 模型下载所需网络
-- 可选：Windows 11 + Ollama + NVIDIA 驱动
+当前仓库已经有桌面代码和 Release workflow，但以下门禁仍是 `not-run`：
 
-推荐先安装 Homebrew，再由 bootstrap 安装缺失的 `jq`、Python 3 与 `rsync`。原生路径还需要
-Homebrew、Node.js 22+、Homebrew SQLite、Python 3.11+ 与 Universal Ctags。只检查、不安装：
+- 干净 macOS 用户安装；
+- 打包应用中的真实 Codex 采集；
+- 物理 Apple Silicon embedding 下载/重建；
+- 0.0.1 → 0.0.2 物理更新。
 
-```bash
-./scripts/macos-bootstrap.sh --check
-```
+在 GitHub Releases 出现经过维护者审查的一组正式资产之前，不要把源码构建或
+`*-UNOFFICIAL.dmg` 当作推荐安装包。正式资产至少应同时包含：
 
-## 1. all-in-one 初始化（推荐）
+- `local-context-forge-<version>-arm64.dmg`
+- `SHA256SUMS`
+- `release-manifest.json`
+- `update-manifest.json`
+- `update-manifest.json.sig`
 
-```bash
-./install.sh
-```
+Electron 是**有审查 Release 后的推荐目标**。现在需要稳定运行时，legacy Docker 路径仍可用；
+`./install.sh` 安装的是 legacy 服务，不是 Electron。
 
-这一个入口完成预检、私有配置、按需安装 macOS host runner LaunchAgent、Compose build/up、
-health、doctor/smoke 并打开 Web。它不安装第三方 CLI、不切换 Docker context、
-不复制/mount 登录凭据，且只监听 loopback。首次未指定 provider 且没有已登录
-Codex/Cursor 时会明确进入 `mock` 演示模式，仍可完成部署。完整阶段与高级参数见
-[M4 Pro all-in-one 部署](14-all-in-one-macos.md)。
+## 1. 准备 Codex CLI
 
-仅做旧式手工 bootstrap 时仍可运行：
+桌面版默认使用当前 macOS 用户已经登录的 Codex CLI。先在终端检查：
 
 ```bash
-./scripts/macos-bootstrap.sh --check
-./scripts/macos-bootstrap.sh
+codex --version
+codex login status
 ```
 
-检查关键安全默认值：
-
-```dotenv
-LCF_BIND_HOST=127.0.0.1
-WEB_PORT=8080
-API_PORT=8000
-MCP_PORT=8001
-LCF_QMD_HYBRID_ENABLED=true
-```
-
-## 2. 查看状态
+如未登录：
 
 ```bash
-./scripts/lcf status
-./scripts/lcf doctor
+codex login
 ```
 
-正常状态：
+应用不会索取、复制或保存 Codex 登录文件，也不会把 `~/.codex` 放进应用数据。实际调用使用
+本机 CLI 和该账号的 Codex 用量。没有可用 Codex 时仍可打开应用和查询已有知识，但新的 Wiki
+生成会失败，除非你事先在设置中明确允许符合条件的 Cursor fallback。
 
-```text
-api    healthy
-mcp    healthy
-web    healthy
-```
+## 2. 安装 DMG
 
-首次构建会按 requirements 的兼容范围安装 Python 包，并固定 QMD 为 `2.5.3`；可复现发布还应保存
-lockfile/镜像 digest。没有可用的全局 embedding profile 时，查询使用内置 lexical fallback；
-这不阻塞仓库采集、审核和发布。模型选择与向量重建由 Web 的“系统设置”统一管理。
+1. 从项目的官方 GitHub Release 下载 arm64 DMG 和 `SHA256SUMS`；
+2. 按 Release 页面核对文件名与摘要；
+3. 双击 DMG；
+4. 把 `Local Context Forge.app` 拖到“应用程序”；
+5. 从“应用程序”打开，不要长期从 DMG 或下载目录运行。
 
-## 3. 导入演示仓库
+该发行策略使用项目自签名证书，不是 Apple Developer ID，也不 notarize。若 macOS 拦截：
 
-```bash
-./scripts/demo-seed.sh
-```
+1. 在 Finder 中按住 Control 点击应用，选择“打开”；
+2. 若仍被拦截，打开“系统设置 → 隐私与安全性”；
+3. 找到刚才被拦截的 Local Context Forge，选择“仍要打开”；
+4. 再确认一次。
 
-脚本创建一个小型、无外部依赖的 Python 示例库，调用 `mock` ingest，并为演示目的自动发布确定性
-文档骨架。成功发布后可幂等重复运行：它会复用 library、按 Compose/native 修正 source；若
-`1.0.0` 已经发布，就跳过不可变 ingest 并继续做 query 验证。它不会自动修复前次失败留下的
-proposed/partial/rejected 同版本，也不应并发运行。真实仓库默认应保持
-`auto_publish=false` 先审核。
+不要关闭 Gatekeeper，不要运行 `xattr -dr`，也不要使用 `sudo`。如果系统没有显示可撤销的
+“打开”选项，就停止并核对 Release、摘要和文件来源。
 
-为避免同一个 branch/标签在不同 commit 上互相污染，显式版本会物化为例如 `1.0.0+git.3ac10e1f42ab`。API 用原始 `1.0.0` 查询时会解析到该基线最新的物化版本；job/default_version 响应会显示精确值。
+## 3. 添加第一个仓库
 
-查询 job：
-
-```bash
-curl --fail http://127.0.0.1:8000/api/jobs/JOB_ID | jq
-```
-
-也可以从 Web UI 查看进度、提案、lint 与发布操作。
-
-## 4. 运行冒烟测试
-
-```bash
-./scripts/smoke-test.sh
-```
-
-它检查：
-
-- Web、API、MCP health；
-- library 列表；
-- 若 demo 已由上一步创建，则验证它的 query API 基本返回结构；否则明确 skip；
-- 容器状态。
-
-脚本不删除用户数据，也不会自动批准真实仓库提案。
-
-## 5. 导入自己的仓库
+打开应用后选择“仓库 → 添加仓库”。
 
 ### 本地仓库
 
-容器只能看到显式 allowlist 的只读 mount。先把可信仓库放入 `./imports`；Compose 将它挂为
-`/imports`，并按操作系统 path separator 设置
-`LCF_LOCAL_SOURCE_ROOTS=/examples:/imports`。创建 library 时使用容器路径，例如
-`"source":"/imports/widget"`。默认不允许 `/data`、宿主任意路径或未列出的本地目录。
+点击“选择本地仓库”，用 macOS 系统选择器选中仓库顶层目录。页面只得到目录显示名和一次性
+授权 ID，不会得到完整路径。授权提交后失效。
 
-若目录中存在父 Git worktree 元数据，source 必须正好是 `git rev-parse --show-toplevel` 返回的
-仓库顶层；monorepo 的 package 子目录不能直接作为本地 Git source。普通独立仓库的 standalone
-`.git` 目录可用；linked worktree/`.git` pointer、非普通 `.git/config`、`commondir`、alternate
-object store 和任何越界 metadata/object path 会拒绝。Git 固化路径还会拒绝：
+以下目录会被拒绝：
 
-- mode `160000` 的 submodule（`git archive` 不会展开它）；
-- Git LFS pointer（不把 pointer 当真实源码）；
-- 两个路径经 NFC normalization + casefold 后碰撞；
-- 越界链接、特殊文件、重复路径和最终 snapshot 限额。
+- home 根目录、卷根目录或应用数据/缓存目录；
+- `.ssh`、`.aws`、`.codex`、`.kube` 等敏感配置目录；
+- 不是当前用户拥有的目录；
+- symlink、mount root 或与授权后身份不一致的目录。
 
-需要分析 monorepo 子树、submodule 或 LFS 内容时，先在宿主完整 checkout：
+私有 GitHub 仓库请先用你熟悉的 Git 工具克隆到本机，再通过选择器授权。应用不会弹窗索取
+GitHub token。
 
-```bash
-git -C /path/to/repo submodule update --init --recursive
-git -C /path/to/repo lfs pull
-rsync -a --exclude=.git /path/to/repo/ ./imports/widget-materialized/
-```
+### 公开远程仓库
 
-若只要 monorepo 的一个 package，就把最后一条的 source 换成该子目录。目标必须是一个不含父
-`.git` 元数据的独立 allowlist 目录；随后以普通目录 source 和 `ref=HEAD` ingest。不要用关闭
-检查来换取“成功”。
-
-`imports/` 已进入 `.gitignore`，也不应进入 release zip；它只是只读入站区。LCF 的一致性备份保存 `/data/sources` 中已经固化的快照，不重复归档宿主 `imports/` 原仓库。
-
-示例请求：
-
-```bash
-curl --fail-with-body \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "widget",
-    "slug": "acme-widget",
-    "source": "/imports/widget"
-  }' \
-  http://127.0.0.1:8000/api/libraries
-```
-
-`default_version` 是发布成功后由系统维护的**物化版本指针**，不是初始 branch/tag。要分析的 ref 与版本基线放在后续 ingest 请求中。
-
-若仓库是私有的，优先在宿主机提前 clone，再用只读 mount；不要把长期 Git token 写入 URL、`.env` 或 job payload。
-
-### Git URL
-
-当前远端入口只接受不含 userinfo、query/fragment 的 `https://` 443，明确拒绝
-`http://`、`ssh://`、`git://` 和 `git@...`；默认 exact-host allowlist 是
-`github.com,gitlab.com,bitbucket.org`，通过 `.env` 的
-`LCF_REMOTE_SOURCE_HOSTS` 调整。Git 子进程禁用交互凭据、system/global 配置、hooks 与 HTTP
-重定向；最终 snapshot 默认最多 100,000 个成员/2 GiB。私库请先在宿主安全地 clone 到
-`imports/`。hostname allowlist 与最终展开限额仍不是完整 SSRF/流量防线；生产部署还应阻断：
-
-- `file://` 与本地任意路径；
-- loopback、link-local、云元数据地址；
-- 重定向到内网的地址。
-
-## 6. 审核与发布
-
-```bash
-# 查看某个 library 的提案
-curl --fail "http://127.0.0.1:8000/api/libraries/LIBRARY_ID/proposals"
-
-# 明确确认后发布
-curl --fail-with-body -X POST \
-  "http://127.0.0.1:8000/api/proposals/PROPOSAL_ID/publish"
-
-# 发布后检查 index/sidecar/source refs 与 Wiki links
-curl --fail-with-body -X POST \
-  "http://127.0.0.1:8000/api/libraries/LIBRARY_ID/lint"
-```
-
-`lint` 只检查已发布 Wiki，不验证 pending proposal。发布前从 Web UI 查看 proposal 正文预览、metadata 与 `source_refs`；当前 UI 不是 base-vs-proposal diff。不要把“lint 通过”视为“内容一定正确”。
-
-人工 publish 是**逐页批准、整版激活**：每个已批准页面先进入该物化版本的 Git/SQLite
-暂存层；只有全部 proposal 都 published 且没有 rejected 时，最后一次批准才原子更新
-`default_version`。任一拒绝会让版本保持 `rejected/partial`，默认、alias、global query 与
-MCP 都不会返回它。`auto_publish=true` 使用同一整批可见性门；中途失败保留 `partial`
-诊断页，但不会替换旧默认。这里的“原子”只指 SQLite 可见性指针，不是假装 Git 与 SQLite
-组成跨介质 ACID 事务。
-
-## 7. 查询
-
-```bash
-curl --fail-with-body \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "library_id": "/local/acme-widget",
-    "query": "How do I create a client with a custom timeout?",
-    "version": "v1.4.0",
-    "limit": 5
-  }' \
-  http://127.0.0.1:8000/api/query | jq
-```
-
-要启用完整 hybrid，在 Web 的“系统设置”选择 embedding 模型并提交“重建全局索引”。该操作会
-创建持久 FIFO 中的 `embedding_rebuild` job；可在任务页查看排队位置、取消或在失败后重试。
-系统会注册完整的已发布 corpus，并以目标模型执行一次全局 `qmd embed -f`。成功前
-`embedding.hybrid_ready=false`，查询继续走 lexical fallback；不会混用旧模型向量。
-
-索引重建只读取已发布 Wiki 并更新 QMD，**不会调用 Codex/Cursor，也不消耗 LLM 额度**。只有
-“重新采集仓库”才会重新生成 Wiki 提案并消耗所选 provider 的额度。`scripts/reindex.sh` 和
-`make qmd-embed*` 仅保留给资深用户做同步诊断，不是日常模型切换入口。
-
-## 8. MCP 客户端
-
-Streamable HTTP endpoint：
+填写：
 
 ```text
-http://127.0.0.1:8001/mcp
+https://github.com/owner/repository.git
 ```
 
-Codex CLI 示例：
+桌面 UI 当前只接受公开 `github.com` HTTPS 形式，不接受 SSH、userinfo、query、fragment 或
+自定义端口。需要凭据或其他托管站时，先安全地克隆到本机。
+
+在“采集选项”中填写：
+
+- 分支、标签或提交，例如 `main` 或完整 commit SHA；
+- “使用系统默认（推荐）”或“只用 Codex CLI”；
+- 是否添加后立即采集。
+
+## 4. 查看任务队列
+
+采集不会阻塞页面。打开“任务”可查看：
+
+- `queued`、`running`、`cancelling` 和终态；
+- FIFO 队列位置；
+- 当前阶段和进度；
+- requested/effective provider；
+- 错误、取消和重试入口。
+
+页面每 5 秒刷新。当前版本固定单并发。失败任务的“重试”会创建新的审计记录，不会改写旧任务；
+Codex 已经提交执行后的超时或未知结果不会自动重放。
+
+## 5. 审核并发布
+
+采集成功只会生成待审提案。打开“审核”：
+
+1. 选择页面；
+2. 阅读 Markdown；
+3. 核对 source path 和行号；
+4. 选择“批准发布”或“拒绝”；
+5. 必要时运行 Wiki 校验。
+
+同一知识版本的全部提案都批准后才会激活。一个提案被拒绝或版本只完成一部分时，该版本不会
+通过默认查询或 MCP 冒充正式知识。人工批准不是装饰步骤：引用校验能证明行范围真实存在，但
+不能证明模型结论在语义上一定正确。
+
+## 6. 查询已发布知识
+
+打开“查询”，选择知识库并输入自然语言问题，例如：
+
+```text
+如何初始化客户端并配置重试？
+```
+
+结果会显示检索引擎、页面、摘要和源码引用。使用 `Command + Enter` 可提交。未批准的提案
+不会出现在查询中。
+
+Embedding 未就绪时系统使用 lexical 检索；这不是错误。完成下一步后才会启用与当前 corpus
+revision 和模型 profile 一致的 hybrid 查询。
+
+## 7. 选择 embedding 并重建
+
+打开“设置 → Embedding 模型”：
+
+1. 保持默认的 EmbeddingGemma 300M Q8，或选择 Qwen3-Embedding 0.6B Q8；
+2. 高级用户可填写经过格式检查的 `hf:org/repo/file.gguf`；
+3. 点击“检查模型标识”；
+4. 点击“保存并重建全部”。
+
+重建进入同一个持久队列。首次重建可能需要下载模型并持续较长时间。模型准备失败、应用离线、
+任务取消或 corpus 在重建期间变化时，向量状态不会被标成 ready，查询继续安全降级。
+
+“仅保存”只更新期望设置，不会让旧索引自动变成新模型。“从此库发起”会先确认该库已有发布
+版本，但因为向量空间是全局 profile，实际任务仍校验并重建全部已发布语料。
+
+Embedding rebuild 不调用 Codex/Cursor；只有重新采集仓库才消耗生成额度。
+
+## 8. 一键连接 Codex MCP
+
+先确保应用已位于 `/Applications` 且 Codex 已登录。打开“设置 → 在 Codex 中使用本地文档”：
+
+1. 点击“刷新状态”；
+2. 点击“连接 Codex”；
+3. 重启 Codex 或新建 CLI 会话。
+
+应用只登记随包提供的固定 Node 和只读 MCP companion，不使用 `npx` 或系统 Node。连接后提供：
+
+- `resolve-library-id(libraryName, query)`
+- `query-docs(libraryId, query)`
+
+MCP 不提供采集、审核、发布、模型、更新、路径或原始文件能力。Local Context Forge 应用必须
+保持运行；关闭应用后 companion 会明确报告不可用。
+
+为便于审计，应用执行的 `add` 形状包含由应用生成的 ownership marker：
 
 ```bash
 codex mcp add local-context-forge \
-  --url http://127.0.0.1:8001/mcp
+  --env LCF_MCP_OWNER_ID=<由应用生成的所有权标记> \
+  -- \
+  "/Applications/Local Context Forge.app/Contents/Resources/qmd/node/bin/node" \
+  "/Applications/Local Context Forge.app/Contents/Resources/companion/index.mjs"
 ```
 
-再检查 `~/.codex/config.toml`，给冷 hybrid 查询留出比 API 内部 600 秒更长的工具预算：
+这不是手工安装命令。不要复制、复用或伪造 marker；它不是 secret 或 MCP capability，但只有
+marker、当前 `CODEX_HOME` 对应的私有 ownership ledger 和精确 command/arg 同时匹配时，应用
+才会把 target 视为自有。Codex CLI 没有 CAS/共享配置锁，所以同一 UID 下的并发配置写入仍可能
+在最终检查后发生；出现 conflict 时先人工核对，不要反复点击。
 
-```toml
-[mcp_servers.local-context-forge]
-url = "http://127.0.0.1:8001/mcp"
-tool_timeout_sec = 660.0
-```
+Cursor MCP 当前不自动配置；手工添加 bundled stdio companion 也不由 App 管理。不要把 Codex
+marker 复制到 Cursor。具体路径和边界见
+[桌面版完整指南](16-electron-desktop-guide.md)。
 
-或使用 stdio（原生 bootstrap 会以 editable package 安装 console script；把绝对路径替换为你的 checkout）：
+## 9. 日常操作速查
 
-```json
-{
-  "mcpServers": {
-    "local-context-forge": {
-      "command": "/ABSOLUTE/PATH/local-context-forge/.venv/bin/local-context-forge-mcp",
-      "args": [],
-      "env": {
-        "MCP_TRANSPORT": "stdio",
-        "BACKEND_URL": "http://127.0.0.1:8000"
-      }
-    }
-  }
-}
-```
+| 想做什么 | 位置 |
+| --- | --- |
+| 添加/重新采集仓库 | 仓库 |
+| 查看队列、取消、重试 | 任务 |
+| 检查和批准页面 | 审核 |
+| 查询已发布 Wiki | 查询 |
+| 允许 Cursor fallback | 设置 → 知识生成工具 |
+| 更换 embedding | 设置 → Embedding 模型 |
+| 重建所有索引 | 设置 → 保存并重建全部 |
+| 连接 Codex MCP | 设置 → 在 Codex 中使用本地文档 |
+| 检查并打开已验证更新 DMG | 设置 → 应用更新 |
 
-工具调用示例见 [HTTP API 与 MCP](06-api-and-mcp.md)。
+## 10. 遇到问题
 
-## 9. 切换到 Windows Ollama
+- 显示 Codex 未登录：在终端运行 `codex login`，再刷新设置页；
+- 找不到本地仓库：选仓库顶层，避免 home/卷根、symlink 和敏感目录；
+- 任务长期排队：当前固定单 worker，打开任务详情检查前一个任务；
+- 任务 `uncertain` 或超时：不要盲目重放，核对旧任务后显式创建新任务；
+- 查询只有 lexical：检查 embedding job、模型状态和 corpus revision；
+- MCP 提示 app 未运行：先启动 Local Context Forge；
+- MCP 提示移动应用：把 App 拖到 `/Applications` 后重新打开；
+- 更新入口不可用：当前构建可能不是经过 provision 的正式 Release；可由用户显式点击固定的
+  canonical Release 页面按钮，但这不是已验证 DMG 或自动更新。
 
-先按 [硬件与部署](03-hardware-deployment.md) 配好防火墙。然后：
-
-```bash
-sed -n '/OLLAMA_/p' .env
-docker compose up -d --force-recreate api
-curl --fail http://127.0.0.1:8000/api/health
-```
-
-创建 ingest 时把 `"provider":"ollama"` 放在 JSON body 中；provider 是每次任务的选择，不是全局环境变量。
-
-Web 上对已存在库执行“重新采集”时，也必须显式填写 provider、ref 和一个**新的** version label；
-UI 不会隐式复用旧值，也不能原地覆盖已物化 source/version。
-
-从 API 容器验证 Windows：
-
-```bash
-docker compose exec api \
-  sh -lc 'curl --fail "$OLLAMA_BASE_URL/api/tags"'
-```
-
-不要用 shell 历史传递密钥；Ollama 局域网模式默认也不提供用户级鉴权。
-
-## 10. 停止
-
-```bash
-docker compose stop
-```
-
-删除容器但保留 `./data`：
-
-```bash
-docker compose down
-```
-
-不要随意使用 `docker compose down -v`；虽然本项目默认使用 bind mount，但未来配置可能含 named volume。删除或清空 `./data` 前先运行备份。
+恢复、缓存重置、源码模式与 Release 管理见
+[Electron 桌面版完整指南](16-electron-desktop-guide.md)。

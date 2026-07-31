@@ -53,9 +53,9 @@ custom model 固定 digest 清单、shadow-index 原子切换或 clean-user DMG 
 
 | 验证 | 结果 | 日期/提交 | 命令或过程 | 证据/说明 |
 | --- | --- | --- | --- | --- |
-| VAL-QMD-EMBED-001 source | `pass` | 2026-07-31；工作树 | `cd desktop/workers/qmd && npm test` | 8 pass；2 AF_UNIX sandbox skip；1 better-sqlite3 native-not-built skip；fake store 锁定 close→profile store、stale-first、forced embed 与 typed hybrid |
-| VAL-IPC-EMBED-001 source | `pass` | 2026-07-31；工作树 | `cd desktop && npm run typecheck && npm test -- --run`；`cd backend && .venv/bin/pytest ...` | Desktop 136 pass/5 sandbox skip；Backend focused 66 pass；backend excluding optional MCP-formatting dependency 283 pass/1 skip |
-| VAL-MODEL-EMBED-001 source race 子检查 | `pass` | 2026-07-31；工作树 | worker + `test_desktop_retrieval.py` | 模拟 cold/unavailable、ENOSPC/partial cache、取消、claim 前 model switch 不调用 retriever、完成前 model switch activation CAS 与路径脱敏；没有下载真实权重 |
+| VAL-QMD-EMBED-001 source | `pass` | 2026-07-31；`8eedd7e` | `cd desktop/workers/qmd && npm test` | 8 pass / 3 skip；AF_UNIX/native/model 条件保持可见；fake store 锁定 close→profile store、stale-first、forced embed 与 typed hybrid |
+| VAL-IPC-EMBED-001 source | `pass` | 2026-07-31；Desktop `fcca1e4`、Backend `8eedd7e` | `cd desktop && npm test -- --run`；`cd backend && .venv/bin/pytest -q ../tests/backend` | Desktop 30 files / 235 pass / 7 skip；Backend 313 pass / 1 AF_UNIX skip；Desktop 新证据不替代 packaged/native 门禁 |
+| VAL-MODEL-EMBED-001 source race 子检查 | `pass` | 2026-07-31；`8eedd7e` | worker + `tests/backend/test_desktop_retrieval.py`（包含在上述全量命令） | 模拟 cold/unavailable、ENOSPC/partial cache、取消、claim 前 model switch 不调用 retriever、完成前 model switch activation CAS 与路径脱敏；没有下载真实权重 |
 | VAL-MODEL-EMBED-001 real download | `not-run` | — | 需真实模型、离线/磁盘矩阵 | 当前 source checkout 没有 built better-sqlite3，也不以 mock 代替 |
 | VAL-QMD-001 macOS/native | `not-run` | — | 需 packaged macOS arm64 | 不以当前 Linux Node 代替 |
 

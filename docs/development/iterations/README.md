@@ -7,6 +7,7 @@
 | --- | --- | --- |
 | [ITER-0001](0001-electron-foundation.md) | `validated` | 治理、版本契约、Electron 信任边界、源码模式 UDS 纵切 |
 | [ITER-0002](0002-bundled-runtimes.md) | `in-progress` | Python `onedir`、Node/QMD worker、MCP 与 CLI preflight |
+| [ITER-0002/R07](0002-r07-qmd-embeddings.md) | `in-progress` | 独立追加：QMD local embedding、model switch 与 hybrid fallback |
 | [ITER-0003](0003-runtime-data-models.md) | `planned` | macOS 路径、模型管理、旧数据迁移与回滚 |
 | [ITER-0004](0004-macos-release.md) | `planned` | arm64 DMG、自签名、受保护发布 Environment |
 | [ITER-0005](0005-updater-physical-gate.md) | `planned` | 0.0.1 → 0.0.2 实机更新与 DMG fallback |

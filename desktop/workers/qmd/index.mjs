@@ -25,6 +25,7 @@ function parseArguments(argv) {
     "--token-fd",
     "--wiki-root",
     "--data-dir",
+    "--cache-root",
     "--build-manifest-sha256"
   ]);
   if (argv.length !== allowed.size * 2) {
@@ -48,6 +49,7 @@ function parseArguments(argv) {
     tokenFd: 3,
     wikiRoot: validateAbsolutePath(values.get("--wiki-root")),
     dataDir: validateAbsolutePath(values.get("--data-dir")),
+    cacheRoot: validateAbsolutePath(values.get("--cache-root")),
     buildManifestSha256: validateSha256(
       values.get("--build-manifest-sha256")
     )
@@ -78,33 +80,53 @@ function readFramedToken(fd) {
   }
 }
 
-async function validateDataDirectory(dataDir) {
-  await mkdir(dataDir, { recursive: true, mode: 0o700 });
-  const info = await lstat(dataDir);
+async function validatePrivateDirectory(directory) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const info = await lstat(directory);
   const uid = process.geteuid?.() ?? process.getuid?.() ?? -1;
   if (
     !info.isDirectory() ||
     info.isSymbolicLink() ||
     info.uid !== uid ||
-    (await realpath(dataDir)) !== dataDir
+    (await realpath(directory)) !== directory
   ) {
     throw new ContractError(400, "invalid_path");
   }
-  await chmod(dataDir, 0o700);
+  await chmod(directory, 0o700);
 }
 
 async function main() {
   process.umask(0o077);
   const options = parseArguments(process.argv.slice(2));
-  await validateDataDirectory(options.dataDir);
+  await validatePrivateDirectory(options.dataDir);
+  await validatePrivateDirectory(options.cacheRoot);
   const token = readFramedToken(options.tokenFd);
+  process.env.XDG_CACHE_HOME = options.cacheRoot;
   const { createStore } = await import("@tobilu/qmd");
+  const dbPath = path.join(options.dataDir, "index.sqlite");
   const store = await createStore({
-    dbPath: path.join(options.dataDir, "index.sqlite")
+    dbPath
   });
   const service = new QmdIndexService({
     store,
+    openStore: async (profile, collections) =>
+      createStore({
+        dbPath,
+        config: {
+          collections: Object.fromEntries(
+            collections.map((item) => [
+              item.name,
+              {
+                path: item.absoluteRoot,
+                pattern: "**/*.md"
+              }
+            ])
+          ),
+          ...(profile ? { models: { embed: profile.model } } : {})
+        }
+      }),
     wikiRoot: options.wikiRoot,
+    modelCacheDir: path.join(options.cacheRoot, "qmd", "models"),
     stateStore: new FileStateStore(path.join(options.dataDir, "state.json"))
   });
   await service.initialize();

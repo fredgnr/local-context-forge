@@ -19,7 +19,7 @@ import {
 
 const REQUEST_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const MAX_DEADLINE_MS = 120_000;
+const MAX_DEADLINE_MS = 35 * 60 * 1_000;
 
 function headerValues(request, expectedName) {
   const values = [];
@@ -141,7 +141,11 @@ export function createWorkerServer({
   validateSha256(buildManifestSha256);
 
   return http.createServer(
-    { keepAlive: false, maxHeaderSize: 16 * 1024, requestTimeout: 120_000 },
+    {
+      keepAlive: false,
+      maxHeaderSize: 16 * 1024,
+      requestTimeout: MAX_DEADLINE_MS
+    },
     async (request, response) => {
       try {
         validateHeaders(request, token, launchId);
@@ -153,7 +157,7 @@ export function createWorkerServer({
           sendJson(response, 200, {
             service: "local-context-forge",
             role: "qmd-worker",
-            protocol: { major: 1, minor: 0 },
+            protocol: { major: 1, minor: 1 },
             launch_id: launchId,
             transport: "uds",
             qmd_version: QMD_VERSION,

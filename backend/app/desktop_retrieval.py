@@ -28,6 +28,7 @@ MAX_BROKER_RESPONSE_BYTES = 2_097_152
 MAX_COLLECTIONS = 256
 MAX_QUERY_BYTES = 8_192
 MAX_RESULTS = 100
+MAX_RETRIEVAL_TIMEOUT_SECONDS = 35 * 60
 
 _UUID_PATTERN = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
@@ -35,6 +36,20 @@ _UUID_PATTERN = re.compile(
 )
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 _COLLECTION_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,118}\Z")
+_CUSTOM_EMBEDDING_MODEL_PATTERN = re.compile(
+    r"hf:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/"
+    r"[A-Za-z0-9._+/-]+\.gguf\Z"
+)
+_CURATED_EMBEDDING_MODELS = {
+    (
+        "hf:ggml-org/embeddinggemma-300M-GGUF/"
+        "embeddinggemma-300M-Q8_0.gguf"
+    ),
+    (
+        "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/"
+        "Qwen3-Embedding-0.6B-Q8_0.gguf"
+    ),
+}
 
 
 class DesktopRetrievalError(RuntimeError):
@@ -137,7 +152,7 @@ class DesktopRetrievalClient:
         self.socket_path = socket_path
         self._capability = _validate_capability(capability)
         self.launch_id = _validate_launch_id(launch_id)
-        if not 0.1 <= timeout_seconds <= 120:
+        if not 0.1 <= timeout_seconds <= MAX_RETRIEVAL_TIMEOUT_SECONDS:
             raise DesktopTransportError("Retrieval timeout is invalid")
         self.timeout_seconds = timeout_seconds
         self._socket_identity = _validate_socket(socket_path)
@@ -152,7 +167,7 @@ class DesktopRetrievalClient:
         if endpoint not in {"/reconcile", "/search"}:
             raise DesktopRetrievalError("invalid_request")
         timeout = timeout_seconds or self.timeout_seconds
-        if not 0.1 <= timeout <= 120:
+        if not 0.1 <= timeout <= MAX_RETRIEVAL_TIMEOUT_SECONDS:
             raise DesktopRetrievalError("invalid_request")
         try:
             serialized = json.dumps(
@@ -229,6 +244,9 @@ class DesktopRetrievalClient:
                 if code not in {
                     "stale_index",
                     "too_many_collections",
+                    "invalid_model_profile",
+                    "model_unavailable",
+                    "embedding_failed",
                     "qmd_unavailable",
                     "invalid_response",
                 }:
@@ -277,11 +295,87 @@ def _is_safe_result_path(value: object) -> bool:
     )
 
 
+def _model_profile(model: object) -> dict[str, str]:
+    if (
+        not isinstance(model, str)
+        or not model
+        or len(model) > 500
+        or model != model.strip()
+        or any(character.isspace() for character in model)
+        or any(character in model for character in "\0\r\n")
+        or _CUSTOM_EMBEDDING_MODEL_PATTERN.fullmatch(model) is None
+        or "//" in model
+        or any(
+            segment in {"", ".", ".."}
+            for segment in model.removeprefix("hf:").split("/")
+        )
+    ):
+        raise DesktopRetrievalError("invalid_model_profile")
+    lowered = model.lower()
+    if "embeddinggemma" not in lowered and "qwen3-embedding" not in lowered:
+        raise DesktopRetrievalError("invalid_model_profile")
+    return {
+        "kind": "curated" if model in _CURATED_EMBEDDING_MODELS else "custom",
+        "model": model,
+    }
+
+
+def _is_model_profile(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {"kind", "model"}:
+        return False
+    try:
+        return _model_profile(value["model"]) == value
+    except DesktopRetrievalError:
+        return False
+
+
+def _is_embedding_state(value: object) -> bool:
+    if (
+        not isinstance(value, dict)
+        or set(value)
+        != {
+            "status",
+            "profile",
+            "revision",
+            "model_status",
+            "error",
+        }
+        or value["status"] not in {"ready", "stale", "failed"}
+        or value["model_status"]
+        not in {"not_requested", "ready", "unavailable"}
+        or (
+            value["profile"] is not None
+            and not _is_model_profile(value["profile"])
+        )
+        or (
+            value["revision"] is not None
+            and not _is_revision(value["revision"])
+        )
+        or value["error"]
+        not in {None, "model_unavailable", "embedding_failed"}
+    ):
+        return False
+    if value["status"] == "ready":
+        return bool(
+            value["profile"]
+            and value["revision"] is not None
+            and value["model_status"] == "ready"
+            and value["error"] is None
+        )
+    if value["status"] == "failed":
+        return bool(
+            value["profile"]
+            and value["revision"] is None
+            and value["error"] is not None
+        )
+    return value["revision"] is None and value["error"] is None
+
+
 class DesktopRetriever:
     """QMD-compatible service port backed by Main's capability broker."""
 
     desktop_broker = True
-    lexical_only = True
+    lexical_only = False
 
     def __init__(
         self,
@@ -325,6 +419,8 @@ class DesktopRetriever:
         collections: list[tuple[Path, str]],
         *,
         revision: int,
+        embed: bool = False,
+        model: str | None = None,
     ) -> dict[str, Any]:
         if not _is_revision(revision):
             self._available = False
@@ -340,6 +436,11 @@ class DesktopRetriever:
         payload_collections: list[dict[str, str]] = []
         names: set[str] = set()
         try:
+            embedding = (
+                {"mode": "rebuild", "profile": _model_profile(model)}
+                if embed
+                else {"mode": "lexical", "profile": None}
+            )
             for root, name in collections:
                 if not _is_collection_name(name) or name in names:
                     raise DesktopRetrievalError("invalid_request")
@@ -355,8 +456,11 @@ class DesktopRetriever:
                 {
                     "revision": revision,
                     "collections": payload_collections,
+                    "embedding": embedding,
                 },
-                timeout_seconds=120,
+                timeout_seconds=(
+                    MAX_RETRIEVAL_TIMEOUT_SECONDS if embed else 120
+                ),
             )
         except DesktopRetrievalError as error:
             self._available = False
@@ -367,7 +471,14 @@ class DesktopRetriever:
                 "collections": len(collections),
             }
         if (
-            set(response) != {"indexed", "revision", "collections", "update"}
+            set(response)
+            != {
+                "indexed",
+                "revision",
+                "collections",
+                "update",
+                "embedding",
+            }
             or response["indexed"] is not True
             or response["revision"] != revision
             or response["collections"] != len(collections)
@@ -380,6 +491,7 @@ class DesktopRetriever:
                 and value >= 0
                 for value in response["update"].values()
             )
+            or not _is_embedding_state(response["embedding"])
         ):
             self._available = False
             return {
@@ -399,12 +511,22 @@ class DesktopRetriever:
         model: str | None = None,
         revision: int | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        del model
         result = self.reconcile(
             collections,
             revision=revision if revision is not None else -1,
+            embed=embed,
+            model=model,
         )
         succeeded = bool(result.get("indexed"))
+        embedding = result.get("embedding")
+        embedded = bool(
+            succeeded
+            and embed
+            and isinstance(embedding, dict)
+            and embedding.get("status") == "ready"
+            and embedding.get("revision") == revision
+            and embedding.get("profile") == _model_profile(model)
+        )
         registrations = [
             {
                 "collection": name,
@@ -415,11 +537,20 @@ class DesktopRetriever:
         ]
         return registrations, {
             "updated": succeeded,
-            "embedded": False,
+            "embedded": embedded,
             "reason": (
-                "desktop-lexical-only"
-                if succeeded and embed
-                else (None if succeeded else result.get("reason"))
+                None
+                if succeeded and (not embed or embedded)
+                else (
+                    embedding.get("error")
+                    if isinstance(embedding, dict)
+                    else result.get("reason")
+                )
+            ),
+            "model_status": (
+                embedding.get("model_status")
+                if isinstance(embedding, dict)
+                else "unavailable"
             ),
             "revision": result.get("revision"),
             "indexed": succeeded,
@@ -465,7 +596,6 @@ class DesktopRetriever:
         hybrid: bool | None = None,
         revision: int | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
-        del model, hybrid
         fallback = lambda: ("lexical", lexical_search(pages, query, limit))
         if (
             not _is_revision(revision)
@@ -479,6 +609,11 @@ class DesktopRetriever:
             or not 1 <= limit <= MAX_RESULTS
         ):
             return fallback()
+        try:
+            mode = "hybrid" if hybrid else "lexical"
+            profile = _model_profile(model) if mode == "hybrid" else None
+        except DesktopRetrievalError:
+            return fallback()
         candidate_limit = min(max(limit * 4, 20), MAX_RESULTS)
         try:
             response = self.client.request(
@@ -488,14 +623,18 @@ class DesktopRetriever:
                     "collection": collection,
                     "query": query,
                     "limit": candidate_limit,
+                    "mode": mode,
+                    "profile": profile,
                 },
+                timeout_seconds=600 if mode == "hybrid" else None,
             )
         except DesktopRetrievalError:
             self._available = False
             return fallback()
         if (
-            set(response) != {"revision", "results"}
+            set(response) != {"revision", "mode", "results"}
             or response["revision"] != revision
+            or response["mode"] != mode
             or not isinstance(response["results"], list)
             or len(response["results"]) > candidate_limit
         ):
@@ -532,4 +671,4 @@ class DesktopRetriever:
             if len(ranked) == limit:
                 break
         self._available = True
-        return "qmd-bm25", ranked
+        return ("qmd-hybrid" if mode == "hybrid" else "qmd-bm25"), ranked

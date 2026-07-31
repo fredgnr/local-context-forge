@@ -4,6 +4,8 @@
 - 日期：2026-07-30
 - 关联需求：REQ-PY-001、REQ-QMD-001、REQ-INSTALL-001、REQ-CI-001
 - 部分取代：ADR-0001 中固定 Python 3.12 的版本条款
+- 后续决策：第 4 条中的 lexical-only/no-model-download 范围由
+  [ADR-0010](0010-qmd-local-embedding-profile.md) 部分取代
 
 ## 上下文
 
@@ -63,4 +65,3 @@ PyInstaller `onedir`、Node/QMD 和 native addon 只有在来源、架构、依�
   生命周期和 PATH/model/network trap。
 - VAL-PACK-001：`beforePack` 接受精确 staging，并拒绝 payload、manifest、schema、commit、
   inventory、normalized digest、architecture 或 input digest 的任一篡改。
-

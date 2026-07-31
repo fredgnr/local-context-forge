@@ -32,7 +32,7 @@ function request(socketPath, { method = "GET", requestPath = "/health", token = 
                 "Content-Length": String(payload.length)
               }
             : {}),
-          "X-LCF-Protocol-Version": "1.0",
+          "X-LCF-Protocol-Version": "1.1",
           "X-LCF-Launch-Id": LAUNCH_ID,
           "X-LCF-Request-Id": randomUUID(),
           "X-LCF-Deadline-Ms": String(Date.now() + 5_000)
@@ -72,9 +72,24 @@ test("real UDS server requires authentication and binds mode 0600", async (t) =>
   await chmod(root, 0o700);
   const socketPath = path.join(root, "qmd.sock");
   const service = {
-    status: () => ({ revision: null, collections: 0 }),
+    status: () => ({
+      revision: null,
+      collections: 0,
+      embedding: {
+        status: "stale",
+        profile: null,
+        revision: null,
+        model_status: "not_requested",
+        error: null
+      },
+      activity: "idle"
+    }),
     reconcile: async (body) => ({ indexed: true, ...body }),
-    search: async (body) => ({ revision: body.revision, results: [] })
+    search: async (body) => ({
+      revision: body.revision,
+      mode: body.mode,
+      results: []
+    })
   };
   const server = createWorkerServer({
     token: TOKEN,
@@ -116,7 +131,18 @@ test("worker HTTP contract returns explicit too_many_collections without calling
     launchId: LAUNCH_ID,
     buildManifestSha256: SHA256,
     service: {
-      status: () => ({ revision: null, collections: 0 }),
+      status: () => ({
+        revision: null,
+        collections: 0,
+        embedding: {
+          status: "stale",
+          profile: null,
+          revision: null,
+          model_status: "not_requested",
+          error: null
+        },
+        activity: "idle"
+      }),
       reconcile: async () => {
         calls += 1;
         return {};
@@ -142,7 +168,8 @@ test("worker HTTP contract returns explicit too_many_collections without calling
       collections: Array.from({ length: 257 }, (_, index) => ({
         name: `collection-${index}`,
         wiki_root: "alpha/versions/v1"
-      }))
+      })),
+      embedding: { mode: "lexical", profile: null }
     }
   });
   assert.deepEqual(response, {

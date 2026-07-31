@@ -49,6 +49,7 @@ function options() {
     },
     appDataDir: "/private/data",
     dataDir: "/private/data/qmd/worker",
+    cacheRoot: "/private/cache/qmd-runtime",
     wikiRoot: "/private/data/wiki",
     startupTimeoutMs: 500,
     pollIntervalMs: 10,
@@ -116,6 +117,8 @@ describe("QmdSupervisor", () => {
       "/private/data/wiki",
       "--data-dir",
       "/private/data/qmd/worker",
+      "--cache-root",
+      "/private/cache/qmd-runtime",
       "--build-manifest-sha256",
       "b".repeat(64)
     ]);

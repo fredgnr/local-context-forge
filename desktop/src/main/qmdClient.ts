@@ -5,7 +5,7 @@ import http, {
   type RequestOptions
 } from "node:http";
 
-export const QMD_WORKER_PROTOCOL_VERSION = "1.0" as const;
+export const QMD_WORKER_PROTOCOL_VERSION = "1.1" as const;
 export const QMD_WORKER_VERSION = "2.5.3" as const;
 export const QMD_NODE_VERSION = "22.23.2" as const;
 export const MAX_QMD_COLLECTIONS = 256;
@@ -15,6 +15,12 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const COLLECTION_PATTERN = /^[a-z0-9][a-z0-9._-]{0,118}$/;
+const CUSTOM_EMBEDDING_MODEL_PATTERN =
+  /^hf:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9._+/-]+\.gguf$/;
+const CURATED_EMBEDDING_MODELS = new Set([
+  "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
+  "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"
+]);
 
 export interface QmdConnection {
   socketPath: string;
@@ -28,10 +34,27 @@ export interface QmdCollection {
   wiki_root: string;
 }
 
+export interface QmdModelProfile {
+  kind: "curated" | "custom";
+  model: string;
+}
+
+export type QmdEmbeddingDirective =
+  | { mode: "lexical"; profile: null }
+  | { mode: "rebuild"; profile: QmdModelProfile };
+
+export interface QmdEmbeddingState {
+  status: "ready" | "stale" | "failed";
+  profile: QmdModelProfile | null;
+  revision: number | null;
+  model_status: "not_requested" | "ready" | "unavailable";
+  error: "model_unavailable" | "embedding_failed" | null;
+}
+
 export interface QmdHealth {
   service: "local-context-forge";
   role: "qmd-worker";
-  protocol: { major: 1; minor: 0 };
+  protocol: { major: 1; minor: 1 };
   launch_id: string;
   transport: "uds";
   qmd_version: typeof QMD_WORKER_VERSION;
@@ -39,6 +62,8 @@ export interface QmdHealth {
   build_manifest_sha256: string;
   revision: number | null;
   collections: number;
+  embedding: QmdEmbeddingState;
+  activity: "idle" | "switching_model" | "preparing_model" | "embedding";
 }
 
 export interface QmdReconcileResponse {
@@ -51,6 +76,7 @@ export interface QmdReconcileResponse {
     unchanged: number;
     removed: number;
   };
+  embedding: QmdEmbeddingState;
 }
 
 export interface QmdSearchResult {
@@ -61,6 +87,7 @@ export interface QmdSearchResult {
 
 export interface QmdSearchResponse {
   revision: number;
+  mode: "lexical" | "hybrid";
   results: QmdSearchResult[];
 }
 
@@ -78,6 +105,9 @@ export class QmdClientError extends Error {
       | "invalid_response"
       | "stale_index"
       | "too_many_collections"
+      | "invalid_model_profile"
+      | "model_unavailable"
+      | "embedding_failed"
       | "qmd_unavailable"
       | "worker_error"
   ) {
@@ -137,6 +167,107 @@ function isRelativePath(value: unknown): value is string {
     );
 }
 
+export function isQmdModelProfile(
+  value: unknown
+): value is QmdModelProfile {
+  if (
+    !isPlainObject(value) ||
+    !exactKeys(value, ["kind", "model"]) ||
+    typeof value.model !== "string" ||
+    value.model.length === 0 ||
+    value.model.length > 500 ||
+    value.model !== value.model.trim() ||
+    /[\s\0\r\n]/u.test(value.model) ||
+    !CUSTOM_EMBEDDING_MODEL_PATTERN.test(value.model) ||
+    value.model.includes("//") ||
+    value.model
+      .slice("hf:".length)
+      .split("/")
+      .some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    return false;
+  }
+  const curated = CURATED_EMBEDDING_MODELS.has(value.model);
+  const lowered = value.model.toLowerCase();
+  return (
+    value.kind === (curated ? "curated" : "custom") &&
+    (lowered.includes("embeddinggemma") ||
+      lowered.includes("qwen3-embedding"))
+  );
+}
+
+export function sameQmdModelProfile(
+  left: QmdModelProfile | null | undefined,
+  right: QmdModelProfile | null | undefined
+): boolean {
+  return Boolean(
+    left &&
+      right &&
+      left.kind === right.kind &&
+      left.model === right.model
+  );
+}
+
+function isQmdEmbeddingState(value: unknown): value is QmdEmbeddingState {
+  if (
+    !isPlainObject(value) ||
+    !exactKeys(value, [
+      "status",
+      "profile",
+      "revision",
+      "model_status",
+      "error"
+    ]) ||
+    !["ready", "stale", "failed"].includes(String(value.status)) ||
+    !["not_requested", "ready", "unavailable"].includes(
+      String(value.model_status)
+    ) ||
+    (value.profile !== null && !isQmdModelProfile(value.profile)) ||
+    (value.revision !== null && !isRevision(value.revision)) ||
+    ![null, "model_unavailable", "embedding_failed"].includes(
+      value.error as null | string
+    )
+  ) {
+    return false;
+  }
+  if (
+    value.status === "ready" &&
+    (value.profile === null ||
+      value.revision === null ||
+      value.model_status !== "ready" ||
+      value.error !== null)
+  ) {
+    return false;
+  }
+  if (
+    value.status === "failed" &&
+    (value.profile === null ||
+      value.revision !== null ||
+      value.error === null)
+  ) {
+    return false;
+  }
+  return !(
+    value.status === "stale" &&
+    (value.revision !== null || value.error !== null)
+  );
+}
+
+function validateEmbeddingDirective(
+  value: QmdEmbeddingDirective
+): void {
+  if (
+    !isPlainObject(value) ||
+    !exactKeys(value, ["mode", "profile"]) ||
+    !(
+      (value.mode === "lexical" && value.profile === null) ||
+      (value.mode === "rebuild" && isQmdModelProfile(value.profile))
+    )
+  ) {
+    throw new QmdClientError("invalid-response", "invalid_response");
+  }
+}
+
 export function isQmdCollectionName(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -182,21 +313,27 @@ function validateHealth(
       "node_version",
       "build_manifest_sha256",
       "revision",
-      "collections"
+      "collections",
+      "embedding",
+      "activity"
     ]) ||
     value.service !== "local-context-forge" ||
     value.role !== "qmd-worker" ||
     !isPlainObject(value.protocol) ||
     !exactKeys(value.protocol, ["major", "minor"]) ||
     value.protocol.major !== 1 ||
-    value.protocol.minor !== 0 ||
+    value.protocol.minor !== 1 ||
     value.launch_id !== connection.launchId ||
     value.transport !== "uds" ||
     value.qmd_version !== QMD_WORKER_VERSION ||
     value.node_version !== QMD_NODE_VERSION ||
     value.build_manifest_sha256 !== connection.buildManifestSha256 ||
     (value.revision !== null && !isRevision(value.revision)) ||
-    !isCount(value.collections)
+    !isCount(value.collections) ||
+    !isQmdEmbeddingState(value.embedding) ||
+    !["idle", "switching_model", "preparing_model", "embedding"].includes(
+      String(value.activity)
+    )
   ) {
     throw new QmdClientError("invalid-response", "invalid_response");
   }
@@ -210,7 +347,13 @@ function validateReconcile(
 ): QmdReconcileResponse {
   if (
     !isPlainObject(value) ||
-    !exactKeys(value, ["indexed", "revision", "collections", "update"]) ||
+    !exactKeys(value, [
+      "indexed",
+      "revision",
+      "collections",
+      "update",
+      "embedding"
+    ]) ||
     value.indexed !== true ||
     value.revision !== expectedRevision ||
     value.collections !== expectedCollections ||
@@ -221,7 +364,8 @@ function validateReconcile(
       "unchanged",
       "removed"
     ]) ||
-    !Object.values(value.update).every(isCount)
+    !Object.values(value.update).every(isCount) ||
+    !isQmdEmbeddingState(value.embedding)
   ) {
     throw new QmdClientError("invalid-response", "invalid_response");
   }
@@ -231,12 +375,14 @@ function validateReconcile(
 function validateSearch(
   value: unknown,
   expectedRevision: number,
+  expectedMode: "lexical" | "hybrid",
   limit: number
 ): QmdSearchResponse {
   if (
     !isPlainObject(value) ||
-    !exactKeys(value, ["revision", "results"]) ||
+    !exactKeys(value, ["revision", "mode", "results"]) ||
     value.revision !== expectedRevision ||
+    value.mode !== expectedMode ||
     !Array.isArray(value.results) ||
     value.results.length > limit
   ) {
@@ -296,16 +442,18 @@ export class QmdClient {
   async reconcile(
     revision: number,
     collections: readonly QmdCollection[],
-    timeoutMs = 120_000
+    embedding: QmdEmbeddingDirective,
+    timeoutMs = embedding.mode === "rebuild" ? 35 * 60 * 1_000 : 120_000
   ): Promise<QmdReconcileResponse> {
     if (!isRevision(revision)) {
       throw new QmdClientError("invalid-response", "invalid_response");
     }
     validateQmdCollections(collections);
+    validateEmbeddingDirective(embedding);
     const response = await this.request(
       "POST",
       "/reconcile",
-      { revision, collections },
+      { revision, collections, embedding },
       timeoutMs
     );
     return validateReconcile(response, revision, collections.length);
@@ -317,8 +465,10 @@ export class QmdClient {
       collection: string;
       query: string;
       limit: number;
+      mode: "lexical" | "hybrid";
+      profile: QmdModelProfile | null;
     },
-    timeoutMs = 30_000
+    timeoutMs = input.mode === "hybrid" ? 10 * 60 * 1_000 : 30_000
   ): Promise<QmdSearchResponse> {
     if (
       !isRevision(input.revision) ||
@@ -329,12 +479,21 @@ export class QmdClient {
       Buffer.byteLength(input.query, "utf8") > 8 * 1024 ||
       !Number.isSafeInteger(input.limit) ||
       input.limit < 1 ||
-      input.limit > 100
+      input.limit > 100 ||
+      !(
+        (input.mode === "lexical" && input.profile === null) ||
+        (input.mode === "hybrid" && isQmdModelProfile(input.profile))
+      )
     ) {
       throw new QmdClientError("invalid-response", "invalid_response");
     }
     const response = await this.request("POST", "/search", input, timeoutMs);
-    return validateSearch(response, input.revision, input.limit);
+    return validateSearch(
+      response,
+      input.revision,
+      input.mode,
+      input.limit
+    );
   }
 
   private request(
@@ -463,6 +622,12 @@ export class QmdClient {
                     ? "stale_index"
                     : parsed.error === "too_many_collections"
                       ? "too_many_collections"
+                      : parsed.error === "invalid_model_profile"
+                        ? "invalid_model_profile"
+                        : parsed.error === "model_unavailable"
+                          ? "model_unavailable"
+                          : parsed.error === "embedding_failed"
+                            ? "embedding_failed"
                       : parsed.error === "qmd_unavailable"
                         ? "qmd_unavailable"
                         : "worker_error";

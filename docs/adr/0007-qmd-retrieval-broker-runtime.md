@@ -3,6 +3,7 @@
 - 状态：Accepted
 - 日期：2026-07-30
 - 关联需求：REQ-QMD-001、REQ-IPC-001、REQ-TRUST-001
+- 后续决策：第 8 条由 [ADR-0010](0010-qmd-local-embedding-profile.md) 部分取代
 
 ## 上下文
 
@@ -54,4 +55,3 @@ native SQLite addon，但 renderer 与 Python 均不应获得 QMD worker 的启�
   Node、qmd、Git、Python 或 ctags。
 - 离线 lexical 测试不得下载模型或产生模型文件；native `.node`、dylib/RPATH、SBOM、
   notices 和 staged manifest 通过审计。
-

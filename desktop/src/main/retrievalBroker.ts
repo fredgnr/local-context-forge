@@ -14,17 +14,22 @@ import {
   MAX_QMD_COLLECTIONS,
   QmdClientError,
   isQmdCollectionName,
+  isQmdModelProfile,
+  sameQmdModelProfile,
   validateQmdCollections,
   type QmdClient,
-  type QmdCollection
+  type QmdCollection,
+  type QmdEmbeddingDirective,
+  type QmdModelProfile
 } from "./qmdClient";
 import type { QmdSupervisor } from "./qmdSupervisor";
 
-export const RETRIEVAL_BROKER_PROTOCOL_VERSION = "1.0" as const;
+export const RETRIEVAL_BROKER_PROTOCOL_VERSION = "1.1" as const;
 export const MAX_RETRIEVAL_REQUEST_BYTES = 256 * 1024;
 export const MAX_RETRIEVAL_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_UDS_PATH_BYTES = 100;
 const BROKER_SOCKET_NAME = "broker.sock";
+const MAX_RETRIEVAL_DEADLINE_MS = 35 * 60 * 1_000;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -47,6 +52,9 @@ interface BrokerRequest {
   collection?: string;
   query?: string;
   limit?: number;
+  embedding?: QmdEmbeddingDirective;
+  mode?: "lexical" | "hybrid";
+  profile?: QmdModelProfile | null;
 }
 
 class BrokerError extends Error {
@@ -59,7 +67,10 @@ class BrokerError extends Error {
       | "invalid_request"
       | "request_too_large"
       | "too_many_collections"
+      | "invalid_model_profile"
       | "stale_index"
+      | "model_unavailable"
+      | "embedding_failed"
       | "qmd_unavailable"
       | "invalid_response"
       | "broker_error"
@@ -123,10 +134,11 @@ function isRelativeWikiRoot(value: unknown): value is string {
 function parseReconcile(value: unknown): {
   revision: number;
   collections: QmdCollection[];
+  embedding: QmdEmbeddingDirective;
 } {
   if (
     !isPlainObject(value) ||
-    !hasExactKeys(value, ["revision", "collections"]) ||
+    !hasExactKeys(value, ["revision", "collections", "embedding"]) ||
     !isRevision(value.revision) ||
     !Array.isArray(value.collections)
   ) {
@@ -150,7 +162,23 @@ function parseReconcile(value: unknown): {
     names.add(item.name);
     collections.push({ name: item.name, wiki_root: item.wiki_root });
   }
-  return { revision: value.revision, collections };
+  if (
+    !isPlainObject(value.embedding) ||
+    !hasExactKeys(value.embedding, ["mode", "profile"]) ||
+    !(
+      (value.embedding.mode === "lexical" &&
+        value.embedding.profile === null) ||
+      (value.embedding.mode === "rebuild" &&
+        isQmdModelProfile(value.embedding.profile))
+    )
+  ) {
+    throw new BrokerError(422, "invalid_model_profile");
+  }
+  return {
+    revision: value.revision,
+    collections,
+    embedding: value.embedding as unknown as QmdEmbeddingDirective
+  };
 }
 
 function parseSearch(value: unknown): {
@@ -158,10 +186,19 @@ function parseSearch(value: unknown): {
   collection: string;
   query: string;
   limit: number;
+  mode: "lexical" | "hybrid";
+  profile: QmdModelProfile | null;
 } {
   if (
     !isPlainObject(value) ||
-    !hasExactKeys(value, ["revision", "collection", "query", "limit"]) ||
+    !hasExactKeys(value, [
+      "revision",
+      "collection",
+      "query",
+      "limit",
+      "mode",
+      "profile"
+    ]) ||
     !isRevision(value.revision) ||
     !isQmdCollectionName(value.collection) ||
     typeof value.query !== "string" ||
@@ -176,11 +213,21 @@ function parseSearch(value: unknown): {
   ) {
     throw new BrokerError(422, "invalid_request");
   }
+  if (
+    !(
+      (value.mode === "lexical" && value.profile === null) ||
+      (value.mode === "hybrid" && isQmdModelProfile(value.profile))
+    )
+  ) {
+    throw new BrokerError(422, "invalid_model_profile");
+  }
   return {
     revision: value.revision,
-      collection: value.collection,
-      query: value.query,
-      limit: value.limit
+    collection: value.collection,
+    query: value.query,
+    limit: value.limit,
+    mode: value.mode,
+    profile: value.profile
   };
 }
 
@@ -236,7 +283,7 @@ function validateHeaders(
   if (
     !Number.isSafeInteger(deadline) ||
     deadline <= now ||
-    deadline - now > 120_000
+    deadline - now > MAX_RETRIEVAL_DEADLINE_MS
   ) {
     throw new BrokerError(deadline <= now ? 408 : 400, "invalid_request");
   }
@@ -347,6 +394,15 @@ function translateQmdError(error: unknown): BrokerError {
   if (error.code === "too_many_collections") {
     return new BrokerError(422, "too_many_collections");
   }
+  if (error.code === "invalid_model_profile") {
+    return new BrokerError(422, "invalid_model_profile");
+  }
+  if (error.code === "model_unavailable") {
+    return new BrokerError(503, "model_unavailable");
+  }
+  if (error.code === "embedding_failed") {
+    return new BrokerError(503, "embedding_failed");
+  }
   if (error.kind === "invalid-response") {
     return new BrokerError(502, "invalid_response");
   }
@@ -360,6 +416,8 @@ interface RetrievalBrokerDependencies {
 export class RetrievalBroker implements RetrievalBrokerSessionFactory {
   private revision: number | undefined;
   private allowlist = new Set<string>();
+  private embeddingProfile: QmdModelProfile | null = null;
+  private embeddingRevision: number | null = null;
   private readonly randomBytes: (size: number) => Buffer;
 
   constructor(
@@ -436,7 +494,7 @@ export class RetrievalBroker implements RetrievalBrokerSessionFactory {
       {
         keepAlive: false,
         maxHeaderSize: 16 * 1024,
-        requestTimeout: 120_000
+        requestTimeout: MAX_RETRIEVAL_DEADLINE_MS
       },
       async (request, response) => {
         try {
@@ -486,6 +544,7 @@ export class RetrievalBroker implements RetrievalBrokerSessionFactory {
   private async reconcile(input: {
     revision: number;
     collections: QmdCollection[];
+    embedding: QmdEmbeddingDirective;
   }): Promise<Record<string, unknown>> {
     validateQmdCollections(input.collections);
     for (const collection of input.collections) {
@@ -494,14 +553,39 @@ export class RetrievalBroker implements RetrievalBrokerSessionFactory {
     const client = await this.client();
     let response;
     try {
-      response = await client.reconcile(input.revision, input.collections);
+      response = await client.reconcile(
+        input.revision,
+        input.collections,
+        input.embedding
+      );
     } catch (error) {
-      // Reconcile is intentionally sent once. A transport failure is surfaced
-      // to Python and never replayed across a worker restart.
-      throw translateQmdError(error);
+      const rejected = translateQmdError(error);
+      // Reconcile is intentionally sent once and never replayed. Invalidate
+      // the broker gate before replacing an unavailable worker so concurrent
+      // searches fail closed and the next explicit reconcile gets a fresh
+      // store.
+      this.revision = undefined;
+      this.allowlist.clear();
+      this.embeddingProfile = null;
+      this.embeddingRevision = null;
+      if (rejected.code === "qmd_unavailable") {
+        await this.supervisor.restart().catch(() => undefined);
+      }
+      throw rejected;
     }
     this.revision = response.revision;
     this.allowlist = new Set(input.collections.map((item) => item.name));
+    if (
+      response.embedding.status === "ready" &&
+      response.embedding.revision === response.revision &&
+      response.embedding.profile
+    ) {
+      this.embeddingProfile = response.embedding.profile;
+      this.embeddingRevision = response.embedding.revision;
+    } else {
+      this.embeddingProfile = null;
+      this.embeddingRevision = null;
+    }
     return response as unknown as Record<string, unknown>;
   }
 
@@ -510,11 +594,20 @@ export class RetrievalBroker implements RetrievalBrokerSessionFactory {
     collection: string;
     query: string;
     limit: number;
+    mode: "lexical" | "hybrid";
+    profile: QmdModelProfile | null;
   }): Promise<Record<string, unknown>> {
     if (
       this.revision === undefined ||
       input.revision !== this.revision ||
       !this.allowlist.has(input.collection)
+    ) {
+      throw new BrokerError(409, "stale_index");
+    }
+    if (
+      input.mode === "hybrid" &&
+      (this.embeddingRevision !== input.revision ||
+        !sameQmdModelProfile(this.embeddingProfile, input.profile))
     ) {
       throw new BrokerError(409, "stale_index");
     }

@@ -105,6 +105,7 @@ export interface QmdSupervisorOptions {
   runtime: QmdRuntimeConfiguration;
   appDataDir: string;
   dataDir: string;
+  cacheRoot: string;
   wikiRoot: string;
   tempRoot?: string;
   startupTimeoutMs?: number;
@@ -126,7 +127,8 @@ export interface QmdSupervisorDependencies {
   prepareDataPaths?: (
     appDataDir: string,
     dataDir: string,
-    wikiRoot: string
+    wikiRoot: string,
+    cacheRoot: string
   ) => Promise<void>;
   createClient?: (connection: QmdConnection) => QmdClient;
   wait?: (milliseconds: number) => Promise<void>;
@@ -251,12 +253,15 @@ export async function validateQmdRuntime(
 export async function prepareQmdDataPaths(
   appDataDir: string,
   dataDir: string,
-  wikiRoot: string
+  wikiRoot: string,
+  cacheRoot: string
 ): Promise<void> {
   if (
     !path.isAbsolute(appDataDir) ||
     !path.isAbsolute(dataDir) ||
-    !path.isAbsolute(wikiRoot)
+    !path.isAbsolute(wikiRoot) ||
+    !path.isAbsolute(cacheRoot) ||
+    path.normalize(cacheRoot) !== cacheRoot
   ) {
     throw new QmdSupervisorFailure("configuration");
   }
@@ -287,6 +292,11 @@ export async function prepareQmdDataPaths(
       );
       await verifyPrivateDirectory(current);
     }
+  }
+  await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+  await verifyPrivateDirectory(cacheRoot);
+  if ((await realpath(cacheRoot)) !== cacheRoot) {
+    throw new QmdSupervisorFailure("configuration");
   }
 }
 
@@ -529,7 +539,8 @@ export class QmdSupervisor {
       await this.dependencies.prepareDataPaths(
         this.options.appDataDir,
         this.options.dataDir,
-        this.options.wikiRoot
+        this.options.wikiRoot,
+        this.options.cacheRoot
       );
       const launchId = this.dependencies.randomUUID();
       if (!UUID_PATTERN.test(launchId)) {
@@ -561,6 +572,8 @@ export class QmdSupervisor {
         this.options.wikiRoot,
         "--data-dir",
         this.options.dataDir,
+        "--cache-root",
+        this.options.cacheRoot,
         "--build-manifest-sha256",
         this.options.runtime.buildManifestSha256
       ] as const;

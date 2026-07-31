@@ -23,14 +23,29 @@ interface BrokerInternals {
   reconcile(input: {
     revision: number;
     collections: Array<{ name: string; wiki_root: string }>;
+    embedding:
+      | { mode: "lexical"; profile: null }
+      | {
+          mode: "rebuild";
+          profile: typeof profile;
+        };
   }): Promise<Record<string, unknown>>;
   search(input: {
     revision: number;
     collection: string;
     query: string;
     limit: number;
+    mode: "lexical" | "hybrid";
+    profile: typeof profile | null;
   }): Promise<Record<string, unknown>>;
 }
+
+const profile = {
+  kind: "curated" as const,
+  model:
+    "hf:ggml-org/embeddinggemma-300M-GGUF/" +
+    "embeddinggemma-300M-Q8_0.gguf"
+};
 
 async function wikiFixture() {
   const temporaryRoot = await mkdtemp(
@@ -44,12 +59,30 @@ async function wikiFixture() {
   return { root, temporaryRoot, wiki };
 }
 
-function reconcileResponse(revision: number): QmdReconcileResponse {
+function reconcileResponse(
+  revision: number,
+  ready = false
+): QmdReconcileResponse {
   return {
     indexed: true,
     revision,
     collections: 1,
-    update: { indexed: 1, updated: 0, unchanged: 0, removed: 0 }
+    update: { indexed: 1, updated: 0, unchanged: 0, removed: 0 },
+    embedding: ready
+      ? {
+          status: "ready",
+          profile,
+          revision,
+          model_status: "ready",
+          error: null
+        }
+      : {
+          status: "stale",
+          profile: null,
+          revision: null,
+          model_status: "not_requested",
+          error: null
+        }
   };
 }
 
@@ -65,6 +98,7 @@ describe("RetrievalBroker", () => {
       };
       const secondResponse: QmdSearchResponse = {
         revision: 7,
+        mode: "lexical",
         results: []
       };
       const second = {
@@ -90,7 +124,8 @@ describe("RetrievalBroker", () => {
             name: "lcf-widgets-v1-0123456789ab",
             wiki_root: "widgets/versions/v1"
           }
-        ]
+        ],
+        embedding: { mode: "lexical", profile: null }
       });
 
       await expect(
@@ -98,7 +133,9 @@ describe("RetrievalBroker", () => {
           revision: 7,
           collection: "lcf-widgets-v1-0123456789ab",
           query: "widgets",
-          limit: 5
+          limit: 5,
+          mode: "lexical",
+          profile: null
         })
       ).resolves.toEqual(secondResponse);
       expect(first.search).toHaveBeenCalledTimes(1);
@@ -109,18 +146,25 @@ describe("RetrievalBroker", () => {
     }
   });
 
-  it("never restarts or replays reconcile after a transport failure", async () => {
+  it("replaces an unavailable worker without replaying reconcile", async () => {
     const fixture = await wikiFixture();
     try {
-      const client = {
+      const first = {
         reconcile: vi.fn(async () => {
-          throw new QmdClientError("transport", "transport");
+          throw new QmdClientError("remote", "qmd_unavailable");
         })
       };
+      const second = {
+        reconcile: vi.fn(async () => reconcileResponse(7))
+      };
+      let client: unknown = first;
       const supervisor = {
-        getClient: vi.fn(() => client as unknown as QmdClient),
+        getClient: vi.fn(() => client as QmdClient),
         start: vi.fn(),
-        restart: vi.fn()
+        restart: vi.fn(async () => {
+          client = second;
+          return { state: "ready" };
+        })
       };
       const broker = new RetrievalBroker(
         supervisor as never,
@@ -135,11 +179,91 @@ describe("RetrievalBroker", () => {
               name: "lcf-widgets-v1-0123456789ab",
               wiki_root: "widgets/versions/v1"
             }
-          ]
+          ],
+          embedding: { mode: "lexical", profile: null }
         })
       ).rejects.toThrow(/qmd_unavailable/);
-      expect(client.reconcile).toHaveBeenCalledTimes(1);
-      expect(supervisor.restart).not.toHaveBeenCalled();
+      expect(first.reconcile).toHaveBeenCalledTimes(1);
+      expect(second.reconcile).not.toHaveBeenCalled();
+      expect(supervisor.restart).toHaveBeenCalledTimes(1);
+
+      await expect(
+        broker.reconcile({
+          revision: 7,
+          collections: [
+            {
+              name: "lcf-widgets-v1-0123456789ab",
+              wiki_root: "widgets/versions/v1"
+            }
+          ],
+          embedding: { mode: "lexical", profile: null }
+        })
+      ).resolves.toMatchObject({ indexed: true, revision: 7 });
+      expect(first.reconcile).toHaveBeenCalledTimes(1);
+      expect(second.reconcile).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(fixture.temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("allows hybrid search only for the atomically committed profile and revision", async () => {
+    const fixture = await wikiFixture();
+    try {
+      const response: QmdSearchResponse = {
+        revision: 13,
+        mode: "hybrid",
+        results: []
+      };
+      const client = {
+        reconcile: vi.fn(async () => reconcileResponse(13, true)),
+        search: vi.fn(async () => response)
+      };
+      const supervisor = {
+        getClient: vi.fn(() => client as unknown as QmdClient),
+        start: vi.fn(),
+        restart: vi.fn()
+      };
+      const broker = new RetrievalBroker(
+        supervisor as never,
+        fixture.wiki
+      ) as unknown as BrokerInternals;
+      await broker.reconcile({
+        revision: 13,
+        collections: [
+          {
+            name: "lcf-widgets-v1-0123456789ab",
+            wiki_root: "widgets/versions/v1"
+          }
+        ],
+        embedding: { mode: "rebuild", profile }
+      });
+
+      await expect(
+        broker.search({
+          revision: 13,
+          collection: "lcf-widgets-v1-0123456789ab",
+          query: "meaning",
+          limit: 5,
+          mode: "hybrid",
+          profile
+        })
+      ).resolves.toEqual(response);
+      await expect(
+        broker.search({
+          revision: 13,
+          collection: "lcf-widgets-v1-0123456789ab",
+          query: "meaning",
+          limit: 5,
+          mode: "hybrid",
+          profile: {
+            kind: "curated",
+            model:
+              "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/" +
+              "Qwen3-Embedding-0.6B-Q8_0.gguf"
+          }
+        })
+      ).rejects.toThrow(/stale_index/);
+      expect(client.search).toHaveBeenCalledTimes(1);
     } finally {
       await rm(fixture.temporaryRoot, { recursive: true, force: true });
     }

@@ -3323,7 +3323,7 @@ class AppService:
         try:
             self._raise_if_cancelled(job_id)
             with self.db.transaction() as connection:
-                connection.execute(
+                claim = connection.execute(
                     """
                     UPDATE embedding_state
                     SET status = 'rebuilding', error = NULL,
@@ -3333,6 +3333,8 @@ class AppService:
                     """,
                     (job_id, now, model, target_corpus_revision),
                 )
+                if claim.rowcount != 1:
+                    raise RuntimeError("embedding_claim_stale")
             self._update_job(
                 job_id,
                 stage="embedding",
@@ -3386,6 +3388,8 @@ class AppService:
                         target_corpus_revision,
                     ),
                 )
+                if activation.rowcount != 1:
+                    raise RuntimeError("embedding_activation_stale")
                 connection.execute(
                     """
                     UPDATE jobs
@@ -3400,7 +3404,7 @@ class AppService:
                                 **result,
                                 "global_embedding": True,
                                 "model": model,
-                                "activated": activation.rowcount == 1,
+                                "activated": True,
                                 "corpus_revision": target_corpus_revision,
                             },
                             ensure_ascii=False,
@@ -3511,9 +3515,15 @@ class AppService:
             all_collections, corpus_revision = (
                 self._published_retrieval_collections()
             )
+            desktop_model = model
+            if embed and desktop_model is None:
+                desktop_model = str(
+                    self.embedding_status().get("desired_model") or ""
+                )
             registrations, refresh = self.retriever.rebuild(
                 all_collections,
-                embed=False,
+                embed=embed,
+                model=desktop_model if embed else None,
                 revision=corpus_revision,
             )
             return {
@@ -3737,7 +3747,12 @@ class AppService:
                         library["slug"], resolved_version
                     ),
                     limit=limit,
-                    hybrid=False,
+                    model=(
+                        str(embedding["active_model"])
+                        if embedding["hybrid_ready"]
+                        else None
+                    ),
+                    hybrid=bool(embedding["hybrid_ready"]),
                     revision=int(embedding["corpus_revision"]),
                 )
             elif embedding["hybrid_ready"]:

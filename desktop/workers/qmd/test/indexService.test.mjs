@@ -9,8 +9,23 @@ import {
   resolveCollectionRoot
 } from "../src/indexService.mjs";
 
+const PROFILE = {
+  kind: "curated",
+  model:
+    "hf:ggml-org/embeddinggemma-300M-GGUF/" +
+    "embeddinggemma-300M-Q8_0.gguf"
+};
+const SECOND_PROFILE = {
+  kind: "curated",
+  model:
+    "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/" +
+    "Qwen3-Embedding-0.6B-Q8_0.gguf"
+};
+const LEXICAL = { mode: "lexical", profile: null };
+
 class MemoryStateStore {
   value;
+  saves = [];
 
   async load() {
     return this.value;
@@ -18,13 +33,23 @@ class MemoryStateStore {
 
   async save(value) {
     this.value = structuredClone(value);
+    this.saves.push(structuredClone(value));
   }
 }
 
 class FakeStore {
   collections = new Map();
   calls = [];
-  results = [];
+  lexicalResults = [];
+  hybridResults = [];
+  embedResult = {
+    docsProcessed: 1,
+    chunksEmbedded: 1,
+    errors: 0,
+    durationMs: 5
+  };
+  embedError = null;
+  health = { needsEmbedding: 0, totalDocs: 1, daysStale: 0 };
 
   async listCollections() {
     return [...this.collections.entries()].map(([name, value]) => ({
@@ -56,12 +81,39 @@ class FakeStore {
     };
   }
 
-  async searchLex(query, options) {
-    this.calls.push(["search", query, options.collection, options.limit]);
-    return this.results;
+  async embed(options) {
+    this.calls.push(["embed", options]);
+    if (this.embedError) {
+      throw this.embedError;
+    }
+    options.onProgress?.({
+      chunksEmbedded: 1,
+      totalChunks: 1,
+      bytesProcessed: 10,
+      totalBytes: 10,
+      errors: 0
+    });
+    return this.embedResult;
   }
 
-  async close() {}
+  async getIndexHealth() {
+    this.calls.push(["health"]);
+    return this.health;
+  }
+
+  async searchLex(query, options) {
+    this.calls.push(["searchLex", query, options]);
+    return this.lexicalResults;
+  }
+
+  async search(options) {
+    this.calls.push(["searchHybrid", options]);
+    return this.hybridResults;
+  }
+
+  async close() {
+    this.calls.push(["close"]);
+  }
 }
 
 async function fixture() {
@@ -77,13 +129,16 @@ async function fixture() {
   const stateStore = new MemoryStateStore();
   const service = new QmdIndexService({
     store,
+    openStore: async () => store,
     wikiRoot: wiki,
-    stateStore
+    modelCacheDir: path.join(root, "cache", "qmd", "models"),
+    stateStore,
+    inspectModelCache: async () => true
   });
   return { root, wiki, store, stateStore, service };
 }
 
-test("reconcile commits the complete allowlist and revision before search", async (t) => {
+test("reconcile commits the complete allowlist and revision before lexical search", async (t) => {
   const current = await fixture();
   t.after(() => rm(current.root, { recursive: true, force: true }));
   current.store.collections.set("removed", {
@@ -98,7 +153,8 @@ test("reconcile commits the complete allowlist and revision before search", asyn
         name: "lcf-alpha-v1-0123456789ab",
         wiki_root: "alpha/versions/v1"
       }
-    ]
+    ],
+    embedding: LEXICAL
   });
   assert.equal(result.indexed, true);
   assert.equal(result.revision, 7);
@@ -109,14 +165,21 @@ test("reconcile commits the complete allowlist and revision before search", asyn
         name: "lcf-alpha-v1-0123456789ab",
         wiki_root: "alpha/versions/v1"
       }
-    ]
+    ],
+    embedding: {
+      status: "stale",
+      profile: null,
+      revision: null,
+      model_status: "not_requested",
+      error: null
+    }
   });
   assert.deepEqual(
     current.store.calls.map((call) => call[0]),
     ["add", "remove", "update"]
   );
 
-  current.store.results = [
+  current.store.lexicalResults = [
     {
       displayPath: "qmd://lcf-alpha-v1-0123456789ab/api/widgets.md",
       collectionName: "lcf-alpha-v1-0123456789ab",
@@ -129,34 +192,270 @@ test("reconcile commits the complete allowlist and revision before search", asyn
       revision: 7,
       collection: "lcf-alpha-v1-0123456789ab",
       query: "widgets",
-      limit: 5
+      limit: 5,
+      mode: "lexical",
+      profile: null
     }),
     {
       revision: 7,
+      mode: "lexical",
       results: [{ path: "api/widgets.md", score: 2.5, title: "Widgets" }]
     }
   );
 });
 
-test("oversize reconcile fails before mutating the fake store", async (t) => {
+test("model switch closes and reopens a profile-configured store before forced embed and hybrid query", async (t) => {
   const current = await fixture();
   t.after(() => rm(current.root, { recursive: true, force: true }));
-  const collections = Array.from({ length: MAX_COLLECTIONS + 1 }, (_, index) => ({
-    name: `collection-${index}`,
-    wiki_root: "alpha/versions/v1"
-  }));
+  const modelStore = new FakeStore();
+  const opened = [];
+  const service = new QmdIndexService({
+    store: current.store,
+    openStore: async (profile, collections) => {
+      opened.push({
+        profile: structuredClone(profile),
+        collections: collections.map((item) => item.name)
+      });
+      return modelStore;
+    },
+    wikiRoot: current.wiki,
+    modelCacheDir: path.join(current.root, "cache", "qmd", "models"),
+    stateStore: current.stateStore,
+    inspectModelCache: async (_cache, profile) =>
+      profile.model === PROFILE.model
+  });
+
+  const rebuilt = await service.reconcile({
+    revision: 11,
+    collections: [
+      {
+        name: "alpha",
+        wiki_root: "alpha/versions/v1"
+      }
+    ],
+    embedding: { mode: "rebuild", profile: PROFILE }
+  });
+
+  assert.deepEqual(opened, [
+    { profile: PROFILE, collections: ["alpha"] }
+  ]);
+  const embedOptions = modelStore.calls.find(
+    (call) => call[0] === "embed"
+  )[1];
+  assert.equal(typeof embedOptions.onProgress, "function");
+  assert.deepEqual(
+    {
+      force: embedOptions.force,
+      model: embedOptions.model,
+      chunkStrategy: embedOptions.chunkStrategy,
+      maxDocsPerBatch: embedOptions.maxDocsPerBatch,
+      maxBatchBytes: embedOptions.maxBatchBytes
+    },
+    {
+      force: true,
+      model: PROFILE.model,
+      chunkStrategy: "auto",
+      maxDocsPerBatch: 50,
+      maxBatchBytes: 64 * 1024 * 1024
+    }
+  );
+  assert.equal(rebuilt.embedding.status, "ready");
+  assert.equal(rebuilt.embedding.revision, 11);
+  assert.deepEqual(rebuilt.embedding.profile, PROFILE);
+
+  modelStore.hybridResults = [
+    {
+      file: "qmd://alpha/api/semantic.md",
+      title: "Semantic",
+      score: 0.9
+    }
+  ];
+  const result = await service.search({
+    revision: 11,
+    collection: "alpha",
+    query: "meaning",
+    limit: 5,
+    mode: "hybrid",
+    profile: PROFILE
+  });
+  assert.equal(result.mode, "hybrid");
+  assert.deepEqual(result.results.map((item) => item.path), [
+    "api/semantic.md"
+  ]);
+  const hybridCall = modelStore.calls.find(
+    (call) => call[0] === "searchHybrid"
+  );
+  assert.deepEqual(hybridCall[1].queries, [
+    { type: "lex", query: "meaning" },
+    { type: "vec", query: "meaning" }
+  ]);
+  assert.equal(hybridCall[1].rerank, false);
+  assert.equal(
+    current.store.calls.some((call) => call[0] === "searchHybrid"),
+    false
+  );
+});
+
+test("switch failure persists stale then failed and keeps the reopened lexical store usable", async (t) => {
+  const current = await fixture();
+  t.after(() => rm(current.root, { recursive: true, force: true }));
+  const lexicalStore = new FakeStore();
+  let opens = 0;
+  const service = new QmdIndexService({
+    store: current.store,
+    openStore: async (profile) => {
+      opens += 1;
+      if (profile) {
+        throw new Error("/private/cache/model failed");
+      }
+      return lexicalStore;
+    },
+    wikiRoot: current.wiki,
+    modelCacheDir: path.join(current.root, "cache", "qmd", "models"),
+    stateStore: current.stateStore,
+    inspectModelCache: async () => false
+  });
+
+  const rebuilt = await service.reconcile({
+    revision: 12,
+    collections: [
+      {
+        name: "alpha",
+        wiki_root: "alpha/versions/v1"
+      }
+    ],
+    embedding: { mode: "rebuild", profile: SECOND_PROFILE }
+  });
+
+  assert.equal(opens, 2);
+  assert.equal(rebuilt.indexed, true);
+  assert.deepEqual(rebuilt.embedding, {
+    status: "failed",
+    profile: SECOND_PROFILE,
+    revision: null,
+    model_status: "unavailable",
+    error: "model_unavailable"
+  });
+  assert.equal(JSON.stringify(rebuilt).includes("/private"), false);
+  assert.equal(
+    lexicalStore.calls.some((call) => call[0] === "embed"),
+    false
+  );
+  assert.equal(current.stateStore.saves[0].embedding.status, "stale");
+  assert.equal(current.stateStore.saves.at(-1).embedding.status, "failed");
+
+  await assert.rejects(
+    service.search({
+      revision: 12,
+      collection: "alpha",
+      query: "meaning",
+      limit: 5,
+      mode: "hybrid",
+      profile: SECOND_PROFILE
+    }),
+    (error) =>
+      error instanceof ContractError && error.code === "stale_index"
+  );
+  assert.equal(
+    (
+      await service.search({
+        revision: 12,
+        collection: "alpha",
+        query: "meaning",
+        limit: 5,
+        mode: "lexical",
+        profile: null
+      })
+    ).mode,
+    "lexical"
+  );
+});
+
+test("disk-full or partial-cache embedding errors never leak paths or restore ready state", async (t) => {
+  const current = await fixture();
+  t.after(() => rm(current.root, { recursive: true, force: true }));
+  const modelStore = new FakeStore();
+  modelStore.embedError = new Error(
+    "ENOSPC while writing /private/cache/qmd/models/model.partial"
+  );
+  const service = new QmdIndexService({
+    store: current.store,
+    openStore: async () => modelStore,
+    wikiRoot: current.wiki,
+    modelCacheDir: path.join(current.root, "cache", "qmd", "models"),
+    stateStore: current.stateStore,
+    // A valid cached GGUF may exist even when vector DB writes run out of
+    // space. It still cannot make the partial vector rebuild ready.
+    inspectModelCache: async () => true
+  });
+
+  const rebuilt = await service.reconcile({
+    revision: 18,
+    collections: [
+      {
+        name: "alpha",
+        wiki_root: "alpha/versions/v1"
+      }
+    ],
+    embedding: { mode: "rebuild", profile: PROFILE }
+  });
+
+  assert.equal(current.stateStore.saves[0].embedding.status, "stale");
+  assert.deepEqual(rebuilt.embedding, {
+    status: "failed",
+    profile: PROFILE,
+    revision: null,
+    model_status: "ready",
+    error: "embedding_failed"
+  });
+  assert.equal(JSON.stringify(rebuilt).includes("/private/cache"), false);
+  assert.equal(current.stateStore.value.embedding.status, "failed");
+});
+
+test("oversize reconcile and unsafe model profiles fail before mutating QMD", async (t) => {
+  const current = await fixture();
+  t.after(() => rm(current.root, { recursive: true, force: true }));
+  const collections = Array.from(
+    { length: MAX_COLLECTIONS + 1 },
+    (_, index) => ({
+      name: `collection-${index}`,
+      wiki_root: "alpha/versions/v1"
+    })
+  );
 
   assert.throws(
-    () => current.service.reconcile({ revision: 1, collections }),
+    () =>
+      current.service.reconcile({
+        revision: 1,
+        collections,
+        embedding: LEXICAL
+      }),
     (error) =>
       error instanceof ContractError &&
       error.code === "too_many_collections"
+  );
+  assert.throws(
+    () =>
+      current.service.reconcile({
+        revision: 1,
+        collections: [],
+        embedding: {
+          mode: "rebuild",
+          profile: {
+            kind: "custom",
+            model: "https://example.invalid/model.gguf"
+          }
+        }
+      }),
+    (error) =>
+      error instanceof ContractError &&
+      error.code === "invalid_model_profile"
   );
   assert.deepEqual(current.store.calls, []);
   assert.equal(current.stateStore.value, undefined);
 });
 
-test("stale revisions and removed collections never reach QMD search", async (t) => {
+test("stale revisions, removed collections, and mismatched profiles never reach hybrid search", async (t) => {
   const current = await fixture();
   t.after(() => rm(current.root, { recursive: true, force: true }));
   await current.service.reconcile({
@@ -166,30 +465,43 @@ test("stale revisions and removed collections never reach QMD search", async (t)
         name: "alpha",
         wiki_root: "alpha/versions/v1"
       }
-    ]
+    ],
+    embedding: LEXICAL
   });
   current.store.calls = [];
 
-  await assert.rejects(
-    current.service.search({
+  for (const input of [
+    {
       revision: 2,
       collection: "alpha",
       query: "widgets",
-      limit: 5
-    }),
-    (error) =>
-      error instanceof ContractError && error.code === "stale_index"
-  );
-  await assert.rejects(
-    current.service.search({
+      limit: 5,
+      mode: "lexical",
+      profile: null
+    },
+    {
       revision: 1,
       collection: "beta",
       query: "widgets",
-      limit: 5
-    }),
-    (error) =>
-      error instanceof ContractError && error.code === "stale_index"
-  );
+      limit: 5,
+      mode: "lexical",
+      profile: null
+    },
+    {
+      revision: 1,
+      collection: "alpha",
+      query: "widgets",
+      limit: 5,
+      mode: "hybrid",
+      profile: PROFILE
+    }
+  ]) {
+    await assert.rejects(
+      current.service.search(input),
+      (error) =>
+        error instanceof ContractError && error.code === "stale_index"
+    );
+  }
   assert.deepEqual(current.store.calls, []);
 });
 
@@ -210,31 +522,35 @@ test("wiki roots reject traversal and every symlink component", async (t) => {
   );
 });
 
-test("a persisted committed allowlist restores after a worker restart", async (t) => {
+test("a persisted lexical allowlist restores after a worker restart", async (t) => {
   const current = await fixture();
   t.after(() => rm(current.root, { recursive: true, force: true }));
   const name = "lcf-alpha-v1-0123456789ab";
   await current.service.reconcile({
     revision: 9,
-    collections: [
-      { name, wiki_root: "alpha/versions/v1" }
-    ]
+    collections: [{ name, wiki_root: "alpha/versions/v1" }],
+    embedding: LEXICAL
   });
 
   const restarted = new QmdIndexService({
     store: current.store,
+    openStore: async () => current.store,
     wikiRoot: current.wiki,
-    stateStore: current.stateStore
+    modelCacheDir: path.join(current.root, "cache", "qmd", "models"),
+    stateStore: current.stateStore,
+    inspectModelCache: async () => true
   });
   await restarted.initialize();
-  current.store.results = [];
+  current.store.lexicalResults = [];
   assert.deepEqual(
     await restarted.search({
       revision: 9,
       collection: name,
       query: "widgets",
-      limit: 5
+      limit: 5,
+      mode: "lexical",
+      profile: null
     }),
-    { revision: 9, results: [] }
+    { revision: 9, mode: "lexical", results: [] }
   );
 });

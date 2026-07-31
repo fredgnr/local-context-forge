@@ -28,6 +28,7 @@ ADR 记录跨组件、难以逆转或具有安全/数据/发行影响的决策�
 | [ADR-0007](0007-qmd-retrieval-broker-runtime.md) | Accepted | QMD worker、Main broker 与 stale-index 确定性降级 |
 | [ADR-0008](0008-mcp-companion-main-bridge.md) | Accepted | 内置 stdio MCP companion 与 Main 只读私有桥 |
 | [ADR-0009](0009-bundled-runtime-provenance.md) | Accepted | Python/Node bundled runtime 的来源、清单和打包审计 |
+| [ADR-0010](0010-qmd-local-embedding-profile.md) | Accepted | QMD 本地 embedding profile、显式重建与 hybrid 降级 |
 
 ## 新 ADR 编号
 

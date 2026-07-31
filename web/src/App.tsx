@@ -28,6 +28,13 @@ type View = "overview" | "repositories" | "jobs" | "review" | "query" | "setting
 type Notice = { tone: "success" | "error" | "info"; message: string };
 
 const DEFAULT_SETTINGS: AppSettings = {
+  providerPolicy: "codex_only",
+  cursorFallbackConsent: {
+    subject: "cursor_cli_fallback",
+    version: 1,
+    granted: false,
+    grantedAt: null
+  },
   generator: "codex",
   fallbackGenerator: "cursor",
   embeddingModel: "embeddinggemma-300m-q8",
@@ -1204,6 +1211,7 @@ export function SettingsWorkspace({
   const [rebuildBusy, setRebuildBusy] = useState("");
   const saveInFlight = useRef(false);
   const validationSequence = useRef(0);
+  const desktopRuntime = isDesktopRuntime();
 
   useEffect(() => {
     let active = true;
@@ -1290,21 +1298,60 @@ export function SettingsWorkspace({
         <>
           <section className="panel settings-section">
             <header className="panel__header"><div><span className="step-badge">1</span><h2>知识生成工具</h2><p>采集代码后，用哪个工具生成待审核知识。</p></div></header>
-            <div className="choice-grid">
-              {[
-                { id: "codex", name: "Codex CLI", text: "默认。适合已配置 Codex 的本地环境。", badge: "推荐" },
-                { id: "cursor", name: "Cursor", text: "显式只使用 Cursor CLI，不自动调用 Codex。", badge: "备用" },
-                { id: "mock", name: "Mock", text: "确定性测试输出，不用于正式 Wiki。", badge: "测试" },
-                { id: "ollama", name: "Ollama", text: "调用高级用户自行配置的 Ollama 节点。", badge: "高级" }
-              ].map((choice) => (
-                <label className={settings.generator === choice.id ? "choice-card is-selected" : "choice-card"} key={choice.id}>
-                  <input type="radio" name="generator" value={choice.id} checked={settings.generator === choice.id} onChange={() => setSettings((current) => ({ ...current, generator: choice.id, fallbackGenerator: choice.id === "codex" ? "cursor" : choice.id === "cursor" ? "codex" : "none" }))} />
-                  <span><strong>{choice.name}</strong><small>{choice.text}</small></span><b>{choice.badge}</b>
-                </label>
-              ))}
-            </div>
-            <label className="field compact-field"><span>{settings.generator === "cursor" ? "Cursor" : "Codex"} 预检不可用时</span><select disabled={!["codex", "cursor"].includes(settings.generator)} value={["codex", "cursor"].includes(settings.generator) ? settings.fallbackGenerator : "none"} onChange={(event) => setSettings((current) => ({ ...current, fallbackGenerator: event.target.value }))}>{settings.generator === "cursor" ? <option value="codex">使用 Codex CLI</option> : <option value="cursor">使用 Cursor CLI</option>}<option value="none">不使用后备</option></select><small>首选工具已经开始执行后不会再切换，以免一个任务重复消费两份额度。</small></label>
-            {["codex", "cursor"].includes(settings.generator) && <p className="settings-note"><Icon name="terminal" size={16} /><span>如果安装时选择的是 Mock 或 Ollama，切回 CLI 后请重新运行 installer，并确认 Host Runner 显示可用；只保存此处设置不会启动宿主机 Runner。</span></p>}
+            {desktopRuntime ? <div className="provider-policy">
+              <div className="provider-primary">
+                <Icon name="terminal" size={18} />
+                <span><strong>Codex CLI</strong><small>唯一默认和首选工具。任务开始前会先检查是否已安装并登录。</small></span>
+                <b>默认</b>
+              </div>
+              <label className="provider-consent">
+                <input
+                  type="checkbox"
+                  checked={
+                    settings.providerPolicy === "codex_then_cursor" &&
+                    settings.cursorFallbackConsent.granted
+                  }
+                  onChange={(event) => {
+                    const granted = event.target.checked;
+                    setSettings((current) => ({
+                      ...current,
+                      providerPolicy: granted
+                        ? "codex_then_cursor"
+                        : "codex_only",
+                      cursorFallbackConsent: {
+                        ...current.cursorFallbackConsent,
+                        subject: "cursor_cli_fallback",
+                        version: 1,
+                        granted,
+                        grantedAt: granted
+                          ? current.cursorFallbackConsent.grantedAt
+                          : null
+                      }
+                    }));
+                  }}
+                />
+                <span>
+                  <strong>Codex 预检不可用时，允许改用 Cursor CLI</strong>
+                  <small>仅在任务开始前确认 Codex 未安装或未登录时生效。Cursor 会使用你单独登录的 Cursor 账户和额度，不与 Codex 账户或额度共享。</small>
+                </span>
+              </label>
+            </div> : <>
+              <div className="choice-grid">
+                {[
+                  { id: "codex", name: "Codex CLI", text: "适合已配置 Codex 的本地环境。", badge: "推荐" },
+                  { id: "cursor", name: "Cursor", text: "使用 legacy Cursor Host Runner。", badge: "备用" },
+                  { id: "mock", name: "Mock", text: "确定性测试输出，不用于正式 Wiki。", badge: "测试" },
+                  { id: "ollama", name: "Ollama", text: "调用高级用户自行配置的 Ollama 节点。", badge: "高级" }
+                ].map((choice) => (
+                  <label className={settings.generator === choice.id ? "choice-card is-selected" : "choice-card"} key={choice.id}>
+                    <input type="radio" name="generator" value={choice.id} checked={settings.generator === choice.id} onChange={() => setSettings((current) => ({ ...current, generator: choice.id, fallbackGenerator: choice.id === "codex" ? "cursor" : choice.id === "cursor" ? "codex" : "none" }))} />
+                    <span><strong>{choice.name}</strong><small>{choice.text}</small></span><b>{choice.badge}</b>
+                  </label>
+                ))}
+              </div>
+              <label className="field compact-field"><span>{settings.generator === "cursor" ? "Cursor" : "Codex"} 预检不可用时</span><select disabled={!["codex", "cursor"].includes(settings.generator)} value={["codex", "cursor"].includes(settings.generator) ? settings.fallbackGenerator : "none"} onChange={(event) => setSettings((current) => ({ ...current, fallbackGenerator: event.target.value }))}>{settings.generator === "cursor" ? <option value="codex">使用 Codex CLI</option> : <option value="cursor">使用 Cursor CLI</option>}<option value="none">不使用后备</option></select></label>
+            </>}
+            {desktopRuntime && <p className="settings-note"><Icon name="terminal" size={16} /><span>一旦 Codex 已确认并提交执行，即使随后超时或失败也绝不会切换到 Cursor，以免重复消耗额度或生成两份冲突结果。</span></p>}
           </section>
 
           <section className="panel settings-section">
@@ -1529,7 +1576,7 @@ function CreateLibraryDialog({
         <label className="field"><span>显示名称（可选）</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="不填则从仓库地址推断" /></label>
         <details className="form-advanced"><summary>采集选项</summary><div>
           <label className="field"><span>分支、标签或提交</span><input value={ref} onChange={(event) => setRef(event.target.value)} /></label>
-          <label className="field"><span>文档生成器</span><select value={generator} onChange={(event) => setGenerator(event.target.value)}><option value="auto">使用系统默认（推荐）</option><option value="codex">只用 Codex CLI</option><option value="cursor">只用 Cursor</option><option value="mock">Mock（测试）</option><option value="ollama">Ollama</option></select></label>
+          <label className="field"><span>文档生成器</span><select value={generator} onChange={(event) => setGenerator(event.target.value)}><option value="auto">使用系统默认（推荐）</option><option value="codex">只用 Codex CLI</option>{!desktopRuntime && <><option value="cursor">只用 Cursor</option><option value="mock">Mock（测试）</option><option value="ollama">Ollama</option></>}</select></label>
         </div></details>
         <label className="check-field"><input type="checkbox" checked={ingestNow} onChange={(event) => setIngestNow(event.target.checked)} /><span><strong>添加后立即采集</strong><small>任务会进入队列，不会阻塞当前页面。</small></span></label>
         {error && <p className="form-error" role="alert">{error}</p>}
@@ -1552,6 +1599,7 @@ function IngestLibraryDialog({
   const [version, setVersion] = useState("");
   const [generator, setGenerator] = useState("auto");
   const [busy, setBusy] = useState(false);
+  const desktopRuntime = isDesktopRuntime();
 
   return (
     <Dialog title={`重新采集 ${library.name}`} onClose={onClose}>
@@ -1564,8 +1612,8 @@ function IngestLibraryDialog({
         <p className="dialog-intro">选择一个确定的提交来源并创建新的不可变知识版本。</p>
         <label className="field"><span>分支、标签或提交 <b>*</b></span><input required value={ref} onChange={(event) => setRef(event.target.value)} /></label>
         <label className="field"><span>新版本标签 <b>*</b></span><input required value={version} onChange={(event) => setVersion(event.target.value)} placeholder="例如：2.0.0 或 2026-07-29" /></label>
-        <label className="field"><span>文档生成器 <b>*</b></span><select value={generator} onChange={(event) => setGenerator(event.target.value)}><option value="auto">使用系统默认（推荐）</option><option value="codex">只用 Codex CLI</option><option value="cursor">只用 Cursor</option><option value="mock">Mock（测试）</option><option value="ollama">Ollama</option></select></label>
-        <small className="form-help">高级说明：显式选择 provider、ref 与新的 version label，确保失败任务可以审计和重现。</small>
+        <label className="field"><span>文档生成器 <b>*</b></span><select value={generator} onChange={(event) => setGenerator(event.target.value)}><option value="auto">使用系统默认（推荐）</option><option value="codex">只用 Codex CLI</option>{!desktopRuntime && <><option value="cursor">只用 Cursor</option><option value="mock">Mock（测试）</option><option value="ollama">Ollama</option></>}</select></label>
+        <small className="form-help">显式选择默认策略或 Codex，并填写 ref 与新的 version label，确保失败任务可以审计和重现。</small>
         <div className="dialog__actions"><button type="button" className="button" onClick={onClose}>取消</button><button className="button button--primary" disabled={busy || !ref.trim() || !version.trim()}>{busy ? "正在入队…" : "开始采集"}</button></div>
       </form>
     </Dialog>

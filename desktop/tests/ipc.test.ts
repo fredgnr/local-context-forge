@@ -133,8 +133,32 @@ describe("renderer IPC validation", () => {
         path: "/api/settings",
         body: {
           expected_revision: 0,
-          provider_order: ["codex_cli"],
+          provider_policy: "codex_only",
           concurrency: 2
+        }
+      })
+    ).toThrow(/invalid-payload/);
+    expect(
+      parseApiRequest({
+        method: "PATCH",
+        path: "/api/settings",
+        body: {
+          expected_revision: 1,
+          provider_policy: "codex_then_cursor",
+          cursor_fallback_consent: true,
+          concurrency: 1,
+          embedding_model: "embeddinggemma-300m-q8"
+        }
+      })
+    ).toMatchObject({ timeoutMs: 30_000 });
+    expect(() =>
+      parseApiRequest({
+        method: "PATCH",
+        path: "/api/settings",
+        body: {
+          expected_revision: 1,
+          provider_policy: "cursor_only",
+          cursor_fallback_consent: true
         }
       })
     ).toThrow(/invalid-payload/);
@@ -144,10 +168,46 @@ describe("renderer IPC validation", () => {
         path: "/api/settings",
         body: {
           expected_revision: 1,
-          provider_order: ["codex_cli", "codex_cli"]
+          provider_order: ["codex_cli", "cursor_cli"],
+          fallback_enabled: true
         }
       })
     ).toThrow(/invalid-payload/);
+    expect(() =>
+      parseApiRequest({
+        method: "PATCH",
+        path: "/api/settings",
+        body: {
+          expected_revision: 1,
+          provider_policy: "codex_then_cursor",
+          cursor_fallback_consent: "yes"
+        }
+      })
+    ).toThrow(/invalid-payload/);
+    expect(
+      parseApiRequest({
+        method: "POST",
+        path: "/api/libraries/library-1/ingest",
+        body: {
+          ref: "main",
+          provider: "codex",
+          version: "1.0.0"
+        }
+      })
+    ).toMatchObject({ timeoutMs: 30_000 });
+    for (const provider of ["cursor", "cursor_cli", "mock", "ollama"]) {
+      expect(() =>
+        parseApiRequest({
+          method: "POST",
+          path: "/api/libraries/library-1/ingest",
+          body: {
+            ref: "main",
+            provider,
+            version: "1.0.0"
+          }
+        })
+      ).toThrow(/invalid-payload/);
+    }
     expect(
       parseApiRequest({
         method: "POST",

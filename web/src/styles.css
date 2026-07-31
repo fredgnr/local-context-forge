@@ -319,6 +319,22 @@ main { padding: 0 clamp(20px, 3.5vw, 48px) 64px; }
 .choice-card b, .model-meta b { padding: 3px 6px; color: var(--green); border-radius: 4px; background: var(--green-soft); font-size: 8px; }
 .model-meta { align-items: flex-end; gap: 7px; color: var(--subtle); font-size: 9px; white-space: nowrap; }
 .compact-field { max-width: 360px; margin: 16px 20px 0; }
+.provider-policy { display: grid; gap: 10px; padding: 0 20px; }
+.provider-primary {
+  display: grid; grid-template-columns: 22px 1fr auto; align-items: flex-start; gap: 11px;
+  padding: 16px; border: 1px solid var(--line-strong); border-radius: 7px; background: #fff;
+}
+.provider-primary > svg { margin-top: 1px; color: var(--ink); }
+.provider-primary > span, .provider-consent > span { display: flex; flex-direction: column; }
+.provider-primary strong, .provider-consent strong { font-size: 12px; }
+.provider-primary small, .provider-consent small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.provider-primary b { padding: 3px 6px; color: var(--green); border-radius: 4px; background: var(--green-soft); font-size: 8px; }
+.provider-consent {
+  display: grid; grid-template-columns: 18px 1fr; align-items: flex-start; gap: 10px;
+  padding: 15px 16px; border: 1px solid var(--line); border-radius: 7px; background: #fff; cursor: pointer;
+}
+.provider-consent:hover { border-color: #aeb6bd; }
+.provider-consent input { margin: 2px 0 0; accent-color: var(--ink); }
 .settings-note {
   display: flex; max-width: 620px; align-items: flex-start; gap: 9px; margin: 14px 20px 0;
   padding: 11px 12px; color: #4f5d68; border-radius: 6px; background: var(--soft);

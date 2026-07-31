@@ -42,7 +42,7 @@ describe("API transports", () => {
     await expect(
       api.ingest("library-a", {
         ref: "main",
-        generator: "mock",
+        generator: "codex",
         version: "1.0.0"
       })
     ).resolves.toMatchObject({ id: "desktop-job", status: "queued" });
@@ -52,7 +52,7 @@ describe("API transports", () => {
       path: "/api/libraries/library-a/ingest",
       body: {
         ref: "main",
-        provider: "mock",
+        provider: "codex",
         version: "1.0.0"
       },
       timeoutMs: 60_000
@@ -236,6 +236,13 @@ describe("API contract normalization", () => {
         new Response(
           JSON.stringify({
             revision: 4,
+            provider_policy: "codex_then_cursor",
+            cursor_fallback_consent: {
+              subject: "cursor_cli_fallback",
+              version: 1,
+              granted: true,
+              granted_at: "2026-07-31T08:00:00Z"
+            },
             provider_order: ["codex_cli", "cursor_cli"],
             fallback_enabled: true,
             embedding_model:
@@ -254,8 +261,13 @@ describe("API contract normalization", () => {
       checks: [{ id: "queue", label: "Queue", status: "ready" }]
     });
     await expect(api.settings()).resolves.toMatchObject({
-      generator: "codex",
-      fallbackGenerator: "cursor",
+      providerPolicy: "codex_then_cursor",
+      cursorFallbackConsent: {
+        subject: "cursor_cli_fallback",
+        version: 1,
+        granted: true,
+        grantedAt: "2026-07-31T08:00:00Z"
+      },
       embeddingModel: "embeddinggemma-300m-q8",
       revision: 4,
       advanced: { maxConcurrency: 1 }
@@ -290,7 +302,7 @@ describe("API contract normalization", () => {
     });
   });
 
-  it("does not invent a hidden CLI fallback for a single-provider setting", async () => {
+  it("does not treat legacy fallback fields as current Cursor consent", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -308,36 +320,88 @@ describe("API contract normalization", () => {
     );
 
     await expect(api.settings()).resolves.toMatchObject({
-      generator: "mock",
-      fallbackGenerator: "none"
+      providerPolicy: "codex_only",
+      cursorFallbackConsent: {
+        subject: "cursor_cli_fallback",
+        version: 1,
+        granted: false,
+        grantedAt: null
+      }
     });
   });
 
-  it("saves normalized settings and validates an embedding model", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
+  it("rejects an incomplete versioned consent record", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
+            revision: 3,
+            provider_policy: "codex_then_cursor",
+            cursor_fallback_consent: {
+              subject: "cursor_cli_fallback",
+              version: 1,
+              granted: true,
+              granted_at: null
+            },
+            provider_order: ["codex_cli", "cursor_cli"],
+            fallback_enabled: true,
+            concurrency: 1,
+            embedding_model: "embeddinggemma-300m-q8"
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      )
+    );
+
+    await expect(api.settings()).resolves.toMatchObject({
+      providerPolicy: "codex_then_cursor",
+      cursorFallbackConsent: {
+        granted: false,
+        grantedAt: null
+      }
+    });
+  });
+
+  it("uses the desktop provider policy contract when saving settings", async () => {
+    const bridgeRequest = vi
+      .fn()
+      .mockResolvedValueOnce(
+        {
+          status: 200,
+          body: {
             revision: 9,
+            provider_policy: "codex_then_cursor",
+            cursor_fallback_consent: {
+              subject: "cursor_cli_fallback",
+              version: 1,
+              granted: true,
+              granted_at: "2026-07-31T09:00:00Z"
+            },
             provider_order: ["codex_cli", "cursor_cli"],
             fallback_enabled: true,
             embedding_model:
               "hf:example/Qwen3-Embedding-Code/Qwen3-Embedding-Code-Q8_0.gguf",
             concurrency: 1
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
+          }
+        }
       )
       .mockResolvedValueOnce(
-        new Response('{"valid":true,"dimensions":768}', {
+        {
           status: 200,
-          headers: { "Content-Type": "application/json" }
-        })
+          body: { valid: true, dimensions: 768 }
+        }
       );
-    vi.stubGlobal("fetch", fetchMock);
+    installDesktopBridge(bridgeRequest);
 
     await api.updateSettings({
+      providerPolicy: "codex_then_cursor",
+      cursorFallbackConsent: {
+        subject: "cursor_cli_fallback",
+        version: 1,
+        granted: true,
+        grantedAt: null
+      },
       generator: "codex",
       fallbackGenerator: "cursor",
       embeddingModel: "custom",
@@ -353,17 +417,107 @@ describe("API contract normalization", () => {
       })
     ).resolves.toEqual({ valid: true, dimensions: 768 });
 
-    const saveBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(saveBody).toMatchObject({
-      expected_revision: 8,
-      provider_order: ["codex_cli", "cursor_cli"],
-      fallback_enabled: true,
-      concurrency: 1,
-      embedding_model:
-        "hf:example/Qwen3-Embedding-Code/Qwen3-Embedding-Code-Q8_0.gguf"
+    expect(bridgeRequest.mock.calls[0][0]).toEqual({
+      method: "PATCH",
+      path: "/api/settings",
+      body: {
+        expected_revision: 8,
+        provider_policy: "codex_then_cursor",
+        cursor_fallback_consent: true,
+        concurrency: 1,
+        embedding_model:
+          "hf:example/Qwen3-Embedding-Code/Qwen3-Embedding-Code-Q8_0.gguf"
+      },
+      timeoutMs: 30_000
     });
-    expect(String(fetchMock.mock.calls[1][0])).toContain(
-      "/api/embedding/models/validate"
+    expect(bridgeRequest.mock.calls[1][0]).toMatchObject({
+      method: "POST",
+      path: "/api/embedding/models/validate"
+    });
+  });
+
+  it("fails closed to Codex-only when fallback consent is not current", async () => {
+    const bridgeRequest = vi.fn().mockResolvedValue({
+      status: 200,
+      body: {
+          revision: 3,
+          provider_policy: "codex_only",
+          cursor_fallback_consent: {
+            subject: "cursor_cli_fallback",
+            version: 1,
+            granted: false,
+            granted_at: null
+          },
+          provider_order: ["codex_cli"],
+          fallback_enabled: false,
+          embedding_model: "embeddinggemma-300m-q8",
+          concurrency: 1
+      }
+    });
+    installDesktopBridge(bridgeRequest);
+
+    await api.updateSettings({
+      revision: 2,
+      providerPolicy: "codex_then_cursor",
+      cursorFallbackConsent: {
+        subject: "cursor_cli_fallback",
+        version: 1,
+        granted: false,
+        grantedAt: null
+      },
+      generator: "codex",
+      fallbackGenerator: "cursor",
+      embeddingModel: "embeddinggemma-300m-q8",
+      advanced: { maxConcurrency: 1 }
+    });
+
+    expect(bridgeRequest.mock.calls[0][0]).toMatchObject({
+      body: {
+        expected_revision: 2,
+        provider_policy: "codex_only",
+        cursor_fallback_consent: false,
+        concurrency: 1,
+        embedding_model: "embeddinggemma-300m-q8"
+      }
+    });
+  });
+
+  it("keeps legacy browser settings on provider_order fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          revision: 5,
+          provider_order: ["mock"],
+          fallback_enabled: false,
+          embedding_model: "embeddinggemma-300m-q8",
+          concurrency: 1
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
     );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.updateSettings({
+      revision: 4,
+      providerPolicy: "codex_only",
+      cursorFallbackConsent: {
+        subject: "cursor_cli_fallback",
+        version: 1,
+        granted: false,
+        grantedAt: null
+      },
+      generator: "mock",
+      fallbackGenerator: "none",
+      embeddingModel: "embeddinggemma-300m-q8",
+      advanced: { maxConcurrency: 1 }
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      expected_revision: 4,
+      provider_order: ["mock"],
+      fallback_enabled: false,
+      concurrency: 1,
+      embedding_model: "embeddinggemma-300m-q8"
+    });
   });
 });

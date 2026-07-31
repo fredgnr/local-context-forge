@@ -175,6 +175,49 @@ describe("operational states", () => {
     expect(screen.queryByText("本地目录和远程 Git 地址都可以。")).toBeNull();
   });
 
+  it("offers only the default policy or Codex when adding a repository", async () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
+    vi.spyOn(api, "libraries").mockResolvedValue([]);
+    vi.spyOn(api, "jobs").mockResolvedValue([]);
+    vi.spyOn(api, "health").mockResolvedValue(true);
+
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "添加代码仓库" })
+    );
+    await screen.findByRole("heading", { name: "添加代码仓库" });
+    fireEvent.click(screen.getByText("采集选项"));
+
+    const providerSelect = screen.getByLabelText("文档生成器");
+    expect(
+      [...(providerSelect as HTMLSelectElement).options].map(
+        (option) => option.value
+      )
+    ).toEqual(["auto", "codex"]);
+  });
+
+  it("keeps legacy provider choices in browser and Docker mode", async () => {
+    vi.spyOn(api, "libraries").mockResolvedValue([]);
+    vi.spyOn(api, "jobs").mockResolvedValue([]);
+    vi.spyOn(api, "health").mockResolvedValue(true);
+
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "添加代码仓库" })
+    );
+    fireEvent.click(screen.getByText("采集选项"));
+
+    const providerSelect = screen.getByLabelText("文档生成器");
+    expect(
+      [...(providerSelect as HTMLSelectElement).options].map(
+        (option) => option.value
+      )
+    ).toEqual(["auto", "codex", "cursor", "mock", "ollama"]);
+  });
+
   it("presents empty-wiki lint as neutral rather than passed", () => {
     const report: LintReport = {
       ok: true,
@@ -194,7 +237,11 @@ describe("operational states", () => {
     expect(screen.queryByText("Wiki 校验通过")).toBeNull();
   });
 
-  it("requires explicit provider, ref, and version for re-ingest", async () => {
+  it("offers only the default policy or Codex for re-ingest", async () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
     vi.spyOn(api, "libraries").mockResolvedValue([libraries[0]]);
     vi.spyOn(api, "jobs").mockResolvedValue([]);
     vi.spyOn(api, "health").mockResolvedValue(true);
@@ -217,13 +264,16 @@ describe("operational states", () => {
       target: { value: "2.0.0" }
     });
     fireEvent.change(screen.getByLabelText(/文档生成器/), {
-      target: { value: "mock" }
+      target: { value: "codex" }
     });
+    expect(screen.queryByRole("option", { name: /Cursor/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Mock/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Ollama/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "开始采集" }));
 
     await waitFor(() =>
       expect(ingest).toHaveBeenCalledWith("library-a", {
-        generator: "mock",
+        generator: "codex",
         ref: "release/v2",
         version: "2.0.0"
       })
@@ -234,6 +284,13 @@ describe("operational states", () => {
 describe("runtime settings", () => {
   const currentSettings: AppSettings = {
     revision: 4,
+    providerPolicy: "codex_then_cursor",
+    cursorFallbackConsent: {
+      subject: "cursor_cli_fallback",
+      version: 1,
+      granted: true,
+      grantedAt: "2026-07-31T08:00:00Z"
+    },
     generator: "codex",
     fallbackGenerator: "cursor",
     embeddingModel: "embeddinggemma-300m-q8",
@@ -241,6 +298,10 @@ describe("runtime settings", () => {
   };
 
   it("keeps the saved revision and reports a rebuild enqueue failure precisely", async () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
     vi.spyOn(api, "settings").mockResolvedValue(currentSettings);
     vi.spyOn(api, "embeddingModels").mockResolvedValue([
       {
@@ -287,8 +348,21 @@ describe("runtime settings", () => {
     await waitFor(() => expect(update).toHaveBeenLastCalledWith(saved));
   });
 
-  it("deduplicates concurrent save clicks and explains the Host Runner requirement", async () => {
-    vi.spyOn(api, "settings").mockResolvedValue(currentSettings);
+  it("requires explicit Cursor fallback consent and deduplicates saves", async () => {
+    Object.defineProperty(window, "localContextForge", {
+      configurable: true,
+      value: undefined
+    });
+    const codexOnlySettings: AppSettings = {
+      ...currentSettings,
+      providerPolicy: "codex_only",
+      cursorFallbackConsent: {
+        ...currentSettings.cursorFallbackConsent,
+        granted: false,
+        grantedAt: null
+      }
+    };
+    vi.spyOn(api, "settings").mockResolvedValue(codexOnlySettings);
     vi.spyOn(api, "embeddingModels").mockResolvedValue([]);
     let resolveSave!: (settings: AppSettings) => void;
     const pendingSave = new Promise<AppSettings>((resolve) => {
@@ -306,11 +380,29 @@ describe("runtime settings", () => {
       />
     );
     const save = await screen.findByRole("button", { name: "仅保存" });
-    expect(screen.getByText(/重新运行 installer/)).not.toBeNull();
+    const consent = screen.getByRole("checkbox", {
+      name: /Codex 预检不可用时，允许改用 Cursor CLI/
+    });
+    expect((consent as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText(/单独登录的 Cursor 账户和额度/)).not.toBeNull();
+    expect(screen.getByText(/绝不会切换到 Cursor/)).not.toBeNull();
+    expect(screen.queryByRole("radio", { name: /Cursor/ })).toBeNull();
+    expect(screen.queryByText("Mock")).toBeNull();
+    expect(screen.queryByText("Ollama")).toBeNull();
+    fireEvent.click(consent);
+    expect((consent as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(save);
     fireEvent.click(save);
     expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({
+      ...codexOnlySettings,
+      providerPolicy: "codex_then_cursor",
+      cursorFallbackConsent: {
+        ...codexOnlySettings.cursorFallbackConsent,
+        granted: true
+      }
+    });
 
     await act(async () => resolveSave({ ...currentSettings, revision: 5 }));
   });

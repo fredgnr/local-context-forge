@@ -156,6 +156,12 @@ const RESPONSE_FIELDS = {
   settings: new Set([
     "settings",
     "revision",
+    "provider_policy",
+    "cursor_fallback_consent",
+    "subject",
+    "version",
+    "granted",
+    "granted_at",
     "provider_order",
     "fallback_enabled",
     "embedding_model",

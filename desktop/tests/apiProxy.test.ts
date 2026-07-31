@@ -185,6 +185,51 @@ describe("UDS API proxy", () => {
     });
   });
 
+  it("preserves only the allowlisted provider policy and consent fields", async () => {
+    const transport = fakeTransport((callback) =>
+      response(
+        callback,
+        200,
+        JSON.stringify({
+          revision: 7,
+          provider_policy: "codex_then_cursor",
+          cursor_fallback_consent: {
+            subject: "cursor_cli_fallback",
+            version: 1,
+            granted: true,
+            granted_at: "2026-07-31T08:00:00Z",
+            account: "private@example.com"
+          },
+          provider_order: ["codex_cli", "cursor_cli"],
+          fallback_enabled: true,
+          executable: "/private/bin/cursor"
+        })
+      )
+    );
+
+    await expect(
+      proxyApiRequest(
+        { method: "GET", path: "/api/settings", timeoutMs: 1_000 },
+        connection,
+        { request: transport.request }
+      )
+    ).resolves.toEqual({
+      status: 200,
+      body: {
+        revision: 7,
+        provider_policy: "codex_then_cursor",
+        cursor_fallback_consent: {
+          subject: "cursor_cli_fallback",
+          version: 1,
+          granted: true,
+          granted_at: "2026-07-31T08:00:00Z"
+        },
+        provider_order: ["codex_cli", "cursor_cli"],
+        fallback_enabled: true
+      }
+    });
+  });
+
   it("keeps only canonical repo-relative path and file response fields", async () => {
     for (const safe of [
       "README.md",

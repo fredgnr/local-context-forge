@@ -307,17 +307,11 @@ const embeddingModel: FieldValidator = (value) => {
     .split("/")
     .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 };
-const provider: FieldValidator = (value) =>
+const ingestProvider: FieldValidator = (value) =>
   typeof value === "string" &&
-  [
-    "auto",
-    "codex",
-    "codex_cli",
-    "cursor",
-    "cursor_cli",
-    "mock",
-    "ollama"
-  ].includes(value);
+  ["auto", "codex", "codex_cli"].includes(value);
+const providerPolicy: FieldValidator = (value) =>
+  value === "codex_only" || value === "codex_then_cursor";
 const positiveInteger = (maximum: number): FieldValidator => (value) =>
   typeof value === "number" &&
   Number.isInteger(value) &&
@@ -377,13 +371,8 @@ function validateRequestBody(
         body,
         {},
         {
-          provider_order: (value) =>
-            Array.isArray(value) &&
-            value.length >= 1 &&
-            value.length <= 2 &&
-            value.every(provider) &&
-            new Set(value).size === value.length,
-          fallback_enabled: (value) => typeof value === "boolean",
+          provider_policy: providerPolicy,
+          cursor_fallback_consent: (value) => typeof value === "boolean",
           concurrency: (value) => value === 1,
           embedding_model: embeddingModel,
           expected_revision: (value) =>
@@ -439,7 +428,7 @@ function validateRequestBody(
         {},
         {
           ref: boundedString(200),
-          provider,
+          provider: ingestProvider,
           version: boundedString(160),
           auto_publish: (value) => typeof value === "boolean"
         }

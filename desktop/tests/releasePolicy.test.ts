@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -440,6 +440,8 @@ describe("desktop release portable policy", () => {
       "process.argv[3],process.argv[4],process.argv[5])",
       "));"
     ].join("");
+    const fixtureEnvironment = { ...process.env };
+    delete fixtureEnvironment.GITHUB_SHA;
 
     execFileSync("/usr/bin/git", [
       "-C",
@@ -448,21 +450,23 @@ describe("desktop release portable policy", () => {
       "--quiet",
       olderCommit
     ]);
-    expect(() =>
-      execFileSync(
-        process.execPath,
-        [
-          "-e",
-          evaluate,
-          script,
-          sourceRoot,
-          "v1.2.0",
-          olderCommit,
-          latestCommit
-        ],
-        { encoding: "utf8" }
-      )
-    ).toThrow();
+    const stale = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        evaluate,
+        script,
+        sourceRoot,
+        "v1.2.0",
+        olderCommit,
+        latestCommit
+      ],
+      { encoding: "utf8", env: fixtureEnvironment }
+    );
+    expect(stale.status).not.toBe(0);
+    expect(stale.stderr).toContain(
+      "A newer or equal release tag supersedes this Draft"
+    );
     execFileSync("/usr/bin/git", [
       "-C",
       sourceRoot,
@@ -482,7 +486,7 @@ describe("desktop release portable policy", () => {
           latestCommit,
           latestCommit
         ],
-        { encoding: "utf8" }
+        { encoding: "utf8", env: fixtureEnvironment }
       )
     );
     expect(latest).toMatchObject({

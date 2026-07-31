@@ -359,6 +359,48 @@ def test_wiki_publication_does_not_execute_restored_git_hooks(
     assert not sentinel.exists()
 
 
+def test_wiki_status_does_not_honor_restored_ignore_rules(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    wiki = WikiStore(service.settings, "ignored")
+    wiki.initialize()
+    (wiki.root / ".gitignore").write_text("*.txt\n", encoding="utf-8")
+    (wiki.root / "hidden.txt").write_text("dirty\n", encoding="utf-8")
+
+    status = wiki.git_status()
+
+    assert "?? .gitignore" in status
+    assert "?? hidden.txt" in status
+
+
+def test_wiki_rejects_symlinked_restored_config(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    wiki = WikiStore(service.settings, "config-link")
+    wiki.initialize()
+    config = wiki.root / ".git" / "config"
+    config.unlink()
+    config.symlink_to(tmp_path / "outside.gitconfig")
+
+    with pytest.raises(WikiError, match="config must be a regular"):
+        wiki.git_status()
+
+
+def test_wiki_clean_refuses_symlinked_scope_ancestor(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    wiki = WikiStore(service.settings, "clean-link")
+    wiki.initialize()
+    outside = tmp_path / "outside-wiki"
+    target = outside / "v1"
+    target.mkdir(parents=True)
+    sentinel = target / "keep.txt"
+    sentinel.write_text("keep\n", encoding="utf-8")
+    (wiki.root / "versions").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(WikiError, match="contains a symlink"):
+        wiki._git(["clean", "-fd", "--", "versions/v1"])
+
+    assert sentinel.read_text(encoding="utf-8") == "keep\n"
+
+
 def test_publish_rejects_ref_outside_recorded_generation_evidence(
     tmp_path: Path,
 ) -> None:

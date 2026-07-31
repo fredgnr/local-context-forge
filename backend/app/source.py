@@ -3,17 +3,28 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
+import re
 import shutil
 import stat
-import subprocess
 import tarfile
 import tempfile
+import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+import certifi
+import urllib3
+from dulwich.client import Urllib3HttpGitClient, get_transport_and_path
+from dulwich.config import ConfigFile
+from dulwich.objects import Blob, Commit, Tag, Tree, S_ISGITLINK
+from dulwich.object_store import iter_tree_contents
+from dulwich.refs import check_ref_format
+
 from .config import Settings
+from .dulwich_support import ControlledGitError, ControlledRepo, open_controlled_repo
 from .utils import atomic_write_json, utcnow
 
 IGNORED_DIRECTORIES = {
@@ -79,6 +90,15 @@ class SourceError(RuntimeError):
     pass
 
 
+@dataclass(slots=True)
+class _GitResult:
+    """Compatibility result for the former subprocess monkeypatch seam."""
+
+    stdout: bytes
+    stderr: bytes = b""
+    returncode: int = 0
+
+
 def sensitive_path_reason(relative: Path | str) -> str | None:
     path = Path(relative)
     lowered_parts = tuple(part.lower() for part in path.parts)
@@ -101,30 +121,68 @@ def sensitive_path_reason(relative: Path | str) -> str | None:
 
 def _run_git(
     arguments: list[str], *, cwd: Path | None = None, timeout: int = 300
-) -> subprocess.CompletedProcess[bytes]:
-    environment = _git_environment()
-    try:
-        return subprocess.run(
-            [
-                "git",
-                "-c",
-                "credential.helper=",
-                "-c",
-                "core.hooksPath=" + os.devnull,
-                "-c",
-                "http.followRedirects=false",
-                *arguments,
-            ],
-            cwd=cwd,
-            check=True,
-            capture_output=True,
-            timeout=timeout,
-            env=environment,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        stderr = getattr(error, "stderr", b"")
-        detail = stderr.decode("utf-8", errors="replace").strip()
-        raise SourceError(detail or f"git {' '.join(arguments)} failed") from error
+) -> _GitResult:
+    """Run a small, semantic Dulwich allowlist.
+
+    The name and return shape are retained for tests that monkeypatch the old
+    seam. No executable lookup or child process occurs here.
+    """
+
+    del timeout
+    if cwd is None:
+        raise SourceError("A repository path is required for Git inspection")
+    repository = cwd.resolve()
+    if arguments == ["rev-parse", "--is-inside-work-tree"]:
+        root = _git_repository_root(repository)
+        return _GitResult(b"true\n" if root is not None else b"false\n")
+    if arguments == ["rev-parse", "--show-toplevel"]:
+        root = _git_repository_root(repository)
+        if root is None:
+            raise SourceError("Not a Git working tree")
+        return _GitResult(os.fsencode(root) + b"\n")
+
+    with _open_source_repository(repository) as repo:
+        if arguments == ["rev-parse", "--absolute-git-dir"]:
+            return _GitResult(os.fsencode(repository / ".git") + b"\n")
+        if arguments == ["rev-parse", "--git-common-dir"]:
+            return _GitResult(os.fsencode(repository / ".git") + b"\n")
+        if arguments == ["rev-parse", "--git-path", "objects"]:
+            return _GitResult(os.fsencode(repository / ".git" / "objects") + b"\n")
+        if (
+            len(arguments) >= 2
+            and arguments[0] == "rev-parse"
+            and arguments[-1].endswith("^{commit}")
+        ):
+            candidate = arguments[-1][: -len("^{commit}")]
+            resolved = _resolve_candidate_commit(repo, candidate)
+            if resolved is None:
+                raise SourceError(f"Git ref does not exist: {candidate}")
+            return _GitResult(resolved.encode("ascii") + b"\n")
+        if (
+            len(arguments) == 5
+            and arguments[:4] == ["ls-tree", "-r", "-z", "--full-tree"]
+        ):
+            commit = _commit_object(repo, arguments[4])
+            records: list[bytes] = []
+            for entry in iter_tree_contents(
+                repo.object_store, commit.tree, include_trees=False
+            ):
+                if entry.path is None or entry.mode is None or entry.sha is None:
+                    raise SourceError("Git tree contains an incomplete entry")
+                object_type = (
+                    b"commit" if S_ISGITLINK(entry.mode) else b"blob"
+                )
+                records.append(
+                    f"{entry.mode:o} ".encode("ascii")
+                    + object_type
+                    + b" "
+                    + entry.sha
+                    + b"\t"
+                    + entry.path
+                    + b"\0"
+                )
+            return _GitResult(b"".join(records))
+    raise SourceError(f"Unsupported controlled Git operation: {' '.join(arguments)}")
 
 
 def _git_environment() -> dict[str, str]:
@@ -149,22 +207,12 @@ def _git_environment() -> dict[str, str]:
 
 
 def _git_repository_root(path: Path) -> Path | None:
-    try:
-        inside = (
-            _run_git(["rev-parse", "--is-inside-work-tree"], cwd=path, timeout=20)
-            .stdout.decode("utf-8", errors="replace")
-            .strip()
-        )
-        if inside != "true":
-            return None
-        root = (
-            _run_git(["rev-parse", "--show-toplevel"], cwd=path, timeout=20)
-            .stdout.decode("utf-8", errors="replace")
-            .strip()
-        )
-        return Path(root).resolve() if root else None
-    except SourceError:
-        return None
+    current = path.resolve()
+    for candidate in (current, *current.parents):
+        marker = candidate / ".git"
+        if marker.exists() or marker.is_symlink():
+            return candidate
+    return None
 
 
 def _validate_local_git_repository(repository: Path) -> None:
@@ -185,27 +233,48 @@ def _validate_local_git_repository(repository: Path) -> None:
         raise SourceError("Local Git common-directory indirection is not accepted")
     if (marker / "objects" / "info" / "alternates").exists():
         raise SourceError("Local Git alternate object stores are not accepted")
-
-    for arguments in (
-        ["--absolute-git-dir"],
-        ["--git-common-dir"],
-        ["--git-path", "objects"],
-    ):
-        value = (
-            _run_git(["rev-parse", *arguments], cwd=repository, timeout=20)
-            .stdout.decode("utf-8", errors="replace")
-            .strip()
-        )
-        candidate = Path(value)
-        if not candidate.is_absolute():
-            candidate = repository / candidate
-        try:
-            candidate.resolve().relative_to(repository)
-        except ValueError as error:
+    for required_directory in (marker / "objects", marker / "refs"):
+        if required_directory.is_symlink() or not required_directory.is_dir():
             raise SourceError(
                 "Local Git metadata or object storage escapes the authorized "
                 "repository directory"
-            ) from error
+            )
+    head = marker / "HEAD"
+    if head.is_symlink() or not head.is_file():
+        raise SourceError("Local Git HEAD must be a regular local file")
+
+    for current_root, directory_names, file_names in os.walk(
+        marker, followlinks=False
+    ):
+        for name in [*directory_names, *file_names]:
+            candidate = Path(current_root) / name
+            if candidate.is_symlink():
+                raise SourceError(
+                    "Local Git metadata must not contain symlinks or escape "
+                    "the authorized repository directory"
+                )
+
+    if config.exists():
+        try:
+            local_config = ConfigFile.from_path(config, expand_includes=False)
+        except (OSError, ValueError) as error:
+            raise SourceError(f"Local Git config is unreadable: {error}") from error
+        try:
+            local_config.get((b"core",), b"worktree")
+        except KeyError:
+            pass
+        else:
+            raise SourceError("Local Git core.worktree indirection is not accepted")
+        if local_config.get_boolean((b"core",), b"bare", False):
+            raise SourceError("A bare Git repository is not an accepted local source")
+
+
+def _open_source_repository(repository: Path) -> ControlledRepo:
+    _validate_local_git_repository(repository)
+    try:
+        return open_controlled_repo(repository)
+    except ControlledGitError as error:
+        raise SourceError(str(error)) from error
 
 
 def _safe_extract(
@@ -283,94 +352,153 @@ def _archive_git(
     settings: Settings, repository: Path, ref: str, destination: Path
 ) -> tuple[str, list[dict[str, str]]]:
     source_sha = _resolve_git_commit(repository, ref)
-    with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as handle:
-        archive_path = Path(handle.name)
+    prepared: list[tuple[str, int, bytes | None]] = []
+    portable_seen: dict[str, str] = {}
+    byte_count = 0
+    submodules: list[str] = []
+    lfs_pointers: list[str] = []
+    signature = b"version https://git-lfs.github.com/spec/v1\n"
+
     try:
-        with archive_path.open("wb") as handle:
-            try:
-                environment = _git_environment()
-                subprocess.run(
-                    [
-                        "git",
-                        "-c",
-                        "credential.helper=",
-                        "-c",
-                        "core.hooksPath=" + os.devnull,
-                        "-c",
-                        "http.followRedirects=false",
-                        "archive",
-                        "--format=tar",
-                        source_sha,
-                    ],
-                    cwd=repository,
-                    check=True,
-                    stdout=handle,
-                    stderr=subprocess.PIPE,
-                    timeout=300,
-                    env=environment,
-                )
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-                stderr = getattr(error, "stderr", b"")
-                detail = stderr.decode("utf-8", errors="replace").strip()
-                raise SourceError(detail or "git archive failed") from error
-        # The tar stream has small header/padding overhead above regular file
-        # bytes. Reject an obviously oversized stream before parsing members.
-        archive_ceiling = (
-            settings.max_snapshot_bytes
-            + settings.max_snapshot_files * 2048
-            + 10 * 1024 * 1024
+        with _open_source_repository(repository) as repo:
+            commit = _commit_object(repo, source_sha)
+            entries = iter_tree_contents(
+                repo.object_store, commit.tree, include_trees=True
+            )
+            file_count = 0
+            for entry in entries:
+                if entry.path == b"" and entry.mode is not None and stat.S_ISDIR(
+                    entry.mode
+                ):
+                    continue
+                file_count += 1
+                if file_count > settings.max_snapshot_files:
+                    raise SourceError(
+                        "Source snapshot exceeds "
+                        f"LCF_MAX_SNAPSHOT_FILES ({settings.max_snapshot_files})"
+                    )
+                if entry.path is None or entry.mode is None or entry.sha is None:
+                    raise SourceError("Git tree contains an incomplete entry")
+                relative = _decode_git_tree_path(entry.path)
+                portable_key = unicodedata.normalize("NFC", relative).casefold()
+                previous = portable_seen.get(portable_key)
+                if previous is not None:
+                    raise SourceError(
+                        "Git archive contains paths that collide on portable "
+                        f"filesystems: {previous!r} and {relative!r}"
+                    )
+                portable_seen[portable_key] = relative
+
+                if entry.mode == 0o160000:
+                    submodules.append(relative)
+                    continue
+                if entry.mode == 0o040000:
+                    tree = repo.object_store[entry.sha]
+                    if not isinstance(tree, Tree):
+                        raise SourceError(
+                            f"Git tree entry has an invalid object: {relative}"
+                        )
+                    prepared.append((relative, entry.mode, None))
+                    continue
+                if entry.mode not in {0o100644, 0o100755, 0o120000}:
+                    raise SourceError(
+                        f"Unsupported special file in git archive: {relative}"
+                    )
+                blob = repo.object_store[entry.sha]
+                if not isinstance(blob, Blob):
+                    raise SourceError(
+                        f"Git file entry has an invalid object: {relative}"
+                    )
+                data = blob.data
+                if entry.mode in {0o100644, 0o100755}:
+                    byte_count += len(data)
+                    if byte_count > settings.max_snapshot_bytes:
+                        raise SourceError(
+                            "Source snapshot exceeds "
+                            f"LCF_MAX_SNAPSHOT_BYTES ({settings.max_snapshot_bytes})"
+                        )
+                    if (
+                        data[:200].startswith(signature)
+                        and b"\noid sha256:" in data[:200]
+                        and len(lfs_pointers) < 5
+                    ):
+                        lfs_pointers.append(relative)
+                else:
+                    _validate_git_symlink(relative, data)
+                prepared.append((relative, entry.mode, data))
+    except SourceError:
+        raise
+    except Exception as error:
+        raise SourceError(
+            "Git repository has a missing or invalid required snapshot object"
+        ) from error
+
+    if submodules:
+        preview = ", ".join(submodules[:5])
+        raise SourceError(
+            "Git submodules are not materialized by git archive "
+            f"({preview}). Export a complete worktree without its parent "
+            ".git directory into an allowed imports directory."
         )
-        if archive_path.stat().st_size > archive_ceiling:
-            raise SourceError(
-                "Git archive exceeds the configured snapshot resource limits"
-            )
-        _safe_extract(
-            archive_path,
-            destination,
-            max_files=settings.max_snapshot_files,
-            max_bytes=settings.max_snapshot_bytes,
+    if lfs_pointers:
+        raise SourceError(
+            "Git LFS pointer files are not materialized by git archive "
+            f"({', '.join(lfs_pointers)}). Export a fully smudged worktree "
+            "without its parent .git directory into an allowed imports "
+            "directory."
         )
-        tree = _run_git(
-            ["ls-tree", "-r", "-z", "--full-tree", source_sha],
-            cwd=repository,
-            timeout=300,
-        ).stdout
-        submodules = [
-            record.split(b"\t", 1)[1].decode("utf-8", errors="replace")
-            for record in tree.split(b"\0")
-            if record.startswith(b"160000 ") and b"\t" in record
-        ]
-        if submodules:
-            preview = ", ".join(submodules[:5])
-            raise SourceError(
-                "Git submodules are not materialized by git archive "
-                f"({preview}). Export a complete worktree without its parent "
-                ".git directory into an allowed imports directory."
-            )
-        lfs_pointers: list[str] = []
-        signature = b"version https://git-lfs.github.com/spec/v1\n"
-        for path in sorted(destination.rglob("*")):
-            if not path.is_file() or path.is_symlink():
-                continue
-            try:
-                with path.open("rb") as handle:
-                    prefix = handle.read(200)
-            except OSError:
-                continue
-            if prefix.startswith(signature) and b"\noid sha256:" in prefix:
-                lfs_pointers.append(path.relative_to(destination).as_posix())
-                if len(lfs_pointers) >= 5:
-                    break
-        if lfs_pointers:
-            raise SourceError(
-                "Git LFS pointer files are not materialized by git archive "
-                f"({', '.join(lfs_pointers)}). Export a fully smudged worktree "
-                "without its parent .git directory into an allowed imports "
-                "directory."
-            )
-    finally:
-        archive_path.unlink(missing_ok=True)
+
+    for relative, mode, data in prepared:
+        target = destination.joinpath(*relative.split("/"))
+        if mode == 0o040000:
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        assert data is not None
+        if mode == 0o120000:
+            os.symlink(data.decode("utf-8"), target)
+        else:
+            target.write_bytes(data)
+            target.chmod(0o755 if mode & 0o111 else 0o644)
     return source_sha, _list_sensitive_paths(destination)
+
+
+def _decode_git_tree_path(path: bytes) -> str:
+    try:
+        decoded = path.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SourceError("Git tree paths must be valid UTF-8") from error
+    parts = decoded.split("/")
+    if (
+        not decoded
+        or decoded.startswith("/")
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(part.casefold() == ".git" for part in parts)
+        or "\0" in decoded
+    ):
+        raise SourceError(f"Unsafe path in git archive: {decoded!r}")
+    return decoded
+
+
+def _validate_git_symlink(relative: str, target: bytes) -> None:
+    try:
+        decoded_target = target.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SourceError(
+            f"Unsafe symlink in git archive: {relative}"
+        ) from error
+    if (
+        not decoded_target
+        or "\0" in decoded_target
+        or decoded_target.startswith("/")
+        or len(target) > 4096
+    ):
+        raise SourceError(f"Unsafe symlink in git archive: {relative}")
+    combined = posixpath.normpath(
+        posixpath.join(posixpath.dirname(relative), decoded_target)
+    )
+    if combined == ".." or combined.startswith("../") or combined.startswith("/"):
+        raise SourceError(f"Unsafe symlink in git archive: {relative}")
 
 
 def _iter_source_files(source: Path):
@@ -492,6 +620,87 @@ def is_unsupported_remote_source(source: str) -> bool:
     return parsed.scheme in {"http", "ssh", "git"} or source.startswith("git@")
 
 
+class _DeadlinePoolManager(urllib3.PoolManager):
+    """HTTPS pool with redirects, proxies, retries, and unbounded waits disabled."""
+
+    def __init__(self, *, timeout_seconds: int):
+        self._deadline = time.monotonic() + timeout_seconds
+        retries = urllib3.util.Retry(
+            total=0,
+            connect=0,
+            read=0,
+            redirect=0,
+            status=0,
+            raise_on_redirect=False,
+        )
+        super().__init__(
+            cert_reqs="CERT_REQUIRED",
+            ca_certs=certifi.where(),
+            headers={"User-Agent": "Local-Context-Forge/controlled-dulwich"},
+            retries=retries,
+        )
+
+    def check_deadline(self) -> float:
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise urllib3.exceptions.TimeoutError(
+                "Remote Git operation exceeded its overall deadline"
+            )
+        return remaining
+
+    def request(self, method: str, url: str, **kwargs):
+        remaining = self.check_deadline()
+        kwargs["redirect"] = False
+        kwargs["timeout"] = urllib3.util.Timeout(
+            connect=min(10.0, remaining),
+            read=min(60.0, remaining),
+            total=remaining,
+        )
+        return super().request(method, url, **kwargs)
+
+
+def _clone_remote_repository(
+    source: str, destination: Path, *, timeout_seconds: int = 900
+) -> None:
+    pool = _DeadlinePoolManager(timeout_seconds=timeout_seconds)
+    client = None
+    try:
+        config = ConfigFile()
+        client, path = get_transport_and_path(
+            source,
+            config=config,
+            operation="pull",
+            pool_manager=pool,
+        )
+        if not isinstance(client, Urllib3HttpGitClient):
+            raise SourceError("HTTPS source did not select the controlled transport")
+
+        def check_progress(_message: bytes) -> None:
+            pool.check_deadline()
+
+        cloned = client.clone(
+            path,
+            str(destination),
+            checkout=False,
+            origin="origin",
+            protocol_version=2,
+            progress=check_progress,
+        )
+        try:
+            pool.check_deadline()
+        finally:
+            cloned.close()
+        _validate_local_git_repository(destination)
+    except SourceError:
+        raise
+    except Exception as error:
+        raise SourceError(f"Remote Git clone failed: {error}") from error
+    finally:
+        if client is not None:
+            client.close()
+        pool.clear()
+
+
 def _validate_git_ref(ref: str) -> str:
     if (
         not ref
@@ -499,42 +708,44 @@ def _validate_git_ref(ref: str) -> str:
         or any(character in ref for character in ("\0", "\r", "\n"))
     ):
         raise SourceError("Invalid Git ref")
+    if ref == "HEAD" or re.fullmatch(r"[0-9a-fA-F]{4,64}", ref):
+        return ref
+    if ref.startswith("refs/") and not ref.startswith(
+        ("refs/tags/", "refs/heads/", "refs/remotes/origin/")
+    ):
+        raise SourceError("Invalid Git ref")
+    try:
+        encoded = ref.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise SourceError("Invalid Git ref") from error
+    candidate = encoded if ref.startswith("refs/") else b"refs/heads/" + encoded
+    if not check_ref_format(candidate):
+        raise SourceError("Invalid Git ref")
     return ref
 
 
 def _resolve_git_commit(repository: Path, ref: str) -> str:
     ref = _validate_git_ref(ref)
-    candidates = [ref]
-    if not ref.startswith("refs/") and ref != "HEAD":
+    candidates: list[str] = []
+    if ref == "HEAD" or ref.startswith("refs/"):
+        candidates.append(ref)
+    else:
+        if re.fullmatch(r"[0-9a-fA-F]{4,64}", ref):
+            candidates.append(ref.lower())
         candidates.extend(
-            [
-                f"refs/tags/{ref}",
-                f"refs/heads/{ref}",
-                f"refs/remotes/origin/{ref}",
-            ]
+            (f"refs/tags/{ref}", f"refs/heads/{ref}", f"refs/remotes/origin/{ref}")
         )
     resolved: list[str] = []
-    for candidate in candidates:
-        try:
-            value = (
-                _run_git(
-                    [
-                        "rev-parse",
-                        "--verify",
-                        "--quiet",
-                        "--end-of-options",
-                        f"{candidate}^{{commit}}",
-                    ],
-                    cwd=repository,
-                    timeout=30,
-                )
-                .stdout.decode()
-                .strip()
-            )
-        except SourceError:
-            continue
-        if value and value not in resolved:
-            resolved.append(value)
+    try:
+        with _open_source_repository(repository) as repo:
+            for candidate in candidates:
+                value = _resolve_candidate_commit(repo, candidate)
+                if value and value not in resolved:
+                    resolved.append(value)
+    except SourceError:
+        raise
+    except Exception as error:
+        raise SourceError(f"Git repository is unreadable: {error}") from error
     if not resolved:
         raise SourceError(f"Git ref does not exist: {ref}")
     if len(resolved) > 1:
@@ -542,6 +753,60 @@ def _resolve_git_commit(repository: Path, ref: str) -> str:
             f"Ambiguous Git ref {ref!r}; use an explicit refs/... name or commit SHA"
         )
     return resolved[0]
+
+
+def _resolve_candidate_commit(
+    repo: ControlledRepo, candidate: str
+) -> str | None:
+    object_id: bytes | None
+    encoded = candidate.encode("utf-8")
+    if candidate == "HEAD" or candidate.startswith("refs/"):
+        try:
+            object_id = repo.refs[encoded]
+        except KeyError:
+            return None
+    elif re.fullmatch(r"[0-9a-f]{4,64}", candidate):
+        matches = list(repo.object_store.iter_prefix(encoded))
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise SourceError(
+                f"Ambiguous Git ref {candidate!r}; use a full commit SHA"
+            )
+        object_id = matches[0]
+    else:
+        return None
+
+    visited: set[bytes] = set()
+    for _depth in range(16):
+        if object_id in visited:
+            raise SourceError(f"Git tag cycle detected while resolving {candidate!r}")
+        visited.add(object_id)
+        try:
+            value = repo.object_store[object_id]
+        except KeyError as error:
+            raise SourceError(
+                f"Git ref {candidate!r} points to a missing required object"
+            ) from error
+        if isinstance(value, Commit):
+            return value.id.decode("ascii")
+        if isinstance(value, Tag):
+            object_id = value.object[1]
+            continue
+        return None
+    raise SourceError(f"Git tag chain is too deep while resolving {candidate!r}")
+
+
+def _commit_object(repo: ControlledRepo, source_sha: str) -> Commit:
+    try:
+        value = repo.object_store[source_sha.encode("ascii")]
+    except (KeyError, UnicodeEncodeError) as error:
+        raise SourceError(
+            f"Git repository is missing required commit object {source_sha}"
+        ) from error
+    if not isinstance(value, Commit):
+        raise SourceError(f"Git snapshot object is not a commit: {source_sha}")
+    return value
 
 
 def _paths_overlap(left: Path, right: Path) -> bool:
@@ -641,17 +906,7 @@ def create_snapshot(
         if is_remote_source(source):
             temporary_clone = tempfile.TemporaryDirectory(prefix="lcf-clone-")
             clone_path = Path(temporary_clone.name) / "repository"
-            _run_git(
-                [
-                    "clone",
-                    "--quiet",
-                    "--no-checkout",
-                    "--filter=blob:none",
-                    source,
-                    str(clone_path),
-                ],
-                timeout=900,
-            )
+            _clone_remote_repository(source, clone_path, timeout_seconds=900)
             local_source = clone_path
             source_kind = "git-remote"
         else:

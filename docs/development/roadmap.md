@@ -3,13 +3,14 @@
 ## 基线与目标
 
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
-- source merge 基线：`main@52a5ffa`
-- 开发分支：`agent/two-phase-desktop-release`
+- bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
+- two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
+- 文档审计基线：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
 - 平台目标：macOS Apple Silicon
 - 当前总体状态：`in-progress`
 
 本路线图是交付顺序，不是完成声明。各阶段只有在其退出门禁有可复现 `pass` 证据后，
-才能进入 `validated`。
+才能进入 `validated`。当前快照见[status](status.md)，可执行任务见[TODO](todo.md)。
 
 ## 依赖图
 
@@ -33,14 +34,15 @@ P2 与 P3 可在 P1 的 IPC 契约冻结后并行；P4 必须等两类持久数�
 | --- | --- | --- | --- | --- | --- |
 | P0 治理与契约 | `validated` | ITER-0001 | AGENTS、skills、ADR、迭代、追踪矩阵 | 无 | G0 |
 | P1 Electron 壳与信任边界 | `in-progress` | ITER-0001 | Main/preload/renderer 骨架、类型化 IPC | P0 | G1 |
-| P2 Python sidecar | `in-progress` | ITER-0002 | Python 3.13.14 PyInstaller `onedir`、生命周期契约 | P1 | G2 |
-| P3 Node/QMD 与 MCP | `in-progress` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1；与 P2 并行 | G3 |
+| P2 Python sidecar | `in-progress` | ITER-0002 | Python 3.13.14 PyInstaller `onedir`、生命周期契约 | P1 source IPC contract | G2 |
+| P3 Node/QMD 与 MCP | `in-progress` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1 source IPC contract；与 P2 并行 | G3 |
 | P4 路径与迁移 | `planned` | ITER-0003 | macOS 路径、原子迁移、回滚与数据验证 | P2、P3 | G4 |
 | P5 DMG 发行基础 | `planned` | ITER-0004 | arm64 DMG、自签名、受保护发布流程 | P1–P4 | G5 |
-| P6 更新实机门禁 | `planned` | ITER-0005 | 0.0.1 → 0.0.2 实机报告、DMG fallback | P5 | G6 |
+| P6 更新实机门禁 | `planned` | ITER-0005 | 真实单调 `N-1 → N` 实机报告、DMG fallback | P5 | G6 |
 | P7 迁移退出 | `planned` | ITER-0006 | 发布判定、legacy Docker 去留决策 | P6 | G7 |
 
-表中状态表示父迭代和完整退出门禁，而不是“是否已有 source 实现”。ITER-0001 的 source
+表中状态表示阶段完整退出门禁，而不是“是否已有 source 实现”。P2/P3 依赖 P1 已冻结的
+source IPC contract，不要求先把 P1 packaged gate 标成完成。ITER-0001 的 source
 纵切已验证，但 packaged trust/IPC 尚未运行，所以 P1 仍为 `in-progress`。当前 ITER-0002
 提前实现了 P5 的受保护 release workflow/policy，以及 P6 的独立签名检查和 verified DMG
 fallback source 纵切；ITER-0004/0005 仍保持 `planned`，因为 protected Environment、
@@ -140,13 +142,16 @@ G4：
 - 默认用户产物是 macOS arm64 DMG；
 - 应用及 sidecar 使用明确的自签名身份，发布记录披露未 notarize、未启用
   hardened runtime；
-- 公开仓库唯一发布秘密只在 tag-only `macos-signing` Environment 中可用；
-- `macos-release` 只允许 branch `main` 的 promotion，且零 secret；两 Environment 都要求
+- release workflow 使用的唯一 private credential 只在 tag-only `macos-signing`
+  Environment 中可用；
+- `macos-release` 只允许 branch `main` 的 promotion，且不配置 Environment/repository
+  release secret 或长期签名凭据；job 仍使用短期 `GITHUB_TOKEN`。两 Environment 都要求
   独立 reviewer、prevent self review、UI 禁 admin bypass；
 - PR、fork 与普通构建不接触发布秘密。
 - canonical release/update manifest、完整资产集合和独立 Ed25519 信任锚在打包前
   fail closed。
-- tag push 只创建候选 Draft；公开 promotion 必须以 `workflow_dispatch --ref main` 运行，
+- desktop tag path 只创建候选 Draft；相同 tag 的 GHCR workflow 独立且非原子；desktop 公开
+  promotion 必须以 `workflow_dispatch --ref main` 运行，
   将 `release_tag` 只作为资料输入，由 trusted `main` verifier 在隔离 tag worktree 中
   fresh-peel、重新下载、绑定 candidate manifest digest；在 `PATCH` 前以 fresh
   `origin/main` comparison ref 验证 promotion order/`make_latest`，再以固定 Release ID REST
@@ -173,7 +178,7 @@ repository owner、contents writer/可改 workflow 的主体和 settings admin �
 Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。因此当前 P5 总结保持
 **source merge GO / release NO-GO**。
 
-## P6：0.0.1 → 0.0.2 更新实机门禁
+## P6：真实 `N-1 → N` 更新实机门禁
 
 交付：
 
@@ -185,14 +190,19 @@ Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。�
 
 G6：
 
-- `VAL-UPDATE-001` 在实机完成安装 0.0.1、创建数据、更新至 0.0.2、重启、
+- `VAL-UPDATE-001` 在实机完成安装真实上一版本 `N-1`、创建数据、更新至真实下一版本
+  `N`、重启、
   校验版本/sidecar/数据；
 - 同一报告注入自动更新失败，验证 DMG fallback；
 - G6 通过前，不把自动应用更新列为可交付能力。
 
 当前 source 进度：Main/preload/Web 的签名 manifest、redirect、私有 cache、脱敏 IPC、
 verified DMG open 与固定 Release 页面 no-payload/URL 隐藏/状态保持合同已通过
-`VAL-UPDATE-CLIENT-001`。真实 feed、下载、打开和 0.0.1 → 0.0.2 物理门禁仍为 `not-run`。
+`VAL-UPDATE-CLIENT-001`。真实 feed、下载、打开和 `N-1 → N` 物理门禁仍为 `not-run`。
+
+ADR-0003/0011 中描述的真实 `N-1 → N` 是版本关系而非固定版本号。执行门禁必须使用与
+`runtime/version.json`、tag 和 manifest 完全一致的两个真实单调版本；不能为了匹配示例伪造
+旧 tag。Automatic apply 还需要新增或 supersede ADR-0011。
 
 ## P7：迁移退出与 legacy Docker 决策
 
@@ -211,6 +221,6 @@ G7：
 ## 阻断规则
 
 - 任一必需门禁为 `fail` 或 `not-run`，对应阶段不能标记 `validated`/`done`。
-- 签名 CI 成功不能替代干净 Mac 安装；模拟更新不能替代实机 0.0.1 → 0.0.2。
+- 签名 CI 成功不能替代干净 Mac 安装；模拟更新不能替代实机 `N-1 → N`。
 - 迁移成功不能由“新应用能启动”推断，必须验证数据数量、引用、索引状态和回滚。
 - 后续阶段如需改变已接受 ADR，先新增 superseding ADR，再调整路线图。

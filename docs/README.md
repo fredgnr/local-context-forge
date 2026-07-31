@@ -14,6 +14,16 @@ Electron all-in-one 客户端。阅读文档时请先区分两条路径：
 的桌面使用、限制与维护说明见
 [Electron 桌面版完整指南](16-electron-desktop-guide.md)。
 
+## 先读权威入口
+
+| 你要了解 | 权威入口 |
+| --- | --- |
+| 当前完成度、证据和 Release GO/NO-GO | [项目状态快照](development/status.md) |
+| 当前 Electron/legacy 组合架构 | [系统设计](17-system-design.md) |
+| 安装、source、legacy、备份和 Release | [部署与运维总手册](18-deployment-operations.md) |
+| 开发环境、测试和 PR 流程 | [开发者手册](development/contributor-handbook.md) |
+| 还要做什么、由谁做、如何验收 | [详细 TODO](development/todo.md) |
+
 ## 产品与使用
 
 | 编号 | 文档 | 主要内容 |
@@ -35,10 +45,16 @@ Electron all-in-one 客户端。阅读文档时请先区分两条路径：
 | 14 | [macOS all-in-one](14-all-in-one-macos.md) | 桌面部署决策和高级入口 |
 | 15 | [GitHub Actions 与 GHCR](15-github-actions-ghcr.md) | legacy Docker 镜像 |
 | 16 | [Electron 桌面版完整指南](16-electron-desktop-guide.md) | DMG、UI、MCP、更新、恢复与发布 |
+| 17 | [系统设计](17-system-design.md) | Electron 组合拓扑、信任、时序、数据与代码地图 |
+| 18 | [部署与运维总手册](18-deployment-operations.md) | 四条路径、备份恢复、GitHub controls 与物理门禁 |
 
 ## 开发与可追溯性
 
 - [Electron 迁移开发索引](development/README.md)
+- [项目状态快照](development/status.md)
+- [开发者手册](development/contributor-handbook.md)
+- [详细 TODO](development/todo.md)
+- [证据记录规范](development/evidence/README.md)
 - [迁移路线图](development/roadmap.md)
 - [需求—决策—验证矩阵](development/traceability.md)
 - [迭代记录](development/iterations/README.md)

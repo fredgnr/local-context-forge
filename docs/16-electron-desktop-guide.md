@@ -7,7 +7,8 @@
 
 ## 1. 先看当前可用性
 
-桌面源码已经实现：
+当前权威完成度见[项目状态快照](development/status.md)，进程和数据边界见
+[系统设计](17-system-design.md)。主要桌面 source foundation 已实现：
 
 - Electron Main、sandboxed renderer 与类型化 preload；
 - 内置 Python sidecar 和 Node/QMD worker 的打包、审计与监督逻辑；
@@ -26,7 +27,7 @@
 | 无开发环境的干净 macOS 用户安装 | `not-run` | 不能声称目标机零依赖已经实机通过 |
 | 打包 App 的真实 Codex 采集 | `not-run` | 不能用 mock/provider 单测替代 |
 | 物理 M4 模型下载、embedding、hybrid | `not-run` | lexical fallback 可用不代表模型门禁通过 |
-| 0.0.1 → 0.0.2 物理更新与故障注入 | `not-run` | 自动应用更新尚未交付 |
+| 真实 `N-1 → N` 物理更新与故障注入 | `not-run` | 自动应用更新尚未交付 |
 | legacy Docker 数据迁移 | `not-run` | 不能直接覆盖或共用数据目录 |
 
 因此，本文所称“推荐桌面安装”始终带一个前提：GitHub Releases 已出现由维护者审查的完整正式
@@ -571,8 +572,9 @@ error 状态。source/unpackaged、unprovisioned、signature/schema/asset/cache/
 - 绕过 Gatekeeper；
 - 把一次 source/CI 测试当作升级证明。
 
-`VAL-UPDATE-001` 要求在物理 Apple Silicon Mac 上从 0.0.1 创建真实数据，跨到 0.0.2，并对
-下载、校验、替换或重启故障注入后验证 DMG fallback。该门禁仍是 `not-run`，所以文档和 UI
+`VAL-UPDATE-001` 要求在物理 Apple Silicon Mac 上用真实上一版本 `N-1` 创建真实数据，跨到
+真实单调下一版本 `N`，并在下载、校验、替换或重启故障注入后验证 DMG fallback。早期 ADR
+中的版本号只是示例。该门禁仍是 `not-run`，所以文档和 UI
 只把 signed 路径称为“下载并打开已验证 DMG”，不称“自动更新”。手工 Release 页面只是人工
 出口，既不证明已有 DMG/Release，也不证明页面资产经过 App 验证。
 
@@ -696,7 +698,7 @@ legacy 路径。当前桌面迁移 UI 和代表性数据门禁未完成：
 - 保留 legacy checkout、备份和原数据，直到桌面迁移另有已验证工具。
 
 需要回退时，退出 Electron，再从原 legacy checkout 按
-[macOS all-in-one legacy 说明](14-all-in-one-macos.md)和
+[部署与运维总手册的 legacy 路径](18-deployment-operations.md)和
 [备份与恢复](09-backup-restore.md)运行旧路径。两套数据目前是独立的。
 
 ## 15. 常见问题
@@ -923,7 +925,9 @@ python3 tools/bootstrap_desktop_release_keys.py \
 deployment policy、精确 secret membership、三组 active ruleset 和 Immutable Releases；然后
 通过 `gh secret set ... --env macos-signing` 的 stdin 上传 bundle，不打印私钥。
 `--confirm-admin-bypass-disabled` 是管理员已在 UI 复核该 API 难以可靠证明的开关。上传和公共
-文件写入成功后，临时 private 目录被删除；`macos-release` 始终保持零 secret。
+文件写入成功后，临时 private 目录被删除；`macos-release` 不配置 Environment/repository
+release secret 或长期签名凭据，但 promotion job 仍使用 GitHub 自动签发的短期
+`GITHUB_TOKEN`。
 
 仓库工作区只应出现：
 
@@ -979,7 +983,8 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 3. 确认 public update/certificate locks 已 provision；
 4. 确认 `macos-signing` 的 reviewer/self-review/tag policy/唯一 secret，以及
-   `macos-release` 的 reviewer/self-review/main-only/零 secret；
+   `macos-release` 的 reviewer/self-review/main-only、无配置 release secret/长期签名凭据，
+   并确认 job 只依赖短期 `GITHUB_TOKEN`；
 5. 在 UI 确认两 Environment 禁止 admin bypass，并确认 `protected-main`、
    `release-tag-creation`、`immutable-release-tags` active 且 GitHub Immutable Releases 开启；
 6. 确认没有私钥、auth cache、模型、index、用户数据或 generated staging 入库；
@@ -988,7 +993,11 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 ### 18.2 触发
 
-工作流只接受符合 `v*.*.*` 的 tag，并要求 tag 指向精确 release commit。示例：
+这是统一产品发行事件：同一个符合 `v*.*.*` 的 tag 会并行触发 desktop build/Draft 与 GHCR
+container SemVer 发布。两条 workflow 非原子；GHCR 镜像可能在 desktop 等待审批或失败时已经
+公开，desktop Draft 成功也不证明 container job 成功。创建 tag 前同时确认两类产物就绪，
+创建后分别记录两个 workflow run 与 digest。Desktop workflow 还要求 tag 指向精确 release
+commit。示例：
 
 ```bash
 git tag -a v0.3.0 -m "Local Context Forge v0.3.0"
@@ -998,8 +1007,10 @@ git push origin v0.3.0
 使用仓库实际版本；不要照抄示例 tag。Environment reviewer 在 GitHub 界面检查 commit、tag、
 workflow 和 public locks 后批准 build。
 
-tag push 成功后只会得到 Draft，不会自动公开。先从 Draft 下载候选，在真实 M4 完成适用的
-安装、runtime、Codex、embedding 和更新测试，并记录：
+desktop workflow 的 tag 路径成功后只会得到 Draft，不会自动公开 desktop Release；这不撤销
+或回滚可能已经公开的 GHCR SemVer image。先分别核对 container run/image digest 与 desktop
+build/Draft run，再从 Draft 下载候选，在真实 M4 完成适用的安装、runtime、Codex、embedding
+和更新测试，并记录：
 
 ```bash
 shasum -a 256 "/path/to/release-assets/release-manifest.json"
@@ -1118,16 +1129,19 @@ GitHub Actions 成功本身不能把最后四项标记为 `pass`。
 维护者发行验收：
 
 - [ ] `macos-signing` 有独立 reviewer、prevent self review、禁 admin bypass 和唯一 tag policy；
-- [ ] `macos-release` 有独立 reviewer、prevent self review、禁 admin bypass、main-only 且零
-      secret；
-- [ ] 全仓库只有 `macos-signing` 的一个 Environment secret；
+- [ ] `macos-release` 有独立 reviewer、prevent self review、禁 admin bypass、main-only，且
+      不配置 Environment/repository release secret 或长期签名凭据；job 只使用短期
+      `GITHUB_TOKEN`；
+- [ ] 本 desktop release workflow 的 Environment 私有凭据只有 `macos-signing` 中的一个
+      credential bundle secret；不据此推断组织其他用途的 secret；
 - [ ] `protected-main`、owner-only `release-tag-creation` 和无 bypass
       `immutable-release-tags` 都 active；
 - [ ] GitHub Immutable Releases 已开启；
 - [ ] 三个公共 trust files 同 generation；
 - [ ] PR/fork/source CI 无 secret；
 - [ ] tag、source commit、version、architecture 一致；
-- [ ] tag push 只创建 Draft，未出现自动公开路径；
+- [ ] desktop tag 路径只创建 Draft，未出现自动公开 desktop Release 的路径；
+- [ ] 同一 tag 的 GHCR 与 desktop workflow 已分别核对 run/digest，任何非原子部分成功已记录；
 - [ ] promotion 以 `--ref main` 运行，trusted verifier、隔离 tag worktree、fresh peel 和固定
       Release ID 证据齐全；
 - [ ] `verifyPromotionOrder` 的 comparison ref 是 `PATCH` 前 fresh-fetched `origin/main`，

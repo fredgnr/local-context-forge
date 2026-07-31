@@ -6,13 +6,17 @@
 
 ## 目标与范围
 
-只在物理 Apple Silicon Mac 上验证 `0.0.1 → 0.0.2` 后启用自动更新。失败路径必须校验并
-下载同一公开 Release 的 DMG、打开 Finder/安装界面，并让用户明确完成安装。
+只在物理 Apple Silicon Mac 上用两个真实、单调且与 tag/manifest 一致的版本完成
+`N-1 → N` 后，才可讨论启用 automatic apply。ADR-0003/0011 中的
+真实 `N-1 → N` 是版本关系，不是可伪造的固定 tag。当前实现只提供 signed
+check/download 和用户确认后的 verified DMG open；automatic apply 还必须先新增或
+supersede ADR-0011。
 
 ## 计划任务
 
-- [ ] U01 冻结更新元数据、发布公钥/摘要和 fail-closed 规则。
-- [ ] U02 安装 0.0.1、创建真实数据、更新至 0.0.2 并验证重启与数据。
+- [ ] U01 完成生产更新元数据/public pins，并新增或 supersede ADR-0011 以决定 automatic
+  apply/install/restart/rollback；signed client source foundation 已存在。
+- [ ] U02 安装真实 `N-1`、创建真实数据、更新至真实 `N` 并验证重启与数据。
 - [ ] U03 注入下载、校验、替换或重启失败。
 - [ ] U04 验证 DMG fallback 不静默执行安装器且不丢失数据。
 - [ ] U05 记录机器、macOS、版本、产物摘要、步骤与审查人。

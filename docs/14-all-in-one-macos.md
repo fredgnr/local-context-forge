@@ -1,5 +1,10 @@
 # M4 Pro 24 GB：all-in-one 桌面部署
 
+> 当前事实与未完成门禁以[项目状态](development/status.md)为准；完整进程、数据和信任边界见
+> [系统设计](17-system-design.md)，实际部署/发行/回滚步骤见
+> [部署与运维](18-deployment-operations.md)。本章解释目标体验，不代表仓库现在已有可推荐
+> 的 DMG。
+
 ## 部署决策
 
 Local Context Forge 的目标默认形态是一个 macOS Apple Silicon Electron 应用：
@@ -46,24 +51,34 @@ Electron 作为非开发者的推荐路径。
   → 运行测试和资源审计
   → 从 tag-only macos-signing Environment 读取唯一 credential bundle
   → 自签名、组装 DMG/ZIP/更新元数据
-  → 无 Environment/secret 的 job 创建并复核 GitHub Draft
+  → 无配置 Environment/repository release secret 或长期签名凭据的 job
+    使用短期 GITHUB_TOKEN 创建并复核 GitHub Draft
   → 物理测试
-  → --ref main 的 secret-free macos-release promotion 复核并发布固定 Release ID
+  → --ref main、无配置 release secret/长期签名凭据的 macos-release promotion
+    使用短期 GITHUB_TOKEN 复核并发布固定 Release ID
 ```
 
-这是**tag push 候选构建 + 独立人工 promotion**，不是终端用户安装脚本。tag push 永远停在
-Draft；`release_tag` 只是 trusted `main` verifier 的资料输入。仓库当前的 public key 和
-certificate lock 仍是 `unprovisioned`，因此正式发行会 fail closed，不应声称已有可下载版本。
+这是 **desktop tag 候选构建 + 独立人工 promotion**，不是终端用户安装脚本。Desktop workflow
+永远停在 Draft；相同 tag 还会独立、非原子地触发 GHCR SemVer 发布，container image 可能先
+公开，必须另行核对 run/digest。`release_tag` 只是 trusted `main` verifier 的资料输入。仓库
+当前的 public key 和 certificate lock 仍是 `unprovisioned`，因此正式 desktop 发行会 fail
+closed，不应声称已有可下载版本。
 
 ### legacy Docker all-in-one
 
 ```bash
-./install.sh
+LCF_CONTROL_BIN="$(pwd -P)/scripts/lcf"
+lcf_managed() {
+  env -i HOME="$HOME" PATH="$PATH" "$LCF_CONTROL_BIN" "$@"
+}
+lcf_managed install
 ```
 
 或双击 `install.command`，仍会安装 Docker/Web/host runner 方案。它不是 Electron，不会产生
-DMG，也不会写入桌面 Application Support。legacy 路径在迁移和物理门禁通过前继续保留用于
-回退。
+DMG，也不会写入桌面 Application Support。终端入口使用最小环境包装，是因为当前控制脚本尚未
+自行隔离 Compose project/data/port 等调用者覆盖；详情见
+[部署总手册](18-deployment-operations.md#22-安装)。legacy 路径在迁移和物理门禁通过前继续
+保留用于回退。
 
 当前没有一个把未审查源码直接变成“可推荐桌面安装”的本地脚本；这样可以避免把 source smoke
 误当成签名、clean-user 和更新证据。
@@ -174,7 +189,7 @@ marker。
 - 在 source/unprovisioned、校验、网络或打开错误时，由用户显式打开固定的官方 Release 页面。
 
 应用目前不会静默替换 App、运行 ZIP、重启或删除数据。`VAL-UPDATE-001` 的物理
-0.0.1 → 0.0.2 门禁仍未运行，因此“自动应用更新”不是已交付能力；用户需在打开的 DMG 中手工
+真实 `N-1 → N` 门禁仍未运行，因此“自动应用更新”不是已交付能力；用户需在打开的 DMG 中手工
 拖拽替换。Release 页面操作不接受 Renderer URL，也不会把 signed updater 的候选/错误状态改成
 成功；它只是人工出口，不证明页面已有 Release 或其中资产已验证。
 
@@ -212,7 +227,8 @@ make ci-source
    deployment policy 只允许 tag `v*.*.*`，只保存
    `DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`；
 2. `macos-release`：required reviewer、prevent self review、UI 禁 admin bypass，custom
-   deployment policy 只允许 branch `main`，零 secret；
+   deployment policy 只允许 branch `main`，Environment/repository release secret 集合为空，
+   无长期签名凭据；promotion job 仍使用 GitHub 自动签发的短期 `GITHUB_TOKEN`；
 3. active `protected-main` ruleset 要求 PR、独立 approval、dismiss stale、last-push approval、
    resolve threads、禁止 force/delete、无 bypass；
 4. active `release-tag-creation` 只允许 canonical owner actor 创建 `v*.*.*` tag，

@@ -53,8 +53,9 @@ hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf
 HTTP URL 和本地任意路径会被拒绝。
 
 模型不会随 DMG 预装。第一次明确发起 embedding rebuild 时，QMD 才可能下载所选模型。下载、
-native embedding 和 hybrid 检索尚需物理 Apple Silicon 门禁；在模型未就绪、stale 或失败时，
-查询会降级为 lexical，不会混用旧向量。
+native embedding 和 hybrid 检索尚需物理 Apple Silicon 门禁；模型未就绪时，指定 library
+且 QMD broker 健康的 desktop 查询使用 BM25，broker/revision 失败或全局查询使用 Python
+lexical，不会混用旧向量。
 
 ### 磁盘与电源
 

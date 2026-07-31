@@ -38,10 +38,11 @@ resolve-library-id + query-docs
 Docker/Homebrew/Python/Node/Git/QMD/ctags。Wiki 生成默认使用本机已经登录的 Codex CLI；
 Cursor 只能作为用户明确同意的 preflight fallback。
 
-## 当前状态：桌面源码完成，发行门禁尚未完成
+## 当前状态：主要桌面 source foundation 已合并，发行仍 NO-GO
 
-当前分支已经实现桌面进程边界、UI 工作流、provider 监督、本地 embedding、MCP onboarding
-和 GitHub Release workflow，但还没有可以向非开发者推荐的公开 DMG：
+`main@fb8bbbc` 已合并桌面进程边界、UI 工作流、provider 监督、本地 embedding、MCP
+onboarding 和 GitHub Release workflow 的主要 source 纵切，但 P1–P3 的 packaged/native
+门禁仍未通过，P4–P7 仍有未完成工作，也没有可以向非开发者推荐的公开 DMG：
 
 | 项目 | 状态 |
 | --- | --- |
@@ -50,13 +51,20 @@ Cursor 只能作为用户明确同意的 preflight fallback。
 | 干净 macOS 用户安装 | `not-run` |
 | 打包应用中的真实 Codex 采集 | `not-run` |
 | 物理 Apple Silicon 模型下载/重建 | `not-run` |
-| 0.0.1 → 0.0.2 物理更新 | `not-run` |
+| 真实 `N-1 → N` 物理更新 | `not-run` |
 
 因此，**Electron 只在经过审查的 Release 资产出现后成为推荐安装路径**。当前需要稳定运行时，
 legacy Docker/Web 部署仍保留；`./install.sh` 安装的是 legacy 路径，不是 Electron。
 
 完整安装、首次打开、MCP、恢复与发布说明：
 [Electron 桌面版完整指南](docs/16-electron-desktop-guide.md)。
+
+当前事实、系统边界和剩余任务以以下页面为准：
+
+- [项目状态快照](docs/development/status.md)
+- [系统设计](docs/17-system-design.md)
+- [部署与运维总手册](docs/18-deployment-operations.md)
+- [详细 TODO](docs/development/todo.md)
 
 ## M4 Pro 24 GB 默认选择
 
@@ -67,7 +75,7 @@ legacy Docker/Web 部署仍保留；`./install.sh` 安装的是 legacy 路径，
 | Embedding | EmbeddingGemma 300M Q8 |
 | 备选 | Qwen3-Embedding 0.6B Q8 |
 | 队列 | 单 worker，最大并发固定为 1 |
-| 降级 | 模型未 ready 或 revision 不一致时使用 lexical |
+| 降级 | 模型未 ready 时 scoped desktop 查询先用 QMD BM25；broker/revision 失败或全局查询用 Python lexical |
 
 更换模型后必须“保存并重建全部”。Embedding rebuild 只处理已发布 Wiki，不调用
 Codex/Cursor，也不消耗生成额度；重新采集仓库才会生成新提案。
@@ -117,8 +125,9 @@ requested/effective provider、阶段和进度。失败重试会创建新的审�
 
 ### 查询
 
-查询只读取已发布知识。Embedding state 与 corpus revision 完全一致时使用 hybrid；
-stale、缺失、崩溃或模型失败时明确回退到 deterministic lexical。
+查询只读取已发布知识。Embedding state 与 corpus revision 完全一致时使用 hybrid；模型未
+ready 但 desktop QMD broker 健康时，指定 library 的查询使用 `qmd-bm25`；broker/revision/
+响应失败或全局查询才回退到 Python `lexical`。响应中的 `engine` 会明确实际路径。
 
 ### 设置
 
@@ -173,15 +182,18 @@ Application Support 包含私有源码快照、SQLite、facts、proposal、任�
 
 - build/sign 只响应 `v*.*.*` tag push，并绑定仅允许该 tag pattern 的
   `macos-signing` Environment；
-- 只有一个 private secret：
+- release workflow 使用的唯一 private credential：
   `DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`；
 - Draft job 不绑定 Environment、也不读取 secret；
 - 自签名证书、密码和 Ed25519 private key 不进入仓库、artifact 或普通 CI；
 - public key 和 certificate fingerprint 作为可审查 lock 提交；
-- tag push 只构建、签名并生成经远端复核的 Draft，不自动公开；
+- desktop workflow 的 tag 路径只构建、签名并生成经远端复核的 Draft，不自动公开 desktop
+  Release；同一 tag 会并行触发独立的 GHCR SemVer workflow，两者非原子，container image
+  可能先公开，必须分别核对 run 与 digest；
 - 真机测试后，维护者必须以 `workflow_dispatch --ref main` 启动 promotion；`release_tag`
-  只是资料输入，promotion 绑定只允许 branch `main`、零 secret 的 `macos-release`
-  Environment；
+  只是资料输入，promotion 绑定只允许 branch `main`、不配置 Environment/repository release
+  secret 或长期签名凭据的 `macos-release` Environment；job 仍使用 GitHub 自动签发的短期
+  `GITHUB_TOKEN`；
 - 两个 Environment 都要求独立 reviewer、prevent self review，且在 GitHub UI 禁止 admin
   bypass；`protected-main`、owner-only `release-tag-creation`、无 bypass 的
   `immutable-release-tags` ruleset 与 GitHub Immutable Releases 也必须开启；
@@ -192,7 +204,7 @@ Application Support 包含私有源码快照、SQLite、facts、proposal、任�
   安全事件处理，不按幂等成功。
 
 当前 public locks 是 `unprovisioned`，所以正式 workflow 会 fail closed。应用虽然实现了签名
-manifest 检查，以及用户确认后的已验证 DMG 下载/打开，但物理 0.0.1 → 0.0.2 门禁尚未运行；
+manifest 检查，以及用户确认后的已验证 DMG 下载/打开，但真实单调版本的 `N-1 → N` 物理门禁尚未运行；
 “自动应用更新”不是已交付能力。source/unprovisioned、校验或网络错误时不会旁路 signed
 updater；只有用户显式操作才可让 Main 打开固定的 canonical GitHub Releases 页面，renderer
 不能提供或读取该 URL，这个手工出口也不会改写 signed updater 的错误/候选状态。
@@ -237,10 +249,19 @@ npm --prefix desktop run start:source
 原有路径继续保留用于当前运行和回退：
 
 ```bash
-./install.sh
-./scripts/lcf doctor
-./scripts/lcf status
+LCF_CONTROL_BIN="$(pwd -P)/scripts/lcf"
+lcf_managed() {
+  env -i HOME="$HOME" PATH="$PATH" "$LCF_CONTROL_BIN" "$@"
+}
+
+lcf_managed install
+lcf_managed doctor
+lcf_managed status
 ```
+
+当前控制脚本尚未自行隔离优先级更高的 shell/Compose 变量；上面的最小环境包装避免错误
+project/context/data/port 覆盖。完整说明和高级变量 allowlist 见
+[部署与运维](docs/18-deployment-operations.md#22-安装)。
 
 GitHub Actions/GHCR、多机 Ollama、HTTP MCP、legacy backup/restore 等旧操作仍在编号文档中。
 不要让 legacy 与 Electron 同时写同一数据目录。后续只有完成代表性迁移、更新和回滚门禁，并
@@ -263,6 +284,11 @@ tests/            后端与跨边界回归
 ## 文档导航
 
 - [文档总索引](docs/README.md)
+- [项目状态快照](docs/development/status.md)
+- [系统设计](docs/17-system-design.md)
+- [部署与运维总手册](docs/18-deployment-operations.md)
+- [开发者手册](docs/development/contributor-handbook.md)
+- [详细 TODO](docs/development/todo.md)
 - [产品概览](docs/00-overview.md)
 - [硬件与部署](docs/03-hardware-deployment.md)
 - [快速开始](docs/04-quickstart.md)

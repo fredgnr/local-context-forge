@@ -4,9 +4,10 @@
 - 开始日期：2026-07-31
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
 - 前置检查点：`agent/electron-desktop-foundation@7e4524f`
-- source merge 基线：`main@52a5ffa`
-- 当前工作分支：`agent/two-phase-desktop-release`
-- 当前公开 source 检查点：`main@52a5ffa`
+- bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
+- two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
+- 文档审计基线：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
+- 当前文档分支：`agent/documentation-handoff`
 - 依赖：[ITER-0001](0001-electron-foundation.md) 的源码模式 trust/IPC 契约
 - 路线图阶段：P2、P3；提前落地 P5/P6 source foundation
 - 追踪矩阵：[traceability](../traceability.md)
@@ -27,13 +28,13 @@
 - 原生 picker 以一次性 opaque grant 导入已预先 clone 的本地/私有仓库，不管理凭据；
 - 生成可复核的来源、依赖、许可证、SBOM、native closure 和精确资源清单。
 
-R07–R10 是本父迭代的追加纵切，保留最初 lexical-only/无模型下载/无发行的历史范围，同时
+R07–R11 是本父迭代的追加纵切，保留最初 lexical-only/无模型下载/无发行的历史范围，同时
 单独记录 embedding、MCP onboarding、signed update/release policy 和 local source 的
-source 实现。它们不是独立父迭代，不能绕过 packaged/physical 退出门禁。
+source 实现与文档交接。它们不是独立父迭代，不能绕过 packaged/physical 退出门禁。
 
 本迭代不完成旧数据切换、notarization、hardened runtime、automatic update apply 或
 Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
-真实签名 provider、外置卷或物理 0.0.1 → 0.0.2 门禁。
+真实签名 provider、外置卷或物理 `N-1 → N` 门禁。
 
 ## 已接受决策
 
@@ -51,7 +52,7 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 | Main-owned signed update client | [ADR-0011](../../adr/0011-main-owned-signed-update-client.md) | R09 source client/policy 已实现；public pins 尚未 provision |
 | 本地仓库 picker 与 opaque grant | [ADR-0012](../../adr/0012-local-repository-picker-opaque-grants.md) | R10 Main/Backend/Web source 已实现；物理 volume gate 待运行 |
 | Codex MCP onboarding 与签名 CLI discovery | [ADR-0013](../../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | R08 source discovery/onboarding 已实现；真实 OpenAI 签名 gate 待运行 |
-| 候选 Draft 与公开 promotion 分离 | [ADR-0014](../../adr/0014-two-stage-desktop-release-promotion.md) | R09 的 tag-only signing、trusted-main/secret-free promotion、ruleset/immutable source policy 已实现并复验；真实 settings/promotion 待运行 |
+| 候选 Draft 与公开 promotion 分离 | [ADR-0014](../../adr/0014-two-stage-desktop-release-promotion.md) | R09 的 tag-only signing、trusted-main promotion（无配置 release secret/长期签名凭据，使用短期 `GITHUB_TOKEN`）、ruleset/immutable source policy 已实现并复验；真实 settings/promotion 待运行 |
 
 ## 任务
 
@@ -81,6 +82,9 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
   [R09](0002-r09-signed-update-client.md)。
 - [x] **R10 local/private repositories**：完成 picker、opaque grant、Main/Backend 双层路径
   策略和脱敏 UX；见 [R10](0002-r10-local-repositories.md)。
+- [x] **R11 documentation handoff foundation**：建立 status、系统设计、部署运维、开发手册、
+  TODO 和 evidence 规范；入口同步与最终 CI 见
+  [R11](0002-r11-documentation-handoff.md)。
 
 以上 `[x]` 表示对应 source 纵切落地，不表示下列完整验收或父迭代完成。
 
@@ -99,23 +103,25 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 - [ ] Python/QMD/companion/renderer staging 的 source digest、inventory、native closure、
   SBOM、notices 和 `beforePack` tamper rejection 在正式 macOS arm64 build 可复现。
 - [ ] 本地 home/外置卷私有仓库在 packaged app 中完成选择、重启、移动/删除和脱敏矩阵。
-- [ ] 两个 protected Environment、三组 ruleset 和 Immutable Releases settings 验证后生成
-  真实签名 DMG，完成 clean-user Gatekeeper/smoke 和
-  0.0.1 → 0.0.2 + verified DMG fallback 物理门禁完成。
 - [ ] VAL-GIT-001、VAL-PY-001、VAL-QMD-001、VAL-CLI-001、VAL-MCP-001、VAL-PACK-001
   获得与各自最低环境相符的完整证据。
+
+两个 protected Environment、三组 ruleset、Immutable Releases、真实签名 DMG、
+clean-user、promotion 和 `N-1 → N` 属于 ITER-0004/0005 的退出门禁，不再作为
+ITER-0002 的完成条件。R09 只记录这些后续阶段的 source foundation；这样避免
+P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 
 ## 验证日志
 
 | 验证 | 结果 | 日期/提交 | 命令或过程 | 证据/说明 |
 | --- | --- | --- | --- | --- |
-| VAL-GOV-001 | `pass` | 2026-07-31；当前文档工作树 | `python tools/check_markdown_links.py` | Markdown link validation passed: 67 files |
+| VAL-GOV-001 baseline | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) 的 Python source job | 该基线包含 Markdown link check；R11 最终 head 仍在 [R11 validation](0002-r11-documentation-handoff.md#验证日志) 独立记录 |
 | VAL-P1-SOURCE-001 | `pass` | 2026-07-30；`7e4524f` | 继承 ITER-0001 Actions 证据 | 仅证明恢复基线 |
-| 当前 Backend source 回归 | `pass` | 2026-07-31；当前工作树 | `cd backend && .venv/bin/pytest` | 322 pass / 1 AF_UNIX skip |
-| 当前 Desktop source 回归 | `pass` | 2026-07-31；当前工作树 | `cd desktop && npm test -- --run` | 30 files / 245 pass / 7 skip |
-| 当前 Web source 回归 | `pass` | 2026-07-31；`fcca1e4` | `cd web && npm test -- --run` | 7 files / 51 pass |
-| 当前 QMD worker source 回归 | `pass` | 2026-07-31；`8eedd7e` | `cd desktop/workers/qmd && npm test` | 8 pass / 3 skip（AF_UNIX/native/model 条件） |
-| 当前 Host Runner 回归 | `pass` | 2026-07-31；`8eedd7e` | `backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .` | 8 pass |
+| Backend source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Python source job success；历史本地计数 322 pass / 1 AF_UNIX skip |
+| Desktop source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Desktop source job success；历史本地计数 30 files / 245 pass / 7 skip |
+| Web source checkpoint | `pass` | 2026-07-31；`fcca1e4` | `cd web && npm test -- --run` | 7 files / 51 pass |
+| QMD worker source checkpoint | `pass` | 2026-07-31；`8eedd7e` | `cd desktop/workers/qmd && npm test` | 8 pass / 3 skip（AF_UNIX/native/model 条件） |
+| Host Runner checkpoint | `pass` | 2026-07-31；`8eedd7e` | `backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .` | 8 pass |
 | VAL-GIT-001 | `not-run` | — | source Dulwich/PATH 回归已包含在 Backend 313；完整 gate 需 packaged clean macOS | source 子检查 `pass`，最低环境未满足 |
 | VAL-PY-001 | `not-run` | — | build/audit source 合同已测试；需无系统 Python/Git/ctags 的 clean macOS arm64 | 不把 CI fixture 当 bundled runtime |
 | VAL-QMD-001 | `not-run` | — | worker/Main/Python source 合同已测试；需 packaged Node/QMD/native/UDS | 3 个 worker 条件 skip 保持可见 |
@@ -124,15 +130,15 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 | VAL-MCP-001 | `not-run` | — | core 3 files / 37 pass；bridge/companion source 子集 15 pass / 7 skip；需 packaged sidecars/Codex | 7 skip 保持可见；见 [R08](0002-r08-mcp-onboarding.md) |
 | VAL-MCP-ONBOARD-001 | `not-run` | — | Desktop 6 files / 73、Web 3 files / 25 source 子检查 `pass`；需真实签名 Codex packaged app | `fcca1e4`；source fake/signature injection 不替代 physical |
 | VAL-PACK-001 | `not-run` | — | beforePack/build/audit/source tamper 子检查已通过；需 macOS 15 arm64 formal staging | public release locks 仍 unprovisioned |
-| VAL-RELEASE-POLICY-001 | `pass` | 2026-07-31；当前工作树 | Desktop release/update policy 2 files / 18；Backend workflow/bootstrap policy 22 | 只证明 source workflow policy，不证明签名产物或真实 GitHub settings |
-| VAL-RELEASE-PROMOTION-001 | `pass` | 2026-07-31；当前工作树 | 两阶段 focused tests；YAML parse；17 个 workflow `run` script `bash -n` | tag push Draft-only、`--ref main` trusted verifier/隔离 tag worktree/fresh peel、PATCH 前 fresh `origin/main` promotion order、固定 Release ID、published 预状态拒绝、post-publish attestation/immutable source contract；真实 settings/promotion `not-run` |
+| VAL-RELEASE-POLICY-001 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112)；历史 focused 2 files / 18 + Backend 22 | 只证明 source workflow policy，不证明签名产物或真实 GitHub settings |
+| VAL-RELEASE-PROMOTION-001 | `pass` | 2026-07-31；`71890ee` | 同一 source run；历史 focused/YAML/17 个 shell slice | desktop tag path Draft-only、trusted-main/fixed-ID source contract；同 tag GHCR 独立非原子；真实 settings/promotion `not-run` |
 | VAL-UPDATE-CLIENT-001 | `pass` | 2026-07-31；`fcca1e4` | Desktop 5 files / 42；Web 2 files / 19 | exact 命令见 [R09](0002-r09-signed-update-client.md) |
 | VAL-TRUST-001 packaged | `not-run` | — | 需 packaged renderer/IPC/updater/local-source 审计 | source 负向合同不能替代 |
 | VAL-LOCAL-SOURCE-001 | `pass` | 2026-07-31；full `fcca1e4`、focused `8eedd7e` | Desktop 235/7 skip、Web 51；核心 security 子集 30 | 见 [R10](0002-r10-local-repositories.md) |
 | VAL-LOCAL-SOURCE-002 | `pass` | 2026-07-31；`8eedd7e` | Backend source+transport 103 pass / 1 skip；全量 Backend 313 / 1 | desktop argv roots/owner/sensitive root 重验 |
 | VAL-LOCAL-SOURCE-003 | `not-run` | — | 需 physical packaged macOS home/外置卷/重启矩阵 | source checkout 不替代 NSOpenPanel/volume |
 | VAL-INSTALL-001、VAL-RELEASE-001、VAL-SECRET-001 | `not-run` | — | 需两 Environment、三组 ruleset、Immutable Releases、真实签名 DMG、clean-user 与仓库设置证据 | release policy source `pass` 不提升这些门禁 |
-| VAL-UPDATE-001 | `not-run` | — | 需物理 Apple Silicon 0.0.1 → 0.0.2 与失败 DMG fallback | automatic apply 保持禁用 |
+| VAL-UPDATE-001 | `not-run` | — | 需物理 Apple Silicon 真实 `N-1 → N` 与失败 DMG fallback | automatic apply 保持禁用；早期版本号仅为示例 |
 
 ## 风险、阻塞与回滚点
 
@@ -140,7 +146,7 @@ Docker retirement。packaged runtime 的 source/macOS CI 合同不替代 clean-u
 | --- | --- | --- |
 | source 通过数被误写成完整交付 | 绕过 clean-user/signing/native/physical 风险 | 每项记录最低环境；完整门禁继续 `not-run` |
 | public update/codesign locks 尚未 provision | formal release/update 不可用 | fail closed；按 [release runbook](../desktop-release.md) 由管理员 provision |
-| tag push 被误当成公开授权 | 未经过物理门禁的候选被立即公开 | ADR-0014：tag push 只创建 Draft；`--ref main` manual promotion 绑定 candidate digest 和固定 Release ID |
+| tag push 被误当成 desktop 公开授权 | 未经过物理门禁的 desktop 候选被立即公开 | ADR-0014：desktop tag path 只创建 Draft；`--ref main` manual promotion 绑定 candidate digest 和固定 Release ID；同 tag GHCR 独立发布、需单独记录 |
 | promotion 从 tag 执行不可信 verifier | tag author 可选择/削弱验证策略 | workflow 固定 protected `main`，tag 仅作为 data 放入 detached worktree |
 | 并行 tag promotion 使用启动时旧 HEAD | 较旧版本可能被错误设为 latest | `PATCH` 前 fresh-fetch `origin/main`，以该 comparison ref 重跑 `verifyPromotionOrder`/计算 `make_latest` |
 | Draft verify→PATCH 竞态或已 published 预状态被重跑洗绿 | 公开字节不再等于已测试候选 | GitHub Draft 无 CAS；fresh peel/fixed ID、published 预状态安全事件、post-publish `gh release verify`/immutable/完整集合后验检测 |

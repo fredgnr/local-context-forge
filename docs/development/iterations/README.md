@@ -12,9 +12,10 @@
 | [ITER-0002/R08](0002-r08-mcp-onboarding.md) | `in-progress`（继承） | Codex MCP onboarding、签名 CLI discovery、scoped ownership 与 per-launch rendezvous |
 | [ITER-0002/R09](0002-r09-signed-update-client.md) | `in-progress`（继承） | 独立签名更新、候选 Draft 与 trusted-main/fixed-ID promotion policy |
 | [ITER-0002/R10](0002-r10-local-repositories.md) | `in-progress`（继承） | 原生本地/私有仓库选择与不透明路径授权 |
+| [ITER-0002/R11](0002-r11-documentation-handoff.md) | `in-progress`（继承） | 状态、系统设计、部署、开发、TODO 与 evidence 交接 |
 | [ITER-0003](0003-runtime-data-models.md) | `planned` | macOS 路径、模型管理、旧数据迁移与回滚 |
 | [ITER-0004](0004-macos-release.md) | `planned` | arm64 DMG、双 Environment、ruleset/Immutable Releases 与物理 promotion |
-| [ITER-0005](0005-updater-physical-gate.md) | `planned` | 0.0.1 → 0.0.2 实机更新与 DMG fallback |
+| [ITER-0005](0005-updater-physical-gate.md) | `planned` | 真实单调 `N-1 → N` 实机更新与 DMG fallback |
 | [ITER-0006](0006-legacy-exit.md) | `planned` | 迁移演练、Docker legacy 去留决策 |
 
 每个记录维护自己的范围、任务、验收、风险、验证日志和变更清单。Rxx 中 source task 的

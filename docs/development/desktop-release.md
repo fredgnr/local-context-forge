@@ -7,6 +7,10 @@ release 会 fail closed。source tests 或普通 macOS CI 不能替代 protected
 
 决策与证据：
 
+- [当前状态](status.md)
+- [部署与运维总手册](../18-deployment-operations.md)
+- [剩余任务](todo.md)
+- [证据记录规范](evidence/README.md)
 - [ADR-0003：macOS release policy](../adr/0003-macos-release-signing-update-policy.md)
 - [ADR-0011：signed update client](../adr/0011-main-owned-signed-update-client.md)
 - [ADR-0014：two-stage release promotion](../adr/0014-two-stage-desktop-release-promotion.md)
@@ -18,9 +22,10 @@ release 会 fail closed。source tests 或普通 macOS CI 不能替代 protected
 - 唯一正式入口：`.github/workflows/desktop-release.yml`；
 - runner：`macos-15`，目标只允许 `darwin/arm64`；
 - build/sign 只响应 exact `v*.*.*` tag push；
-- `macos-signing`：只允许 tag `v*.*.*`，保存唯一 release secret
+- `macos-signing`：只允许 tag `v*.*.*`，保存本工作流唯一的 private credential
   `DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`；
-- `macos-release`：只允许 branch `main`，secret 集合必须为空；
+- `macos-release`：只允许 branch `main`，Environment/repository release secret 集合必须为空，
+  不保存长期签名凭据；promotion job 仍使用 GitHub 自动签发的短期 `GITHUB_TOKEN`；
 - 两个 Environment 都必须有 required reviewers、`prevent self review`，并在 GitHub UI
   禁止 administrator bypass；
 - code signing identity：`Local Context Forge Self Signed`；
@@ -28,14 +33,18 @@ release 会 fail closed。source tests 或普通 macOS CI 不能替代 protected
 - update metadata 使用独立 Ed25519 key；automatic apply 固定为 disabled。
 
 普通 PR、fork 和 source CI job 只有 `contents: read`，不能引用 Environment secret。
-正式 release build/sign job 绑定 `macos-signing` Environment 并读取唯一 credential bundle；
-tag push 后的 Draft job 只有 `contents: write`，不绑定 Environment 且不读取该 secret。tag push
-只产生经远端复核的 Draft，不会公开 Release。
+正式 release build/sign job 绑定 `macos-signing` Environment 并读取本工作流唯一的
+credential bundle；
+desktop workflow 在 tag push 后的 Draft job 只有 `contents: write`，不绑定 Environment 且
+不读取该 secret；它只产生经远端复核的 **desktop Draft**，不会公开 desktop Release。相同
+tag 还会独立触发 container workflow 的 GHCR SemVer 发布；两条 workflow 并行且非原子，
+container image 可能在 desktop 审批等待或失败时已经公开。
 
 公开是第二次、独立的手动 promotion。维护者必须用 `workflow_dispatch --ref main` 启动受
 `protected-main` ruleset 保护的 verifier；`release_tag` 只是资料输入，不能决定 workflow
-代码来源。promotion 绑定 secret-free 的 `macos-release` Environment，不依赖 build job、
-不重新签名，也不引用任何 `secrets.*`。可信 `main` verifier 把 tag 隔离到 detached worktree，
+代码来源。promotion 绑定无配置 release secret/长期签名凭据的 `macos-release`
+Environment，不依赖 build job、不重新签名，也不引用任何 `secrets.*`；它仍使用 GitHub
+自动签发的短期 `GITHUB_TOKEN`。可信 `main` verifier 把 tag 隔离到 detached worktree、
 fresh-peel tag、固定 Draft Release ID，并且只有这个 job 可以用 REST `PATCH` 公开该 ID。
 
 当前仓库尚无由此流程产出的真实 tag、DMG 或公开 Release，也没有 Developer ID/notarization。
@@ -49,9 +58,10 @@ source/unprovisioned、校验或网络错误时，应用的 signed update check/
 Environment 都禁止 admin bypass，并配置下列 fail-closed 控制：
 
 - `macos-signing`：required reviewers、prevent self review、唯一 tag policy `v*.*.*`，
-  且只有一个 credential bundle secret；
+  且该 Environment 的 release workflow credential 集合只有一个 credential bundle secret；
 - `macos-release`：required reviewers、prevent self review、唯一 branch policy `main`，
-  且零 secret；
+  Environment/repository release secret 集合为空、无长期签名凭据；job 仅使用短期
+  `GITHUB_TOKEN`；
 - active `protected-main` branch ruleset：PR、至少一名独立 review、dismiss stale reviews、
   last-push approval、resolve threads、禁止 force push/delete、无 bypass；
 - active `release-tag-creation` ruleset：`refs/tags/v*.*.*` 只能由 canonical owner actor
@@ -99,6 +109,25 @@ digest 不匹配 fail closed；保留恢复目录，修复后按脚本错误提�
 - certificate SHA-256、固定 identity 与 credential bundle generation 一致；
 - diff 中没有 private key、P12、password、bundle 或额外 secret。
 
+“唯一 credential”只限定 `desktop-release.yml` 的正式签名输入和 `macos-signing`
+Environment 的成员资格，不声称仓库、账号或组织没有其他无关 secret。
+
+### 设置精确性与证据
+
+bootstrap 的校验必须匹配**完整合同**，不能只看到同名对象就通过：
+
+- Environment 名称、deployment branch/tag policy、required reviewer、prevent-self-review
+  与 secret name/membership；
+- `protected-main`、`release-tag-creation`、`immutable-release-tags` 的 `active` enforcement、
+  ref condition、所需 rule 类型、bypass actor/mode 和禁止 force/delete；
+- GitHub Immutable Releases 的真实开启状态；
+- 操作者在 UI 中确认 admin bypass 已关闭。
+
+API 可见字段保存为脱敏 JSON，UI-only 控制保存截图；两者都按
+[证据记录规范](evidence/README.md)绑定 repository、观察时间、操作者角色和目标 commit。
+截图必须裁掉通知、账号隐私、secret value 和无关仓库。只有配置存在但没有 exact-value
+验证，仍记为 `not-run`，不能把 `VAL-SECRET-001` 标为 `pass`。
+
 ## 发布前检查
 
 1. 版本在 `runtime/version.json`、package 和协议层同步，release notes 已更新。
@@ -131,8 +160,12 @@ cd ../backend
 
 ### 阶段一：构建候选并停止在 Draft
 
-由 canonical owner 从受保护 `main` 创建并推送 exact `vX.Y.Z` tag；`macos-signing`
-Environment 第一次审批后：
+这是统一产品发行事件，不是仅 desktop 的操作。同一 exact `vX.Y.Z` tag 会同时启动 GHCR
+container workflow 与下述 desktop workflow；二者没有跨 workflow 事务或回滚。创建 tag 前
+必须同时确认 container 与 desktop 版本/发布说明已就绪，并准备分别记录两个 run 和 digest。
+
+由 canonical owner 从受保护 `main` 创建并推送 exact tag；`macos-signing` Environment
+第一次审批后，desktop workflow：
 
 1. 绑定 tag、commit 和 `SOURCE_DATE_EPOCH`；
 2. 下载并双重校验固定 CPython 3.13.14 与 Node 22.23.2 source archives；
@@ -147,9 +180,11 @@ Environment 第一次审批后：
 10. 逐项核对 GitHub 远端 tag/title/state/notes 与 name/size/`sha256:` digest/download URL
     完整集合，然后停止，全程不覆盖现有 Release。
 
-tag push 永远不会公开 Release。任一步失败都停止；不要手工删减、替换、追加或
+tag push 永远不会公开 **desktop GitHub Release**，但 GHCR workflow 可能已经公开同版本
+container image。任一步失败都停止；记录这种非原子部分成功，不要手工删减、替换、追加或
 `--clobber` Draft assets。若构建、验证或真机测试发现问题，不移动旧 tag，也不复用该候选；
-修复 `main`、提升版本并创建新 tag。
+修复 `main`、提升版本并创建新 tag。分别核对 container run/image digest 与 desktop
+build/Draft run，不能用其中一条的成功替代另一条。
 
 ### 阶段二：真机验证并手动推广
 
@@ -176,8 +211,9 @@ tag push 永远不会公开 Release。任一步失败都停止；不要手工删
 
    所有 tag 的 promotion 共用一个不自动取消的全局 concurrency group，会按队列串行执行。
 
-5. 在 secret-free 的 `macos-release` Environment 中完成第二次审批。promotion 必须证明
-   `GITHUB_SHA` 是 fresh `main` head，从私有 ref fresh-peel 输入 tag，在 detached worktree
+5. 在无配置 release secret/长期签名凭据的 `macos-release` Environment 中完成第二次审批；
+   job 仅使用短期 `GITHUB_TOKEN`。promotion 必须证明 `GITHUB_SHA` 是 fresh `main` head，
+   从私有 ref fresh-peel 输入 tag，在 detached worktree
    中读取 tag-bound data，并验证 tag commit 属于 `main` 历史。
 6. promotion 严格选出唯一 exact Draft，记录 Release ID，下载全部资产；公开前再次 fresh
    fetch tag/Release 和 `origin/main`，并要求 tag、Draft 状态和固定 ID 都未变化。
@@ -242,7 +278,8 @@ ruleset 与 reviewer 不会防御恶意根信任。GitHub Draft 也没有资产 
 - QMD 真实模型首次下载、离线/低磁盘/中断、forced rebuild、hybrid 和 profile switch；
 - 官方签名 Codex 的一键 MCP 接入、Codex 重启、两个工具、app move/reconnect/clear；
 - 本地 home/外置卷/私有仓库、移动/删除目录和 app 重启；
-- 0.0.1 创建数据 → 0.0.2 跨版本、数据保留、自动路径失败注入和 verified DMG fallback；
+- 真实上一版本 `N-1` 创建数据 → 真实单调下一版本 `N`、数据保留、更新路径失败注入和
+  verified DMG fallback；早期 ADR 的版本号只是示例；
 - 两个 Environment、三组 ruleset、Immutable Releases 和 fork/PR/普通 workflow secret
   隔离的真实 GitHub settings 证据。
 

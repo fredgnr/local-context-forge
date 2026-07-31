@@ -11,11 +11,19 @@
 
 ## 计划任务
 
-- [ ] D01 实现 Application Support、Caches、Logs 和临时 runtime 的路径适配器。
+- [x] D01a source foundation：Main 已使用 Application Support、Caches 和 per-launch temp。
+- [ ] D01b 冻结 layout version，补齐 ADR-0004 的持久/可重建/日志/更新缓存分层及旧布局兼容。
 - [ ] D02 建立迁移清单、空间预检、journal、恢复和回滚。
 - [ ] D03 覆盖 fresh、repeat、interrupt、corrupt、low-disk、rollback 样本。
-- [ ] D04 实现模型用户确认、断点下载、摘要校验与原子激活。
-- [ ] D05 覆盖离线、损坏、来源不可信和磁盘不足。
+- [x] D04a source foundation：R07 已实现用户触发、profile/revision CAS、forced embed 和
+  lexical fallback。
+- [ ] D04b 实现固定 publisher/digest/signature、可靠 resume、cache eviction、shadow-index
+  staging/atomic swap。
+- [ ] D05 覆盖离线、损坏、不可信来源、磁盘不足、取消、publish race 和 rollback。
+
+详细可执行任务见
+[TODO-DATA-* / TODO-MODEL-SUPPLY-001](../todo.md)。`[x]` 只表示 source foundation，
+不提升本迭代或 `VAL-DATA/MODEL-001`。
 
 ## 退出门禁
 

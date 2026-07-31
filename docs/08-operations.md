@@ -1,18 +1,39 @@
 # 运维、升级与性能
 
+> **适用范围：legacy Docker/Web。** Electron 桌面版使用不同的数据目录、进程和更新模型，
+> 参见[部署与运维](18-deployment-operations.md)。对 `./install.sh` 创建的实例，生命周期命令
+> 必须通过下方 `lcf_managed` 调用 `scripts/lcf`。脚本会读取安装时记录的 Docker context、
+> Compose project root 和 mode-`0600` 的 `.lcf/runtime.env`，但当前不会自行隔离优先级更高的
+> shell/Compose 变量。本页出现的裸 `docker compose` 命令只适用于明确配置好的未托管开发
+> checkout，不能直接复制到已安装实例。实现缺口见 `TODO-LEGACY-CONTROL-001`。
+
 ## all-in-one 生命周期
 
-日常操作统一使用记录了 Docker context 与私有 runtime env 的控制命令：
+先在受管实例的仓库根目录定义 clean-environment 入口；它只保留 Docker/CLI 定位所需的
+`HOME`、`PATH`，清除 `COMPOSE_PROJECT_NAME`、`COMPOSE_*`、`LOCAL_*`、`LCF_*`、端口和镜像
+覆盖：
 
 ```bash
-./scripts/lcf status
-./scripts/lcf doctor
-./scripts/lcf logs
-./scripts/lcf stop
-./scripts/lcf start
-./scripts/lcf restart
-./scripts/lcf down
-./scripts/lcf backup
+LCF_CONTROL_BIN="$(pwd -P)/scripts/lcf"
+lcf_managed() {
+  env -i \
+    HOME="$HOME" \
+    PATH="$PATH" \
+    "$LCF_CONTROL_BIN" "$@"
+}
+```
+
+本页所有 `lcf_managed` 示例都要求先执行这段定义。日常操作：
+
+```bash
+lcf_managed status
+lcf_managed doctor
+lcf_managed logs
+lcf_managed stop
+lcf_managed start
+lcf_managed restart
+lcf_managed down
+lcf_managed backup
 ```
 
 不要在 Docker Desktop 与 Colima 共存时绕过该入口对另一个 context 执行
@@ -23,21 +44,21 @@ Host runner 由当前用户的
 `.lcf/logs/`，状态位于 `data/runner/heartbeat.json`。Heartbeat 过期时运行：
 
 ```bash
-./scripts/lcf doctor
+lcf_managed doctor
 tail -n 200 .lcf/logs/host-runner.err.log
-./scripts/lcf restart
+lcf_managed restart
 ```
 
 `stop` 保留容器，`down` 删除容器但不带 `-v`；二者都会停止 host runner 并删除派生的旧
-heartbeat，下一次 `start` 必须等待新 heartbeat，避免假健康。`./scripts/lcf uninstall` 只移除
+heartbeat，下一次 `start` 必须等待新 heartbeat，避免假健康。`lcf_managed uninstall` 只移除
 容器和 LaunchAgent，默认保留 `data`、`imports`、`backups` 和 `.lcf`。
 
 切换 provider 使用幂等安装器：
 
 ```bash
-./install.sh --provider codex_cli --no-open
-./install.sh --provider cursor_cli --no-open
-./install.sh --provider mock --no-open
+lcf_managed install --provider codex_cli --no-open
+lcf_managed install --provider cursor_cli --no-open
+lcf_managed install --provider mock --no-open
 ```
 
 显式 CLI 模式会先验证安装与登录。`mock`/`ollama` 会卸载 host runner LaunchAgent；切回 CLI
@@ -47,11 +68,16 @@ heartbeat，下一次 `start` 必须等待新 heartbeat，避免假健康。`./s
 ## 日常检查
 
 ```bash
-docker compose ps
+lcf_managed status
+lcf_managed doctor
+```
+
+若安装时保留默认端口，可额外做只读端点探测：
+
+```bash
 curl --fail http://127.0.0.1:8000/api/health
 curl --fail http://127.0.0.1:8001/health
 curl --fail http://127.0.0.1:8080/healthz
-docker compose exec api qmd status
 ```
 
 当前 `/api/health` 是进程存活检查，并报告 QMD 的 `enabled/available`；它不会做 SQLite 写入、Wiki Git、Ollama 或端到端 query 探测。Compose 的 `healthy` 因此只代表对应 HTTP 进程可响应。生产监控应另加 synthetic query、SQLite integrity/空间、最近 job 失败率和 Ollama 探测，不能把 liveness 当完整 readiness。
@@ -61,10 +87,13 @@ docker compose exec api qmd status
 ## 日志
 
 ```bash
-docker compose logs --since=30m api
-docker compose logs --since=30m mcp
-docker compose logs --since=30m web
+lcf_managed logs
 ```
+
+该命令显示 Host Runner 日志路径，并使用已记录的 context/env 跟随 Compose 日志；`Ctrl-C`
+只退出日志跟随，不停止服务。需要单服务或时间范围过滤时，先阅读
+[部署与运维中的高级诊断](18-deployment-operations.md#29-高级诊断与裸-compose)，再显式传入
+同一个 context、project directory、env file 和 Compose 文件。
 
 原生一键开发模式会在启动时打印一个
 `${TMPDIR:-/tmp}/lcf-dev-native.XXXXXX/` 目录，并把 `api.log`、`mcp.log`、`web.log` 留在那里；
@@ -84,11 +113,31 @@ debug 日志留在共享 `/tmp`。
 
 ### FIFO、取消与重试
 
-SQLite 持久 FIFO 默认单并发。先看系统与任务：
+SQLite 持久 FIFO 默认单并发。先从受管安装记录中只读取并校验实际 API 端口；不要 `source`
+整个 `.lcf/runtime.env`：
 
 ```bash
-curl --fail http://127.0.0.1:8000/api/system/status | jq
-curl --fail "http://127.0.0.1:8000/api/jobs/JOB_ID" | jq
+LCF_API_PORT_ACTUAL="$(
+  awk -F= '
+    $1 == "API_PORT" && $2 ~ /^[0-9]+$/ && $2 >= 1024 && $2 <= 65535 {
+      print $2
+      exit
+    }
+  ' .lcf/runtime.env
+)"
+if [ -z "$LCF_API_PORT_ACTUAL" ]; then
+  printf '%s\n' 'Invalid or missing API_PORT in .lcf/runtime.env' >&2
+  exit 1
+fi
+LCF_API_BASE="http://127.0.0.1:${LCF_API_PORT_ACTUAL}"
+```
+
+未托管部署没有这份权威记录；必须从它自己的受控配置构造 `LCF_API_BASE`。后续所有 API
+命令复用该变量。先看系统与任务：
+
+```bash
+curl --fail "${LCF_API_BASE}/api/system/status" | jq
+curl --fail "${LCF_API_BASE}/api/jobs/JOB_ID" | jq
 ```
 
 `queued` 返回从 1 开始的 `queue_position`；API/主机重启不会丢队列，dispatcher 恢复后继续
@@ -96,10 +145,10 @@ curl --fail "http://127.0.0.1:8000/api/jobs/JOB_ID" | jq
 
 ```bash
 curl --fail-with-body -X POST \
-  http://127.0.0.1:8000/api/jobs/JOB_ID/cancel | jq
+  "${LCF_API_BASE}/api/jobs/JOB_ID/cancel" | jq
 
 curl --fail-with-body -X POST \
-  http://127.0.0.1:8000/api/jobs/JOB_ID/retry | jq
+  "${LCF_API_BASE}/api/jobs/JOB_ID/retry" | jq
 ```
 
 queued 立即 cancelled；running 先变 cancelling，并在 snapshot/facts/generation/publish 等安全
@@ -134,8 +183,8 @@ schema/source-ref validation 发生在 `generation` 与 `proposal` 之间；失�
 `failed/orphaned`：
 
 ```bash
-curl --fail http://127.0.0.1:8000/api/jobs/active | jq
-curl --fail "http://127.0.0.1:8000/api/jobs?limit=200" |
+curl --fail "${LCF_API_BASE}/api/jobs/active" | jq
+curl --fail "${LCF_API_BASE}/api/jobs?limit=200" |
   jq '[.[] | select(.stage == "orphaned")]'
 ```
 
@@ -143,7 +192,7 @@ curl --fail "http://127.0.0.1:8000/api/jobs?limit=200" |
 
 ```bash
 curl --fail-with-body -X POST \
-  http://127.0.0.1:8000/api/admin/jobs/recover-orphans |
+  "${LCF_API_BASE}/api/admin/jobs/recover-orphans" |
   jq
 ```
 
@@ -177,7 +226,7 @@ registration、update、embed、remove 和 rebuild 共享同一个跨进程 writ
 curl --fail-with-body -X POST \
   -H 'Content-Type: application/json' \
   -d '{}' \
-  http://127.0.0.1:8000/api/rebuilds | jq
+  "${LCF_API_BASE}/api/rebuilds" | jq
 ```
 
 它只枚举 fully published Wiki，注册完整 corpus 并 `embed -f`；review/rejected/partial 不进入
@@ -186,7 +235,7 @@ curl --fail-with-body -X POST \
 
 ### 全局模型 profile
 
-`.env.example` 与 Compose/native helper 都明确固定：
+`.env.example`、安装器生成的 `.lcf/runtime.env` 与 Compose/native helper 都明确固定：
 
 ```dotenv
 QMD_EMBED_MODEL=hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf
@@ -218,7 +267,7 @@ curl --fail-with-body --max-time 650 \
   -d "$(jq -n \
     --arg library_id "$LIBRARY_ID" \
     '{library_id:$library_id,query:"create client timeout",limit:1}')" \
-  http://127.0.0.1:8000/api/query |
+  "${LCF_API_BASE}/api/query" |
   jq '{engine, hits: (.results | length)}'
 ```
 
@@ -240,12 +289,13 @@ curl --fail-with-body --max-time 650 \
 后续查询 lexical fallback，直到排队的 rebuild 完成。
 Web publish 与 nginx 的 1,860 秒覆盖 collection show/remove/add 与 update 的累计上限；
 query/MCP 的 660 秒略高于 hybrid 的 600 秒。生产前应先完成全局 rebuild 并通过直连 API
-warm-up，避免第一次查询承担模型加载。若旧
-`.env` 仍保留较小 MCP timeout，或你调整了后端上限，要同步修改
-`BACKEND_TIMEOUT_SECONDS` 后执行：
+warm-up，避免第一次查询承担模型加载。若旧安装的 `.lcf/runtime.env` 仍保留较小 MCP
+timeout，或你调整了后端上限，先备份该文件，只修改
+`BACKEND_TIMEOUT_SECONDS=<正整数秒>`，确认文件权限仍为 `0600`，再重启受管实例：
 
 ```bash
-docker compose up -d --force-recreate mcp
+chmod 600 .lcf/runtime.env
+lcf_managed restart
 ```
 
 Codex 配置应为：
@@ -278,6 +328,11 @@ docker compose exec api sh -lc \
 若宿主可访问而容器不可访问，检查 Docker Desktop 网络、Windows 防火墙 RemoteAddress 和 Windows IP 是否变化。
 
 ## 升级流程
+
+当前 legacy 路径没有通过端到端恢复演练的一键原地升级合同。已安装实例不要直接执行
+`git pull && docker compose up`；先按[部署与运维](18-deployment-operations.md#27-legacy-升级)
+记录版本/镜像摘要、完成一致性备份，并在数据副本演练。下面的裸 Compose 命令只展示未托管
+开发 checkout 的验证动作。
 
 1. 阅读 changelog 与 schema/migration 说明。
 2. 停止发起 publish/delete 等同步写请求并等待返回，再运行 `./scripts/backup.sh`；脚本会自动
@@ -314,8 +369,10 @@ du -sh data/metadata.sqlite3 data/jobs data/locks data/sources data/facts data/p
 df -h .
 ```
 
-上面是默认宿主 `LOCAL_DATA_DIR=./data`；外置数据根要替换为 `.env` 中配置的真实宿主路径，不能拿
-容器内 `/data` 去检查 Mac 磁盘。
+上面也是当前受管安装器唯一支持的数据布局：checkout 内的 `data/`。安装器没有
+`--data-dir`，重跑时会把路径写回 checkout。旧的手工外置数据实例属于未托管配置；不要在其上
+重跑安装器，也不要拿容器内 `/data` 去检查 Mac 磁盘。该缺口由
+`TODO-LEGACY-CONTROL-001` 跟踪。
 
 当前没有内置 retention/garbage-collection 命令。安全清理原则：
 
@@ -330,7 +387,7 @@ df -h .
 ```bash
 LIBRARY_ID=acme-widget
 curl --fail-with-body -X DELETE \
-  "http://127.0.0.1:8000/api/libraries/${LIBRARY_ID}?purge=true"
+  "${LCF_API_BASE}/api/libraries/${LIBRARY_ID}?purge=true"
 ```
 
 不带 `purge=true` 时只删除 SQLite 中的 library 及其级联元数据，便于保留磁盘审计材料。

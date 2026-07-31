@@ -40,8 +40,9 @@ work to the maintained sources below.
   history in place.
 - Update user documentation in the same change when setup, behavior, storage,
   compatibility, recovery, or limitations change.
-- Keep relative links valid and preserve the upstream numbered `docs/00-*`
-  through `docs/15-*` set as historical/current product documentation.
+- Keep relative links valid and preserve the numbered `docs/00-*` through
+  `docs/18-*` product documentation set; add new chapters deliberately and
+  update `docs/README.md` plus the handbook builder description.
 
 ## Instruction layers
 
@@ -53,6 +54,12 @@ work to the maintained sources below.
 ## Index
 
 - Documentation map: `docs/README.md`
+- Current status and release disposition: `docs/development/status.md`
+- Current system design: `docs/17-system-design.md`
+- Deployment and operations: `docs/18-deployment-operations.md`
+- Contributor workflow: `docs/development/contributor-handbook.md`
+- Remaining work: `docs/development/todo.md`
+- Evidence format: `docs/development/evidence/README.md`
 - Migration planning and evidence: `docs/development/README.md`
 - Architectural decisions: `docs/adr/README.md`
 - Desktop implementation workflow:

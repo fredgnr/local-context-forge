@@ -1,7 +1,15 @@
 # Handbook builder
 
-The printable Chinese handbook is generated from `docs/00-*.md` through
-`docs/13-*.md`.
+The printable Chinese handbook is generated from every numbered
+`docs/[0-9][0-9]-*.md` file, in lexical order. At the current documentation
+revision that is `docs/00-*.md` through `docs/18-*.md`.
+
+The handbook is a generated convenience copy. The live handoff authorities are
+[`docs/development/status.md`](../docs/development/status.md),
+[`docs/development/todo.md`](../docs/development/todo.md), and
+[`docs/development/traceability.md`](../docs/development/traceability.md);
+regenerate the PDF after changing numbered chapters, and never treat an old PDF
+as newer evidence than those version-controlled files.
 
 ```bash
 python3 -m pip install -r tools/requirements.txt

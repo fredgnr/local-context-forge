@@ -164,7 +164,7 @@ verification. Immutable Releases protect the published state, not that Draft
 window.
 
 The real packaged `/Applications`/official-Codex gate, protected signed
-release settings, clean-user DMG test, and physical 0.0.1 to 0.0.2 update gate
+release settings, clean-user DMG test, and physical real-version `N-1` to `N` update gate
 remain `not-run`. The current decision is **source merge GO / release NO-GO**.
 
 See [the detailed threat model](docs/10-security.md) and

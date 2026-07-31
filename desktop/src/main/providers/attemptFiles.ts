@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -49,17 +49,6 @@ export interface ProviderOutputEvidence {
 
 function effectiveUid(): number {
   return process.geteuid?.() ?? process.getuid?.() ?? -1;
-}
-
-async function hashFile(filePath: string): Promise<string> {
-  const digest = createHash("sha256");
-  await new Promise<void>((resolve, reject) => {
-    const stream = createReadStream(filePath);
-    stream.on("data", (chunk) => digest.update(chunk));
-    stream.once("error", reject);
-    stream.once("end", resolve);
-  });
-  return digest.digest("hex");
 }
 
 function plainRecord(value: unknown): value is Record<string, unknown> {
@@ -127,21 +116,23 @@ async function readPrivateFile(
   if (path.dirname(filePath) !== attemptDirectory) {
     throw new TypeError("Provider attempt file escapes its directory");
   }
-  const info = await lstat(filePath);
   const canonical = await realpath(filePath);
-  if (
-    !info.isFile() ||
-    info.isSymbolicLink() ||
-    info.uid !== effectiveUid() ||
-    (info.mode & 0o022) !== 0 ||
-    canonical !== filePath ||
-    info.size !== expected.size ||
-    info.size > maximumBytes
-  ) {
-    throw new TypeError("Provider attempt file metadata is invalid");
-  }
-  const handle = await open(filePath, "r");
+  const handle = await open(
+    filePath,
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+  );
   try {
+    const info = await handle.stat();
+    if (
+      !info.isFile() ||
+      info.uid !== effectiveUid() ||
+      (info.mode & 0o022) !== 0 ||
+      canonical !== filePath ||
+      info.size !== expected.size ||
+      info.size > maximumBytes
+    ) {
+      throw new TypeError("Provider attempt file metadata is invalid");
+    }
     const value = await handle.readFile();
     if (
       value.length !== expected.size ||
@@ -170,20 +161,24 @@ export async function verifyClaimedAttemptFiles(
     throw new TypeError("Provider attempt directory is invalid");
   }
 
-  const requestInfo = await lstat(attempt.requestPath);
-  if (
-    !requestInfo.isFile() ||
-    requestInfo.isSymbolicLink() ||
-    requestInfo.uid !== effectiveUid() ||
-    (requestInfo.mode & 0o022) !== 0 ||
-    requestInfo.size > MAX_REQUEST_BYTES ||
-    path.dirname(attempt.requestPath) !== attempt.attemptDirectory
-  ) {
+  if (path.dirname(attempt.requestPath) !== attempt.attemptDirectory) {
     throw new TypeError("Provider attempt request manifest is invalid");
   }
-  const request = await open(attempt.requestPath, "r");
+  const request = await open(
+    attempt.requestPath,
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+  );
   let requestBytes: Buffer;
   try {
+    const requestInfo = await request.stat();
+    if (
+      !requestInfo.isFile() ||
+      requestInfo.uid !== effectiveUid() ||
+      (requestInfo.mode & 0o022) !== 0 ||
+      requestInfo.size > MAX_REQUEST_BYTES
+    ) {
+      throw new TypeError("Provider attempt request manifest is invalid");
+    }
     requestBytes = await request.readFile();
   } finally {
     await request.close();
@@ -306,21 +301,32 @@ export async function writeCursorOutput(
 export async function inspectProviderOutput(
   outputPath: string
 ): Promise<ProviderOutputEvidence> {
-  const info = await lstat(outputPath);
   const canonical = await realpath(outputPath);
-  if (
-    !info.isFile() ||
-    info.isSymbolicLink() ||
-    info.uid !== effectiveUid() ||
-    canonical !== outputPath ||
-    info.size < 2 ||
-    info.size > MAX_PROVIDER_OUTPUT_BYTES
-  ) {
-    throw new TypeError("Provider output metadata is invalid");
+  const handle = await open(
+    outputPath,
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+  );
+  try {
+    const info = await handle.stat();
+    if (
+      !info.isFile() ||
+      info.uid !== effectiveUid() ||
+      canonical !== outputPath ||
+      info.size < 2 ||
+      info.size > MAX_PROVIDER_OUTPUT_BYTES
+    ) {
+      throw new TypeError("Provider output metadata is invalid");
+    }
+    const value = await handle.readFile();
+    if (value.length !== info.size) {
+      throw new TypeError("Provider output changed while being inspected");
+    }
+    await handle.chmod(0o600);
+    return {
+      sha256: createHash("sha256").update(value).digest("hex"),
+      size: value.length
+    };
+  } finally {
+    await handle.close();
   }
-  await chmod(outputPath, 0o600);
-  return {
-    sha256: await hashFile(outputPath),
-    size: info.size
-  };
 }

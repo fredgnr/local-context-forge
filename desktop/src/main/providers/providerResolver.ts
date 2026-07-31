@@ -6,7 +6,7 @@ import type {
 import {
   discoverCodexInstallation,
   discoverCursorInstallation,
-  findCommandOnPath
+  findCommandCandidates
 } from "./discovery";
 import {
   preflightCodex,
@@ -35,58 +35,70 @@ export class ProviderResolver {
   ) {}
 
   async codex(): Promise<ResolvedCodex> {
-    const command = await findCommandOnPath("codex", this.environment);
-    if (!command) {
+    const commands = await findCommandCandidates(
+      "codex",
+      this.environment
+    );
+    if (!commands.length) {
       return {
         preflight: { provider: "codex_cli", state: "not_installed" }
       };
     }
-    let installation: CodexInstallation;
-    try {
-      installation = await discoverCodexInstallation(command);
-    } catch {
+    for (const command of commands) {
+      let installation: CodexInstallation;
+      try {
+        installation = await discoverCodexInstallation(command);
+      } catch {
+        continue;
+      }
       return {
-        preflight: {
-          provider: "codex_cli",
-          state: "unsupported_installation"
-        }
+        installation,
+        preflight: await preflightCodex(
+          installation,
+          this.runner,
+          this.environment
+        )
       };
     }
     return {
-      installation,
-      preflight: await preflightCodex(
-        installation,
-        this.runner,
-        this.environment
-      )
+      preflight: {
+        provider: "codex_cli",
+        state: "unsupported_installation"
+      }
     };
   }
 
   async cursor(): Promise<ResolvedCursor> {
-    const command = await findCommandOnPath("cursor-agent", this.environment);
-    if (!command) {
+    const commands = await findCommandCandidates(
+      "cursor-agent",
+      this.environment
+    );
+    if (!commands.length) {
       return {
         preflight: { provider: "cursor_cli", state: "not_installed" }
       };
     }
-    let installation: CursorInstallation;
-    try {
-      installation = await discoverCursorInstallation(command);
-    } catch {
+    for (const command of commands) {
+      let installation: CursorInstallation;
+      try {
+        installation = await discoverCursorInstallation(command);
+      } catch {
+        continue;
+      }
       return {
-        preflight: {
-          provider: "cursor_cli",
-          state: "unsupported_installation"
-        }
+        installation,
+        preflight: await preflightCursor(
+          installation,
+          this.runner,
+          this.environment
+        )
       };
     }
     return {
-      installation,
-      preflight: await preflightCursor(
-        installation,
-        this.runner,
-        this.environment
-      )
+      preflight: {
+        provider: "cursor_cli",
+        state: "unsupported_installation"
+      }
     };
   }
 }

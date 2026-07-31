@@ -98,6 +98,8 @@ class SettingsPatch(BaseModel):
         Literal["codex_cli", "cursor_cli", "mock", "ollama"]
     ] | None = None
     fallback_enabled: bool | None = None
+    provider_policy: Literal["codex_only", "codex_then_cursor"] | None = None
+    cursor_fallback_consent: bool | None = None
     concurrency: int | None = Field(default=None, ge=1, le=1)
     embedding_model: str | None = Field(default=None, min_length=1, max_length=500)
 

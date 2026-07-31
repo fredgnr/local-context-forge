@@ -124,11 +124,11 @@ def create_attempt(
     )
 
 
-def test_schema_four_creates_attempt_table(tmp_path: Path) -> None:
+def test_schema_five_creates_attempt_table(tmp_path: Path) -> None:
     database = Database(tmp_path / "schema.db")
     with database.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
-        assert SCHEMA_VERSION == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert SCHEMA_VERSION == 5
         columns = {
             row["name"]
             for row in connection.execute(
@@ -372,4 +372,4 @@ def test_database_migration_from_schema_three_is_idempotent(tmp_path: Path) -> N
     Database(database_path)
     Database(database_path)
     with sqlite3.connect(database_path) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5

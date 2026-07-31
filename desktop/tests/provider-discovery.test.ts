@@ -12,9 +12,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   discoverCodexInstallation,
   discoverCursorInstallation,
+  findCommandCandidates,
   findCommandOnPath,
   revalidateExecutableIdentity
 } from "../src/main/providers/discovery";
+import { ProviderResolver } from "../src/main/providers/providerResolver";
 import {
   preflightCodex,
   preflightCursor,
@@ -203,6 +205,56 @@ describe("provider discovery", () => {
         HOME: prefix
       })
     ).resolves.toBe(path.join(cursorBin, "cursor-agent"));
+  });
+
+  it("discovers version-manager installs when a Finder launch has no shell PATH", async () => {
+    const home = "/Users/example";
+    const nvmRoot = path.join(home, ".nvm", "versions", "node");
+    const expected = path.join(
+      nvmRoot,
+      "v22.17.0",
+      "bin",
+      "codex"
+    );
+    const candidates = await findCommandCandidates(
+      "codex",
+      { PATH: "/usr/bin:/bin", HOME: home },
+      {
+        readDirectory: async (directory) =>
+          directory === nvmRoot
+            ? ["../escape", "v22.17.0", "too many spaces"]
+            : [],
+        access: async (candidate) => {
+          if (candidate !== expected) {
+            throw new Error("missing");
+          }
+        }
+      }
+    );
+    expect(candidates).toEqual([expected]);
+  });
+
+  it("skips a PATH spoof and selects the next official Codex package", async () => {
+    const invalid = await mkdtemp(path.join(os.tmpdir(), "lcf-spoof-"));
+    temporaryDirectories.push(invalid);
+    await mkdir(path.join(invalid, "bin"), { recursive: true });
+    await writeFile(path.join(invalid, "bin", "codex"), "spoof", {
+      mode: 0o755
+    });
+    const fixture = await createCodexFixture();
+    const runner = new QueueRunner([
+      { exitCode: 0, stdout: "codex-cli 0.146.0\n", stderr: "" },
+      { exitCode: 0, stdout: "Logged in using ChatGPT\n", stderr: "" }
+    ]);
+    const resolver = new ProviderResolver(runner, {
+      PATH: `${path.join(invalid, "bin")}${path.delimiter}${path.dirname(fixture.commandPath)}`
+    });
+    await expect(resolver.codex()).resolves.toMatchObject({
+      preflight: { provider: "codex_cli", state: "ready" },
+      installation: {
+        executable: { canonicalPath: fixture.nativePath }
+      }
+    });
   });
 });
 

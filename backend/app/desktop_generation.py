@@ -50,6 +50,37 @@ def _write_private(path: Path, value: bytes) -> None:
     path.chmod(0o600)
 
 
+def _private_directory(path: Path, *, parent: Path | None = None) -> Path:
+    try:
+        metadata = path.lstat()
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise GenerationError(
+            "Desktop provider evidence directory is unavailable"
+        ) from error
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+    ):
+        raise GenerationError(
+            "Desktop provider evidence directory is not private"
+        )
+    if parent is not None:
+        try:
+            resolved.relative_to(parent.resolve(strict=True))
+        except (OSError, ValueError) as error:
+            raise GenerationError(
+                "Desktop provider evidence directory escaped app data"
+            ) from error
+    path.chmod(0o700)
+    if stat.S_IMODE(path.lstat().st_mode) != 0o700:
+        raise GenerationError(
+            "Desktop provider evidence permissions could not be enforced"
+        )
+    return resolved
+
+
 def _read_verified_output(
     path: Path,
     *,
@@ -131,9 +162,13 @@ class DesktopProviderGenerator(Generator):
     def generate(self, context: GenerationContext) -> list[dict[str, object]]:
         if context.runner_id != self.job_id:
             raise GenerationError("Desktop provider job identity mismatch")
-        attempts_root = self.settings.data_dir / "provider-attempts"
-        attempts_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        attempts_root.chmod(0o700)
+        data_root = _private_directory(self.settings.data_dir)
+        attempts_root = data_root / "provider-attempts"
+        try:
+            attempts_root.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        attempts_root = _private_directory(attempts_root, parent=data_root)
         attempt_directory = attempts_root / self.job_id
         try:
             attempt_directory.mkdir(mode=0o700)
@@ -141,7 +176,10 @@ class DesktopProviderGenerator(Generator):
             raise GenerationError(
                 "Desktop provider attempt evidence already exists"
             ) from error
-        attempt_directory.chmod(0o700)
+        attempt_directory = _private_directory(
+            attempt_directory,
+            parent=attempts_root,
+        )
 
         evidence = _json_bytes(_context_payload(context, self.settings))
         schema = _json_bytes(PAGE_SCHEMA)

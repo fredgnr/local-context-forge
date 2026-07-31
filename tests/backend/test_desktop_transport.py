@@ -160,10 +160,11 @@ def test_desktop_handshake_and_health_require_complete_headers(
         "capabilities": [
             "desktop-handshake",
             "health",
-            "library-api",
-            "desktop-retrieval-v1",
-        ],
-    }
+                "library-api",
+                "desktop-retrieval-v1",
+                "desktop-provider-v1",
+            ],
+        }
     assert health.status_code == 200
     assert health.json()["version"] == APP_VERSION
 

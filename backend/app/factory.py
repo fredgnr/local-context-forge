@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .db import SCHEMA_VERSION
+from .desktop_provider_api import install_desktop_provider_routes
 from .desktop_session import DesktopSession
 from .schemas import (
     EmbeddingModelValidate,
@@ -57,7 +58,11 @@ def create_app(
         ),
         lifespan=lifespan,
     )
-    application.state.service = AppService(settings, retriever=retriever)
+    application.state.service = AppService(
+        settings,
+        retriever=retriever,
+        desktop_mode=desktop_session is not None,
+    )
     if desktop_session is None:
         origins = [
             item.strip()
@@ -78,6 +83,7 @@ def create_app(
             DesktopSession,
             **desktop_session.middleware_options(),
         )
+        install_desktop_provider_routes(application)
 
     @application.exception_handler(ServiceError)
     async def service_error_handler(
@@ -115,6 +121,7 @@ def create_app(
                 "health",
                 "library-api",
                 "desktop-retrieval-v1",
+                "desktop-provider-v1",
             ],
         }
 

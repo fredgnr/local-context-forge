@@ -3,6 +3,7 @@ import { constants as fsConstants, createReadStream } from "node:fs";
 import {
   access,
   lstat,
+  readdir,
   readFile,
   realpath
 } from "node:fs/promises";
@@ -23,6 +24,7 @@ type ReadTextFile = (
   filePath: string,
   encoding: BufferEncoding
 ) => Promise<string>;
+type ReadDirectory = (directory: string) => Promise<readonly string[]>;
 
 export interface DiscoveryDependencies {
   readonly lstat?: typeof lstat;
@@ -30,6 +32,7 @@ export interface DiscoveryDependencies {
   readonly readFile?: ReadTextFile;
   readonly access?: typeof access;
   readonly hashFile?: (filePath: string) => Promise<string>;
+  readonly readDirectory?: ReadDirectory;
 }
 
 class UnsupportedProviderInstallation extends Error {
@@ -308,36 +311,113 @@ export async function findCommandOnPath(
   environment: NodeJS.ProcessEnv,
   dependencies: Pick<DiscoveryDependencies, "access"> = {}
 ): Promise<string | undefined> {
+  return (
+    await findCommandCandidates(command, environment, dependencies)
+  )[0];
+}
+
+async function safeDirectoryEntries(
+  directory: string,
+  readDirectory: ReadDirectory
+): Promise<readonly string[]> {
+  const entries = await readDirectory(directory).catch(() => []);
+  return entries
+    .filter(
+      (entry) =>
+        typeof entry === "string" &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(entry)
+    )
+    .sort()
+    .slice(0, 128);
+}
+
+export async function findCommandCandidates(
+  command: "codex" | "cursor-agent",
+  environment: NodeJS.ProcessEnv,
+  dependencies: Pick<
+    DiscoveryDependencies,
+    "access" | "readDirectory"
+  > = {}
+): Promise<readonly string[]> {
   const checkAccess = dependencies.access ?? access;
+  const readDirectory: ReadDirectory =
+    dependencies.readDirectory ??
+    (async (directory) =>
+      await readdir(directory, { encoding: "utf8" }));
+  const directories: string[] = [];
   for (const directory of (environment.PATH ?? "").split(path.delimiter)) {
     if (!directory || !path.isAbsolute(directory)) {
       continue;
     }
+    directories.push(path.normalize(directory));
+  }
+  const home =
+    typeof environment.HOME === "string" &&
+    path.isAbsolute(environment.HOME)
+      ? path.normalize(environment.HOME)
+      : undefined;
+  directories.push("/opt/homebrew/bin", "/usr/local/bin");
+  if (home) {
+    directories.push(
+      path.join(home, ".local", "bin"),
+      path.join(home, ".npm-global", "bin"),
+      path.join(home, ".npm", "bin"),
+      path.join(home, ".volta", "bin"),
+      path.join(home, ".bun", "bin")
+    );
+    if (command === "codex") {
+      const versionedRoots = [
+        {
+          root: path.join(home, ".nvm", "versions", "node"),
+          suffix: ["bin"]
+        },
+        {
+          root: path.join(
+            home,
+            ".local",
+            "share",
+            "mise",
+            "installs",
+            "node"
+          ),
+          suffix: ["bin"]
+        },
+        {
+          root: path.join(home, ".asdf", "installs", "nodejs"),
+          suffix: ["bin"]
+        },
+        {
+          root: path.join(
+            home,
+            "Library",
+            "Application Support",
+            "fnm",
+            "node-versions"
+          ),
+          suffix: ["installation", "bin"]
+        }
+      ] as const;
+      for (const layout of versionedRoots) {
+        for (const version of await safeDirectoryEntries(
+          layout.root,
+          readDirectory
+        )) {
+          directories.push(
+            path.join(layout.root, version, ...layout.suffix)
+          );
+        }
+      }
+    }
+  }
+  const candidates: string[] = [];
+  for (const directory of new Set(directories)) {
     const candidate = path.join(directory, command);
     const available = await checkAccess(candidate, fsConstants.X_OK)
       .then(() => true)
       .catch(() => false);
     if (available) {
-      return candidate;
+      candidates.push(candidate);
     }
   }
-  if (
-    command === "cursor-agent" &&
-    typeof environment.HOME === "string" &&
-    path.isAbsolute(environment.HOME)
-  ) {
-    const documented = path.join(
-      environment.HOME,
-      ".local",
-      "bin",
-      "cursor-agent"
-    );
-    const available = await checkAccess(documented, fsConstants.X_OK)
-      .then(() => true)
-      .catch(() => false);
-    if (available) {
-      return documented;
-    }
-  }
-  return undefined;
+  return candidates;
 }

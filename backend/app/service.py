@@ -13,6 +13,7 @@ from typing import Any
 
 from .config import Settings
 from .db import Database
+from .desktop_generation import DesktopProviderGenerator
 from .facts import extract_facts
 from .generation import (
     GenerationCancelled,
@@ -23,6 +24,7 @@ from .generation import (
     normalize_page,
 )
 from .locks import LockUnavailable, filesystem_lock, lock_path
+from .provider_attempts import ProviderAttemptStore
 from .retrieval import QmdRetriever, collection_name, lexical_search
 from .source import (
     SourceError,
@@ -95,10 +97,15 @@ class AppService:
         settings: Settings | None = None,
         *,
         retriever: Any | None = None,
+        desktop_mode: bool = False,
     ):
         self.settings = settings or Settings.from_env()
+        self.desktop_mode = desktop_mode
         self.settings.ensure_directories()
         self.db = Database(self.settings.database_path)
+        self.provider_attempts = (
+            ProviderAttemptStore(self.db) if self.desktop_mode else None
+        )
         self.retriever = (
             retriever if retriever is not None else QmdRetriever(self.settings)
         )
@@ -116,6 +123,8 @@ class AppService:
         self._publish_locks_guard = threading.Lock()
         self.dispatcher = None
         self._ensure_runtime_settings()
+        if self.provider_attempts is not None:
+            self.provider_attempts.recover_interrupted()
         self.recover_orphaned_jobs()
 
     def close(self) -> None:
@@ -145,7 +154,10 @@ class AppService:
             "codex": "codex_cli",
             "cursor": "cursor_cli",
         }.get(configured_provider, configured_provider)
-        if configured_provider == "auto":
+        if self.desktop_mode:
+            provider_order = ["codex_cli"]
+            fallback_enabled = 0
+        elif configured_provider == "auto":
             provider_order = ["codex_cli", "cursor_cli"]
             fallback_enabled = 1
         elif configured_provider in {
@@ -169,8 +181,10 @@ class AppService:
                 """
                 INSERT OR IGNORE INTO runtime_settings (
                     id, revision, provider_order_json, fallback_enabled,
-                    concurrency, embedding_model, updated_at
-                ) VALUES (1, 1, ?, ?, 1, ?, ?)
+                    provider_policy, cursor_consent_version,
+                    cursor_consent_granted_at, concurrency, embedding_model,
+                    updated_at
+                ) VALUES (1, 1, ?, ?, 'codex_only', NULL, NULL, 1, ?, ?)
                 """,
                 (
                     json.dumps(provider_order),
@@ -179,6 +193,18 @@ class AppService:
                     now,
                 ),
             )
+            if self.desktop_mode:
+                # Schema-5 intentionally converts every pre-desktop implicit
+                # Cursor fallback into a fail-closed Codex-only policy. Cursor
+                # can only be enabled again through a current explicit consent.
+                connection.execute(
+                    """
+                    UPDATE runtime_settings
+                    SET provider_order_json = '["codex_cli"]',
+                        fallback_enabled = 0
+                    WHERE id = 1 AND provider_policy = 'codex_only'
+                    """
+                )
             connection.execute(
                 """
                 INSERT OR IGNORE INTO embedding_state (
@@ -360,14 +386,41 @@ class AppService:
         row = self.db.fetchone("SELECT * FROM runtime_settings WHERE id = 1")
         if not row:
             raise RuntimeError("Runtime settings row is missing")
-        try:
-            provider_order = json.loads(str(row["provider_order_json"]))
-        except json.JSONDecodeError:
-            provider_order = ["codex_cli", "cursor_cli"]
+        provider_policy = str(row.get("provider_policy") or "codex_only")
+        consent_granted = bool(
+            row.get("cursor_consent_version") == 1
+            and row.get("cursor_consent_granted_at")
+        )
+        if self.desktop_mode:
+            provider_order = (
+                ["codex_cli", "cursor_cli"]
+                if provider_policy == "codex_then_cursor" and consent_granted
+                else ["codex_cli"]
+            )
+            fallback_enabled = len(provider_order) == 2
+        else:
+            try:
+                provider_order = json.loads(str(row["provider_order_json"]))
+            except json.JSONDecodeError:
+                provider_order = ["codex_cli", "cursor_cli"]
+            fallback_enabled = bool(row["fallback_enabled"])
         return {
             "revision": int(row["revision"]),
             "provider_order": provider_order,
-            "fallback_enabled": bool(row["fallback_enabled"]),
+            "fallback_enabled": fallback_enabled,
+            "provider_policy": (
+                provider_policy if self.desktop_mode else None
+            ),
+            "cursor_fallback_consent": {
+                "subject": "cursor_cli_fallback",
+                "version": 1,
+                "granted": consent_granted,
+                "granted_at": (
+                    row.get("cursor_consent_granted_at")
+                    if consent_granted
+                    else None
+                ),
+            },
             "concurrency": int(row["concurrency"]),
             "embedding_model": row["embedding_model"],
         }
@@ -400,13 +453,23 @@ class AppService:
         }
 
     def patch_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(payload)
         supplied_revision = payload.pop("expected_revision", None)
-        allowed = {
-            "provider_order",
-            "fallback_enabled",
-            "concurrency",
-            "embedding_model",
-        }
+        allowed = (
+            {
+                "provider_policy",
+                "cursor_fallback_consent",
+                "concurrency",
+                "embedding_model",
+            }
+            if self.desktop_mode
+            else {
+                "provider_order",
+                "fallback_enabled",
+                "concurrency",
+                "embedding_model",
+            }
+        )
         if any(key not in allowed for key in payload):
             raise ValidationError("Unknown runtime setting")
         if payload.get("concurrency") not in {None, 1}:
@@ -441,6 +504,43 @@ class AppService:
             )
             if int(current["revision"]) != expected_revision:
                 raise ConflictError("Settings revision changed; reload and retry")
+            provider_policy = str(
+                current["provider_policy"] or "codex_only"
+            )
+            cursor_consent_version = current["cursor_consent_version"]
+            cursor_consent_granted_at = current[
+                "cursor_consent_granted_at"
+            ]
+            if self.desktop_mode:
+                requested_policy = payload.get("provider_policy")
+                if requested_policy is not None:
+                    provider_policy = str(requested_policy)
+                consent_change = payload.get("cursor_fallback_consent")
+                if consent_change is True:
+                    cursor_consent_version = 1
+                    cursor_consent_granted_at = now
+                elif consent_change is False:
+                    cursor_consent_version = None
+                    cursor_consent_granted_at = None
+                    if requested_policy is None:
+                        provider_policy = "codex_only"
+                if provider_policy not in {
+                    "codex_only",
+                    "codex_then_cursor",
+                }:
+                    raise ValidationError("provider_policy is invalid")
+                if provider_policy == "codex_then_cursor" and not (
+                    cursor_consent_version == 1
+                    and cursor_consent_granted_at
+                ):
+                    raise ValidationError(
+                        "Current explicit Cursor fallback consent is required"
+                    )
+                provider_order = (
+                    ["codex_cli", "cursor_cli"]
+                    if provider_policy == "codex_then_cursor"
+                    else ["codex_cli"]
+                )
             values = {
                 "provider_order_json": (
                     json.dumps(provider_order)
@@ -448,10 +548,17 @@ class AppService:
                     else current["provider_order_json"]
                 ),
                 "fallback_enabled": (
-                    int(bool(payload["fallback_enabled"]))
-                    if "fallback_enabled" in payload
-                    else current["fallback_enabled"]
+                    int(provider_policy == "codex_then_cursor")
+                    if self.desktop_mode
+                    else (
+                        int(bool(payload["fallback_enabled"]))
+                        if "fallback_enabled" in payload
+                        else current["fallback_enabled"]
+                    )
                 ),
+                "provider_policy": provider_policy,
+                "cursor_consent_version": cursor_consent_version,
+                "cursor_consent_granted_at": cursor_consent_granted_at,
                 "concurrency": (
                     int(payload["concurrency"])
                     if payload.get("concurrency") is not None
@@ -465,13 +572,18 @@ class AppService:
                 """
                 UPDATE runtime_settings
                 SET revision = revision + 1, provider_order_json = ?,
-                    fallback_enabled = ?, concurrency = ?, embedding_model = ?,
-                    updated_at = ?
+                    fallback_enabled = ?, provider_policy = ?,
+                    cursor_consent_version = ?,
+                    cursor_consent_granted_at = ?, concurrency = ?,
+                    embedding_model = ?, updated_at = ?
                 WHERE id = 1 AND revision = ?
                 """,
                 (
                     values["provider_order_json"],
                     values["fallback_enabled"],
+                    values["provider_policy"],
+                    values["cursor_consent_version"],
+                    values["cursor_consent_granted_at"],
                     values["concurrency"],
                     values["embedding_model"],
                     now,
@@ -593,7 +705,15 @@ class AppService:
             "SELECT status, COUNT(*) AS count FROM jobs GROUP BY status"
         )
         queue = {str(row["status"]): int(row["count"]) for row in counts}
-        providers = self._provider_heartbeat()
+        providers = (
+            {
+                "status": "managed",
+                "providers": {},
+                "policy": self.get_settings()["provider_policy"],
+            }
+            if self.desktop_mode
+            else self._provider_heartbeat()
+        )
         embedding = self.embedding_status()
         runtime = self.get_settings()
         ordered_providers = runtime["provider_order"]
@@ -606,7 +726,7 @@ class AppService:
             for provider in ordered_providers
             if provider in {"codex_cli", "cursor_cli"}
         )
-        ready = not runner_required or (
+        ready = self.desktop_mode or not runner_required or (
             providers["status"] == "ready" and usable_cli
         )
         checks = [
@@ -618,15 +738,27 @@ class AppService:
             },
             {
                 "id": "host-runner",
-                "label": "Host CLI runner",
+                "label": (
+                    "Desktop CLI broker"
+                    if self.desktop_mode
+                    else "Host CLI runner"
+                ),
                 "status": (
                     "ok"
-                    if providers["status"] == "ready"
-                    and (usable_cli or not runner_required)
+                    if self.desktop_mode
+                    or (
+                        providers["status"] == "ready"
+                        and (usable_cli or not runner_required)
+                    )
                     else ("error" if runner_required else "optional")
                 ),
                 "message": (
-                    "At least one configured CLI provider is usable"
+                    (
+                        "Codex login is checked locally when a job starts; "
+                        "Cursor is considered only with explicit consent"
+                    )
+                    if self.desktop_mode
+                    else "At least one configured CLI provider is usable"
                     if providers["status"] == "ready" and usable_cli
                     else (
                         "Host CLI runner is healthy but no configured CLI is usable"
@@ -1253,7 +1385,37 @@ class AppService:
                 provider = "codex_cli"
             if provider == "cursor":
                 provider = "cursor_cli"
-            if provider == "auto":
+            desktop_authorization: dict[str, Any] = {}
+            if self.desktop_mode:
+                if provider not in {"auto", "codex_cli", "mock"}:
+                    raise ValidationError(
+                        "Desktop jobs support the default Codex policy, "
+                        "explicit Codex, or the internal deterministic "
+                        "packaging self-test provider"
+                    )
+                runtime = self.get_settings()
+                requested_policy = (
+                    "codex_only"
+                    if provider == "codex_cli"
+                    else str(runtime["provider_policy"])
+                )
+                consent = runtime["cursor_fallback_consent"]
+                desktop_authorization = {
+                    "desktop_provider_policy": requested_policy,
+                    "cursor_consent_version": (
+                        consent["version"]
+                        if requested_policy == "codex_then_cursor"
+                        and consent["granted"]
+                        else None
+                    ),
+                    "cursor_consent_granted_at": (
+                        consent["granted_at"]
+                        if requested_policy == "codex_then_cursor"
+                        and consent["granted"]
+                        else None
+                    ),
+                }
+            elif provider == "auto":
                 runtime = self.get_settings()
                 provider_order = runtime["provider_order"]
                 preferred = str(provider_order[0])
@@ -1294,6 +1456,7 @@ class AppService:
                 "ref": ref,
                 "provider": provider,
                 "auto_publish": auto_publish,
+                **desktop_authorization,
             }
             job = {
                 "id": job_id or _identifier(),
@@ -1376,6 +1539,7 @@ class AppService:
                         "ref": ref,
                         "provider": provider,
                         "auto_publish": auto_publish,
+                        **desktop_authorization,
                     },
                 )
             except OSError:
@@ -1548,6 +1712,59 @@ class AppService:
             if remaining < 512:
                 break
         return baseline
+
+    def _desktop_generator(
+        self,
+        *,
+        job_id: str,
+        version_id: str,
+        provider: str,
+        control: dict[str, Any],
+    ) -> Any:
+        if provider == "mock":
+            # Used only by the frozen-package domain smoke. The shipped UI
+            # never offers this deterministic provider.
+            return get_generator(provider, self.settings)
+        if provider not in {"auto", "codex_cli"}:
+            raise GenerationError(
+                "Desktop provider selection is outside the supported policy"
+            )
+        policy = "codex_only"
+        consent_version: int | None = None
+        consent_granted_at: str | None = None
+        if (
+            provider == "auto"
+            and control.get("desktop_provider_policy")
+            == "codex_then_cursor"
+            and control.get("cursor_consent_version") == 1
+            and isinstance(control.get("cursor_consent_granted_at"), str)
+        ):
+            current = self.get_settings()
+            consent = current["cursor_fallback_consent"]
+            if (
+                current["provider_policy"] == "codex_then_cursor"
+                and consent["granted"] is True
+                and consent["version"] == 1
+                and isinstance(consent["granted_at"], str)
+            ):
+                policy = "codex_then_cursor"
+                consent_version = 1
+                consent_granted_at = consent["granted_at"]
+        state = self.db.fetchone(
+            "SELECT corpus_revision FROM embedding_state WHERE id = 1"
+        )
+        if self.provider_attempts is None:
+            raise GenerationError("Desktop provider broker is unavailable")
+        return DesktopProviderGenerator(
+            self.settings,
+            self.provider_attempts,
+            job_id=job_id,
+            version_id=version_id,
+            corpus_revision=int(state["corpus_revision"] if state else 0),
+            policy=policy,
+            cursor_consent_version=consent_version,
+            cursor_consent_granted_at=consent_granted_at,
+        )
 
     def run_ingest_job(
         self,
@@ -1749,7 +1966,16 @@ class AppService:
                 progress=50,
                 message=f"Generating typed wiki proposals with {provider}",
             )
-            generator = get_generator(provider, self.settings)
+            generator = (
+                self._desktop_generator(
+                    job_id=job_id,
+                    version_id=str(version_row["id"]),
+                    provider=str(provider),
+                    control=control,
+                )
+                if self.desktop_mode
+                else get_generator(provider, self.settings)
+            )
             existing_wiki = self._existing_wiki_baseline(library, resolved_version)
             generation_context = GenerationContext(
                 library_name=library["name"],
@@ -2083,6 +2309,13 @@ class AppService:
                 )
             elif row["status"] not in {"cancelling", "cancelled"}:
                 raise ConflictError("Only queued or running jobs can be cancelled")
+        if self.provider_attempts is not None:
+            attempt = self.db.fetchone(
+                "SELECT id FROM provider_attempts WHERE job_id = ?",
+                (job_id,),
+            )
+            if attempt is not None:
+                self.provider_attempts.request_cancel(str(attempt["id"]))
         if self.dispatcher is not None:
             self.dispatcher.notify()
         return self.get_job(job_id)
@@ -2190,6 +2423,10 @@ class AppService:
         original: dict[str, Any],
         requested_provider: str,
     ) -> dict[str, Any] | None:
+        if self.desktop_mode:
+            # Desktop provider attempts are single-use. A retry receives a new
+            # job/attempt identity and never reuses a previous CLI result.
+            return None
         if requested_provider not in {"auto", "codex_cli", "cursor_cli"}:
             return None
         old_id = str(original["id"])

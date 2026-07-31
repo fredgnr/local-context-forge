@@ -80,7 +80,7 @@ const expectedHandshake = (
   protocol: { major: 1, minor: 0 },
   launch_id: connection.launchId,
   transport: "uds",
-  schema_version: 4,
+  schema_version: 5,
   capabilities: ["desktop-handshake", "health", "library-api"],
   ...overrides
 });
@@ -91,7 +91,7 @@ function supervisorOptions() {
     dataDir: "/private/data",
     appVersion: "0.3.0-alpha.1",
     sidecarVersion: "0.3.0-alpha.1",
-    schemaVersion: 4,
+    schemaVersion: 5,
     requiredCapabilities: [
       "desktop-handshake",
       "health",

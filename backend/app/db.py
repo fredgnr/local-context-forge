@@ -113,6 +113,11 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
     revision INTEGER NOT NULL,
     provider_order_json TEXT NOT NULL,
     fallback_enabled INTEGER NOT NULL,
+    provider_policy TEXT NOT NULL DEFAULT 'codex_only' CHECK (
+        provider_policy IN ('codex_only', 'codex_then_cursor')
+    ),
+    cursor_consent_version INTEGER,
+    cursor_consent_granted_at TEXT,
     concurrency INTEGER NOT NULL,
     embedding_model TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -182,7 +187,7 @@ CREATE INDEX IF NOT EXISTS idx_provider_attempts_recovery
 ON provider_attempts(status, execution_committed_at);
 """
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _JOB_COLUMNS: dict[str, str] = {
     "kind": "TEXT NOT NULL DEFAULT 'ingest'",
@@ -205,6 +210,12 @@ _EMBEDDING_COLUMNS: dict[str, str] = {
 
 _PROVIDER_ATTEMPT_COLUMNS: dict[str, str] = {
     "cancel_requested_at": "TEXT",
+}
+
+_RUNTIME_SETTINGS_COLUMNS: dict[str, str] = {
+    "provider_policy": "TEXT NOT NULL DEFAULT 'codex_only'",
+    "cursor_consent_version": "INTEGER",
+    "cursor_consent_granted_at": "TEXT",
 }
 
 
@@ -277,6 +288,18 @@ class Database:
             if name not in embedding_columns:
                 connection.execute(
                     "ALTER TABLE embedding_state "
+                    f"ADD COLUMN {name} {declaration}"
+                )
+        runtime_settings_columns = {
+            str(row["name"])
+            for row in connection.execute(
+                "PRAGMA table_info(runtime_settings)"
+            ).fetchall()
+        }
+        for name, declaration in _RUNTIME_SETTINGS_COLUMNS.items():
+            if name not in runtime_settings_columns:
+                connection.execute(
+                    "ALTER TABLE runtime_settings "
                     f"ADD COLUMN {name} {declaration}"
                 )
         provider_attempt_columns = {

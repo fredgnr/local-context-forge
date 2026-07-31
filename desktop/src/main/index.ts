@@ -25,6 +25,8 @@ import {
   QmdSupervisor,
   type QmdRuntimeConfiguration
 } from "./qmdSupervisor";
+import { ProviderAttemptClient } from "./providers/providerAttemptClient";
+import { ProviderAttemptSupervisor } from "./providers/providerAttemptSupervisor";
 import { RetrievalBroker } from "./retrievalBroker";
 import {
   resolveSidecarExecutable,
@@ -37,7 +39,8 @@ const REQUIRED_SIDECAR_CAPABILITIES = [
   "desktop-handshake",
   "health",
   "library-api",
-  "desktop-retrieval-v1"
+  "desktop-retrieval-v1",
+  "desktop-provider-v1"
 ] as const;
 
 registerPrivilegedScheme(
@@ -127,10 +130,14 @@ async function bootstrap(): Promise<void> {
     dataDir,
     appVersion: app.getVersion(),
     sidecarVersion: app.getVersion(),
-    schemaVersion: 4,
+    schemaVersion: 5,
     requiredCapabilities: REQUIRED_SIDECAR_CAPABILITIES,
     retrievalBroker
   });
+  const providerSupervisor = new ProviderAttemptSupervisor(
+    new ProviderAttemptClient(dataDir),
+    () => supervisor.getConnection()
+  );
   const apiProxy = new ApiProxy(8);
 
   registerIpcHandlers(ipcMain, {
@@ -180,8 +187,10 @@ async function bootstrap(): Promise<void> {
       return;
     }
     event.preventDefault();
-    void supervisor
+    void providerSupervisor
       .shutdown()
+      .catch(() => undefined)
+      .then(() => supervisor.shutdown())
       .catch(() => undefined)
       .then(() => qmdSupervisor.shutdown())
       .catch(() => undefined)
@@ -194,6 +203,7 @@ async function bootstrap(): Promise<void> {
   await openMainWindow();
   void qmdSupervisor.start();
   void supervisor.start();
+  providerSupervisor.start();
 }
 
 if (!app.requestSingleInstanceLock()) {

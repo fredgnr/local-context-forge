@@ -1,0 +1,518 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "python-sidecar-build-manifest.schema.json",
+  "title": "Local Context Forge Python sidecar build manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "kind",
+    "entrypoint",
+    "product",
+    "target",
+    "build",
+    "components",
+    "artifacts",
+    "files",
+    "native",
+    "audit"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "python-sidecar-build-manifest.schema.json"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "local-context-forge-python-sidecar"
+    },
+    "entrypoint": {
+      "const": "lcf-service"
+    },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appVersion",
+        "pythonDistributionVersion",
+        "desktopProtocol",
+        "databaseSchema"
+      ],
+      "properties": {
+        "appVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pythonDistributionVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "desktopProtocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "major",
+            "minor"
+          ],
+          "properties": {
+            "major": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minor": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "databaseSchema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "os": {
+          "const": "darwin"
+        },
+        "architecture": {
+          "const": "arm64"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryCommit",
+        "sourceDateEpoch",
+        "runnerImage",
+        "runnerImageVersion",
+        "macosDeploymentTarget",
+        "xcodeVersion",
+        "sdkVersion",
+        "uvVersion",
+        "pyinstallerVersion",
+        "pyinstallerHooksContribVersion",
+        "python",
+        "inputDigests"
+      ],
+      "properties": {
+        "repositoryCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "sourceDateEpoch": {
+          "type": "integer",
+          "minimum": 100000000
+        },
+        "runnerImage": {
+          "const": "macos-15"
+        },
+        "runnerImageVersion": {
+          "type": "string",
+          "pattern": "^[0-9]{8}\\.[0-9]+\\.[0-9]+$"
+        },
+        "macosDeploymentTarget": {
+          "const": "14.0"
+        },
+        "xcodeVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sdkVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uvVersion": {
+          "const": "0.11.29"
+        },
+        "pyinstallerVersion": {
+          "const": "6.21.0"
+        },
+        "pyinstallerHooksContribVersion": {
+          "const": "2026.6"
+        },
+        "python": {
+          "$ref": "#/$defs/pythonProvenance"
+        },
+        "inputDigests": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9._/-]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 12,
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "spdxSbom",
+        "thirdPartyNotices",
+        "licensesDirectory"
+      ],
+      "properties": {
+        "spdxSbom": {
+          "$ref": "#/$defs/safePath"
+        },
+        "thirdPartyNotices": {
+          "$ref": "#/$defs/safePath"
+        },
+        "licensesDirectory": {
+          "$ref": "#/$defs/safePath"
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/fileInventoryEntry"
+      }
+    },
+    "native": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/nativeInventoryEntry"
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "policyVersion",
+        "normalizedInventorySha256",
+        "frozenSmoke"
+      ],
+      "properties": {
+        "status": {
+          "const": "pass"
+        },
+        "policyVersion": {
+          "const": 1
+        },
+        "normalizedInventorySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "frozenSmoke": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "pathTrap",
+            "checks"
+          ],
+          "properties": {
+            "status": {
+              "const": "pass"
+            },
+            "pathTrap": {
+              "const": true
+            },
+            "checks": {
+              "const": [
+                "version",
+                "doctor",
+                "uds-handshake",
+                "uds-health",
+                "domain-ingest",
+                "domain-publish",
+                "domain-lint"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "safePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*\\u0000).+$"
+    },
+    "pythonProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "version",
+        "installRoot",
+        "provider",
+        "releaseTag",
+        "archiveName",
+        "archiveSource",
+        "archiveSha256",
+        "installerPackageName",
+        "installerPackageSha256",
+        "hashManifestName",
+        "hashManifestSource",
+        "hashManifestSha256",
+        "installRootFingerprintSha256"
+      ],
+      "properties": {
+        "implementation": {
+          "const": "CPython"
+        },
+        "version": {
+          "const": "3.13.14"
+        },
+        "installRoot": {
+          "const": "/Library/Frameworks/Python.framework/Versions/3.13"
+        },
+        "provider": {
+          "const": "actions/python-versions"
+        },
+        "releaseTag": {
+          "const": "3.13.14-27320626148"
+        },
+        "archiveName": {
+          "const": "python-3.13.14-darwin-arm64.tar.gz"
+        },
+        "archiveSource": {
+          "const": "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/python-3.13.14-darwin-arm64.tar.gz"
+        },
+        "archiveSha256": {
+          "const": "839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34"
+        },
+        "installerPackageName": {
+          "const": "python-3.13.14-macos11.pkg"
+        },
+        "installerPackageSha256": {
+          "const": "8e58affb218c155a1dfdc27b291f817129669f8760e7a297adb2e4439ba5d2e8"
+        },
+        "hashManifestName": {
+          "const": "hashes.sha256"
+        },
+        "hashManifestSource": {
+          "const": "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/hashes.sha256"
+        },
+        "hashManifestSha256": {
+          "const": "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17"
+        },
+        "installRootFingerprintSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "scope",
+        "licenseExpression",
+        "licenseFiles"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "enum": [
+            "runtime",
+            "build-tool"
+          ]
+        },
+        "licenseExpression": {
+          "type": "string",
+          "minLength": 1
+        },
+        "licenseFiles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safePath"
+          }
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "fileInventoryEntry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "mode",
+            "type",
+            "size"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/safePath"
+            },
+            "mode": {
+              "type": "string",
+              "pattern": "^[0-7]{4}$"
+            },
+            "type": {
+              "const": "directory"
+            },
+            "size": {
+              "const": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "mode",
+            "type",
+            "size",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/safePath"
+            },
+            "mode": {
+              "type": "string",
+              "pattern": "^[0-7]{4}$"
+            },
+            "type": {
+              "const": "file"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "mode",
+            "type",
+            "size",
+            "sha256",
+            "linkTarget"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/safePath"
+            },
+            "mode": {
+              "type": "string",
+              "pattern": "^[0-7]{4}$"
+            },
+            "type": {
+              "const": "symlink"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "linkTarget": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "nativeInventoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "architectures",
+        "dylibs",
+        "rpaths",
+        "platform",
+        "minimumMacosVersion",
+        "codeSignature"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/safePath"
+        },
+        "architectures": {
+          "const": [
+            "arm64"
+          ]
+        },
+        "dylibs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "rpaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "platform": {
+          "const": "macos"
+        },
+        "minimumMacosVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){1,2}$"
+        },
+        "codeSignature": {
+          "const": "valid"
+        },
+        "installName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

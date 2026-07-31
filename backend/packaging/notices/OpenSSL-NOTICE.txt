@@ -1,0 +1,5 @@
+Python's ssl and hashlib modules may contain OpenSSL code supplied by the
+verified CPython distribution. OpenSSL 3.x is licensed under Apache-2.0.
+
+The exact linked or bundled native files are recorded in the build manifest.
+This notice does not imply that an unaudited system or Homebrew dylib is used.

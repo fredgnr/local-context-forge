@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "pyinstallerVersion": "6.21.0",
+  "modules": {
+    "_frozen_importlib_external": "CPython bootstrap module referenced by importlib analysis",
+    "_overlapped": "Windows-only asyncio transport",
+    "_winapi": "Windows-only standard-library module",
+    "java.lang": "Jython-only compatibility probe",
+    "msvcrt": "Windows-only standard-library module",
+    "nt": "Windows-only standard-library module",
+    "org.python": "Jython-only compatibility probe",
+    "winreg": "Windows-only standard-library module"
+  }
+}

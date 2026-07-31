@@ -3,10 +3,20 @@ SHELL := /bin/sh
 .PHONY: help install doctor status uninstall bootstrap up down stop restart build ps logs smoke demo backup restore \
 	qmd-status qmd-embed qmd-embed-native dev-native dev-api dev-mcp dev-web test handbook \
 	ci-source ci-python-install ci-python ci-ipc-source ci-web \
-	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci
+	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci \
+	python-sidecar-source-verify python-sidecar-install-python python-sidecar-toolchain \
+	python-sidecar-build python-sidecar-audit python-sidecar-packaging-test
 
 UV ?= uv
 NPM ?= npm
+PYTHON ?= python3
+PYTHON_SIDECAR_ARCHIVE ?=
+PYTHON_SIDECAR_HASH_MANIFEST ?=
+PYTHON_SIDECAR_INSTALL_ROOT ?= /Library/Frameworks/Python.framework/Versions/3.13
+PYTHON_SIDECAR_FRAMEWORK_PYTHON ?= $(PYTHON_SIDECAR_INSTALL_ROOT)/bin/python3.13
+PYTHON_SIDECAR_BUILD_VENV ?= $(CURDIR)/.python-sidecar-build-venv
+PYTHON_SIDECAR_BUILD_ROOT ?= $(CURDIR)/.python-sidecar-build
+PYTHON_SIDECAR_INSTALLER ?= $(PYTHON_SIDECAR_BUILD_ROOT)/python-3.13.14-macos11.pkg
 
 help:
 	@printf '%s\n' \
@@ -28,6 +38,12 @@ help:
 	  'make ci-ipc-source  Run the source-mode Python desktop IPC contract' \
 	  'make ci-web      Install and run Web source tests, typecheck and build' \
 	  'make desktop-ci  Install and run desktop tests, typecheck and build' \
+	  'make python-sidecar-source-verify  Verify pinned Python archive/pkg bytes' \
+	  'make python-sidecar-install-python  Verify and install the locked Python.org pkg' \
+	  'make python-sidecar-toolchain  Create the hash-locked macOS build venv' \
+	  'make python-sidecar-build  Build, smoke, audit and atomically stage sidecar' \
+	  'make python-sidecar-audit  Re-audit the current Python sidecar staging' \
+	  'make python-sidecar-packaging-test  Run portable packaging policy tests' \
 	  'make handbook    Build the printable Chinese PDF handbook' \
 	  'make logs        Follow service logs' \
 	  'make down        Remove containers, keep ./data'
@@ -146,6 +162,52 @@ desktop-ci: desktop-install
 	+$(MAKE) desktop-test
 	+$(MAKE) desktop-typecheck
 	+$(MAKE) desktop-build
+
+python-sidecar-source-verify:
+	@test -n "$(PYTHON_SIDECAR_ARCHIVE)" || { printf '%s\n' 'PYTHON_SIDECAR_ARCHIVE is required'; exit 2; }
+	@test -n "$(PYTHON_SIDECAR_HASH_MANIFEST)" || { printf '%s\n' 'PYTHON_SIDECAR_HASH_MANIFEST is required'; exit 2; }
+	$(PYTHON) tools/build_python_sidecar.py --verify-source-only \
+		--archive "$(PYTHON_SIDECAR_ARCHIVE)" \
+		--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)"
+
+python-sidecar-install-python: python-sidecar-source-verify
+	$(PYTHON) tools/build_python_sidecar.py --extract-installer-package \
+		--archive "$(PYTHON_SIDECAR_ARCHIVE)" \
+		--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)" \
+		--installer-output "$(PYTHON_SIDECAR_INSTALLER)"
+	/usr/sbin/pkgutil --check-signature "$(PYTHON_SIDECAR_INSTALLER)"
+	/usr/sbin/spctl --assess --type install --verbose=4 "$(PYTHON_SIDECAR_INSTALLER)"
+	/usr/bin/sudo /usr/sbin/installer -pkg "$(PYTHON_SIDECAR_INSTALLER)" -target /
+	@test -x "$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" || { printf '%s\n' 'Pinned framework Python install failed'; exit 2; }
+
+python-sidecar-toolchain: python-sidecar-install-python
+	@test "$$(uname -s)" = Darwin || { printf '%s\n' 'Python sidecar toolchain requires macOS'; exit 2; }
+	@test "$$(uname -m)" = arm64 || { printf '%s\n' 'Python sidecar toolchain requires native arm64'; exit 2; }
+	@test -x "$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" || { printf '%s\n' 'Pinned framework Python is missing'; exit 2; }
+	"$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" -m venv --clear "$(PYTHON_SIDECAR_BUILD_VENV)"
+	"$(PYTHON_SIDECAR_BUILD_VENV)/bin/python" -I -m pip install \
+		--disable-pip-version-check --no-deps --only-binary=:all: \
+		--require-hashes -r backend/packaging/build-requirements.lock
+	mkdir -p "$(PYTHON_SIDECAR_BUILD_ROOT)"
+	cd backend && "$(PYTHON_SIDECAR_BUILD_VENV)/bin/uv" export \
+		--frozen --no-dev --no-emit-project --format requirements-txt \
+		--output-file "$(PYTHON_SIDECAR_BUILD_ROOT)/runtime-requirements.lock"
+	"$(PYTHON_SIDECAR_BUILD_VENV)/bin/uv" pip install \
+		--python "$(PYTHON_SIDECAR_BUILD_VENV)/bin/python" \
+		--no-deps --only-binary=:all: --require-hashes \
+		-r "$(PYTHON_SIDECAR_BUILD_ROOT)/runtime-requirements.lock"
+
+python-sidecar-build: python-sidecar-toolchain
+	LCF_PYTHON_DISTRIBUTION_ARCHIVE="$(PYTHON_SIDECAR_ARCHIVE)" \
+	LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST="$(PYTHON_SIDECAR_HASH_MANIFEST)" \
+	LCF_PYTHON_INSTALL_ROOT="$(PYTHON_SIDECAR_INSTALL_ROOT)" \
+	"$(PYTHON_SIDECAR_BUILD_VENV)/bin/python" -I tools/build_python_sidecar.py
+
+python-sidecar-audit:
+	$(PYTHON) tools/audit_python_sidecar.py --bundle desktop/generated/sidecar
+
+python-sidecar-packaging-test:
+	cd backend && .venv/bin/pytest ../tests/backend/test_python_sidecar_packaging.py
 
 handbook:
 	python3 tools/build_handbook.py

@@ -3,6 +3,7 @@ productName: Local Context Forge
 asar: true
 npmRebuild: false
 electronVersion: 43.2.0
+beforePack: scripts/beforePack.cjs
 afterPack: scripts/afterPack.cjs
 directories:
   output: release
@@ -15,7 +16,7 @@ extraResources:
     to: renderer
     filter:
       - "**/*"
-  - from: resources/sidecar
+  - from: generated/sidecar
     to: sidecar
     filter:
       - "**/*"

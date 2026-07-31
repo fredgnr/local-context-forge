@@ -15,6 +15,11 @@ node_modules/
 dist/
 release/
 packaging/stage/
+.python-sidecar-build/
+.python-sidecar-build-venv/
+desktop/generated/sidecar/
+desktop/generated/python-sidecar-evidence/
+runtime-archives/
 .vinext/
 data/
 data.quarantine.*/

@@ -1,0 +1,5 @@
+CPython 3.13.14 is distributed under the Python Software Foundation License
+Version 2 and additional notices included with the upstream distribution.
+
+The build copies the license evidence available from the verified installed
+distribution into the sidecar's licenses directory.

@@ -8,9 +8,13 @@ version = "0.3.0a1"
 description = "Evidence-first local Context7 replacement backend"
 requires-python = ">=3.11"
 dependencies = [
+  "certifi==2026.7.22",
+  "dulwich==1.2.11",
   "fastapi>=0.115,<1",
+  "h11==0.16.0",
   "pydantic>=2.10,<3",
-  "uvicorn[standard]>=0.34,<1",
+  "urllib3==2.7.0",
+  "uvicorn>=0.34,<1",
 ]
 
 [project.scripts]

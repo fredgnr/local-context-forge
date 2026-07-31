@@ -12,8 +12,9 @@
     "typecheck": "tsc --noEmit --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pack:dir": "npm run build && electron-builder --dir --config electron-builder.yml",
-    "dist:mac": "npm run build && electron-builder --mac dmg zip --arm64 --config electron-builder.yml"
+    "audit:python-sidecar": "../.python-sidecar-build-venv/bin/python -I ../tools/audit_python_sidecar.py --bundle generated/sidecar",
+    "pack:dir": "npm run build && npm run audit:python-sidecar && electron-builder --dir --config electron-builder.yml",
+    "dist:mac": "npm run build && npm run audit:python-sidecar && electron-builder --mac dmg zip --arm64 --config electron-builder.yml"
   },
   "devDependencies": {
     "@electron/fuses": "2.1.3",

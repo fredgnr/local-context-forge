@@ -4,6 +4,14 @@
 `<VAL-ID>/<YYYY-MM-DD>-<short-commit>.md` 或外部受控 artifact 链接增加记录。当前目录只存
 规范，不存私有源码、用户数据、证书、密钥、模型或大型构建产物。
 
+## 当前记录
+
+| Gate | Source commit | 结果 | 记录 |
+| --- | --- | --- | --- |
+| `VAL-DOC-HANDOFF-001` | `625db7647d47fb6ff8f23c3136c4f45ded80384f` | `pass`（文档 source checkpoint） | [2026-07-31-625db76](VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) |
+
+该记录不代表最终 PR head、packaged、physical、GitHub settings 或 release gate 已通过。
+
 ## 1. 证据原则
 
 一条可支撑 `pass` 的记录必须同时回答：

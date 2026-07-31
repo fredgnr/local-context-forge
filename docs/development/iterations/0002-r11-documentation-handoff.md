@@ -83,10 +83,11 @@ NO-GO 边界整理成可由下一位贡献者独立执行的文档集。
 | --- | --- | --- | --- | --- |
 | VAL-DOC-HANDOFF-001 首轮 content audit | `fail` | 2026-07-31；`main@fb8bbbc` input + R11 worktree | 三路独立只读审计 + 主执行者 ADR/代码复核 | 发现进程边界、legacy instance control、evidence/task mapping 等阻断项；已进入修复 |
 | VAL-DOC-HANDOFF-001 修复后 content audit 本地观察 | `pass` | 2026-07-31；dirty R11 worktree | 三路最终只读复核 | 架构、部署/发布、开发交接均无剩余 Critical/High/Medium；仅证明当前工作树内容 |
-| Markdown links 本地观察 | `pass` | 2026-07-31；dirty R11 worktree | `python3 -B tools/check_markdown_links.py` | 76 files；仅临时观察，不提升 commit-bound gate |
-| Diff whitespace 本地观察 | `pass` | 2026-07-31；dirty R11 worktree | `git diff --check` | exit 0；仅临时观察 |
-| Version sync 本地观察 | `pass` | 2026-07-31；dirty R11 worktree | `python3 tools/check_version_sync.py` | `0.3.0-alpha.1`、desktop protocol `1.0` |
-| Make help 本地观察 | `pass` | 2026-07-31；dirty R11 worktree | `make help` | legacy/Electron 与 aggregate exclusions 明确 |
+| VAL-DOC-HANDOFF-001 commit-bound checkpoint | `pass` | 2026-07-31；`625db7647d47fb6ff8f23c3136c4f45ded80384f` | [脱敏证据记录](../evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) | 冻结全部实质文档；三路复核和精确命令可追溯 |
+| Markdown links checkpoint | `pass` | 2026-07-31；`625db76` clean checkout | `python3 -B tools/check_markdown_links.py` | 76 files |
+| Diff whitespace checkpoint | `pass` | 2026-07-31；`625db76` clean checkout | `git diff --check HEAD^ HEAD` | exit 0 |
+| Version sync checkpoint | `pass` | 2026-07-31；`625db76` clean checkout | `python3 tools/check_version_sync.py` | `0.3.0-alpha.1`、desktop protocol `1.0` |
+| Make help checkpoint | `pass` | 2026-07-31；`625db76` clean checkout | `make help` | legacy/Electron 与 aggregate exclusions 明确 |
 | VAL-DOC-HANDOFF-001 final head | `not-run` | — | clean checkout + 最终 PR head 复核 | 本地 content pass 不能绑定尚未产生的 commit bytes |
 | VAL-GOV-001 R11 final head | `not-run` | — | 最终 PR head Actions | dirty worktree 的成功不能绑定最终 bytes |
 | PR CI | `not-run` | — | 最终 PR head Actions | 本地验证后运行 |

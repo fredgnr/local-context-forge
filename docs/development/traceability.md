@@ -26,8 +26,8 @@ R07–R11 是 ITER-0002 的追加记录，继承父迭代 `in-progress` 状态�
 
 | 需求 ID | 验收目标 | 决策 | 任务 | Owned paths | 验证 | 当前状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ-GOV-001 | 每项变更有 active iteration、owner、稳定 task/VAL 和 commit-bound evidence | 现有治理规则，无新架构决策 | ITER-0001/T01；[R11](iterations/0002-r11-documentation-handoff.md) | `AGENTS.md`、`.agents/skills/**`、`docs/development/**`、PR template | VAL-GOV-001、VAL-DOC-HANDOFF-001 | 治理 foundation `pass`；R11 最终 PR evidence 待完成 |
-| REQ-DOC-001 | 新贡献者可从权威状态、系统设计、部署、开发、TODO 和 evidence 独立接手 | 组合既有 ADR-0001–0014，不改变决策 | [R11](iterations/0002-r11-documentation-handoff.md) | `README.md`、`TODO.md`、`docs/{README,17-*,18-*}.md`、`docs/development/**`、component READMEs | VAL-DOC-HANDOFF-001 | 修复后本地三路审计无 Critical/High/Medium；最终 commit-bound 复核与 PR CI 待完成 |
+| REQ-GOV-001 | 每项变更有 active iteration、owner、稳定 task/VAL 和 commit-bound evidence | 现有治理规则，无新架构决策 | ITER-0001/T01；[R11](iterations/0002-r11-documentation-handoff.md) | `AGENTS.md`、`.agents/skills/**`、`docs/development/**`、PR template | VAL-GOV-001、VAL-DOC-HANDOFF-001 | 治理 foundation 与 `625db76` R11 checkpoint `pass`；最终 PR head/Actions 待完成 |
+| REQ-DOC-001 | 新贡献者可从权威状态、系统设计、部署、开发、TODO 和 evidence 独立接手 | 组合既有 ADR-0001–0014，不改变决策 | [R11](iterations/0002-r11-documentation-handoff.md) | `README.md`、`TODO.md`、`docs/{README,17-*,18-*}.md`、`docs/development/**`、component READMEs | VAL-DOC-HANDOFF-001 | [`625db76` commit-bound checkpoint](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) `pass`；最终 PR head/CI 待完成 |
 | REQ-PLATFORM-001 | macOS Apple Silicon Electron all-in-one，React renderer | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md) | ITER-0001/T02；ITER-0004/P01、P05 | `desktop/**`、`web/src/**` | VAL-P1-SOURCE-001、VAL-INSTALL-001 | source `pass`；packaged/安装 `not-run` |
 | REQ-TRUST-001 | Main 是信任边界，renderer 只有类型化最小能力，不得到路径/argv/token/key | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md)、[ADR-0011](../adr/0011-main-owned-signed-update-client.md)、[ADR-0012](../adr/0012-local-repository-picker-opaque-grants.md)、[ADR-0013](../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | ITER-0001/T02、T04；R08–R10 | `desktop/src/main/**`、`desktop/src/preload/**`、`web/src/**` | VAL-TRUST-001、VAL-MCP-ONBOARD-001、VAL-UPDATE-CLIENT-001、VAL-LOCAL-SOURCE-001 | source contracts `pass`；packaged trust `not-run` |
 | REQ-PY-001 | CPython 3.13.14 PyInstaller `onedir` 随应用交付且可审计 | [ADR-0001](../adr/0001-electron-python-sidecar-boundary.md)、[ADR-0009](../adr/0009-bundled-runtime-provenance.md) | ITER-0002/R02 | `backend/packaging/**`、`tools/*python_sidecar*`、`desktop/generated/sidecar/**`、`desktop/resources/sidecar/**` | VAL-PY-001、VAL-PACK-001 | source build/audit contract `pass`；clean-user `not-run` |
@@ -94,9 +94,9 @@ R07–R11 是 ITER-0002 的追加记录，继承父迭代 `in-progress` 状态�
 
 | 验证 ID | 所需证据 / 最低环境 | 当前结果 |
 | --- | --- | --- |
-| VAL-GOV-001 | repository checkout；所有新增/修改 Markdown 相对链接检查 | baseline `71890ee` / Actions 30611309112 为 `pass`；R11 final head `not-run`，最终结果记录到 R11/PR |
+| VAL-GOV-001 | repository checkout；所有新增/修改 Markdown 相对链接检查 | baseline `71890ee` / Actions 30611309112 与 `625db76` clean-checkout checkpoint 为 `pass`；R11 final head `not-run`，最终结果记录到 R11/PR |
 | VAL-GOV-002 | repository checkout；两个项目 `SKILL.md` 结构 | `pass`（继承已发布检查点） |
-| VAL-DOC-HANDOFF-001 | clean checkout；权威入口、命令模式、task owner/dependency/gate 和 PR handoff 可执行性 | 首轮三路审计 `fail`；修复后 dirty worktree 三路复核 `pass`（仅本地观察）；最终 commit-bound 复核 `not-run` |
+| VAL-DOC-HANDOFF-001 | clean checkout；权威入口、命令模式、task owner/dependency/gate 和 PR handoff 可执行性 | 首轮三路审计 `fail`；修复后 [`625db76` commit-bound checkpoint](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) `pass`；最终 PR head `not-run` |
 | VAL-P1-CONTRACT-001 | Linux source；Main/preload/Web/sidecar 纯源码合同 | `pass`（继承 ITER-0001） |
 | VAL-P1-SOURCE-001 | Linux/macOS source；真实 AF_UNIX bind 和 source jobs | `pass`（[Actions 30550023917](https://github.com/fredgnr/local-context-forge/actions/runs/30550023917)） |
 | VAL-P1-REGRESSION-001 | source checkout；Backend/Desktop/Web/Host Runner 全量 | `pass`（当前 Desktop 245/7 skip、Backend 322/1 skip；Web 51、Host 8 继承无代码变化基线） |

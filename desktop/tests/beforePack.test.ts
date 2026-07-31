@@ -45,6 +45,11 @@ const gate = require("../scripts/beforePack.cjs") as {
   createBeforePackHook(dependencies: {
     platform: string;
     architecture?: string;
+    auditPythonSidecar?: () => JsonObject;
+    auditQmdRuntime?: () => JsonObject;
+    auditCompanion?: () => JsonObject;
+    auditRenderer?: () => JsonObject;
+    auditUpdateTrustAnchor?: () => JsonObject;
   }): (context: {
     electronPlatformName: string;
     arch?: number | string;
@@ -382,6 +387,51 @@ afterEach(async () => {
 });
 
 describe("Python sidecar beforePack gate", () => {
+  it("runs Python, QMD, companion, and renderer audits in the native gate", async () => {
+    const calls: string[] = [];
+    const hook = gate.createBeforePackHook({
+      platform: "darwin",
+      architecture: "arm64",
+      auditPythonSidecar: () => {
+        calls.push("python");
+        return { files: 1 };
+      },
+      auditQmdRuntime: () => {
+        calls.push("qmd");
+        return { files: 2 };
+      },
+      auditCompanion: () => {
+        calls.push("companion");
+        return { files: 3 };
+      },
+      auditRenderer: () => {
+        calls.push("renderer");
+        return { files: 4 };
+      },
+      auditUpdateTrustAnchor: () => {
+        calls.push("update-trust");
+        return { algorithm: "Ed25519" };
+      }
+    });
+
+    await expect(
+      hook({ electronPlatformName: "darwin", arch: "arm64" })
+    ).resolves.toEqual({
+      python: { files: 1 },
+      qmd: { files: 2 },
+      companion: { files: 3 },
+      renderer: { files: 4 },
+      updateTrust: { algorithm: "Ed25519" }
+    });
+    expect(calls).toEqual([
+      "python",
+      "qmd",
+      "companion",
+      "renderer",
+      "update-trust"
+    ]);
+  });
+
   it("accepts one exact, canonical, arm64 audited staging", async () => {
     const fixture = await createFixture();
     const inspected: string[] = [];

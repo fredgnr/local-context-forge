@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "Ed25519",
+  "credentialGenerationId": null,
+  "publicKeyPath": "desktop/resources/update/update-metadata-ed25519-public.pem",
+  "publicKeySha256": null,
+  "status": "unprovisioned"
+}

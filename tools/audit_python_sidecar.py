@@ -148,10 +148,16 @@ def critical_input_paths() -> list[Path]:
         PACKAGING_ROOT / "python-sidecar-toolchain.lock.json",
         *sorted((PACKAGING_ROOT / "notices").glob("*.txt")),
         REPOSITORY_ROOT / "desktop" / "electron-builder.yml",
+        REPOSITORY_ROOT / "desktop" / "electron-builder.release.yml",
         REPOSITORY_ROOT / "desktop" / "package-lock.json",
         REPOSITORY_ROOT / "desktop" / "package.json",
         REPOSITORY_ROOT / "desktop" / "scripts" / "afterPack.cjs",
         REPOSITORY_ROOT / "desktop" / "scripts" / "beforePack.cjs",
+        REPOSITORY_ROOT
+        / "desktop"
+        / "scripts"
+        / "resealPackagedRuntimes.cjs",
+        REPOSITORY_ROOT / ".github" / "workflows" / "desktop-release.yml",
         MANIFEST_SCHEMA,
         VERSION_FILE,
         REPOSITORY_ROOT / "tools" / "audit_python_sidecar.py",
@@ -943,6 +949,60 @@ def audit_bundle(
     }
 
 
+def reseal_manifest(root: Path) -> dict[str, int]:
+    """Refresh inventory evidence after reviewed outer certificate signing."""
+
+    try:
+        root_info = root.lstat()
+    except OSError as exc:
+        raise AuditError("Sidecar root must be a real directory") from exc
+    if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode):
+        raise AuditError("Sidecar root must be a real directory")
+    root = root.resolve()
+    manifest_path = root / MANIFEST_NAME
+    manifest = load_manifest(manifest_path)
+    _validate_manifest_shape(manifest)
+    files = build_file_inventory(root)
+    native = scan_macho_inventory(root)
+    validate_native_inventory(root, native)
+    if EXPECTED_EXECUTABLE not in {
+        record.get("path")
+        for record in native
+        if isinstance(record, Mapping)
+    }:
+        raise AuditError("Native inventory omits the sidecar entrypoint")
+    manifest["files"] = files
+    manifest["native"] = native
+    audit = manifest.get("audit")
+    if not isinstance(audit, dict):
+        raise AuditError("manifest audit must be an object")
+    audit["normalizedInventorySha256"] = normalized_inventory_sha256(
+        files, native
+    )
+    encoded = canonical_json_bytes(manifest) + b"\n"
+    temporary = manifest_path.with_name(f".{MANIFEST_NAME}.reseal")
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, manifest_path)
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise AuditError("Unable to reseal sidecar manifest") from exc
+    return {
+        "files": len(files),
+        "nativeFiles": len(native),
+        "components": len(manifest["components"]),
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Audit a darwin-arm64 Python sidecar staging directory"
@@ -953,13 +1013,24 @@ def _parser() -> argparse.ArgumentParser:
         default=Path("desktop/generated/sidecar"),
         help="staged PyInstaller onedir root",
     )
+    parser.add_argument(
+        "--reseal-manifest",
+        action="store_true",
+        help=(
+            "refresh file/native inventory after reviewed certificate signing"
+        ),
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     try:
-        summary = audit_bundle(arguments.bundle)
+        summary = (
+            reseal_manifest(arguments.bundle)
+            if arguments.reseal_manifest
+            else audit_bundle(arguments.bundle)
+        )
     except AuditError as exc:
         print(f"python-sidecar audit failed: {exc}", file=sys.stderr)
         return 2

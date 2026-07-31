@@ -20,6 +20,26 @@ extraResources:
     to: sidecar
     filter:
       - "**/*"
+  - from: generated/companion
+    to: companion
+    filter:
+      - "**/*"
+  - from: companion
+    to: companion
+    filter:
+      - "THIRD_PARTY_NOTICES.txt"
+  - from: generated/qmd
+    to: qmd
+    filter:
+      - "**/*"
+  - from: resources/update
+    to: update
+    filter:
+      - "update-metadata-ed25519-public.pem"
+  - from: ../runtime
+    to: update
+    filter:
+      - "update-metadata-key.lock.json"
 mac:
   category: public.app-category.developer-tools
   target:
@@ -29,8 +49,14 @@ mac:
     - target: zip
       arch:
         - arm64
-  identity: Local Context Forge Self Signed
+  identity: "-"
+  timestamp: none
   hardenedRuntime: false
   gatekeeperAssess: false
   notarize: false
-artifactName: "${productName}-${version}-${arch}.${ext}"
+  signIgnore:
+    - "/Contents/Resources/sidecar/"
+    - "/Contents/Resources/qmd/"
+dmg:
+  writeUpdateInfo: false
+artifactName: "local-context-forge-${version}-${arch}-UNOFFICIAL.${ext}"

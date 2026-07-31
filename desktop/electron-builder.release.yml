@@ -1,0 +1,11 @@
+extends: ./electron-builder.yml
+forceCodeSigning: true
+electronUpdaterCompatibility: ">= 2.16"
+artifactName: "local-context-forge-${version}-${arch}.${ext}"
+mac:
+  identity: Local Context Forge Self Signed
+  timestamp: none
+publish:
+  provider: github
+  owner: fredgnr
+  repo: local-context-forge

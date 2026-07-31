@@ -1,0 +1,503 @@
+name: Desktop macOS release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified draft release
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and sign macOS arm64 release
+    if: >-
+      github.repository == 'fredgnr/local-context-forge' &&
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: macos-release
+    permissions:
+      contents: read
+    env:
+      CI: "true"
+      LCF_FORMAL_RELEASE: "true"
+
+    steps:
+      - name: Check out exact release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up locked Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.23.2"
+
+      - name: Set up reviewed build Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Bind release provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/tags/${GITHUB_REF_NAME}"
+          test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "${GITHUB_SHA}"
+          source_epoch="$(git show -s --format=%ct "${GITHUB_SHA}")"
+          build_python="$(python -c 'import os,sys; print(os.path.realpath(sys.executable))')"
+          test "${build_python#/}" != "${build_python}"
+          {
+            printf 'LCF_SOURCE_DATE_EPOCH=%s\n' "${source_epoch}"
+            printf 'LCF_QMD_BUILD_PYTHON=%s\n' "${build_python}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Fail-closed release preflight
+        run: >-
+          node desktop/scripts/prepareRelease.cjs preflight
+          --tag "${GITHUB_REF_NAME}"
+
+      - name: Download locked runtime sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python_archive="${RUNNER_TEMP}/python-3.13.14-darwin-arm64.tar.gz"
+          python_hashes="${RUNNER_TEMP}/python-3.13.14-hashes.sha256"
+          node_archive="${RUNNER_TEMP}/node-v22.23.2-darwin-arm64.tar.gz"
+          node_hashes="${RUNNER_TEMP}/node-v22.23.2-SHASUMS256.txt"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${python_archive}" \
+            "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/python-3.13.14-darwin-arm64.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${python_hashes}" \
+            "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/hashes.sha256"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${node_archive}" \
+            "https://nodejs.org/download/release/v22.23.2/node-v22.23.2-darwin-arm64.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${node_hashes}" \
+            "https://nodejs.org/download/release/v22.23.2/SHASUMS256.txt"
+          printf '%s  %s\n' \
+            "839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34" \
+            "${python_archive}" |
+            shasum -a 256 --check
+          printf '%s  %s\n' \
+            "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17" \
+            "${python_hashes}" |
+            shasum -a 256 --check
+          printf '%s  %s\n' \
+            "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6" \
+            "${node_archive}" |
+            shasum -a 256 --check
+          printf '%s  %s\n' \
+            "778ac5b2fcdbd68d9c0ae9f4310674faa3af0910bd0d18e7f6597787c40a3e39" \
+            "${node_hashes}" |
+            shasum -a 256 --check
+          {
+            printf 'PYTHON_SIDECAR_ARCHIVE=%s\n' "${python_archive}"
+            printf 'PYTHON_SIDECAR_HASH_MANIFEST=%s\n' "${python_hashes}"
+            printf 'QMD_NODE_ARCHIVE=%s\n' "${node_archive}"
+            printf 'QMD_NODE_HASH_MANIFEST=%s\n' "${node_hashes}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Build locked Python sidecar
+        run: make python-sidecar-build
+
+      - name: Build locked QMD runtime
+        run: make qmd-runtime-build
+
+      - name: Build and stage production renderer
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix web ci --ignore-scripts
+          npm --prefix web test
+          npm --prefix web run typecheck
+          npm --prefix web run build
+          make renderer-stage
+
+      - name: Build and audit desktop sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix desktop ci --ignore-scripts
+          npm --prefix desktop test
+          npm --prefix desktop run typecheck
+          npm --prefix desktop run build
+          npm --prefix desktop run audit:companion
+          npm --prefix desktop run audit:python-sidecar
+          make qmd-runtime-audit
+          make renderer-audit
+
+      - name: Sign, package, and assemble formal assets
+        shell: bash
+        env:
+          DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64: ${{ secrets.DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          credential_bundle="${RUNNER_TEMP}/lcf-desktop-release-credentials.json"
+          update_key="${RUNNER_TEMP}/lcf-update-metadata-ed25519-private.pem"
+          certificate_bundle="${RUNNER_TEMP}/lcf-codesign.p12"
+          certificate_password="${RUNNER_TEMP}/lcf-codesign-password.txt"
+          certificate_pem="${RUNNER_TEMP}/lcf-codesign-certificate.pem"
+          signing_keychain="${RUNNER_TEMP}/lcf-signing.keychain-db"
+          release_assets="${RUNNER_TEMP}/lcf-desktop-release-assets"
+          keychain_password="$(openssl rand -hex 32)"
+          cleanup() {
+            security delete-keychain "${signing_keychain}" >/dev/null 2>&1 || true
+            rm -f \
+              "${credential_bundle}" \
+              "${update_key}" \
+              "${certificate_bundle}" \
+              "${certificate_password}" \
+              "${certificate_pem}" \
+              "${signing_keychain}"
+          }
+          trap cleanup EXIT
+          printf '%s' "${DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64}" |
+            base64 -D > "${credential_bundle}"
+          unset DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64
+          node - \
+            "${credential_bundle}" \
+            "${update_key}" \
+            "${certificate_bundle}" \
+            "${certificate_password}" <<'NODE'
+          const fs = require("node:fs");
+          const [
+            bundlePath,
+            updateKeyPath,
+            certificatePath,
+            passwordPath
+          ] = process.argv.slice(2);
+          const exact = (value, names) =>
+            value !== null &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            Object.keys(value).sort().join("\0") ===
+              [...names].sort().join("\0");
+          const decode = (value, label, maximum) => {
+            if (
+              typeof value !== "string" ||
+              value.length === 0 ||
+              value.length > maximum * 2 ||
+              !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+            ) {
+              throw new Error(`${label} is not canonical base64`);
+            }
+            const decoded = Buffer.from(value, "base64");
+            if (
+              decoded.length === 0 ||
+              decoded.length > maximum ||
+              decoded.toString("base64") !== value
+            ) {
+              throw new Error(`${label} is not canonical base64`);
+            }
+            return decoded;
+          };
+          const bundle = JSON.parse(fs.readFileSync(bundlePath, "utf8"));
+          const updateLock = require("./runtime/update-metadata-key.lock.json");
+          const certificateLock = require(
+            "./runtime/macos-codesign-certificate.lock.json"
+          );
+          if (
+            !exact(bundle, [
+              "schemaVersion",
+              "credentialGenerationId",
+              "repository",
+              "environment",
+              "updateMetadata",
+              "macosCodeSigning"
+            ]) ||
+            bundle.schemaVersion !== 1 ||
+            !/^[0-9a-f]{32}$/.test(bundle.credentialGenerationId || "") ||
+            bundle.repository !== "fredgnr/local-context-forge" ||
+            bundle.environment !== "macos-release" ||
+            !exact(bundle.updateMetadata, [
+              "algorithm",
+              "privateKeyPemBase64",
+              "publicKeySha256"
+            ]) ||
+            bundle.updateMetadata.algorithm !== "Ed25519" ||
+            !exact(bundle.macosCodeSigning, [
+              "identity",
+              "certificateP12Base64",
+              "certificatePasswordBase64",
+              "certificateSha256"
+            ]) ||
+            bundle.macosCodeSigning.identity !==
+              "Local Context Forge Self Signed" ||
+            bundle.credentialGenerationId !==
+              updateLock.credentialGenerationId ||
+            bundle.credentialGenerationId !==
+              certificateLock.credentialGenerationId ||
+            bundle.updateMetadata.publicKeySha256 !==
+              updateLock.publicKeySha256 ||
+            bundle.macosCodeSigning.certificateSha256 !==
+              certificateLock.certificateSha256
+          ) {
+            throw new Error(
+              "Credential bundle does not match reviewed public pins"
+            );
+          }
+          fs.writeFileSync(
+            updateKeyPath,
+            decode(
+              bundle.updateMetadata.privateKeyPemBase64,
+              "Update private key",
+              64 * 1024
+            ),
+            { mode: 0o600, flag: "wx" }
+          );
+          fs.writeFileSync(
+            certificatePath,
+            decode(
+              bundle.macosCodeSigning.certificateP12Base64,
+              "Code-signing certificate",
+              1024 * 1024
+            ),
+            { mode: 0o600, flag: "wx" }
+          );
+          fs.writeFileSync(
+            passwordPath,
+            decode(
+              bundle.macosCodeSigning.certificatePasswordBase64,
+              "Code-signing password",
+              1024
+            ),
+            { mode: 0o600, flag: "wx" }
+          );
+          NODE
+          openssl pkcs12 \
+            -in "${certificate_bundle}" \
+            -passin "file:${certificate_password}" \
+            -clcerts -nokeys \
+            -out "${certificate_pem}"
+          expected_certificate_sha="$(
+            node -p "require('./runtime/macos-codesign-certificate.lock.json').certificateSha256"
+          )"
+          actual_certificate_sha="$(
+            openssl x509 -in "${certificate_pem}" -outform DER |
+              shasum -a 256 |
+              awk '{print $1}'
+          )"
+          test "${actual_certificate_sha}" = "${expected_certificate_sha}"
+          security create-keychain -p "${keychain_password}" "${signing_keychain}"
+          security set-keychain-settings -lut 21600 "${signing_keychain}"
+          security unlock-keychain -p "${keychain_password}" "${signing_keychain}"
+          security import "${certificate_bundle}" \
+            -k "${signing_keychain}" \
+            -P "$(cat "${certificate_password}")" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "${keychain_password}" \
+            "${signing_keychain}"
+          node desktop/scripts/prepareRelease.cjs verify-key \
+            --tag "${GITHUB_REF_NAME}" \
+            --private-key "${update_key}"
+          export CSC_NAME="Local Context Forge Self Signed"
+          export CSC_KEYCHAIN="${signing_keychain}"
+          (
+            cd desktop
+            ./node_modules/.bin/electron-builder \
+              --mac dmg zip \
+              --arm64 \
+              --config electron-builder.release.yml \
+              --publish never
+          )
+          node desktop/scripts/prepareRelease.cjs assemble \
+            --tag "${GITHUB_REF_NAME}" \
+            --release-dir "${GITHUB_WORKSPACE}/desktop/release" \
+            --output-dir "${release_assets}" \
+            --private-key "${update_key}"
+          printf 'LCF_RELEASE_ASSET_DIR=%s\n' "${release_assets}" >> "${GITHUB_ENV}"
+
+      - name: Independently verify assembled assets
+        run: >-
+          node desktop/scripts/prepareRelease.cjs verify-assets
+          --tag "${GITHUB_REF_NAME}"
+          --asset-dir "${LCF_RELEASE_ASSET_DIR}"
+
+      - name: Upload one verified release-asset set
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-release-assets
+          path: ${{ env.LCF_RELEASE_ASSET_DIR }}
+          if-no-files-found: error
+          compression-level: 0
+          include-hidden-files: false
+
+  publish:
+    name: Verify draft and publish
+    needs: release
+    if: >-
+      github.repository == 'fredgnr/local-context-forge' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      (github.event_name == 'push' || inputs.publish == true)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out exact release tag without credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up locked Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.23.2"
+
+      - name: Download verified asset set
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: desktop-release-assets
+          path: ${{ runner.temp }}/lcf-desktop-release-assets
+
+      - name: Independently verify downloaded assets
+        env:
+          LCF_RELEASE_ASSET_DIR: ${{ runner.temp }}/lcf-desktop-release-assets
+        run: >-
+          node desktop/scripts/prepareRelease.cjs verify-assets
+          --tag "${GITHUB_REF_NAME}"
+          --asset-dir "${LCF_RELEASE_ASSET_DIR}"
+
+      - name: Create, remotely verify, and publish the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LCF_RELEASE_ASSET_DIR: ${{ runner.temp }}/lcf-desktop-release-assets
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "${tag}" \
+            --repo fredgnr/local-context-forge >/dev/null 2>&1; then
+            printf '%s\n' "A release already exists for ${tag}" >&2
+            exit 2
+          fi
+          create_flags=(
+            --repo fredgnr/local-context-forge
+            --draft
+            --verify-tag
+            --title "Local Context Forge ${tag}"
+            --notes-file .github/desktop-release-notes.md
+          )
+          if [[ "${tag}" == *-* ]]; then
+            create_flags+=(--prerelease)
+          fi
+          gh release create \
+            "${tag}" \
+            "${LCF_RELEASE_ASSET_DIR}"/* \
+            "${create_flags[@]}"
+          remote_json="${RUNNER_TEMP}/lcf-draft-release.json"
+          gh api \
+            --method GET \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/fredgnr/local-context-forge/releases/tags/${tag}" \
+            > "${remote_json}"
+          node - "${LCF_RELEASE_ASSET_DIR}" "${remote_json}" "${tag}" <<'NODE'
+          const fs = require("node:fs");
+          const crypto = require("node:crypto");
+          const path = require("node:path");
+          const [assetDirectory, responsePath, expectedTag] =
+            process.argv.slice(2);
+          const sha256File = (file) => {
+            const digest = crypto.createHash("sha256");
+            const descriptor = fs.openSync(file, "r");
+            const buffer = Buffer.allocUnsafe(1024 * 1024);
+            try {
+              for (;;) {
+                const count = fs.readSync(
+                  descriptor,
+                  buffer,
+                  0,
+                  buffer.length,
+                  null
+                );
+                if (count === 0) break;
+                digest.update(buffer.subarray(0, count));
+              }
+            } finally {
+              fs.closeSync(descriptor);
+            }
+            return digest.digest("hex");
+          };
+          const release = JSON.parse(fs.readFileSync(responsePath, "utf8"));
+          if (
+            release.draft !== true ||
+            release.tag_name !== expectedTag ||
+            !Array.isArray(release.assets)
+          ) {
+            throw new Error("GitHub draft release shape is invalid");
+          }
+          const local = new Map(
+            fs.readdirSync(assetDirectory).map((name) => {
+              const file = path.join(assetDirectory, name);
+              const stat = fs.lstatSync(file);
+              if (
+                !stat.isFile() ||
+                stat.isSymbolicLink() ||
+                name !== path.basename(name) ||
+                name !== name.normalize("NFC")
+              ) {
+                throw new Error("Local release asset set is unsafe");
+              }
+              return [
+                name,
+                {
+                  size: stat.size,
+                  digest: `sha256:${sha256File(file)}`
+                }
+              ];
+            })
+          );
+          const remoteNames = new Set();
+          for (const asset of release.assets) {
+            const expected = local.get(asset.name);
+            const expectedUrl =
+              `https://github.com/fredgnr/local-context-forge/releases/download/` +
+              `${encodeURIComponent(expectedTag)}/${encodeURIComponent(asset.name)}`;
+            if (
+              !expected ||
+              remoteNames.has(asset.name) ||
+              asset.state !== "uploaded" ||
+              asset.size !== expected.size ||
+              asset.digest !== expected.digest ||
+              typeof asset.browser_download_url !== "string" ||
+              new URL(asset.browser_download_url).href !== expectedUrl
+            ) {
+              throw new Error(
+                "GitHub draft asset digest or provenance is invalid"
+              );
+            }
+            remoteNames.add(asset.name);
+          }
+          if (
+            local.size !== remoteNames.size ||
+            [...local.keys()].some((name) => !remoteNames.has(name))
+          ) {
+            throw new Error("GitHub draft asset set differs from verification");
+          }
+          NODE
+          gh release edit "${tag}" \
+            --repo fredgnr/local-context-forge \
+            --draft=false

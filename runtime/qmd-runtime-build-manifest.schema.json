@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qmd-runtime-build-manifest.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "kind",
+    "product",
+    "target",
+    "build",
+    "components",
+    "artifacts",
+    "files",
+    "native",
+    "audit"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "qmd-runtime-build-manifest.schema.json"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "local-context-forge-qmd-runtime"
+    },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appVersion",
+        "desktopProtocol",
+        "databaseSchema"
+      ],
+      "properties": {
+        "appVersion": {
+          "type": "string"
+        },
+        "desktopProtocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "major",
+            "minor"
+          ],
+          "properties": {
+            "major": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minor": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "databaseSchema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "os": {
+          "const": "darwin"
+        },
+        "architecture": {
+          "const": "arm64"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryCommit",
+        "sourceDateEpoch",
+        "runnerImage",
+        "runnerImageVersion",
+        "macosDeploymentTarget",
+        "node",
+        "python",
+        "inputDigests"
+      ],
+      "properties": {
+        "repositoryCommit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "sourceDateEpoch": {
+          "type": "integer",
+          "minimum": 100000000
+        },
+        "runnerImage": {
+          "const": "macos-15"
+        },
+        "runnerImageVersion": {
+          "type": "string",
+          "pattern": "^[0-9]{8}\\.[0-9]+\\.[0-9]+$"
+        },
+        "macosDeploymentTarget": {
+          "const": "14.0"
+        },
+        "node": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "archiveName",
+            "archiveSource",
+            "archiveSha256",
+            "hashManifestName",
+            "hashManifestSource",
+            "hashManifestSha256"
+          ],
+          "properties": {
+            "version": {
+              "const": "22.23.2"
+            },
+            "archiveName": {
+              "const": "node-v22.23.2-darwin-arm64.tar.gz"
+            },
+            "archiveSource": {
+              "type": "string",
+              "format": "uri"
+            },
+            "archiveSha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "hashManifestName": {
+              "const": "SHASUMS256.txt"
+            },
+            "hashManifestSource": {
+              "type": "string",
+              "format": "uri"
+            },
+            "hashManifestSha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "python": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider",
+            "implementation",
+            "version",
+            "executableSha256"
+          ],
+          "properties": {
+            "provider": {
+              "const": "actions/setup-python"
+            },
+            "implementation": {
+              "const": "CPython"
+            },
+            "version": {
+              "const": "3.13.14"
+            },
+            "executableSha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "inputDigests": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "version",
+          "license"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "license": {
+            "type": "string",
+            "minLength": 1
+          },
+          "integrity": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "spdxSbom",
+        "thirdPartyNotices",
+        "licensesDirectory"
+      ],
+      "properties": {
+        "spdxSbom": {
+          "const": "compliance/sbom.spdx.json"
+        },
+        "thirdPartyNotices": {
+          "const": "compliance/THIRD-PARTY-NOTICES.txt"
+        },
+        "licensesDirectory": {
+          "const": "compliance/licenses"
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "native": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/native"
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "policyVersion",
+        "normalizedInventorySha256",
+        "nativeSmoke"
+      ],
+      "properties": {
+        "status": {
+          "const": "pass"
+        },
+        "policyVersion": {
+          "const": 1
+        },
+        "normalizedInventorySha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "nativeSmoke": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "pathTrap",
+            "networkTrap",
+            "modelFilesCreated",
+            "checks"
+          ],
+          "properties": {
+            "status": {
+              "const": "pass"
+            },
+            "pathTrap": {
+              "const": true
+            },
+            "networkTrap": {
+              "const": true
+            },
+            "modelFilesCreated": {
+              "const": 0
+            },
+            "checks": {
+              "type": "array",
+              "const": [
+                "node-version",
+                "worker-contract",
+                "better-sqlite3-native-load",
+                "uds-health",
+                "qmd-reconcile",
+                "qmd-lexical-search",
+                "offline-no-model"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "size",
+        "mode",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-7]{4}$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "native": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "architectures",
+        "dependencies",
+        "rpaths",
+        "codeSignature"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "architectures": {
+          "type": "array",
+          "const": [
+            "arm64"
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rpaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "codeSignature": {
+          "const": "valid"
+        }
+      }
+    }
+  }
+}

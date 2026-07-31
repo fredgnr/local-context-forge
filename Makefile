@@ -5,7 +5,9 @@ SHELL := /bin/sh
 	ci-source ci-python-install ci-python ci-ipc-source ci-web \
 	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci \
 	python-sidecar-source-verify python-sidecar-install-python python-sidecar-toolchain \
-	python-sidecar-build python-sidecar-audit python-sidecar-packaging-test
+	python-sidecar-build python-sidecar-audit python-sidecar-packaging-test \
+	qmd-runtime-source-verify qmd-runtime-build qmd-runtime-audit \
+	renderer-stage renderer-audit
 
 UV ?= uv
 NPM ?= npm
@@ -17,6 +19,9 @@ PYTHON_SIDECAR_FRAMEWORK_PYTHON ?= $(PYTHON_SIDECAR_INSTALL_ROOT)/bin/python3.13
 PYTHON_SIDECAR_BUILD_VENV ?= $(CURDIR)/.python-sidecar-build-venv
 PYTHON_SIDECAR_BUILD_ROOT ?= $(CURDIR)/.python-sidecar-build
 PYTHON_SIDECAR_INSTALLER ?= $(PYTHON_SIDECAR_BUILD_ROOT)/python-3.13.14-macos11.pkg
+NODE ?= node
+QMD_NODE_ARCHIVE ?=
+QMD_NODE_HASH_MANIFEST ?=
 
 help:
 	@printf '%s\n' \
@@ -44,6 +49,11 @@ help:
 	  'make python-sidecar-build  Build, smoke, audit and atomically stage sidecar' \
 	  'make python-sidecar-audit  Re-audit the current Python sidecar staging' \
 	  'make python-sidecar-packaging-test  Run portable packaging policy tests' \
+	  'make qmd-runtime-source-verify  Verify pinned Node archive/hash bytes' \
+	  'make qmd-runtime-build  Build, native-smoke, audit and stage Node/QMD' \
+	  'make qmd-runtime-audit  Re-audit the current QMD runtime staging' \
+	  'make renderer-stage  Stage audited web/dist for desktop packaging' \
+	  'make renderer-audit  Re-audit the staged production renderer' \
 	  'make handbook    Build the printable Chinese PDF handbook' \
 	  'make logs        Follow service logs' \
 	  'make down        Remove containers, keep ./data'
@@ -208,6 +218,27 @@ python-sidecar-audit:
 
 python-sidecar-packaging-test:
 	cd backend && .venv/bin/pytest ../tests/backend/test_python_sidecar_packaging.py
+
+qmd-runtime-source-verify:
+	@test -n "$(QMD_NODE_ARCHIVE)" || { printf '%s\n' 'QMD_NODE_ARCHIVE is required'; exit 2; }
+	@test -n "$(QMD_NODE_HASH_MANIFEST)" || { printf '%s\n' 'QMD_NODE_HASH_MANIFEST is required'; exit 2; }
+	$(NODE) desktop/scripts/buildQmdRuntime.cjs --verify-source-only \
+		--archive "$(QMD_NODE_ARCHIVE)" \
+		--hash-manifest "$(QMD_NODE_HASH_MANIFEST)"
+
+qmd-runtime-build: qmd-runtime-source-verify
+	LCF_QMD_NODE_ARCHIVE="$(QMD_NODE_ARCHIVE)" \
+	LCF_QMD_NODE_HASH_MANIFEST="$(QMD_NODE_HASH_MANIFEST)" \
+	$(NODE) desktop/scripts/buildQmdRuntime.cjs
+
+qmd-runtime-audit:
+	$(NODE) desktop/scripts/auditQmdRuntime.cjs
+
+renderer-stage:
+	$(NODE) desktop/scripts/stageRenderer.cjs
+
+renderer-audit:
+	$(NODE) desktop/scripts/auditRenderer.cjs
 
 handbook:
 	python3 tools/build_handbook.py

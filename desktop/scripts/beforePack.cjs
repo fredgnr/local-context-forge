@@ -4,6 +4,18 @@ const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  auditQmdRuntime
+} = require("./auditQmdRuntime.cjs");
+const {
+  auditCompanion
+} = require("./auditCompanion.cjs");
+const {
+  auditRenderer
+} = require("./auditRenderer.cjs");
+const {
+  auditUpdateTrustAnchor
+} = require("./auditUpdateTrust.cjs");
 
 const MANIFEST_NAME = "build-manifest.json";
 const MANIFEST_SCHEMA_NAME = "python-sidecar-build-manifest.schema.json";
@@ -65,10 +77,13 @@ const FIXED_CRITICAL_INPUTS = Object.freeze([
   "backend/pyproject.toml",
   "backend/uv.lock",
   "desktop/electron-builder.yml",
+  "desktop/electron-builder.release.yml",
   "desktop/package-lock.json",
   "desktop/package.json",
   "desktop/scripts/afterPack.cjs",
   "desktop/scripts/beforePack.cjs",
+  "desktop/scripts/resealPackagedRuntimes.cjs",
+  ".github/workflows/desktop-release.yml",
   "runtime/python-sidecar-build-manifest.schema.json",
   "runtime/version.json",
   "tools/audit_python_sidecar.py",
@@ -1367,10 +1382,14 @@ function createBeforePackHook(dependencies = {}) {
     if (context.arch !== 3 && context.arch !== "arm64") {
       fail("beforePack only permits an arm64 packaging target");
     }
-    return auditPythonSidecar({
+    const repositoryRoot =
+      dependencies.repositoryRoot ||
+      path.resolve(__dirname, "..", "..");
+    const python = (
+      dependencies.auditPythonSidecar || auditPythonSidecar
+    )({
       repositoryRoot:
-        dependencies.repositoryRoot ||
-        path.resolve(__dirname, "..", ".."),
+        repositoryRoot,
       stagingRoot:
         dependencies.stagingRoot ||
         path.resolve(__dirname, "..", "generated", "sidecar"),
@@ -1381,6 +1400,45 @@ function createBeforePackHook(dependencies = {}) {
       inspectSource: dependencies.inspectSource,
       inspectRepository: dependencies.inspectRepository
     });
+    const qmd = (
+      dependencies.auditQmdRuntime || auditQmdRuntime
+    )({
+      repositoryRoot,
+      stagingRoot:
+        dependencies.qmdStagingRoot ||
+        path.resolve(__dirname, "..", "generated", "qmd"),
+      environment: dependencies.environment || process.env,
+      platform: dependencies.platform || process.platform,
+      architecture: dependencies.architecture || process.arch,
+      inspectNative: dependencies.inspectQmdNative,
+      inspectSource: dependencies.inspectQmdSource,
+      inspectRepository: dependencies.inspectQmdRepository
+    });
+    const companion = (
+      dependencies.auditCompanion || auditCompanion
+    )({
+      repositoryRoot,
+      stagingRoot:
+        dependencies.companionStagingRoot ||
+        path.resolve(__dirname, "..", "generated", "companion")
+    });
+    const renderer = (
+      dependencies.auditRenderer || auditRenderer
+    )(
+      dependencies.rendererRoot ||
+        path.resolve(__dirname, "..", "resources", "renderer"),
+      {
+        expectedCommit:
+          (dependencies.environment || process.env).GITHUB_SHA,
+        expectedSourceDateEpoch: Number(
+          (dependencies.environment || process.env).LCF_SOURCE_DATE_EPOCH
+        )
+      }
+    );
+    const updateTrust = (
+      dependencies.auditUpdateTrustAnchor || auditUpdateTrustAnchor
+    )({ repositoryRoot });
+    return { python, qmd, companion, renderer, updateTrust };
   };
 }
 
@@ -1391,6 +1449,7 @@ module.exports.BeforePackAuditError = BeforePackAuditError;
 module.exports.EXPECTED_FROZEN_SMOKE = EXPECTED_FROZEN_SMOKE;
 module.exports.FIXED_CRITICAL_INPUTS = FIXED_CRITICAL_INPUTS;
 module.exports.auditPythonSidecar = auditPythonSidecar;
+module.exports.auditUpdateTrustAnchor = auditUpdateTrustAnchor;
 module.exports.buildFileInventory = buildFileInventory;
 module.exports.canonicalJson = canonicalJson;
 module.exports.createBeforePackHook = createBeforePackHook;

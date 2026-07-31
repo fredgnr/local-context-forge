@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "os": "darwin",
+    "architecture": "arm64",
+    "runnerLabel": "macos-15",
+    "deploymentTarget": "14.0"
+  },
+  "node": {
+    "version": "22.23.2",
+    "archiveName": "node-v22.23.2-darwin-arm64.tar.gz",
+    "archiveRoot": "node-v22.23.2-darwin-arm64",
+    "archiveSource": "https://nodejs.org/download/release/v22.23.2/node-v22.23.2-darwin-arm64.tar.gz",
+    "archiveSha256": "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6",
+    "archiveSize": 50068815,
+    "hashManifestName": "SHASUMS256.txt",
+    "hashManifestSource": "https://nodejs.org/download/release/v22.23.2/SHASUMS256.txt",
+    "hashManifestSha256": "778ac5b2fcdbd68d9c0ae9f4310674faa3af0910bd0d18e7f6597787c40a3e39",
+    "hashManifestSize": 3777
+  },
+  "worker": {
+    "version": "0.3.0-alpha.1",
+    "qmdVersion": "2.5.3",
+    "betterSqlite3Version": "12.10.0",
+    "packageLockSha256": "d4fbe0e127a3716e7d6b93af7e08a8fed5d9c1b309cae85ea9dde8fe5905c918",
+    "sourcePaths": [
+      "desktop/workers/qmd/index.mjs",
+      "desktop/workers/qmd/package.json",
+      "desktop/workers/qmd/package-lock.json",
+      "desktop/workers/qmd/src/contract.mjs",
+      "desktop/workers/qmd/src/indexService.mjs",
+      "desktop/workers/qmd/src/server.mjs",
+      "desktop/workers/qmd/test/indexService.test.mjs",
+      "desktop/workers/qmd/test/qmdSdkIntegration.test.mjs",
+      "desktop/workers/qmd/test/server.test.mjs"
+    ]
+  },
+  "buildPython": {
+    "provider": "actions/setup-python",
+    "implementation": "CPython",
+    "version": "3.13.14"
+  },
+  "requiredCiInputs": [
+    "GITHUB_SHA",
+    "LCF_SOURCE_DATE_EPOCH",
+    "ImageVersion",
+    "LCF_QMD_NODE_ARCHIVE",
+    "LCF_QMD_NODE_HASH_MANIFEST",
+    "LCF_QMD_BUILD_PYTHON"
+  ]
+}

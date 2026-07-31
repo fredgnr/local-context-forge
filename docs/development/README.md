@@ -7,7 +7,8 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 
 - 上游仓库：`fredgnr/local-context-forge`
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
-- 开发分支：`agent/electron-desktop-foundation`
+- 已发布检查点：`agent/electron-desktop-foundation@7e4524f`
+- 当前工作分支：`agent/electron-bundled-runtimes`
 - 当前迁移状态：`in-progress`
 
 ## 从这里开始
@@ -17,7 +18,7 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 | 查看 P0–P7 顺序、依赖和门禁 | [迁移路线图](roadmap.md) |
 | 从需求追到 ADR、迭代、验证和文件 | [可追溯矩阵](traceability.md) |
 | 查看各轮边界与当前活动记录 | [迭代索引](iterations/README.md) |
-| 查看本轮范围、任务、风险和证据 | [迭代 0001](iterations/0001-electron-foundation.md) |
+| 查看本轮范围、任务、风险和证据 | [迭代 0002](iterations/0002-bundled-runtimes.md) |
 | 查看已接受或待决的架构决策 | [ADR 索引](../adr/README.md) |
 | 查看原有 00–15 文档和新文档入口 | [文档总索引](../README.md) |
 

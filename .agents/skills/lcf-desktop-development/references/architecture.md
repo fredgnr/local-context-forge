@@ -10,7 +10,7 @@ crosses a desktop process or distribution boundary.
 | React renderer | Presentation, local UI state, typed user intent | Node access, secrets, raw paths, child processes, updater control |
 | Preload bridge | Small typed IPC facade and payload validation | General RPC, arbitrary channels, business orchestration |
 | Electron Main | Windows, permissions, filesystem mediation, process lifecycle, updater, protocol routing | Rendering untrusted Markdown with privilege |
-| Python 3.12 sidecar | Existing LCF domain/API behavior packaged as PyInstaller `onedir` | Renderer communication, system-Python assumptions |
+| Python 3.13.14 sidecar | Existing LCF domain/API behavior packaged as PyInstaller `onedir` | Renderer communication, system-Python assumptions |
 | Node 22 QMD worker | QMD/index operations in its bundled runtime | Electron lifecycle, user-installed Node assumptions |
 
 Electron Main launches and supervises the sidecars. Use a private Unix domain
@@ -54,3 +54,8 @@ path.
 - [UDS and startup-token ADR](../../../../docs/adr/0002-uds-startup-token-protocol.md)
 - [Release and update ADR](../../../../docs/adr/0003-macos-release-signing-update-policy.md)
 - [Runtime paths and migration ADR](../../../../docs/adr/0004-runtime-paths-legacy-data-migration.md)
+- [CLI provider attempt ADR](../../../../docs/adr/0005-provider-attempt-execution-boundary.md)
+- [Product Git boundary ADR](../../../../docs/adr/0006-dulwich-product-git-boundary.md)
+- [QMD broker ADR](../../../../docs/adr/0007-qmd-retrieval-broker-runtime.md)
+- [MCP companion ADR](../../../../docs/adr/0008-mcp-companion-main-bridge.md)
+- [Bundled runtime provenance ADR](../../../../docs/adr/0009-bundled-runtime-provenance.md)

@@ -1,6 +1,6 @@
 # ITER-0001：Electron foundation
 
-- 状态：`in-progress`
+- 状态：`validated`
 - 开始日期：2026-07-30
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
 - 开发分支：`agent/electron-desktop-foundation`

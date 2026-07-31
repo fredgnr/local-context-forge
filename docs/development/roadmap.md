@@ -32,8 +32,8 @@ P2 与 P3 可在 P1 的 IPC 契约冻结后并行；P4 必须等两类持久数�
 | --- | --- | --- | --- | --- | --- |
 | P0 治理与契约 | `validated` | ITER-0001 | AGENTS、skills、ADR、迭代、追踪矩阵 | 无 | G0 |
 | P1 Electron 壳与信任边界 | `in-progress` | ITER-0001 | Main/preload/renderer 骨架、类型化 IPC | P0 | G1 |
-| P2 Python sidecar | `planned` | ITER-0002 | Python 3.12 PyInstaller `onedir`、生命周期契约 | P1 | G2 |
-| P3 Node/QMD 与 MCP | `planned` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1；与 P2 并行 | G3 |
+| P2 Python sidecar | `in-progress` | ITER-0002 | Python 3.13.14 PyInstaller `onedir`、生命周期契约 | P1 | G2 |
+| P3 Node/QMD 与 MCP | `in-progress` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1；与 P2 并行 | G3 |
 | P4 路径与迁移 | `planned` | ITER-0003 | macOS 路径、原子迁移、回滚与数据验证 | P2、P3 | G4 |
 | P5 DMG 发行基础 | `planned` | ITER-0004 | arm64 DMG、自签名、受保护发布流程 | P1–P4 | G5 |
 | P6 更新实机门禁 | `planned` | ITER-0005 | 0.0.1 → 0.0.2 实机报告、DMG fallback | P5 | G6 |
@@ -80,7 +80,7 @@ Ubuntu 与 macOS 15 arm64 完成全部 source jobs，包含真实 AF_UNIX bind�
 
 交付：
 
-- 固定 Python 3.12 构建；
+- 固定 Python 3.13.14 构建；
 - PyInstaller `onedir` 包含运行所需模块和资源；
 - Main 通过私有 UDS 启动、探活、停止和恢复 sidecar；
 - 目标 Mac 不使用系统 Python、Git 或 ctags。

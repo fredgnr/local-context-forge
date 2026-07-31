@@ -18,7 +18,8 @@ const {
   auditCompanion
 } = require("./auditCompanion.cjs");
 
-const REPOSITORY_ROOT = path.resolve(__dirname, "..", "..");
+const DEFAULT_REPOSITORY_ROOT = path.resolve(__dirname, "..", "..");
+let REPOSITORY_ROOT = DEFAULT_REPOSITORY_ROOT;
 const CANONICAL_REPOSITORY = "fredgnr/local-context-forge";
 const PRODUCT_NAME = "Local Context Forge";
 const ARTIFACT_NAME_PREFIX = "local-context-forge";
@@ -33,6 +34,10 @@ const SIGNING_IDENTITY = "Local Context Forge Self Signed";
 const MAX_DISK_IMAGE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_UPDATE_ZIP_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_BLOCKMAP_BYTES = 64 * 1024 * 1024;
+const MAX_GITHUB_RELEASE_JSON_BYTES = 16 * 1024 * 1024;
+const MAX_RELEASE_NOTES_BYTES = 1024 * 1024;
+const MAX_GITHUB_RELEASE_ASSETS = 256;
+const MAX_GITHUB_RELEASE_TOTAL_BYTES = 8 * 1024 * 1024 * 1024;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const SHA512_BASE64_PATTERN = /^[A-Za-z0-9+/]{86}==$/;
 const SEMVER_PATTERN =
@@ -59,6 +64,40 @@ function fail(message) {
   throw new DesktopReleaseError(message);
 }
 
+function configureRepositoryRoot(candidate) {
+  if (
+    typeof candidate !== "string" ||
+    !path.isAbsolute(candidate) ||
+    path.normalize(candidate) !== candidate
+  ) {
+    fail("Release source root must be an absolute normalized path");
+  }
+  let canonical;
+  let info;
+  try {
+    canonical = fs.realpathSync.native(candidate);
+    info = fs.lstatSync(candidate);
+  } catch {
+    fail("Release source root does not exist");
+  }
+  if (
+    canonical !== candidate ||
+    !info.isDirectory() ||
+    info.isSymbolicLink()
+  ) {
+    fail("Release source root must be a real canonical directory");
+  }
+  const topLevel = run(
+    "/usr/bin/git",
+    ["-C", canonical, "rev-parse", "--show-toplevel"],
+    { cwd: canonical }
+  ).trim();
+  if (topLevel !== canonical) {
+    fail("Release source root must be a Git worktree root");
+  }
+  REPOSITORY_ROOT = canonical;
+}
+
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -80,12 +119,15 @@ function safeBasename(value, label = "Release asset") {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > 240 ||
+    Buffer.byteLength(value, "utf8") > 240 ||
     value === "." ||
     value === ".." ||
+    value !== value.trim() ||
     value !== value.normalize("NFC") ||
     value.includes("/") ||
     value.includes("\\") ||
     value.includes("\0") ||
+    /[\u0000-\u001f\u007f]/u.test(value) ||
     path.basename(value) !== value
   ) {
     fail(`${label} name is unsafe`);
@@ -346,7 +388,10 @@ function compareSemver(left, right) {
   return 0;
 }
 
-function validateTagAndVersion(tag) {
+function validateTagAndVersion(
+  tag,
+  expectedCommit = process.env.GITHUB_SHA
+) {
   if (typeof tag !== "string" || !tag.startsWith("v")) {
     fail("Desktop release requires a v-prefixed tag");
   }
@@ -385,8 +430,9 @@ function validateTagAndVersion(tag) {
   if (
     !/^[0-9a-f]{40}$/.test(commit) ||
     taggedCommit !== commit ||
-    (process.env.GITHUB_SHA &&
-      process.env.GITHUB_SHA.toLowerCase() !== commit) ||
+    (expectedCommit &&
+      (!/^[0-9a-f]{40}$/i.test(expectedCommit) ||
+        expectedCommit.toLowerCase() !== commit)) ||
     git(["status", "--porcelain", "--untracked-files=all"]) !== "" ||
     !Number.isSafeInteger(sourceDateEpoch) ||
     sourceDateEpoch < 100_000_000
@@ -521,12 +567,12 @@ function validateNoTrackedPrivateKeys() {
   }
 }
 
-function preflight(tag) {
+function preflight(tag, expectedCommit = process.env.GITHUB_SHA) {
   if (process.env.GITHUB_REPOSITORY &&
       process.env.GITHUB_REPOSITORY !== CANONICAL_REPOSITORY) {
     fail("Formal release is restricted to the canonical public repository");
   }
-  const release = validateTagAndVersion(tag);
+  const release = validateTagAndVersion(tag, expectedCommit);
   const pins = validatePublicPins();
   validateNoTrackedPrivateKeys();
   return {
@@ -536,6 +582,76 @@ function preflight(tag) {
     credentialGenerationId:
       pins.updateLock.credentialGenerationId,
     signingIdentity: pins.codesignLock.identity
+  };
+}
+
+function verifyPromotionOrder(tag, expectedCommit, comparisonCommit) {
+  if (
+    typeof tag !== "string" ||
+    !tag.startsWith("v") ||
+    !/^[0-9a-f]{40}$/i.test(expectedCommit || "") ||
+    !/^[0-9a-f]{40}$/i.test(comparisonCommit || "")
+  ) {
+    fail("Promotion order inputs are invalid");
+  }
+  const candidate = parseSemver(tag.slice(1));
+  const canonicalCommit = expectedCommit.toLowerCase();
+  const policyCommit = git(["rev-parse", "HEAD"]).toLowerCase();
+  const mainCommit = comparisonCommit.toLowerCase();
+  const resolvedMainCommit = git([
+    "rev-parse",
+    `${mainCommit}^{commit}`
+  ]).toLowerCase();
+  const taggedCommit = git([
+    "rev-parse",
+    `${tag}^{commit}`
+  ]).toLowerCase();
+  if (
+    !/^[0-9a-f]{40}$/.test(policyCommit) ||
+    resolvedMainCommit !== mainCommit ||
+    taggedCommit !== canonicalCommit ||
+    (process.env.GITHUB_SHA &&
+      process.env.GITHUB_SHA.toLowerCase() !== policyCommit) ||
+    git(["status", "--porcelain", "--untracked-files=all"]) !== ""
+  ) {
+    fail("Promotion policy is not the clean trusted main checkout");
+  }
+  git(["merge-base", "--is-ancestor", policyCommit, mainCommit]);
+  git(["merge-base", "--is-ancestor", canonicalCommit, mainCommit]);
+  const reachableTags = git([
+    "tag",
+    "--merged",
+    mainCommit,
+    "--list",
+    "v*.*.*"
+  ])
+    .split(/\r?\n/)
+    .filter(Boolean);
+  if (!reachableTags.includes(tag)) {
+    fail("Promotion tag is not reachable from trusted main");
+  }
+  for (const otherTag of reachableTags) {
+    if (otherTag === tag) {
+      continue;
+    }
+    let other;
+    try {
+      other = parseSemver(otherTag.slice(1));
+    } catch {
+      fail("Trusted main contains a non-canonical release tag");
+    }
+    if (compareSemver(candidate, other) <= 0) {
+      fail("A newer or equal release tag supersedes this Draft");
+    }
+  }
+  const prerelease = candidate.prerelease.length > 0;
+  return {
+    tag,
+    commit: canonicalCommit,
+    policyCommit,
+    mainCommit,
+    prerelease,
+    makeLatest: prerelease ? "false" : "true"
   };
 }
 
@@ -669,6 +785,18 @@ function verifyCodeSigningPolicy(codeObject, release) {
   }
 }
 
+function packagedRendererAuditOptions(release) {
+  return {
+    expectedCommit: release.commit,
+    expectedSourceDateEpoch: release.sourceDateEpoch,
+    packageLockPath: path.join(
+      REPOSITORY_ROOT,
+      "web",
+      "package-lock.json"
+    )
+  };
+}
+
 function verifyApp(appPath, release) {
   requireRealDirectory(appPath, "Packaged macOS app");
   run(
@@ -728,10 +856,10 @@ function verifyApp(appPath, release) {
       `Packaged resource ${relative}`
     );
   }
-  auditRenderer(path.join(resources, "renderer"), {
-    expectedCommit: release.commit,
-    expectedSourceDateEpoch: release.sourceDateEpoch
-  });
+  auditRenderer(
+    path.join(resources, "renderer"),
+    packagedRendererAuditOptions(release)
+  );
   auditPythonSidecar({
     repositoryRoot: REPOSITORY_ROOT,
     stagingRoot: path.join(resources, "sidecar"),
@@ -1394,9 +1522,13 @@ function validateUpdateManifestShape(manifest, release, updateLock) {
   }
 }
 
-function verifyAssetDirectory(assetDirectory, tag) {
+function verifyAssetDirectory(
+  assetDirectory,
+  tag,
+  expectedCommit = process.env.GITHUB_SHA
+) {
   requireRealDirectory(assetDirectory, "Desktop release asset directory");
-  const release = validateTagAndVersion(tag);
+  const release = validateTagAndVersion(tag, expectedCommit);
   const { updateLock, codesignLock, publicKey } = validatePublicPins();
   const releaseManifestPath = path.join(
     assetDirectory,
@@ -1555,23 +1687,388 @@ function verifyAssetDirectory(assetDirectory, tag) {
   return { assets: actualNames.length, version: release.version };
 }
 
+function requireCanonicalRegularFile(filePath, label, maximumSize) {
+  if (!path.isAbsolute(filePath)) {
+    fail(`${label} path must be absolute`);
+  }
+  const info = requireRegularFile(filePath, label, maximumSize);
+  let canonical;
+  try {
+    canonical = fs.realpathSync.native(filePath);
+  } catch {
+    fail(`${label} is missing`);
+  }
+  if (canonical !== filePath) {
+    fail(`${label} must be a real canonical file`);
+  }
+  return info;
+}
+
+function readStrictUtf8File(filePath, label, maximumSize) {
+  const info = requireCanonicalRegularFile(filePath, label, maximumSize);
+  const bytes = fs.readFileSync(filePath);
+  const value = bytes.toString("utf8");
+  if (
+    info.size === 0 ||
+    !Buffer.from(value, "utf8").equals(bytes) ||
+    value.includes("\0")
+  ) {
+    fail(`${label} must be non-empty canonical UTF-8`);
+  }
+  return value;
+}
+
+function loadGitHubReleaseJson(filePath) {
+  const raw = readStrictUtf8File(
+    filePath,
+    "GitHub release JSON",
+    MAX_GITHUB_RELEASE_JSON_BYTES
+  );
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    fail("GitHub release JSON is not valid JSON");
+  }
+  if (!isObject(value)) {
+    fail("GitHub release JSON must be an object");
+  }
+  return value;
+}
+
+function githubTimestampIsValid(value) {
+  if (
+    typeof value !== "string" ||
+    !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{3})?Z$/.test(
+      value
+    )
+  ) {
+    return false;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return false;
+  }
+  const canonical = parsed.toISOString();
+  return (
+    canonical === value ||
+    canonical.replace(/\.000Z$/, "Z") === value
+  );
+}
+
+function expectedGitHubAssetUrl(tag, assetName) {
+  return (
+    `https://github.com/${CANONICAL_REPOSITORY}/releases/download/` +
+    `${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`
+  );
+}
+
+function inspectLocalGitHubReleaseAssets(assetDirectory) {
+  const root = requireRealDirectory(
+    path.resolve(assetDirectory),
+    "Desktop release asset directory"
+  );
+  const names = fs.readdirSync(root).sort(compareCodePoints);
+  if (
+    names.length === 0 ||
+    names.length > MAX_GITHUB_RELEASE_ASSETS
+  ) {
+    fail("Local GitHub release asset count is invalid");
+  }
+  const assets = new Map();
+  let totalSize = 0;
+  for (const rawName of names) {
+    const name = safeBasename(rawName, "Local GitHub release asset");
+    if (assets.has(name)) {
+      fail("Local GitHub release assets contain duplicate names");
+    }
+    const candidate = path.join(root, name);
+    const info = requireRegularFile(
+      candidate,
+      `Local GitHub release asset ${name}`,
+      MAX_DISK_IMAGE_BYTES
+    );
+    if (info.size <= 0) {
+      fail("Local GitHub release assets must be non-empty");
+    }
+    totalSize += info.size;
+    if (
+      !Number.isSafeInteger(totalSize) ||
+      totalSize > MAX_GITHUB_RELEASE_TOTAL_BYTES
+    ) {
+      fail("Local GitHub release asset set is too large");
+    }
+    assets.set(name, {
+      size: info.size,
+      sha256: sha256File(candidate)
+    });
+  }
+  if (!assets.has(RELEASE_MANIFEST_NAME)) {
+    fail("Local GitHub release assets omit release-manifest.json");
+  }
+  return assets;
+}
+
+function validateGitHubReleaseShape({
+  release,
+  tag,
+  expectedState,
+  releaseNotes,
+  localAssets,
+  candidateManifestSha256
+}) {
+  if (
+    !isObject(release) ||
+    typeof releaseNotes !== "string" ||
+    releaseNotes.length === 0 ||
+    Buffer.byteLength(releaseNotes, "utf8") > MAX_RELEASE_NOTES_BYTES ||
+    !(localAssets instanceof Map) ||
+    localAssets.size === 0 ||
+    localAssets.size > MAX_GITHUB_RELEASE_ASSETS
+  ) {
+    fail("GitHub release verification inputs are invalid");
+  }
+  const candidateManifest = localAssets.get(RELEASE_MANIFEST_NAME);
+  if (
+    !isObject(candidateManifest) ||
+    !Number.isSafeInteger(candidateManifest.size) ||
+    candidateManifest.size <= 0 ||
+    !SHA256_PATTERN.test(candidateManifest.sha256 || "")
+  ) {
+    fail("Local candidate release manifest metadata is invalid");
+  }
+  if (typeof tag !== "string" || !tag.startsWith("v")) {
+    fail("GitHub release tag must be v-prefixed canonical SemVer");
+  }
+  const parsedTag = parseSemver(tag.slice(1));
+  if (expectedState !== "draft" && expectedState !== "published") {
+    fail("GitHub release expected state must be draft or published");
+  }
+  if (
+    candidateManifestSha256 !== undefined &&
+    !SHA256_PATTERN.test(candidateManifestSha256)
+  ) {
+    fail("Candidate release manifest SHA-256 is invalid");
+  }
+  if (
+    expectedState === "published" &&
+    candidateManifestSha256 === undefined
+  ) {
+    fail(
+      "Published GitHub release verification requires a candidate manifest SHA-256"
+    );
+  }
+  if (
+    !Number.isSafeInteger(release.id) ||
+    release.id <= 0
+  ) {
+    fail("GitHub release id must be a positive safe integer");
+  }
+  if (
+    release.tag_name !== tag ||
+    release.name !== `${PRODUCT_NAME} ${tag}`
+  ) {
+    fail("GitHub release tag or title differs from policy");
+  }
+  const expectedDraft = expectedState === "draft";
+  if (
+    release.draft !== expectedDraft ||
+    release.immutable !== !expectedDraft
+  ) {
+    fail("GitHub release state differs from policy");
+  }
+  const expectedPrerelease = parsedTag.prerelease.length > 0;
+  if (release.prerelease !== expectedPrerelease) {
+    fail("GitHub release prerelease state differs from its tag");
+  }
+  if (release.body !== releaseNotes) {
+    fail("GitHub release notes differ from the reviewed notes");
+  }
+  if (
+    (expectedDraft && release.published_at !== null) ||
+    (!expectedDraft && !githubTimestampIsValid(release.published_at))
+  ) {
+    fail("GitHub release published_at differs from its state");
+  }
+  if (
+    !Array.isArray(release.assets) ||
+    release.assets.length === 0 ||
+    release.assets.length > MAX_GITHUB_RELEASE_ASSETS
+  ) {
+    fail("GitHub release assets are missing or excessive");
+  }
+  const remoteNames = new Set();
+  for (const asset of release.assets) {
+    if (!isObject(asset)) {
+      fail("GitHub release asset record is invalid");
+    }
+    const name = safeBasename(asset.name, "GitHub release asset");
+    if (remoteNames.has(name)) {
+      fail("GitHub release contains duplicate asset names");
+    }
+    remoteNames.add(name);
+    const expected = localAssets.get(name);
+    if (!expected) {
+      fail("GitHub release contains an unexpected asset");
+    }
+    if (
+      !isObject(expected) ||
+      !Number.isSafeInteger(expected.size) ||
+      expected.size <= 0 ||
+      !SHA256_PATTERN.test(expected.sha256 || "") ||
+      asset.state !== "uploaded" ||
+      !Number.isSafeInteger(asset.size) ||
+      asset.size <= 0 ||
+      asset.size !== expected.size ||
+      asset.digest !== `sha256:${expected.sha256}` ||
+      asset.browser_download_url !== expectedGitHubAssetUrl(tag, name)
+    ) {
+      fail("GitHub release asset state, size, digest, or URL is invalid");
+    }
+  }
+  if (
+    remoteNames.size !== localAssets.size ||
+    [...localAssets.keys()].some((name) => !remoteNames.has(name))
+  ) {
+    fail("GitHub release asset set differs from the local candidate");
+  }
+  const manifestSha256 = candidateManifest.sha256;
+  if (
+    candidateManifestSha256 !== undefined &&
+    manifestSha256 !== candidateManifestSha256
+  ) {
+    fail("Candidate release manifest SHA-256 does not match");
+  }
+  return {
+    id: release.id,
+    tag,
+    state: expectedState,
+    prerelease: expectedPrerelease,
+    assets: remoteNames.size,
+    releaseManifestSha256: manifestSha256
+  };
+}
+
+function verifyGitHubRelease({
+  tag,
+  assetDirectory,
+  releaseJsonPath,
+  expectedState,
+  releaseNotesPath,
+  candidateManifestSha256
+}) {
+  if (
+    typeof assetDirectory !== "string" ||
+    typeof releaseJsonPath !== "string" ||
+    typeof releaseNotesPath !== "string"
+  ) {
+    fail("GitHub release verification paths are invalid");
+  }
+  const localAssets = inspectLocalGitHubReleaseAssets(assetDirectory);
+  const release = loadGitHubReleaseJson(path.resolve(releaseJsonPath));
+  const releaseNotes = readStrictUtf8File(
+    path.resolve(releaseNotesPath),
+    "GitHub release notes",
+    MAX_RELEASE_NOTES_BYTES
+  );
+  return validateGitHubReleaseShape({
+    release,
+    tag,
+    expectedState,
+    releaseNotes,
+    localAssets,
+    candidateManifestSha256
+  });
+}
+
 function parseArguments(argv) {
   const [command, ...rest] = argv;
-  const allowed = new Map([
-    ["preflight", new Set(["--tag"])],
-    ["verify-key", new Set(["--tag", "--private-key"])],
+  const commands = new Map([
+    [
+      "preflight",
+      {
+        allowed: new Set([
+          "--tag",
+          "--source-root",
+          "--expected-commit"
+        ]),
+        required: new Set(["--tag"])
+      }
+    ],
+    [
+      "verify-promotion-order",
+      {
+        allowed: new Set([
+          "--tag",
+          "--expected-commit",
+          "--comparison-commit"
+        ]),
+        required: new Set([
+          "--tag",
+          "--expected-commit",
+          "--comparison-commit"
+        ])
+      }
+    ],
+    [
+      "verify-key",
+      {
+        allowed: new Set(["--tag", "--private-key"]),
+        required: new Set(["--tag", "--private-key"])
+      }
+    ],
     [
       "assemble",
-      new Set([
-        "--tag",
-        "--release-dir",
-        "--output-dir",
-        "--private-key"
-      ])
+      {
+        allowed: new Set([
+          "--tag",
+          "--release-dir",
+          "--output-dir",
+          "--private-key"
+        ]),
+        required: new Set([
+          "--tag",
+          "--release-dir",
+          "--output-dir",
+          "--private-key"
+        ])
+      }
     ],
-    ["verify-assets", new Set(["--tag", "--asset-dir"])]
+    [
+      "verify-assets",
+      {
+        allowed: new Set([
+          "--tag",
+          "--asset-dir",
+          "--source-root",
+          "--expected-commit"
+        ]),
+        required: new Set(["--tag", "--asset-dir"])
+      }
+    ],
+    [
+      "verify-github-release",
+      {
+        allowed: new Set([
+          "--tag",
+          "--asset-dir",
+          "--release-json",
+          "--expected-state",
+          "--release-notes",
+          "--candidate-manifest-sha256"
+        ]),
+        required: new Set([
+          "--tag",
+          "--asset-dir",
+          "--release-json",
+          "--expected-state",
+          "--release-notes"
+        ])
+      }
+    ]
   ]);
-  if (!allowed.has(command) || rest.length % 2 !== 0) {
+  const specification = commands.get(command);
+  if (!specification || rest.length % 2 !== 0) {
     fail("Desktop release command is unsupported");
   }
   const values = new Map();
@@ -1579,8 +2076,9 @@ function parseArguments(argv) {
     const name = rest[index];
     const value = rest[index + 1];
     if (
-      !allowed.get(command).has(name) ||
+      !specification.allowed.has(name) ||
       value === undefined ||
+      value.length === 0 ||
       values.has(name)
     ) {
       fail("Desktop release arguments are invalid");
@@ -1588,8 +2086,7 @@ function parseArguments(argv) {
     values.set(name, value);
   }
   if (
-    values.size !== allowed.get(command).size ||
-    [...allowed.get(command)].some((name) => !values.has(name))
+    [...specification.required].some((name) => !values.has(name))
   ) {
     fail("Desktop release arguments are incomplete");
   }
@@ -1602,9 +2099,21 @@ function parseArguments(argv) {
 
 function main(argv = process.argv.slice(2)) {
   const { command, values, tag } = parseArguments(argv);
+  const sourceRoot = values.get("--source-root");
+  const expectedCommit = values.get("--expected-commit");
+  const comparisonCommit = values.get("--comparison-commit");
+  if (sourceRoot) {
+    configureRepositoryRoot(sourceRoot);
+  }
   let summary;
-  if (command === "preflight") {
-    summary = preflight(tag);
+  if (command === "verify-promotion-order") {
+    summary = verifyPromotionOrder(
+      tag,
+      expectedCommit,
+      comparisonCommit
+    );
+  } else if (command === "preflight") {
+    summary = preflight(tag, expectedCommit);
   } else if (command === "verify-key") {
     const privateKeyPath = values.get("--private-key");
     const release = preflight(tag);
@@ -1628,12 +2137,27 @@ function main(argv = process.argv.slice(2)) {
       outputDirectory: path.resolve(outputDirectory),
       privateKeyPath: path.resolve(privateKeyPath)
     });
-  } else {
+  } else if (command === "verify-assets") {
     const assetDirectory = values.get("--asset-dir");
     if (!assetDirectory) {
       fail("verify-assets requires --asset-dir");
     }
-    summary = verifyAssetDirectory(path.resolve(assetDirectory), tag);
+    summary = verifyAssetDirectory(
+      path.resolve(assetDirectory),
+      tag,
+      expectedCommit
+    );
+  } else {
+    summary = verifyGitHubRelease({
+      tag,
+      assetDirectory: path.resolve(values.get("--asset-dir")),
+      releaseJsonPath: path.resolve(values.get("--release-json")),
+      expectedState: values.get("--expected-state"),
+      releaseNotesPath: path.resolve(values.get("--release-notes")),
+      candidateManifestSha256: values.get(
+        "--candidate-manifest-sha256"
+      )
+    });
   }
   process.stdout.write(`${JSON.stringify(summary)}\n`);
 }
@@ -1643,6 +2167,7 @@ module.exports = {
   assemble,
   canonicalJson,
   compareSemver,
+  configureRepositoryRoot,
   main,
   parseSemver,
   preflight,
@@ -1653,9 +2178,13 @@ module.exports = {
   validateTagAndVersion,
   validateReleaseManifestShape,
   validateUpdateManifestShape,
+  verifyPromotionOrder,
   walkAppPayload,
   parseUpdaterMetadata,
-  verifyAssetDirectory
+  packagedRendererAuditOptions,
+  verifyAssetDirectory,
+  validateGitHubReleaseShape,
+  verifyGitHubRelease
 };
 
 if (require.main === module) {

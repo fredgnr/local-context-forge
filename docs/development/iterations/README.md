@@ -10,10 +10,10 @@
 | [ITER-0002](0002-bundled-runtimes.md) | `in-progress` | Python `onedir`、Node/QMD worker、MCP 与 CLI preflight |
 | [ITER-0002/R07](0002-r07-qmd-embeddings.md) | `in-progress`（继承） | 独立追加：QMD local embedding、model switch 与 hybrid fallback |
 | [ITER-0002/R08](0002-r08-mcp-onboarding.md) | `in-progress`（继承） | Codex MCP onboarding、签名 CLI discovery、scoped ownership 与 per-launch rendezvous |
-| [ITER-0002/R09](0002-r09-signed-update-client.md) | `in-progress`（继承） | 独立签名更新检查、verified DMG、显式固定 Release 出口与 release policy |
+| [ITER-0002/R09](0002-r09-signed-update-client.md) | `in-progress`（继承） | 独立签名更新、候选 Draft 与 trusted-main/fixed-ID promotion policy |
 | [ITER-0002/R10](0002-r10-local-repositories.md) | `in-progress`（继承） | 原生本地/私有仓库选择与不透明路径授权 |
 | [ITER-0003](0003-runtime-data-models.md) | `planned` | macOS 路径、模型管理、旧数据迁移与回滚 |
-| [ITER-0004](0004-macos-release.md) | `planned` | arm64 DMG、自签名、受保护发布 Environment |
+| [ITER-0004](0004-macos-release.md) | `planned` | arm64 DMG、双 Environment、ruleset/Immutable Releases 与物理 promotion |
 | [ITER-0005](0005-updater-physical-gate.md) | `planned` | 0.0.1 → 0.0.2 实机更新与 DMG fallback |
 | [ITER-0006](0006-legacy-exit.md) | `planned` | 迁移演练、Docker legacy 去留决策 |
 

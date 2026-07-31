@@ -134,9 +134,38 @@ that page does not overwrite signed-updater candidate/error state. This manual
 escape is not a verified download, automatic apply, or proof that a Release
 exists.
 
+Release publication is fail-closed across two runs. A tag push may use the
+only repository secret in the tag-only `macos-signing` Environment to create
+and remotely verify a Draft; the Draft job has no Environment or secret.
+Publishing requires `workflow_dispatch --ref main` after physical testing.
+The `release_tag` is data, not the verifier checkout ref. The promotion job
+uses the branch-only, secret-free `macos-release` Environment, re-downloads the
+Draft, binds the tested `release-manifest.json` SHA-256, verifies policy from
+trusted `main` against an isolated tag worktree, fresh-peels the tag, and
+publishes only a previously fixed Release ID. Immediately before the PATCH,
+promotion order and `make_latest` are recomputed against a freshly fetched
+`origin/main` comparison ref; the workflow-start HEAD is not trusted for this
+ordering decision because another tag may have been promoted concurrently.
+
+Both Environments require independent reviewers, self-review prevention, and
+administrator bypass disabled in the GitHub UI. Protected-main pull-request
+rules, owner-only release-tag creation, immutable release-tag update/deletion
+rules, and GitHub Immutable Releases are also mandatory. Promotion rejects any
+already-published pre-state as a release security incident; it does not turn a
+rerun green as an idempotent success. After the single REST publication PATCH,
+it runs `gh release verify` and verifies the immutable published Release and
+the full asset set again.
+
+Repository owners, settings administrators, and contents writers able to
+change trusted `main` or the workflow remain roots of trust. GitHub Drafts
+provide no asset compare-and-swap operation, so a mutation between final
+verification and the fixed-ID PATCH can only be detected by post-publication
+verification. Immutable Releases protect the published state, not that Draft
+window.
+
 The real packaged `/Applications`/official-Codex gate, protected signed
-release, clean-user DMG test, and physical 0.0.1 to 0.0.2 update gate remain
-`not-run`.
+release settings, clean-user DMG test, and physical 0.0.1 to 0.0.2 update gate
+remain `not-run`. The current decision is **source merge GO / release NO-GO**.
 
 See [the detailed threat model](docs/10-security.md) and
 [the desktop boundary notes](desktop/README.md).

@@ -6,28 +6,38 @@ on:
       - "v*.*.*"
   workflow_dispatch:
     inputs:
-      publish:
-        description: Publish the verified draft release
+      release_tag:
+        description: Exact existing draft tag to promote
+        required: true
+        type: string
+      candidate_manifest_sha256:
+        description: Reviewed SHA-256 of release-manifest.json
+        required: true
+        type: string
+      confirm_publish:
+        description: Confirm promotion of the verified draft
         required: true
         type: boolean
         default: false
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && 'promotion' || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  release:
+  build:
     name: Build and sign macOS arm64 release
     if: >-
       github.repository == 'fredgnr/local-context-forge' &&
+      github.event_name == 'push' &&
+      github.ref_type == 'tag' &&
       startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-15
     timeout-minutes: 120
-    environment: macos-release
+    environment: macos-signing
     permissions:
       contents: read
     env:
@@ -38,6 +48,7 @@ jobs:
       - name: Check out exact release tag
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -57,6 +68,11 @@ jobs:
           set -euo pipefail
           test "${GITHUB_REF}" = "refs/tags/${GITHUB_REF_NAME}"
           test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "${GITHUB_SHA}"
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor \
+            "${GITHUB_SHA}" \
+            "refs/remotes/origin/main"
           source_epoch="$(git show -s --format=%ct "${GITHUB_SHA}")"
           build_python="$(python -c 'import os,sys; print(os.path.realpath(sys.executable))')"
           test "${build_python#/}" != "${build_python}"
@@ -225,7 +241,7 @@ jobs:
             bundle.schemaVersion !== 1 ||
             !/^[0-9a-f]{32}$/.test(bundle.credentialGenerationId || "") ||
             bundle.repository !== "fredgnr/local-context-forge" ||
-            bundle.environment !== "macos-release" ||
+            bundle.environment !== "macos-signing" ||
             !exact(bundle.updateMetadata, [
               "algorithm",
               "privateKeyPemBase64",
@@ -342,13 +358,15 @@ jobs:
           compression-level: 0
           include-hidden-files: false
 
-  publish:
-    name: Verify draft and publish
-    needs: release
+  create_draft:
+    name: Create and verify draft release
+    needs: build
     if: >-
       github.repository == 'fredgnr/local-context-forge' &&
+      github.event_name == 'push' &&
+      github.ref_type == 'tag' &&
       startsWith(github.ref, 'refs/tags/v') &&
-      (github.event_name == 'push' || inputs.publish == true)
+      needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -358,6 +376,7 @@ jobs:
       - name: Check out exact release tag without credentials
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -365,6 +384,26 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22.23.2"
+
+      - name: Bind draft provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME}" = "push"
+          test "${GITHUB_REF_TYPE}" = "tag"
+          test "${GITHUB_REF}" = "refs/tags/${GITHUB_REF_NAME}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "${GITHUB_SHA}"
+          node desktop/scripts/prepareRelease.cjs preflight \
+            --tag "${GITHUB_REF_NAME}"
+
+      - name: Prepare an empty same-run artifact directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_dir="${RUNNER_TEMP}/lcf-desktop-release-assets"
+          test ! -e "${asset_dir}"
+          mkdir -m 700 "${asset_dir}"
 
       - name: Download verified asset set
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -380,7 +419,7 @@ jobs:
           --tag "${GITHUB_REF_NAME}"
           --asset-dir "${LCF_RELEASE_ASSET_DIR}"
 
-      - name: Create, remotely verify, and publish the draft
+      - name: Create and remotely verify the draft
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -388,116 +427,566 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          if gh release view "${tag}" \
-            --repo fredgnr/local-context-forge >/dev/null 2>&1; then
-            printf '%s\n' "A release already exists for ${tag}" >&2
-            exit 2
-          fi
-          create_flags=(
-            --repo fredgnr/local-context-forge
-            --draft
-            --verify-tag
-            --title "Local Context Forge ${tag}"
-            --notes-file .github/desktop-release-notes.md
-          )
-          if [[ "${tag}" == *-* ]]; then
-            create_flags+=(--prerelease)
-          fi
-          gh release create \
-            "${tag}" \
-            "${LCF_RELEASE_ASSET_DIR}"/* \
-            "${create_flags[@]}"
-          remote_json="${RUNNER_TEMP}/lcf-draft-release.json"
-          gh api \
-            --method GET \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/fredgnr/local-context-forge/releases/tags/${tag}" \
-            > "${remote_json}"
-          node - "${LCF_RELEASE_ASSET_DIR}" "${remote_json}" "${tag}" <<'NODE'
-          const fs = require("node:fs");
-          const crypto = require("node:crypto");
-          const path = require("node:path");
-          const [assetDirectory, responsePath, expectedTag] =
-            process.argv.slice(2);
-          const sha256File = (file) => {
-            const digest = crypto.createHash("sha256");
-            const descriptor = fs.openSync(file, "r");
-            const buffer = Buffer.allocUnsafe(1024 * 1024);
-            try {
-              for (;;) {
-                const count = fs.readSync(
-                  descriptor,
-                  buffer,
-                  0,
-                  buffer.length,
-                  null
-                );
-                if (count === 0) break;
-                digest.update(buffer.subarray(0, count));
-              }
-            } finally {
-              fs.closeSync(descriptor);
-            }
-            return digest.digest("hex");
-          };
-          const release = JSON.parse(fs.readFileSync(responsePath, "utf8"));
-          if (
-            release.draft !== true ||
-            release.tag_name !== expectedTag ||
-            !Array.isArray(release.assets)
-          ) {
-            throw new Error("GitHub draft release shape is invalid");
+          fetch_release_pages() {
+            local destination="$1"
+            local temporary="${destination}.tmp"
+            test ! -e "${destination}"
+            test ! -e "${temporary}"
+            gh api \
+              --paginate \
+              --slurp \
+              --method GET \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/fredgnr/local-context-forge/releases?per_page=100" \
+              > "${temporary}"
+            test "$(wc -c < "${temporary}")" -le 8388608
+            mv "${temporary}" "${destination}"
           }
-          const local = new Map(
-            fs.readdirSync(assetDirectory).map((name) => {
-              const file = path.join(assetDirectory, name);
-              const stat = fs.lstatSync(file);
-              if (
-                !stat.isFile() ||
-                stat.isSymbolicLink() ||
-                name !== path.basename(name) ||
-                name !== name.normalize("NFC")
-              ) {
-                throw new Error("Local release asset set is unsafe");
-              }
-              return [
-                name,
-                {
-                  size: stat.size,
-                  digest: `sha256:${sha256File(file)}`
-                }
-              ];
-            })
-          );
-          const remoteNames = new Set();
-          for (const asset of release.assets) {
-            const expected = local.get(asset.name);
-            const expectedUrl =
-              `https://github.com/fredgnr/local-context-forge/releases/download/` +
-              `${encodeURIComponent(expectedTag)}/${encodeURIComponent(asset.name)}`;
-            if (
-              !expected ||
-              remoteNames.has(asset.name) ||
-              asset.state !== "uploaded" ||
-              asset.size !== expected.size ||
-              asset.digest !== expected.digest ||
-              typeof asset.browser_download_url !== "string" ||
-              new URL(asset.browser_download_url).href !== expectedUrl
-            ) {
+          select_exact_release() {
+            local pages="$1"
+            local output="$2"
+            local expectation="$3"
+            node - "${pages}" "${output}" "${tag}" "${expectation}" <<'NODE'
+          const fs = require("node:fs");
+          const [pagesPath, outputPath, expectedTag, expectation] =
+            process.argv.slice(2);
+          const pages = JSON.parse(fs.readFileSync(pagesPath, "utf8"));
+          if (
+            !Array.isArray(pages) ||
+            pages.length === 0 ||
+            pages.length > 100 ||
+            pages.some(
+              (page) =>
+                !Array.isArray(page) ||
+                page.length > 100 ||
+                page.some(
+                  (release) =>
+                    release === null ||
+                    typeof release !== "object" ||
+                    Array.isArray(release)
+                )
+            )
+          ) {
+            throw new Error("GitHub release pagination is invalid or excessive");
+          }
+          const matches = pages
+            .flat()
+            .filter((release) => release.tag_name === expectedTag);
+          if (expectation === "absent-or-draft") {
+            if (matches.length === 0) {
+              process.exit(0);
+            }
+            if (matches.length !== 1 || matches[0].draft !== true) {
               throw new Error(
-                "GitHub draft asset digest or provenance is invalid"
+                "Existing exact-tag release is not one recoverable Draft"
               );
             }
-            remoteNames.add(asset.name);
+            fs.writeFileSync(
+              outputPath,
+              `${JSON.stringify(matches[0])}\n`,
+              { encoding: "utf8", flag: "wx", mode: 0o600 }
+            );
+            process.exit(0);
           }
           if (
-            local.size !== remoteNames.size ||
-            [...local.keys()].some((name) => !remoteNames.has(name))
+            expectation !== "draft" ||
+            matches.length !== 1 ||
+            matches[0].draft !== true
           ) {
-            throw new Error("GitHub draft asset set differs from verification");
+            throw new Error("Expected one exact draft release");
           }
+          fs.writeFileSync(
+            outputPath,
+            `${JSON.stringify(matches[0])}\n`,
+            { encoding: "utf8", flag: "wx", mode: 0o600 }
+          );
           NODE
-          gh release edit "${tag}" \
-            --repo fredgnr/local-context-forge \
-            --draft=false
+          }
+
+          before_pages="${RUNNER_TEMP}/lcf-releases-before-create.json"
+          before_json="${RUNNER_TEMP}/lcf-draft-before-create.json"
+          fetch_release_pages "${before_pages}"
+          select_exact_release \
+            "${before_pages}" \
+            "${before_json}" \
+            "absent-or-draft"
+
+          if [[ -e "${before_json}" ]]; then
+            node desktop/scripts/prepareRelease.cjs \
+              verify-github-release \
+              --tag "${tag}" \
+              --asset-dir "${LCF_RELEASE_ASSET_DIR}" \
+              --release-json "${before_json}" \
+              --expected-state draft \
+              --release-notes .github/desktop-release-notes.md
+          else
+            create_flags=(
+              --repo fredgnr/local-context-forge
+              --draft
+              --verify-tag
+              --title "Local Context Forge ${tag}"
+              --notes-file .github/desktop-release-notes.md
+            )
+            tag_without_build_metadata="${tag%%+*}"
+            if [[ "${tag_without_build_metadata}" == *-* ]]; then
+              create_flags+=(--prerelease)
+            fi
+            gh release create \
+              "${tag}" \
+              "${LCF_RELEASE_ASSET_DIR}"/* \
+              "${create_flags[@]}"
+          fi
+          remote_json="${RUNNER_TEMP}/lcf-draft-release.json"
+          after_pages="${RUNNER_TEMP}/lcf-releases-after-create.json"
+          fetch_release_pages "${after_pages}"
+          select_exact_release "${after_pages}" "${remote_json}" "draft"
+          node desktop/scripts/prepareRelease.cjs verify-github-release \
+            --tag "${tag}" \
+            --asset-dir "${LCF_RELEASE_ASSET_DIR}" \
+            --release-json "${remote_json}" \
+            --expected-state draft \
+            --release-notes .github/desktop-release-notes.md
+
+  promote:
+    name: Verify and promote an existing draft
+    if: >-
+      github.repository == 'fredgnr/local-context-forge' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref_type == 'branch' &&
+      github.ref == 'refs/heads/main' &&
+      github.ref_name == 'main' &&
+      startsWith(inputs.release_tag, 'v') &&
+      inputs.confirm_publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: macos-release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out the trusted main promotion policy
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up locked Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.23.2"
+
+      - name: Bind promotion provenance and reviewed candidate
+        shell: bash
+        env:
+          LCF_RELEASE_TAG: ${{ inputs.release_tag }}
+          LCF_CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
+          test "${GITHUB_REF_TYPE}" = "branch"
+          test "${GITHUB_REF_NAME}" = "main"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          [[ "${LCF_RELEASE_TAG}" =~ ^v[0-9A-Za-z.+-]{1,120}$ ]]
+          [[ "${LCF_CANDIDATE_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          initial_main_commit="$(
+            git rev-parse refs/remotes/origin/main
+          )"
+          test "${initial_main_commit}" = "${GITHUB_SHA}"
+          git fetch --force --tags origin
+          release_ref="refs/lcf-release-tags/${LCF_RELEASE_TAG}"
+          git fetch --no-tags origin \
+            "+refs/tags/${LCF_RELEASE_TAG}:${release_ref}"
+          release_commit="$(git rev-parse "${release_ref}^{commit}")"
+          [[ "${release_commit}" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor \
+            "${release_commit}" \
+            "refs/remotes/origin/main"
+          node "${GITHUB_WORKSPACE}/desktop/scripts/prepareRelease.cjs" \
+            verify-promotion-order \
+            --tag "${LCF_RELEASE_TAG}" \
+            --expected-commit "${release_commit}" \
+            --comparison-commit "${initial_main_commit}"
+          source_dir="${RUNNER_TEMP}/lcf-promotion-source"
+          test ! -e "${source_dir}"
+          git worktree add --detach "${source_dir}" "${release_commit}"
+          test "$(git -C "${source_dir}" rev-parse HEAD)" = "${release_commit}"
+          test -z "$(git -C "${source_dir}" status --porcelain --untracked-files=all)"
+          {
+            printf 'LCF_PROMOTION_SOURCE_DIR=%s\n' "${source_dir}"
+            printf 'LCF_RELEASE_COMMIT=%s\n' "${release_commit}"
+          } >> "${GITHUB_ENV}"
+          node "${GITHUB_WORKSPACE}/desktop/scripts/prepareRelease.cjs" \
+            preflight \
+            --tag "${LCF_RELEASE_TAG}" \
+            --source-root "${source_dir}" \
+            --expected-commit "${release_commit}"
+
+      - name: Fetch the exact release and download every remote asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LCF_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag="${LCF_RELEASE_TAG}"
+          asset_dir="${RUNNER_TEMP}/lcf-promote-release-assets"
+          release_json="${RUNNER_TEMP}/lcf-promotion-release.json"
+          asset_list="${RUNNER_TEMP}/lcf-promotion-assets.tsv"
+          pages="${RUNNER_TEMP}/lcf-promotion-release-pages.json"
+          test ! -e "${asset_dir}"
+          test ! -e "${release_json}"
+          test ! -e "${asset_list}"
+          test ! -e "${pages}"
+          mkdir -m 700 "${asset_dir}"
+          gh api \
+            --paginate \
+            --slurp \
+            --method GET \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/fredgnr/local-context-forge/releases?per_page=100" \
+            > "${pages}"
+          test "$(wc -c < "${pages}")" -le 8388608
+          release_id="$(
+            node - \
+              "${pages}" \
+              "${release_json}" \
+              "${asset_list}" \
+              "${tag}" <<'NODE'
+          const fs = require("node:fs");
+          const [pagesPath, releasePath, assetListPath, expectedTag] =
+            process.argv.slice(2);
+          const pages = JSON.parse(fs.readFileSync(pagesPath, "utf8"));
+          if (
+            !Array.isArray(pages) ||
+            pages.length === 0 ||
+            pages.length > 100 ||
+            pages.some(
+              (page) =>
+                !Array.isArray(page) ||
+                page.length > 100 ||
+                page.some(
+                  (release) =>
+                    release === null ||
+                    typeof release !== "object" ||
+                    Array.isArray(release)
+                )
+            )
+          ) {
+            throw new Error("GitHub release pagination is invalid or excessive");
+          }
+          const matches = pages
+            .flat()
+            .filter((release) => release.tag_name === expectedTag);
+          if (
+            matches.length !== 1 ||
+            matches[0].draft !== true ||
+            !Array.isArray(matches[0].assets) ||
+            matches[0].assets.length === 0 ||
+            matches[0].assets.length > 64
+          ) {
+            throw new Error(
+              "Expected one exact Draft; an existing published release is a security incident"
+            );
+          }
+          const release = matches[0];
+          if (
+            !Number.isSafeInteger(release.id) ||
+            release.id <= 0
+          ) {
+            throw new Error("Draft release id is invalid");
+          }
+          const names = new Set();
+          let totalSize = 0;
+          const lines = release.assets.map((asset) => {
+            const expectedApiUrl =
+              "https://api.github.com/repos/fredgnr/" +
+              `local-context-forge/releases/assets/${asset.id}`;
+            const nameBytes = Buffer.byteLength(asset.name || "", "utf8");
+            if (
+              !Number.isSafeInteger(asset.id) ||
+              asset.id <= 0 ||
+              typeof asset.name !== "string" ||
+              nameBytes === 0 ||
+              nameBytes > 255 ||
+              asset.name !== asset.name.normalize("NFC") ||
+              asset.name === "." ||
+              asset.name === ".." ||
+              /[/\\\u0000-\u001f\u007f]/u.test(asset.name) ||
+              names.has(asset.name) ||
+              asset.url !== expectedApiUrl ||
+              asset.state !== "uploaded" ||
+              !Number.isSafeInteger(asset.size) ||
+              asset.size <= 0 ||
+              asset.size > 4 * 1024 * 1024 * 1024
+            ) {
+              throw new Error("Remote release asset metadata is unsafe");
+            }
+            names.add(asset.name);
+            totalSize += asset.size;
+            return `${asset.id}\t${asset.name}`;
+          });
+          if (!Number.isSafeInteger(totalSize) || totalSize > 8 * 1024 ** 3) {
+            throw new Error("Remote release asset set is too large");
+          }
+          fs.writeFileSync(
+            releasePath,
+            `${JSON.stringify(release)}\n`,
+            { encoding: "utf8", flag: "wx", mode: 0o600 }
+          );
+          fs.writeFileSync(
+            assetListPath,
+            `${lines.join("\n")}\n`,
+            { encoding: "utf8", flag: "wx", mode: 0o600 }
+          );
+          process.stdout.write(String(release.id));
+          NODE
+          )"
+          [[ "${release_id}" =~ ^[1-9][0-9]{0,15}$ ]]
+          downloaded=0
+          while IFS=$'\t' read -r asset_id asset_name; do
+            test -n "${asset_id}"
+            test -n "${asset_name}"
+            target="${asset_dir}/${asset_name}"
+            test ! -e "${target}"
+            gh api \
+              --method GET \
+              --header "Accept: application/octet-stream" \
+              "repos/fredgnr/local-context-forge/releases/assets/${asset_id}" \
+              > "${target}"
+            test -s "${target}"
+            downloaded="$((downloaded + 1))"
+          done < "${asset_list}"
+          test "${downloaded}" -gt 0
+          {
+            printf 'LCF_PROMOTION_ASSET_DIR=%s\n' "${asset_dir}"
+            printf 'LCF_PROMOTION_RELEASE_ID=%s\n' "${release_id}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Independently verify downloaded remote assets
+        env:
+          LCF_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: >-
+          node "${GITHUB_WORKSPACE}/desktop/scripts/prepareRelease.cjs"
+          verify-assets
+          --tag "${LCF_RELEASE_TAG}"
+          --asset-dir "${LCF_PROMOTION_ASSET_DIR}"
+          --source-root "${LCF_PROMOTION_SOURCE_DIR}"
+          --expected-commit "${LCF_RELEASE_COMMIT}"
+
+      - name: Verify the draft, publish once, and verify the published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LCF_RELEASE_TAG: ${{ inputs.release_tag }}
+          LCF_CANDIDATE_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          tag="${LCF_RELEASE_TAG}"
+          release_id="${LCF_PROMOTION_RELEASE_ID}"
+          release_notes="${LCF_PROMOTION_SOURCE_DIR}/.github/desktop-release-notes.md"
+          refresh_remote_tag() {
+            local destination="refs/lcf-fresh-release-tags/${tag}"
+            if git show-ref --verify --quiet "${destination}"; then
+              git update-ref -d "${destination}"
+            fi
+            git fetch --no-tags origin \
+              "+refs/tags/${tag}:${destination}"
+            test "$(git rev-parse "${destination}^{commit}")" = \
+              "${LCF_RELEASE_COMMIT}"
+          }
+          fresh_pages="${RUNNER_TEMP}/lcf-pre-publish-release-pages.json"
+          fresh_json="${RUNNER_TEMP}/lcf-pre-publish-release.json"
+          test ! -e "${fresh_pages}"
+          test ! -e "${fresh_json}"
+          gh api \
+            --paginate \
+            --slurp \
+            --method GET \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/fredgnr/local-context-forge/releases?per_page=100" \
+            > "${fresh_pages}"
+          test "$(wc -c < "${fresh_pages}")" -le 8388608
+          node - \
+            "${fresh_pages}" \
+            "${fresh_json}" \
+            "${tag}" \
+            "${release_id}" <<'NODE'
+          const fs = require("node:fs");
+          const [pagesPath, outputPath, expectedTag, expectedIdText] =
+            process.argv.slice(2);
+          const expectedId = Number(expectedIdText);
+          const pages = JSON.parse(fs.readFileSync(pagesPath, "utf8"));
+          if (
+            !Array.isArray(pages) ||
+            pages.length === 0 ||
+            pages.length > 100 ||
+            pages.some(
+              (page) =>
+                !Array.isArray(page) ||
+                page.length > 100 ||
+                page.some(
+                  (release) =>
+                    release === null ||
+                    typeof release !== "object" ||
+                    Array.isArray(release)
+                )
+            )
+          ) {
+            throw new Error("GitHub release pagination is invalid or excessive");
+          }
+          const matches = pages
+            .flat()
+            .filter((release) => release.tag_name === expectedTag);
+          if (
+            !Number.isSafeInteger(expectedId) ||
+            expectedId <= 0 ||
+            matches.length !== 1 ||
+            matches[0].id !== expectedId ||
+            matches[0].draft !== true
+          ) {
+            throw new Error(
+              "Exact release is no longer the approved Draft"
+            );
+          }
+          fs.writeFileSync(
+            outputPath,
+            `${JSON.stringify(matches[0])}\n`,
+            { encoding: "utf8", flag: "wx", mode: 0o600 }
+          );
+          NODE
+          refresh_remote_tag
+          node "${GITHUB_WORKSPACE}/desktop/scripts/prepareRelease.cjs" \
+            verify-github-release \
+            --tag "${tag}" \
+            --asset-dir "${LCF_PROMOTION_ASSET_DIR}" \
+            --release-json "${fresh_json}" \
+            --expected-state draft \
+            --release-notes "${release_notes}" \
+            --candidate-manifest-sha256 \
+              "${LCF_CANDIDATE_MANIFEST_SHA256}"
+
+          fresh_main_ref="refs/remotes/lcf-promotion-main"
+          git fetch --force --tags origin \
+            "+refs/heads/main:${fresh_main_ref}"
+          fresh_main_commit="$(git rev-parse "${fresh_main_ref}^{commit}")"
+          [[ "${fresh_main_commit}" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor \
+            "${GITHUB_SHA}" \
+            "${fresh_main_commit}"
+          git merge-base --is-ancestor \
+            "${LCF_RELEASE_COMMIT}" \
+            "${fresh_main_commit}"
+          order_json="$(
+            node "${GITHUB_WORKSPACE}/desktop/scripts/prepareRelease.cjs" \
+              verify-promotion-order \
+              --tag "${tag}" \
+              --expected-commit "${LCF_RELEASE_COMMIT}" \
+              --comparison-commit "${fresh_main_commit}"
+          )"
+          make_latest="$(
+            printf '%s' "${order_json}" |
+              node -e '
+                const fs = require("node:fs");
+                const value = JSON.parse(fs.readFileSync(0, "utf8"));
+                if (
+                  value === null ||
+                  typeof value !== "object" ||
+                  !["true", "false"].includes(value.makeLatest)
+                ) {
+                  throw new Error("Trusted preflight output is invalid");
+                }
+                process.stdout.write(value.makeLatest);
+              '
+          )"
+          case "${make_latest}" in
+            true|false) ;;
+            *) printf '%s\n' "Invalid latest-release policy" >&2; exit 2 ;;
+          esac
+          refresh_remote_tag
+          printf '{"draft":false,"make_latest":"%s"}\n' "${make_latest}" |
+            gh api \
+              --method PATCH \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/fredgnr/local-context-forge/releases/${release_id}" \
+              --input -
+
+          refresh_remote_tag
+          gh release verify "${tag}" \
+            --repo fredgnr/local-context-forge
+
+          published_pages="${RUNNER_TEMP}/lcf-published-release-pages.json"
+          published_json="${RUNNER_TEMP}/lcf-published-release.json"
+          test ! -e "${published_pages}"
+          test ! -e "${published_json}"
+          gh api \
+            --paginate \
+            --slurp \
+            --method GET \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/fredgnr/local-context-forge/releases?per_page=100" \
+            > "${published_pages}"
+          test "$(wc -c < "${published_pages}")" -le 8388608
+          node - \
+            "${published_pages}" \
+            "${published_json}" \
+            "${tag}" \
+            "${release_id}" <<'NODE'
+          const fs = require("node:fs");
+          const [pagesPath, outputPath, expectedTag, expectedIdText] =
+            process.argv.slice(2);
+          const expectedId = Number(expectedIdText);
+          const pages = JSON.parse(fs.readFileSync(pagesPath, "utf8"));
+          if (
+            !Array.isArray(pages) ||
+            pages.length === 0 ||
+            pages.length > 100 ||
+            pages.some(
+              (page) =>
+                !Array.isArray(page) ||
+                page.length > 100 ||
+                page.some(
+                  (release) =>
+                    release === null ||
+                    typeof release !== "object" ||
+                    Array.isArray(release)
+                )
+            )
+          ) {
+            throw new Error("GitHub release pagination is invalid or excessive");
+          }
+          const matches = pages
+            .flat()
+            .filter((release) => release.tag_name === expectedTag);
+          if (
+            !Number.isSafeInteger(expectedId) ||
+            expectedId <= 0 ||
+            matches.length !== 1 ||
+            matches[0].id !== expectedId ||
+            matches[0].draft !== false
+          ) {
+            throw new Error("Expected one exact published release");
+          }
+          fs.writeFileSync(
+            outputPath,
+            `${JSON.stringify(matches[0])}\n`,
+            { encoding: "utf8", flag: "wx", mode: 0o600 }
+          );
+          NODE
+          node "${GITHUB_WORKSPACE}/desktop/scripts/prepareRelease.cjs" \
+            verify-github-release \
+            --tag "${tag}" \
+            --asset-dir "${LCF_PROMOTION_ASSET_DIR}" \
+            --release-json "${published_json}" \
+            --expected-state published \
+            --release-notes "${release_notes}" \
+            --candidate-manifest-sha256 \
+              "${LCF_CANDIDATE_MANIFEST_SHA256}"

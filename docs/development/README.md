@@ -8,8 +8,9 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 - 上游仓库：`fredgnr/local-context-forge`
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
 - 已发布检查点：`agent/electron-desktop-foundation@7e4524f`
-- 当前工作分支：`agent/electron-bundled-runtimes`
-- 当前公开 source 检查点：`fcca1e4`
+- source merge 基线：`main@52a5ffa`
+- 当前工作分支：`agent/two-phase-desktop-release`
+- 当前公开 source 检查点：`main@52a5ffa`
 - 当前迁移状态：`in-progress`
 
 ## 从这里开始
@@ -23,6 +24,7 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 | 查看 QMD embedding 追加纵切 | [ITER-0002/R07](iterations/0002-r07-qmd-embeddings.md) |
 | 查看 Codex MCP onboarding 证据 | [ITER-0002/R08](iterations/0002-r08-mcp-onboarding.md) |
 | 查看 signed update/release 证据 | [ITER-0002/R09](iterations/0002-r09-signed-update-client.md) |
+| 查看 tag-only 候选与 trusted-main promotion 决策 | [ADR-0014](../adr/0014-two-stage-desktop-release-promotion.md) |
 | 查看本地/私有仓库证据 | [ITER-0002/R10](iterations/0002-r10-local-repositories.md) |
 | 查看 MCP companion 私有协议 | [MCP companion 协议](mcp-companion-protocol.md) |
 | 执行或审计正式桌面发布 | [macOS release runbook](desktop-release.md) |

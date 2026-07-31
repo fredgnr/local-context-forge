@@ -44,13 +44,15 @@ Electron 作为非开发者的推荐路径。
   → 下载并校验固定 Python/Node 来源
   → 构建 Python onedir、QMD、renderer、companion
   → 运行测试和资源审计
-  → 从 macos-release Environment 读取一个 credential bundle
+  → 从 tag-only macos-signing Environment 读取唯一 credential bundle
   → 自签名、组装 DMG/ZIP/更新元数据
-  → 独立复核本地与 GitHub draft 资产摘要
-  → 发布 Release
+  → 无 Environment/secret 的 job 创建并复核 GitHub Draft
+  → 物理测试
+  → --ref main 的 secret-free macos-release promotion 复核并发布固定 Release ID
 ```
 
-这是**维护者的一次触发、整套产物构建**，不是终端用户安装脚本。仓库当前的 public key 和
+这是**tag push 候选构建 + 独立人工 promotion**，不是终端用户安装脚本。tag push 永远停在
+Draft；`release_tag` 只是 trusted `main` verifier 的资料输入。仓库当前的 public key 和
 certificate lock 仍是 `unprovisioned`，因此正式发行会 fail closed，不应声称已有可下载版本。
 
 ### legacy Docker all-in-one
@@ -204,25 +206,44 @@ make ci-source
 
 ## 高级用户：发布管理
 
-正式发布需要公开仓库中的受保护 Environment：
+正式发布需要公开仓库中的两个受保护 Environment：
 
-1. Environment 名称必须是 `macos-release`；
-2. 必须配置 required reviewer；
-3. custom deployment tag policy 只能允许 `v*.*.*`；
-4. 只保存一个 secret：`DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`；
-5. 公共 update key、update lock 与 certificate fingerprint lock 必须提交并经审查；
-6. PR、fork 和普通 source CI 不能读取该 secret。
+1. `macos-signing`：required reviewer、prevent self review、UI 禁 admin bypass，custom
+   deployment policy 只允许 tag `v*.*.*`，只保存
+   `DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`；
+2. `macos-release`：required reviewer、prevent self review、UI 禁 admin bypass，custom
+   deployment policy 只允许 branch `main`，零 secret；
+3. active `protected-main` ruleset 要求 PR、独立 approval、dismiss stale、last-push approval、
+   resolve threads、禁止 force/delete、无 bypass；
+4. active `release-tag-creation` 只允许 canonical owner actor 创建 `v*.*.*` tag，
+   `immutable-release-tags` 禁止 update/delete 且无 bypass；
+5. GitHub Immutable Releases 必须开启；
+6. 公共 update key、update lock 与 certificate fingerprint lock 必须提交并经审查；
+7. PR、fork 和普通 source CI 不能读取唯一 secret。
 
 管理员初始化命令：
 
 ```bash
 python3 tools/bootstrap_desktop_release_keys.py \
   --repo fredgnr/local-context-forge \
-  --upload
+  --upload \
+  --confirm-admin-bypass-disabled
 ```
 
-脚本先验证公开仓库和 Environment policy，通过 `gh` 的 stdin 上传一个版本化 credential
-bundle，再只在仓库工作区写入公共 key 与两个 public lock。它不会打印私钥。管理员必须审查并
-提交这三个公共文件后才能打 tag；当前未 provision 的 marker 会让 Release workflow 拒绝继续。
+脚本先验证公开仓库、Environment/ruleset/secret membership 与 Immutable Releases policy，
+再通过 `gh` 的 stdin 向 `macos-signing` 上传一个版本化 credential bundle，只在仓库工作区
+写入公共 key 与两个 public lock。`--confirm-admin-bypass-disabled` 表示管理员已在 UI 核对
+API 无法可靠证明的开关。脚本不会打印私钥。管理员必须审查并提交这三个公共文件后才能打 tag；
+当前未 provision 的 marker 会让 Release workflow 拒绝继续。
+
+promotion 必须使用 `workflow_dispatch --ref main`。trusted verifier 把输入 tag 隔离到 detached
+worktree，fresh-peel tag、固定 Draft Release ID；在 PATCH 前以 fresh-fetched `origin/main`
+comparison ref 重算 promotion order/`make_latest`，再以一次 REST PATCH 公开，并在公开后执行
+`gh release verify` 与 immutable/完整资产复核。已 published 预状态是安全事件，不按幂等成功。
+repository owner、contents writer/可改 workflow 的主体和 settings admin 仍是根信任；GitHub
+Draft 无资产 CAS，verify→PATCH 竞态只能后验检测。
+
+真实 GitHub settings、protected signing/promotion 和物理 Mac 证据仍为 `not-run`，整体结论为
+**source merge GO / release NO-GO**。
 
 完整发布和恢复操作见[桌面版完整指南](16-electron-desktop-guide.md)。

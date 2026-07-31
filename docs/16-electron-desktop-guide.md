@@ -849,24 +849,47 @@ canonical repository：
 fredgnr/local-context-forge
 ```
 
-必须是 active public repository。创建 Environment：
+必须是 active public repository。创建两个 Environment：
 
 ```text
+macos-signing
 macos-release
 ```
 
-配置：
+`macos-signing` 配置：
 
 1. 至少一个 required reviewer；
-2. deployment branches/tags 使用 custom policy；
-3. 唯一允许的 tag pattern 是 `v*.*.*`；
-4. 不允许普通 branch、PR 或 fork 直接进入该 Environment；
-5. Environment 内只有一个 release secret：
+2. 启用 `prevent self review`；
+3. 在 GitHub UI 禁止 administrator bypass；
+4. deployment branches/tags 使用 custom policy；
+5. 唯一允许的 tag pattern 是 `v*.*.*`；
+6. Environment 内只有一个 release secret：
    `DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64`。
 
-普通 `.github/workflows/desktop-ci.yml` 不绑定该 Environment，权限保持只读。Release build job
-只有 `contents: read`；独立 publish job 在没有 private secret 的 Linux runner 上才获得
-`contents: write`。
+`macos-release` 配置：
+
+1. 至少一个 required reviewer；
+2. 启用 `prevent self review`；
+3. 在 GitHub UI 禁止 administrator bypass；
+4. deployment branches/tags 使用 custom policy；
+5. 唯一允许的 branch 是 `main`；
+6. Environment secret 集合必须为空。
+
+仓库还必须开启：
+
+1. active `protected-main` branch ruleset：只匹配 `refs/heads/main`，要求 PR、至少一个独立
+   approval、push 后 dismiss stale reviews、last-push approval、resolve review threads，
+   禁止 force push/delete，且没有 bypass actor；
+2. active `release-tag-creation` tag ruleset：只匹配 `refs/tags/v*.*.*`，creation rule 只允许
+   canonical owner actor 通过唯一 bypass 创建 tag；
+3. active `immutable-release-tags` tag ruleset：相同 pattern 禁止 update/delete，无 bypass；
+4. GitHub Immutable Releases。
+
+普通 `.github/workflows/desktop-ci.yml` 不绑定 release Environment，权限保持只读。Release
+build/sign job 只有 `contents: read`，只在 `macos-signing` 中读取唯一 secret；tag push 后的
+独立 Draft job 在没有 Environment/private secret 的 Linux runner 上才获得 `contents: write`。
+手动 promotion 必须以 `--ref main` 运行，在 zero-secret `macos-release` 中取得 reviewer 审批，
+不依赖 build job，并且只有它可以把已验证 Draft 改为公开。
 
 ### 17.2 一次性生成并上传凭据
 
@@ -875,7 +898,8 @@ macos-release
 - 当前 checkout 是 canonical public repository；
 - `openssl` 可用；
 - GitHub CLI `gh` 已以仓库管理员身份登录；
-- Environment policy 已先配置完成；
+- 两个 Environment、三组 ruleset 和 Immutable Releases 已先配置完成；
+- 已在 GitHub UI 确认两个 Environment 都禁止 admin bypass；
 - private output 不在仓库内。
 
 运行：
@@ -883,7 +907,8 @@ macos-release
 ```bash
 python3 tools/bootstrap_desktop_release_keys.py \
   --repo fredgnr/local-context-forge \
-  --upload
+  --upload \
+  --confirm-admin-bypass-disabled
 ```
 
 脚本生成：
@@ -894,8 +919,11 @@ python3 tools/bootstrap_desktop_release_keys.py \
 - 16-byte 随机 generation ID（编码为 32 个十六进制字符）；
 - 一个 canonical base64 credential bundle。
 
-它通过 `gh secret set ... --env macos-release` 的 stdin 上传 bundle，不打印私钥。上传和公共文件
-写入成功后，临时 private 目录被删除。
+它先通过 GitHub API 校验 canonical repository、两个 Environment 的 reviewer/self-review/
+deployment policy、精确 secret membership、三组 active ruleset 和 Immutable Releases；然后
+通过 `gh secret set ... --env macos-signing` 的 stdin 上传 bundle，不打印私钥。
+`--confirm-admin-bypass-disabled` 是管理员已在 UI 复核该 API 难以可靠证明的开关。上传和公共
+文件写入成功后，临时 private 目录被删除；`macos-release` 始终保持零 secret。
 
 仓库工作区只应出现：
 
@@ -926,6 +954,7 @@ closed。保留恢复目录，修复后按工具提示用 `--rotate` 完整重�
 python3 tools/bootstrap_desktop_release_keys.py \
   --repo fredgnr/local-context-forge \
   --upload \
+  --confirm-admin-bypass-disabled \
   --rotate
 ```
 
@@ -949,9 +978,12 @@ python3 tools/bootstrap_desktop_release_keys.py \
    ```
 
 3. 确认 public update/certificate locks 已 provision；
-4. 确认 `macos-release` reviewer 和 tag policy；
-5. 确认没有私钥、auth cache、模型、index、用户数据或 generated staging 入库；
-6. 审查 release notes 对 self-signed、no notarization、no hardened runtime 和
+4. 确认 `macos-signing` 的 reviewer/self-review/tag policy/唯一 secret，以及
+   `macos-release` 的 reviewer/self-review/main-only/零 secret；
+5. 在 UI 确认两 Environment 禁止 admin bypass，并确认 `protected-main`、
+   `release-tag-creation`、`immutable-release-tags` active 且 GitHub Immutable Releases 开启；
+6. 确认没有私钥、auth cache、模型、index、用户数据或 generated staging 入库；
+7. 审查 release notes 对 self-signed、no notarization、no hardened runtime 和
    update gate 的披露。
 
 ### 18.2 触发
@@ -966,8 +998,27 @@ git push origin v0.3.0
 使用仓库实际版本；不要照抄示例 tag。Environment reviewer 在 GitHub 界面检查 commit、tag、
 workflow 和 public locks 后批准 build。
 
-也可对现有 tag 使用 `workflow_dispatch`，但只有 `publish=true` 才进入发布步骤，且仍受
-repository、tag 和 Environment 条件约束。
+tag push 成功后只会得到 Draft，不会自动公开。先从 Draft 下载候选，在真实 M4 完成适用的
+安装、runtime、Codex、embedding 和更新测试，并记录：
+
+```bash
+shasum -a 256 "/path/to/release-assets/release-manifest.json"
+```
+
+只有物理结论允许公开时，才从受保护 `main` 启动 manual promotion：
+
+```bash
+gh workflow run desktop-release.yml \
+  --repo fredgnr/local-context-forge \
+  --ref main \
+  -f release_tag=v0.3.0 \
+  -f candidate_manifest_sha256="<64位小写SHA-256>" \
+  -f confirm_publish=true
+```
+
+必须使用 `--ref main`、仓库实际 tag 和刚验证的 digest。`release_tag` 只决定读取哪个候选，
+不会选择 workflow/verifier code；tag ref、其他 branch、无显式确认或 digest 不匹配都会
+fail closed。`workflow_dispatch` 不提供“重新构建”模式。
 
 ### 18.3 Workflow 做什么
 
@@ -988,30 +1039,62 @@ Build job：
 13. 上传一个 Actions artifact；
 14. 清理 keychain 和临时 private files。
 
-Publish job：
+Draft job（同一次 tag push）：
 
 1. 在没有 release private secret 的 Linux runner 下载上一 job 的 asset set；
 2. 再次 verify；
-3. 创建 draft Release；
-4. 读取 GitHub API 返回，逐个比较 remote asset 名称、大小、digest 和 canonical URL；
-5. 只有完全一致才把 draft 改为公开；
-6. 发现已有同 tag Release、缺失/额外 asset 或 digest 差异时失败，不覆盖。
+3. 读取包含 Draft 的 authenticated GitHub Release 列表，严格选择 exact tag；
+4. 没有同 tag Release 时创建 Draft；若前次创建响应丢失而已有唯一 Draft，只在它与本次
+   同 tag 重建候选完整一致时恢复；
+5. 再次读取远端列表，逐个比较 state、notes、asset 名称、大小、digest 和 canonical URL；
+6. published、重复 Draft、缺失/额外 asset 或任何漂移都失败，绝不覆盖；
+7. 到此停止，任何 tag push 路径都不执行公开。
 
-### 18.4 发布后人工检查
+Promotion job（独立手动运行，所有 tag 的 promotion 全局串行且不取消正在运行的任务）：
+
+1. 校验 dispatch ref 是 fresh `main` head，输入 tag 只是 data；
+2. 通过 `macos-release` 的第二次 reviewer 审批，但不读取任何 secret；
+3. trusted `main` verifier fresh-fetch/peel tag、验证 main ancestry，并把 tag 放入独立
+   detached worktree；workflow script 不从 tag 执行；
+4. 严格选择唯一 Draft，拒绝任何已 published 预状态，固定 Release ID，再从 API 下载所有
+   remote assets 到新空目录；
+5. 用隔离 tag worktree 的 notes/policy 运行 `verify-assets`，并把
+   `release-manifest.json` digest 与真机测试输入精确绑定；
+6. 公开前再次 fresh-peel tag、refetch Release 和 fetch `origin/main`，要求 exact tag、Draft
+   state、固定 Release ID 和完整资产集合均未漂移；`verifyPromotionOrder` 必须以这个
+   `PATCH` 前 fresh `origin/main` comparison ref 计算 SemVer 顺序/`make_latest`，不能使用启动
+   时的旧 HEAD，否则并行 tag promotion 可能让旧版本成为 latest；
+7. 对该 Release ID 执行唯一一次 REST
+   `PATCH {"draft":false,"make_latest":...}`，不上传/替换资产；
+8. 公开后再次 fresh-peel tag，运行 `gh release verify`，并验证同一 ID 的
+   `immutable=true`、published state、notes 和完整资产集合。任何失败都按发布安全事件处理，
+   不重跑洗绿。
+
+这里的 controls 不消除根信任：repository owner、可修改受保护 `main`/workflow 的
+`contents` writer 和 repository settings 管理员仍可改变发布政策。GitHub Draft 也没有资产
+CAS；在最终 verify 与固定 ID `PATCH` 之间发生的 mutation 只能由发布后的
+`gh release verify`、`immutable=true` 和完整资产复核检测。Immutable Releases 保护公开后的
+Release，不保护该 Draft 窗口。
+
+### 18.4 Draft 测试与发布后人工检查
 
 - Release 是 canonical repo 且 tag/commit 正确；
+- 真机测试下载的 Draft 与输入的 candidate manifest digest 一致；
 - DMG 名称、arm64、版本和 SHA256SUMS 一致；
 - `release-manifest.json` 和 update manifest 资产集合一致；
 - detached Ed25519 signature 可由提交的 public key验证；
 - App 与所有 nested executable 的签名 identity/架构符合记录；
 - SBOM、notices 和 license inventory 存在；
 - release notes 明确 self-signed/no notarization/no hardened runtime；
+- post-publish `gh release verify` 通过且 Release 为 `immutable=true`；
 - 在干净 Apple Silicon 用户完成安装 smoke；
 - 使用真实已登录 Codex 完成一次采集、审核、查询和 MCP；
 - 在物理 M4 完成模型下载、embedding/hybrid；
 - `VAL-UPDATE-001` 通过前继续保持“自动应用未交付”。
 
 GitHub Actions 成功本身不能把最后四项标记为 `pass`。
+真实 GitHub settings、受保护签名/promotion 和物理 Mac 证据均尚未运行；当前整体结论保持
+**source merge GO / release NO-GO**。
 
 ## 19. 验收清单
 
@@ -1034,12 +1117,24 @@ GitHub Actions 成功本身不能把最后四项标记为 `pass`。
 
 维护者发行验收：
 
-- [ ] `macos-release` 有 reviewer 和唯一 tag policy；
-- [ ] 只有一个 Environment secret；
+- [ ] `macos-signing` 有独立 reviewer、prevent self review、禁 admin bypass 和唯一 tag policy；
+- [ ] `macos-release` 有独立 reviewer、prevent self review、禁 admin bypass、main-only 且零
+      secret；
+- [ ] 全仓库只有 `macos-signing` 的一个 Environment secret；
+- [ ] `protected-main`、owner-only `release-tag-creation` 和无 bypass
+      `immutable-release-tags` 都 active；
+- [ ] GitHub Immutable Releases 已开启；
 - [ ] 三个公共 trust files 同 generation；
 - [ ] PR/fork/source CI 无 secret；
 - [ ] tag、source commit、version、architecture 一致；
-- [ ] draft remote assets 逐个 digest 校验后才公开；
+- [ ] tag push 只创建 Draft，未出现自动公开路径；
+- [ ] promotion 以 `--ref main` 运行，trusted verifier、隔离 tag worktree、fresh peel 和固定
+      Release ID 证据齐全；
+- [ ] `verifyPromotionOrder` 的 comparison ref 是 `PATCH` 前 fresh-fetched `origin/main`，
+      并行 tag promotion 不会把旧版本设为 latest；
+- [ ] 真机候选 manifest digest 与 manual promotion 输入一致；
+- [ ] Draft 和 Published remote assets 在公开前后逐个 digest 校验，published 预状态未被
+      当作幂等成功；
 - [ ] clean-user、real-Codex、physical-model 和 physical-update 分别记录；
 - [ ] 所有未运行门禁仍明确为 `not-run`。
 

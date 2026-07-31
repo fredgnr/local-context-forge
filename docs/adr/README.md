@@ -32,6 +32,7 @@ ADR 记录跨组件、难以逆转或具有安全/数据/发行影响的决策�
 | [ADR-0011](0011-main-owned-signed-update-client.md) | Accepted | Main-owned 独立签名更新检查、verified DMG 与显式固定 Release 出口 |
 | [ADR-0012](0012-local-repository-picker-opaque-grants.md) | Accepted | 原生本地仓库选择与一次性不透明路径授权 |
 | [ADR-0013](0013-codex-mcp-onboarding-signed-cli-discovery.md) | Accepted | Codex MCP 一键接入、签名 CLI discovery、scoped ownership 与私有 rendezvous |
+| [ADR-0014](0014-two-stage-desktop-release-promotion.md) | Accepted | tag-only signing/Draft 与 trusted-main、secret-free、immutable promotion 分离 |
 
 ## 新 ADR 编号
 

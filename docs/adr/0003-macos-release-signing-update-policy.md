@@ -3,6 +3,9 @@
 - 状态：Accepted
 - 日期：2026-07-30
 - 关联需求：REQ-INSTALL-001、REQ-RELEASE-001、REQ-SECRET-001、REQ-UPDATE-001
+- 后续细化：[ADR-0014](0014-two-stage-desktop-release-promotion.md) 已取代下文单一
+  `macos-release` Environment 的部署形态；当前 build/sign 使用 tag-only `macos-signing`，
+  promotion 使用 branch-only、零 secret 的 `macos-release`
 
 ## 上下文
 

@@ -401,7 +401,7 @@ commit/image 并操作数据副本；项目不保证新 Electron 写入后的数
 2. Electron replacement caller inventory 和门禁状态，或符合上文限制的
    `no-replacement / unsupported` disposition；
 3. baseline commit/package digest 与 `VAL-PACKAGED-SMOKE-001` evidence；
-4. exact changed paths；证明未触及用户数据、远端 package、GitHub Release/secret/settings；
+4. exact changed paths；证明未触及用户数据、Keychain、远端 package、GitHub Release/secret/settings；
 5. breaking change 清单和不提供兼容/迁移的说明；
 6. after-slice commit、fresh package digest、相同 smoke、focused/aggregate source、slice absence 与
    protected-path presence；

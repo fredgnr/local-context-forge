@@ -58,7 +58,7 @@
    caller 证明；两类都运行 aggregate source tests；
 4. after-slice commit、fresh package digest、重跑 smoke 与 slice absence；
 5. protected Electron paths/resources 的 presence 断言；
-6. 用户 data、volume、container/image、Application Support、历史 evidence、远端 GHCR package、
+6. 用户 data、volume、container/image、Application Support、Keychain、历史 evidence、远端 GHCR package、
    GitHub settings/tag/Draft/Release 均未修改的声明。
 
 ## 不在主链中的未来工作

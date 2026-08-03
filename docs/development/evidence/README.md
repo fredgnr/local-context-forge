@@ -171,7 +171,7 @@ credential generation 和 production pin 必须为 null/absent。
 - exact changed paths、focused/aggregate source results；
 - after-slice commit 与 fresh package digest、相同 smoke；
 - slice absence 与 protected-path presence；
-- 用户 data/volume/container/image/Application Support、历史 evidence、远端 GHCR package、GitHub
+- 用户 data/volume/container/image/Application Support/Keychain、历史 evidence、远端 GHCR package、GitHub
   settings/tag/Draft/Release 未修改；
 - 独立回退点。
 

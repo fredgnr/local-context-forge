@@ -17,6 +17,17 @@ The handbook is a generated convenience copy. The live handoff authorities are
 regenerate the PDF after changing numbered chapters, and never treat an old PDF
 as newer evidence than those version-controlled files.
 
+The pre-1.0 governance mapping is validated independently of handbook generation:
+
+```bash
+python3 -B tools/check_pre1_work_plan.py
+python3 -B -m unittest discover -s tools/tests -p 'test_*.py'
+```
+
+`make ci-python` runs both commands. They validate exact W01-W16 ranks, complete
+work/task/gate mappings, TODO/trace status parity, and the formal-release
+`not-run` boundary.
+
 ```bash
 python3 -m pip install -r tools/requirements.txt
 python3 tools/build_handbook.py

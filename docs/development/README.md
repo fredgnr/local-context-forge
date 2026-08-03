@@ -10,8 +10,9 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 - 已发布检查点：`agent/electron-desktop-foundation@7e4524f`
 - bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
 - two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
-- 本轮文档审计基线：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
-- 文档交接分支：`agent/documentation-handoff`
+- Electron-only planning merge：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
+- 当前治理基线：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
+- 当前治理分支：`agent/pre1-incremental-retirement-governance`
 - 当前迁移状态：`in-progress`
 
 ## 从这里开始
@@ -23,6 +24,7 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 | 安装、运维、备份、GitHub settings 和 Release | [部署与运维总手册](../18-deployment-operations.md) |
 | 新贡献者搭环境、测试和提 PR | [开发者手册](contributor-handbook.md) |
 | 查看所有剩余任务、owner、依赖和验收 | [详细 TODO](todo.md) |
+| 查看 W01–W16 execution rank 与正式发行边界 | [Pre-1.0 work plan](work-plan.md) |
 | 查看 Electron-only 的 remove/retain/split 与删除门禁 | [Legacy retirement 计划](legacy-retirement.md) |
 | 建立可复现、脱敏的验证记录 | [证据规范](evidence/README.md) |
 | 查看 P0–P7 顺序、依赖和门禁 | [迁移路线图](roadmap.md) |
@@ -36,6 +38,9 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 | 查看本地/私有仓库证据 | [ITER-0002/R10](iterations/0002-r10-local-repositories.md) |
 | 查看文档交接记录 | [ITER-0002/R11](iterations/0002-r11-documentation-handoff.md) |
 | 查看 Electron-only 范围冻结记录 | [ITER-0002/R12](iterations/0002-r12-legacy-retirement-scope.md) |
+| 查看增量 retirement 治理记录 | [ITER-0002/R13](iterations/0002-r13-pre1-incremental-retirement.md) |
+| 查看增量 retirement / 工程包计划 | [ITER-0008](iterations/0008-incremental-retirement-engineering-package.md) |
+| 查看 packaged smoke、slice 与 release 后置决策 | [ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md) |
 | 查看 MCP companion 私有协议 | [MCP companion 协议](mcp-companion-protocol.md) |
 | 执行或审计正式桌面发布 | [macOS release runbook](desktop-release.md) |
 | 使用安装后的 Electron 桌面应用 | [桌面用户指南](../16-electron-desktop-guide.md) |

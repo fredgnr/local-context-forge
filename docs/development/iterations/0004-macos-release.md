@@ -1,10 +1,13 @@
 # ITER-0004：macOS release foundation
 
 - 状态：`planned`
-- 依赖：ITER-0001–0003 的门禁通过
+- 依赖：W13 final cutover/absence；W14 production control plane；ITER-0001–0003 的相关门禁
 - 路线图阶段：P5
 
 ## 目标与范围
+
+本迭代只承载 W14–W16 formal release；不承载 W02/W03 engineering artifacts。W13 前不得执行
+P02/P02a 或 credential provisioning，不得创建 release tag/Draft。
 
 交付 macOS Apple Silicon arm64 DMG。build/sign 只由 `v*.*.*` tag push 进入
 `macos-signing`，该 Environment 保存仓库唯一 credential bundle secret；Draft job 不绑定
@@ -19,6 +22,8 @@ hardened runtime。
 - [x] P01a source foundation：arm64 DMG/ZIP、资源清单、版本、摘要、Draft/promotion workflow
   和 fail-closed policy 已实现并通过 source tests。
 - [ ] P01b 使用 provisioned credential 在受保护 macOS runner 生成真实签名资产。
+- [ ] P01c 记录 W13 checkpoint → formal tag 的 allowlisted public pins/release metadata/version
+  diff，在 tag 重跑 source/aggregate absence，并把 exact Draft digest 绑定到 continuity evidence。
 - [ ] P02 配置两个受保护 Environment：都 required reviewers、prevent self review、UI 禁
   admin bypass；`macos-signing` 只允许 tag `v*.*.*`/唯一 secret，`macos-release` 只允许
   branch `main`/无配置 Environment/repository release secret 或长期签名凭据；promotion
@@ -33,7 +38,8 @@ hardened runtime。
 - [ ] P05 在无外部运行时的干净 Apple Silicon Mac 完成安装 smoke。
 - [x] P06a source foundation：trusted-main、detached worktree、fresh peel、fixed ID、
   promotion order 和 post-publish validator 已实现。
-- [ ] P06b 从同一 Draft 下载物理测试候选，记录 `release-manifest.json` SHA-256，经第二次
+- [ ] P06b 从同一 Draft 下载物理测试候选，记录 `release-manifest.json` SHA-256，在 exact Draft
+  digest 重新运行完整 cutover/absence（不得复用 W13 engineering evidence），经第二次
   Environment 审批；以 `--ref main` 启动 trusted verifier，隔离/fresh-peel tag，固定 Release
   ID；在 `PATCH` 前以 fresh `origin/main` comparison ref 验证 promotion order/`make_latest`，
   再执行 REST `PATCH`、post-publish `gh release verify`、immutable 和完整资产复核。
@@ -43,11 +49,12 @@ hardened runtime。
 
 `[x]` 只表示提前落地的 R09 source foundation，不改变本迭代 `planned` 状态。真实任务见
 [TODO-REL-*](../todo.md)。
-  安全事件 fail closed，不能重跑幂等洗绿。
+安全事件 fail closed，不能重跑幂等洗绿。
 
 ## 退出门禁
 
-- VAL-INSTALL-001、VAL-RELEASE-001、VAL-SECRET-001 为 `pass`；
+- VAL-RELEASE-CONTINUITY-001、VAL-INSTALL-001、VAL-RELEASE-001、VAL-SECRET-001 为 `pass`；
+- exact Draft digest 上的 VAL-ELECTRON-CUTOVER-001 与 VAL-LEGACY-ABSENCE-001 为 `pass`；
 - VAL-RELEASE-PROMOTION-001 的 source policy 和真实 promotion 记录可复现；
 - GitHub settings 证据覆盖两个 Environment、三组 ruleset 和 Immutable Releases；
 - 发行说明、UI 与构建配置对签名限制的描述一致；

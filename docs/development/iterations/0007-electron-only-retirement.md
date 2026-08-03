@@ -1,11 +1,17 @@
 # ITER-0007：Electron-only cutover 与 legacy retirement
 
-- 状态：`planned`
+- 状态：`superseded`
+- 取代者：[ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) 与
+  [ITER-0008](0008-incremental-retirement-engineering-package.md)
 - 依赖：ADR-0015；E02 只依赖各能力的 source replacement 子门禁；E03–E07 依赖聚合
   `VAL-ELECTRON-CUTOVER-001=pass` 和相关 packaged M4 gate
 - 路线图阶段：P7
 - 关联需求：REQ-ELECTRON-ONLY-001、REQ-PRE1-BREAKING-001
 - 关联验证：VAL-ELECTRON-CUTOVER-001、VAL-LEGACY-ABSENCE-001
+
+> 本页保留 2026-07-31 的旧执行计划与 E01–E07 稳定 ID，不再实施。被取代的是“完整
+> `VAL-ELECTRON-CUTOVER-001` 通过后才允许任何删除”的顺序；Electron-only 目标、严格
+> remove/retain/split、数据保护和最终 cutover/absence 继续由 ADR-0015/0016 约束。
 
 ## 目标
 

@@ -23,6 +23,7 @@ Local Context Forge 正在收敛为 macOS Apple Silicon Electron all-in-one 客�
 | Electron source/Release 与历史部署 inventory | [部署与运维总手册](18-deployment-operations.md) |
 | 开发环境、测试和 PR 流程 | [开发者手册](development/contributor-handbook.md) |
 | 还要做什么、由谁做、如何验收 | [详细 TODO](development/todo.md) |
+| W01–W16 的显式执行顺序与 release boundary | [Pre-1.0 work plan](development/work-plan.md) |
 | 哪些 legacy 文件删除、哪些共享代码保留 | [Legacy retirement 计划](development/legacy-retirement.md) |
 
 ## 产品与使用
@@ -55,6 +56,7 @@ Local Context Forge 正在收敛为 macOS Apple Silicon Electron all-in-one 客�
 - [项目状态快照](development/status.md)
 - [开发者手册](development/contributor-handbook.md)
 - [详细 TODO](development/todo.md)
+- [Pre-1.0 work plan](development/work-plan.md)
 - [证据记录规范](development/evidence/README.md)
 - [迁移路线图](development/roadmap.md)
 - [需求—决策—验证矩阵](development/traceability.md)

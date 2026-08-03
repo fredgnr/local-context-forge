@@ -51,8 +51,12 @@ npm --prefix desktop run start:source
 不要使用 `make dev-native`、`scripts/macos-bootstrap.sh --native`、`make install`、
 `install.sh`、`scripts/lcf` 或裸 Compose 建立新的开发/测试实例。这些入口属于
 [legacy retirement manifest](docs/development/legacy-retirement.md) 的 `remove` / `split`
-范围。若 removal PR 需要确认旧 owner，只做静态 caller/path inventory；在聚合
-`VAL-ELECTRON-CUTOVER-001` 通过前不得借机删除 capability，在任何阶段都不得操作用户现有
+范围。removal PR 必须遵循 [ADR-0016](docs/adr/0016-pre1-incremental-retirement-engineering-package.md)
+和 [W01–W16 work plan](docs/development/work-plan.md)：W01 三个 source/governance gate 全部通过
+后才建立 W02 packaged smoke，再按 slice 做 caller inventory、split、before/after package、
+absence 与 protected presence。shared/必需 Electron capability 要有 replacement；纯 legacy-only
+unsupported capability 可使用受限 no-replacement disposition。W13 才运行工程 checkpoint 的最终
+聚合 cutover/absence；formal Draft 还需独立 continuity 复验。在任何阶段都不得操作用户现有
 container、volume、data、backup 或远端 GHCR package。
 
 ## 变更规则
@@ -91,12 +95,16 @@ npm --prefix desktop/workers/qmd test
 ```bash
 python3 tools/check_markdown_links.py
 python3 tools/check_version_sync.py
+python3 -B tools/check_pre1_work_plan.py
+python3 -B -m unittest discover -s tools/tests -p 'test_*.py'
 git diff --check
 ```
 
-Legacy 解耦/删除变更还必须执行实施时固定的 focused Electron 回归、最终
-`tools/check_legacy_absence.py`（创建前为 `not-run`）和要求 packaged 的 M4 门禁。不要再用
-Docker smoke 证明目标产品正确；它只能证明已弃用运行面仍可运行，不能解除删除门禁。
+Legacy 解耦/删除变更还必须执行实施时固定的 affected Electron 回归（或合格 pure-legacy
+unsupported disposition）、fresh before/after packaged smoke、slice absence 与 protected
+presence。最终 W13 才运行 aggregate
+`tools/check_legacy_absence.py`（创建前为 `not-run`）和完整 M4 cutover。不要再用 Docker smoke
+证明目标产品正确；它只能证明已弃用运行面仍可运行，不能解除删除门禁。
 
 记录 exact command、commit、环境、pass/fail/skip 和所有 `not-run`。证据格式见
 [evidence README](docs/development/evidence/README.md)。Mock/source 不得替代 packaged/
@@ -118,5 +126,6 @@ physical gate。
 
 最终 head 发生变化后重新运行 CI。目标 release tag 只服务 desktop Draft → physical review →
 trusted-main promotion。当前 `container-images.yml` 尚未删除，因此在
-`TODO-LEGACY-REMOVE-RELEASE-001` 与 `VAL-LEGACY-ABSENCE-001` 完成前禁止创建新 release tag；
+W11 release slice、W13 final gates、W14 controls 和 W15 credentials/pins 完成前禁止创建新
+release tag；
 不得把现存的双触发行为解释成受支持的 container 发布合同。

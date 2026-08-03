@@ -28,12 +28,12 @@ gate 已通过。
 - 哪些敏感信息已删除；
 - 哪些内容仍未运行。
 
-以下都不能单独支撑 packaged/physical `pass`：
+以下都不能单独支撑比自身层级更高的 packaged/physical/formal `pass`：
 
 - “当前工作树”；
 - 单元 mock/fake store；
 - source mode；
-- ad-hoc DMG；
+- ad-hoc DMG（只能在显式 W02/W03 engineering gate 的定义范围内作为证据）；
 - 同版本重装；
 - UI 截图外观；
 - CI 成功但没有真实 secret/签名/模型/CLI；
@@ -150,7 +150,40 @@ Markdown 记录可在 YAML 后补：
 > Python/QMD, signing, Gatekeeper, a real model, a logged-in CLI, or update
 > promotion; those gates remain `not-run`.
 
-## 5. GitHub settings 证据
+## 5. Engineering package 与 slice 证据
+
+### W02 packaged smoke
+
+至少记录 `distribution_class=engineering-smoke`、`publishable=false`、exact commit、App/package
+digest、architecture、有限 inventory、launch、renderer/preload、private UDS health/domain request、
+quit/no orphan、process/socket observation、exercised path 的 system Python/Node/Git PATH trap、
+updater unavailable/no-network。`tag`、`release_id`、
+credential generation 和 production pin 必须为 null/absent。
+
+### W10/W11 slice
+
+每个 slice 单独记录：
+
+- baseline commit/package digest 与 W02 smoke；
+- owner/caller inventory、`remove` / `retain` / `split`，以及 affected replacement；纯 legacy-only
+  capability 使用受限 `no-replacement / unsupported` 时还要记录无 Electron caller/data/external
+  side effect 的证明；
+- exact changed paths、focused/aggregate source results；
+- after-slice commit 与 fresh package digest、相同 smoke；
+- slice absence 与 protected-path presence；
+- 用户 data/volume/container/image/Application Support、历史 evidence、远端 GHCR package、GitHub
+  settings/tag/Draft/Release 未修改；
+- 独立回退点。
+
+### W03 engineering test package
+
+记录 `distribution_class=engineering-test`、`publishable=false`、cleaned commit/digest、完整
+renderer/Python/QMD/companion inventory、SBOM/notices、测试入口和 production trust absence。
+该证据只支撑 `VAL-ENGINEERING-PACKAGE-001` 与后续 W04–W12，不支撑 formal gate。
+
+## 6. GitHub settings 证据
+
+本类证据属于 W14 及以后。W02/W03 和 legacy slice 不应包含 GitHub settings mutation。
 
 应包含：
 
@@ -173,11 +206,17 @@ Markdown 记录可在 YAML 后补：
 
 源码 policy test 只能记作 source sub-gate。真实设置必须从 canonical repository 读取。
 
-## 6. Release 候选证据
+## 7. Release 候选证据
+
+本节只适用于 W15/W16 formal candidate。Engineering artifact 永远不能复用为 Draft/Release
+evidence。
 
 记录：
 
 - tag、peeled commit、main ancestry；
+- W13 checkpoint commit/package digest、formal tag commit，以及二者之间只含 production public
+  pins/release metadata/version 的 reviewed allowlisted diff；
+- formal tag 上重跑的 source/aggregate absence 结果；
 - Actions run 和两个 Environment approval；
 - fixed Release ID 和 Draft/published pre-state；
 - candidate `release-manifest.json` SHA-256；
@@ -186,7 +225,10 @@ Markdown 记录可在 YAML 后补：
 - DMG/App/nested Mach-O architecture/signing identity；
 - SBOM/notices/runtime manifest；
 - release notes 的 self-signed/not notarized/not hardened/automatic apply disabled；
-- Draft 未被人工修改的复核。
+- Draft 未被人工修改的复核；
+- exact Draft digest 上重新运行的完整 `VAL-ELECTRON-CUTOVER-001`、
+  `VAL-LEGACY-ABSENCE-001` 结果，以及 `VAL-RELEASE-CONTINUITY-001` 结论；不得引用 W13
+  engineering package 结果代替。
 
 Promotion 记录还需要：
 
@@ -199,9 +241,12 @@ Promotion 记录还需要：
 - `immutable=true`；
 - post-publish 完整资产集合。
 
+缺少 checkpoint/tag allowlisted diff、tag source/absence 或 exact Draft cutover/absence 中任一项，
+continuity gate 必须保持 `not-run`/`fail`，不得 promotion。
+
 若 pre-state 已 published 或资产漂移，状态应为 `fail`/安全事件，不得通过重跑改成 `pass`。
 
-## 7. 物理 Mac 证据
+## 8. 物理 Mac 证据
 
 最低记录：
 

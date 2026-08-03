@@ -8,8 +8,9 @@
 
 > **操作停止：** 不要执行本文 legacy 安装/Compose/localhost/GHCR 命令；它们只描述待删除
 > owner。当前 container tag 双触发和未配置 trust locks 使所有新 release tag、Draft 与公开
-> Release 均为 NO-GO。只有最终 removal bytes 的完整 M4 能力复验、absence gate 和独立发行
-> 门禁全部通过后，才能按改写后的 Electron-only runbook 发布。
+> Release 均为 NO-GO。权威顺序是 W02 engineering smoke → W10/W11 slices → W03 engineering
+> package → W04–W12 physical → W13 final gates → W14–W16 formal release；详见
+> [work plan](development/work-plan.md)。
 
 ## 1. 先选择路径
 
@@ -17,7 +18,8 @@
 | --- | --- | --- |
 | 立即在本机稳定使用 | 暂停 | 等经过审查的 Electron DMG；当前没有受支持稳定发行 |
 | 开发 Electron UI/Main/Python 合同 | Electron source mode | 本文第 3 节 |
-| 验证正式候选 | 受保护 Draft + 物理 M4 | 本文第 6–8 节 |
+| 后续验证 legacy slice / 工程能力 | 明确 non-release 的 W02/W03 package | 本文第 3.4 节；当前未实现 |
+| 验证正式候选 | W15/W16 受保护 exact Draft + continuity/物理 M4 | 本文第 6–8 节 |
 | 普通用户安装 Electron | 暂停 | 等经过审查的公开 DMG |
 | 使用 Windows 4060 加速生成 | 不支持 | future remote-worker 需独立 ADR |
 
@@ -33,7 +35,7 @@ Support。
 
 ## 2. 历史路径 A：已弃用的 Legacy Docker/Web
 
-> 本节命令不得用于新部署。它们将在 ITER-0007 删除，只用于确认 removal scope；项目不提供
+> 本节命令不得用于新部署。它们将在 ITER-0008 的 W10/W11 slices 删除，只用于确认 removal scope；项目不提供
 > 修复、迁移或兼容窗口，也不会自动清理用户已有 container/volume/data。
 
 ### 2.1 前置条件
@@ -55,7 +57,9 @@ Docker socket mount 进容器。首次没有可用 CLI 时可进入 mock demo；
 当前 `scripts/lcf` 会从 `.lcf/runtime.env` 读取安装记录，但还没有清除调用者 shell 中优先级
 更高的 Compose 插值变量，也没有固定 `COMPOSE_PROJECT_NAME`。残留的
 `LOCAL_DATA_DIR`、`LCF_BIND_HOST`、端口、镜像或 `COMPOSE_PROJECT_NAME` 可能改变目标数据、
-监听地址、镜像或 Compose project。这个实现缺口由 `TODO-LEGACY-CONTROL-001` 跟踪。
+监听地址、镜像或 Compose project。该 legacy 缺口不再修复；控制脚本由
+`TODO-LEGACY-REMOVE-DEPLOY-001` 删除，相关 provider/transport caller 分别由
+`TODO-LEGACY-REMOVE-PROVIDER-001`、`TODO-LEGACY-REMOVE-TRANSPORT-001` 清理。
 
 因此先在**受管实例的仓库根目录**定义一个只保留 `HOME` 和 `PATH` 的会话级入口；本章后续
 `lcf_managed` 命令都依赖这个定义：
@@ -150,8 +154,9 @@ lcf_managed uninstall
 当前受管安装器只支持 checkout 内的固定 `data/`、`imports/` 和 `data/runner/`。它没有
 `--data-dir`/`--imports-dir`，每次执行都会把这些路径写回 checkout。不要把手工改过的外置
 `LOCAL_DATA_DIR` 称为受支持受管配置；尤其不要在这种实例上重跑安装器，否则可能启动一个新的
-checkout 数据树。需要外置 active data 时，先完成 `TODO-LEGACY-CONTROL-001`，或把现有实例
-当作明确记录、独立负责的未托管部署。
+checkout 数据树。项目不再实现已 superseded 的 `TODO-LEGACY-CONTROL-001`；需要保留外置
+active data 时，只能继续固定删除前版本并把实例视为明确记录、独立负责的未托管部署。W11
+源码清理不得读取、迁移或删除该数据。
 
 对标准受管布局，不要只修改项目根 `.env`。端口/provider/image 变更推荐重新执行安装器并传入
 显式选项，例如：
@@ -404,6 +409,20 @@ npm --prefix desktop run dist:mac
 已 provision。当前 `unprovisioned` locks 应让 `beforePack` fail closed；即便成功也只是
 `*-UNOFFICIAL`。
 
+### 3.4 规划中的非发行工程包
+
+当前 `dist:mac` 不能作为 W02：base `beforePack` 会无条件审计 production update trust，而当前
+locks 正确地是 `unprovisioned`。后续实现必须新增与 formal release 隔离的显式 mode，不得把
+trust audit 改成全局宽松。
+
+| Class | 最低用途 | 必须具备 | 禁止 |
+| --- | --- | --- | --- |
+| W02 engineering smoke | 每个 removal slice 的 feedback | exact commit/digest/arch/inventory、launch、renderer/preload、private UDS health/domain request、quit/no orphan、no INET listener、exercised path 无 system runtime discovery | production secret/pins、tag/upload/Draft/Release、update network |
+| W03 engineering test package | cleaned tree 的 W04–W12 物理载体 | 完整 renderer/Python/QMD/companion staging、inventory/SBOM/notices/test entry | 冒充 formal pack/install/release evidence |
+
+两者必须标记 `UNOFFICIAL`、`engineering-only`、`publishable=false`，使用 unsigned/ad-hoc identity，
+updater `unavailable` 且不联网。当前两条门禁均 `not-run`；本手册没有可复制的实现命令。
+
 ## 4. 路径 C：普通用户的 Electron 安装
 
 当前没有推荐安装资产。本节只定义将来的合格入口。
@@ -470,6 +489,9 @@ Support 会把可重下载的 update DMG 也复制进去；这是当前实现与
 
 ## 6. GitHub 发布控制面
 
+本节是 W14，必须等待 W13 final `VAL-ELECTRON-CUTOVER-001` 与
+`VAL-LEGACY-ABSENCE-001` 同时通过。它不是 W02/W03 工程包的前置，当前不得提前配置。
+
 正式发布前需要两个 Environment：
 
 ### 6.1 `macos-signing`
@@ -513,6 +535,8 @@ status checks 等常见规则，必须先审查并更新 bootstrap/source policy
 
 ## 7. Provision 自签名与更新凭据
 
+本节是 W15，只能在 W14 的真实设置证据通过后执行。工程包不得读取或生成这些材料。
+
 在可信管理员主机和 clean canonical checkout：
 
 ```bash
@@ -550,9 +574,13 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 ## 8. 正式候选、真机测试与 promotion
 
-### 8.1 Release tag 是统一产品事件
+本节属于 W15/W16，只接受 W13/W14 完成后的 formal candidate。W02/W03 或任一 legacy slice
+artifact 不能上传为 Draft，也不能被 promotion。W13 engineering evidence 只解锁 W14；正式
+候选还必须通过 `VAL-RELEASE-CONTINUITY-001`。
 
-同一个 `vX.Y.Z` tag 会同时触发：
+### 8.1 当前待删除的同 tag 耦合
+
+在 W11 尚未实施的当前仓库中，同一个 `vX.Y.Z` tag 会同时触发：
 
 - container image SemVer 发布；
 - desktop build/sign 与 Draft 创建。
@@ -562,13 +590,21 @@ python3 tools/bootstrap_desktop_release_keys.py \
 container job 成功。发布记录必须分别保存两条 workflow 的 run、commit/tag 和 artifact/image
 digest，并明确任何“只完成一半”的状态。
 
-因此不能把 `git push origin vX.Y.Z` 当成“只发布容器”的轻量命令。启用 immutable tag 后错误
-tag 不能移动或删除。Tag 必须与 `runtime/version.json` 的产品版本完全一致，并按
-[Release runbook](development/desktop-release.md)统一评审。
+因此当前禁止 push release tag。W11 必须删除 container/GHCR trigger 与 tag coupling，并在
+source policy 上证明 tag 只进入 desktop candidate；不得删除远端既有 GHCR package。W14/W15
+启用 immutable tag 后错误 tag 不能移动或删除。Tag 必须与 `runtime/version.json` 完全一致，
+并按 [Release runbook](development/desktop-release.md)统一评审。
 
 ### 8.2 阶段一：只创建 Draft
 
-owner 从受保护 `main` 创建 exact tag。`macos-signing` reviewer 审批后：
+创建 tag 前，W15 必须先实现并运行独立 continuity verifier：绑定 W13 checkpoint，证明到
+formal tag 候选 commit 的 diff 只含 allowlisted production public pins/release metadata/version，
+并重跑 source/aggregate absence。当前 workflow 没有 checkpoint 输入或 diff allowlist，这项
+evidence 为 `not-run`。verifier/allowlist/schema 必须在 W13 checkpoint 前落地并冻结；若 W15
+才新增或修改，必须先建立新 W13 checkpoint 并重跑。在补齐前本节仍不可执行。
+
+该前置通过后，owner 才从受保护 `main` 创建 exact tag。`macos-signing` reviewer 审批后，
+现有 workflow：
 
 1. 校验 tag、commit、version、main ancestry 和 manifest source；
 2. 构建/审计 Python、QMD、renderer、companion；
@@ -597,12 +633,14 @@ owner 从受保护 `main` 创建 exact tag。`macos-signing` reviewer 审批后�
 - home/外置卷/private/move/delete/restart；
 - MCP connect、Codex restart、两个工具、App 退出；
 - data count、rollback 和全部故障注入。
+- exact Draft digest 上重新运行的完整 `VAL-ELECTRON-CUTOVER-001`、
+  `VAL-LEGACY-ABSENCE-001` 与最终 `VAL-RELEASE-CONTINUITY-001`；不得复用 W13 结果。
 
 不要记录用户名、私有绝对路径、仓库内容、auth cache 或 credential。
 
 ### 8.4 阶段二：公开 promotion
 
-只有同一 Draft 的结论允许公开时：
+只有同一 Draft 的完整 cutover/absence、continuity 与全部物理结论允许公开时：
 
 ```bash
 gh workflow run desktop-release.yml \

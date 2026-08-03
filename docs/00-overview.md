@@ -2,7 +2,9 @@
 
 > 自 [ADR-0015](adr/0015-electron-only-legacy-retirement.md) 起，Electron 是唯一目标产品面；
 > Docker/Web/public API/HTTP MCP/Host Runner/container 已弃用并计划删除，不再作为当前可用
-> 回退。实际 Electron Release 仍为 NO-GO。
+> 回退。[ADR-0016](adr/0016-pre1-incremental-retirement-engineering-package.md) 固定 W01 exits → W02 smoke →
+> W10/W11 slices → W03 engineering package → W13 final gates → W14–W16 formal release。实际
+> Electron Release 仍为 NO-GO；W13 engineering checkpoint 不能替代 exact Draft continuity 复验。
 
 Local Context Forge（LCF）把代码仓库编译成一套**可审核、可版本化、可检索、可通过 MCP
 消费**的 API Wiki。它不仅建立代码向量索引，还保存页面、结构化元数据、源码引用、审核状态

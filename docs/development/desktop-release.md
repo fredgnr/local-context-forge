@@ -5,14 +5,21 @@ macOS arm64 release workflow。当前 public trust locks 为 `unprovisioned`，�
 release 会 fail closed。source tests 或普通 macOS CI 不能替代 protected build、干净用户
 安装和物理更新证据。
 
+本页只适用于 W14–W16 的 formal release，不适用于 W02 packaged smoke 或 W03 engineering
+test package。Engineering artifacts 必须使用独立 non-release mode，不读取 production
+credential/pins、不由 tag 触发、不上传、不创建 Draft/Release，updater unavailable/no-network。
+
 > [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) 已决定删除 container/GHCR 发布面。
 > 本页的同-tag GHCR 说明只记录删除前的当前风险；`TODO-LEGACY-REMOVE-RELEASE-001` 完成后
 > 必须移除这些步骤。首个受支持 Electron-only 公开 Release 还要求
-> `VAL-LEGACY-ABSENCE-001=pass`。
+> exact Draft 上的 `VAL-ELECTRON-CUTOVER-001`、`VAL-LEGACY-ABSENCE-001` 与
+> `VAL-RELEASE-CONTINUITY-001=pass`。
 
-> **操作停止：** 在 container workflow 删除、最终 removal commit/candidate 上完整重跑
-> Electron cutover 能力矩阵并取得 `VAL-LEGACY-ABSENCE-001=pass` 前，不得执行本页 tag、Draft
-> 或 promotion 命令。下文同-tag/GHCR 段落是审计现状，不是当前可执行 runbook。
+> **操作停止：** 在 [ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md)
+> 的 W13 final rebuilt bytes 同时取得 `VAL-ELECTRON-CUTOVER-001=pass` 与
+> `VAL-LEGACY-ABSENCE-001=pass` 前，不得配置本页 production control plane、provision
+> credential/trust pins，也不得执行 tag、Draft 或 promotion。下文同-tag/GHCR 段落是审计
+> 现状，不是当前可执行 runbook。
 
 决策与证据：
 
@@ -23,6 +30,8 @@ release 会 fail closed。source tests 或普通 macOS CI 不能替代 protected
 - [ADR-0003：macOS release policy](../adr/0003-macos-release-signing-update-policy.md)
 - [ADR-0011：signed update client](../adr/0011-main-owned-signed-update-client.md)
 - [ADR-0014：two-stage release promotion](../adr/0014-two-stage-desktop-release-promotion.md)
+- [ADR-0016：incremental retirement / engineering package boundary](../adr/0016-pre1-incremental-retirement-engineering-package.md)
+- [W01–W16 work plan](work-plan.md)
 - [ITER-0002/R09](iterations/0002-r09-signed-update-client.md)
 - [追踪矩阵](traceability.md)
 
@@ -62,6 +71,9 @@ source/unprovisioned、校验或网络错误时，应用的 signed update check/
 改变 signed updater 状态；维护者和用户都不得把它当作已验证资产或成功发布的证据。
 
 ## 首次 provision 或轮换
+
+本节从 W14 开始：先验证 GitHub controls，随后在 W15 provision。W13 前即使管理员权限可用，
+也不得提前执行。
 
 必须由有权管理 canonical repository 设置的管理员在可信主机操作。先在 GitHub UI 确认两个
 Environment 都禁止 admin bypass，并配置下列 fail-closed 控制：
@@ -151,6 +163,12 @@ API 可见字段保存为脱敏 JSON，UI-only 控制保存截图；两者都按
    digest 的公开 promotion。两次审批之间不得编辑、覆盖或追加 Draft 资产。
 7. `protected-main`、`release-tag-creation`、`immutable-release-tags` 都是 active、pattern/
    rule/bypass 精确匹配，并已开启 GitHub Immutable Releases。
+8. 已记录 W13 checkpoint commit/package digest；checkpoint → formal tag 的 diff 只包含审核过的
+   production public pins、release metadata 与版本变更，没有 runtime logic 或 legacy surface；
+   formal tag 的 source/aggregate absence 重跑已通过。否则回到 W13，不得创建候选。该 W15
+   continuity verifier/evidence 尚未实现且当前为 `not-run`；它必须在 W13 checkpoint 前落地并
+   冻结。若到 W15 才新增/修改，必须建立新 W13 checkpoint 并重跑。
+   现有 workflow 没有 checkpoint 输入，不会自动执行此检查。
 
 可在 source checkout 运行不接触 secret 的策略检查：
 
@@ -189,6 +207,10 @@ container workflow 与下述 desktop workflow；二者没有跨 workflow 事务�
 10. 逐项核对 GitHub 远端 tag/title/state/notes 与 name/size/`sha256:` digest/download URL
     完整集合，然后停止，全程不覆盖现有 Release。
 
+以上是当前 source workflow 的既有行为；它不实现发布前检查第 8 项。machine-checkable
+continuity verifier 必须在 W13 前实现、审查并冻结；若 W15 才补齐，就先回到 W13 建立并复验
+新 checkpoint。只有其独立、可复现 evidence 通过后才允许创建 tag。
+
 tag push 永远不会公开 **desktop GitHub Release**，但 GHCR workflow 可能已经公开同版本
 container image。任一步失败都停止；记录这种非原子部分成功，不要手工删减、替换、追加或
 `--clobber` Draft assets。若构建、验证或真机测试发现问题，不移动旧 tag，也不复用该候选；
@@ -198,16 +220,18 @@ build/Draft run，不能用其中一条的成功替代另一条。
 ### 阶段二：真机验证并手动推广
 
 1. 从 Draft 下载完整资产到新的私有目录，先运行下方 `verify-assets`。
-2. 在目标 M4 上完成适用的 clean-user、Gatekeeper、packaged runtime、Codex、embedding 和
-   update 测试，如实更新物理门禁记录。
+2. 在目标 M4 上以**将要公开的 exact Draft digest**重新运行完整
+   `VAL-ELECTRON-CUTOVER-001`、`VAL-LEGACY-ABSENCE-001`，并完成 clean-user、Gatekeeper、
+   packaged runtime、Codex、embedding 和 update 测试；不得复用 W13 engineering package 结果。
 3. 记录候选 manifest 的小写 SHA-256：
 
    ```bash
    shasum -a 256 "/absolute/path/to/release-assets/release-manifest.json"
    ```
 
-4. 只有测试结论允许公开时，从 trusted `main` 手动运行 workflow。`--ref` 必须固定为
-   `main`；`release_tag` 只是要验证的 exact tag 资料，digest 必须是上一步的 64 位小写值：
+4. 只有 `VAL-RELEASE-CONTINUITY-001=pass` 且所有测试结论允许公开时，才从 trusted `main`
+   手动运行 workflow。`--ref` 必须固定为 `main`；`release_tag` 只是要验证的 exact tag 资料，
+   digest 必须是上一步的 64 位小写值：
 
    ```bash
      gh workflow run desktop-release.yml \
@@ -237,6 +261,8 @@ build/Draft run，不能用其中一条的成功替代另一条。
 模式；手动 dispatch 从不重建候选。若 Draft 不存在、已经被编辑、资产不完整、digest 不一致、
 tag 漂移或 Release ID 改变，promotion 必须 fail closed。promotion 开始时若 exact Release
 已经 published，无论资产看似是否一致，都必须作为发布安全事件处理；不得重跑来“幂等洗绿”。
+W13 checkpoint/tag diff、tag source/absence 或 exact Draft cutover/absence 证据缺失/漂移时同样
+fail closed。
 
 ## 资产核验
 

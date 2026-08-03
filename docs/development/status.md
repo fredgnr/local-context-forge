@@ -9,10 +9,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 截止日期 | 2026-07-31 |
+| 截止日期 | 2026-08-03 |
 | canonical repository | `fredgnr/local-context-forge` |
-| 本轮文档审计基线 | `main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8` |
-| 基线来源 | PR #7、#8、#17 已合入 `main` |
+| 本轮治理基线 | `main@da40553e43ec6272e1affc1f40abf4f9215f1ba5` |
+| 基线来源 | PR #7、#8、#17、#18 已合入 `main`；本 Work 开始时 open PR/tag/Release 均为 0 |
 | 产品版本 | `0.3.0-alpha.1` |
 | 数据库 schema | `5` |
 | 活动父迭代 | [ITER-0002](iterations/0002-bundled-runtimes.md) |
@@ -28,14 +28,17 @@
 
 ## 可复现的当前源码证据
 
-PR #17 的 head `71890ee99edc572f32a1e4eaf946853bc1e57f4e` 运行了：
+PR #17 的 head `71890ee99edc572f32a1e4eaf946853bc1e57f4e` 提供了既有 source contract。
+PR #18 随 merge commit `da40553e43ec6272e1affc1f40abf4f9215f1ba5` 进入 `main`。截至
+2026-08-03，最近 main 的 Desktop source CI run `30630283893` 与 container run
+`30630283873` 成功；container workflow 仍存在。历史 PR #17 证据包括：
 
 - [Desktop source CI run 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112)：
   Python、Web、Desktop source checks，以及 macOS 15 arm64 source IPC contract 均成功；
 - [Container PR build run 30611309114](https://github.com/fredgnr/local-context-forge/actions/runs/30611309114)：
   容器 PR 构建成功，但不发布镜像。
 
-该 head 随 PR #17 以 merge commit `fb8bbbc` 进入 `main`。这两次运行不包含真实签名、
+这些运行不包含可用 packaged smoke、真实签名、
 DMG、模型权重、已登录 Codex、干净用户安装或 GitHub 控制面验证，因此不能提升任何
 packaged/physical gate。
 
@@ -44,6 +47,8 @@ packaged/physical gate。
 | 路径 | 当前可用性 | 适用对象 | 主要限制 |
 | --- | --- | --- | --- |
 | Electron 源码模式 | 可用于开发和 source 验证 | 开发者 | 借用开发机 Python/Node；不是正式包 |
+| 最小 packaged smoke | `planned` / `not-run` | 后续 W02 removal feedback | 当前 base builder 被 unprovisioned production trust audit 阻断；不得用 legacy `make smoke` 冒充 |
+| 完整 engineering test package | `planned` / `not-run` | W04–W12 工程物理验证 | 只能从 W10/W11 cleaned tree 构建；UNOFFICIAL、无 production trust/tag/upload |
 | Electron 正式 DMG | `not-run` / 不推荐 | 将来的普通用户 | trust pins、签名、真机和 promotion 未完成 |
 | Legacy Docker/Web | 已弃用、unsupported、待删除 | 仅用于解释当前仓库残留 | 不承诺修复、迁移、兼容窗口或继续可用 |
 | Windows + Ollama | unsupported | — | Electron 不支持远程 Windows worker；legacy 路径将删除 |
@@ -51,7 +56,7 @@ packaged/physical gate。
 
 不要新建 legacy 部署。仓库中暂存的 `./install.sh`、`install.command`、`make install`、
 Compose 和 localhost HTTP 路径尚未从代码删除，但不再是受支持交付路径；它们会由
-ITER-0007 移除。此状态变化不自动停止现有容器，也不读取、迁移或删除旧数据。
+ITER-0008 的 W10/W11 slices 移除。此状态变化不自动停止现有容器，也不读取、迁移或删除旧数据。
 
 ## 阶段状态
 
@@ -62,9 +67,9 @@ ITER-0007 移除。此状态变化不自动停止现有容器，也不读取、�
 | P2 Python sidecar | `in-progress` | PyInstaller/Dulwich/source 打包合同 | clean M4 bundled runtime |
 | P3 QMD/MCP/provider | `in-progress` | worker、broker、companion、attempt source 合同 | native QMD、真实模型、真实 CLI/MCP |
 | P4 Desktop 数据、模型 | `planned` | 标准路径部分落地 | Desktop backup/restore、完整模型供应链、unknown layout fail-closed |
-| P5 DMG 与发布 | `planned` | 两阶段 workflow/source policy | GitHub settings、trust pins、签名 Draft、clean-user |
+| P5 DMG 与发布 | `planned` / 后置 W14–W16 | 两阶段 workflow/source policy | W13、GitHub settings、trust pins、签名 Draft、clean-user |
 | P6 更新实机门禁 | `planned` | signed check/download/open-DMG source client | 真实 `N-1 → N`、失败注入；automatic apply 尚未设计 |
-| P7 Electron-only 退出 | `planned` | ADR-0015 与严格删除计划 | capability cutover、解耦、removal、absence gate |
+| P7 Electron-only 退出 | `planned` | ADR-0015/0016、W01–W16 与严格删除计划 | W02 smoke、W10/W11 slices、W03 engineering package、W13 final gates |
 
 P2/P3 的实现依赖 P1 已冻结的 source IPC contract，而不是 P1 的完整 packaged gate。
 P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物理退出门禁。
@@ -75,6 +80,7 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 | Gate | 结果 | 说明 |
 | --- | --- | --- |
+| `VAL-PRE1-SEQUENCE-001` authoring observation | gate `not-run`；local command `pass` | exact mappings、11 个负向 fixtures、links/version/ID-set/diff 通过；dirty authoring tree 不能替代 final PR head |
 | `VAL-GOV-001` baseline | `pass` | `71890ee` 的 Python source job（Actions 30611309112）包含 Markdown 相对链接检查 |
 | `VAL-DOC-HANDOFF-001` R11 local review | `pass`（仅本地） | 修复后三路只读审计无 Critical/High/Medium；dirty worktree 不能替代最终 commit/PR |
 | `VAL-DOC-HANDOFF-001` R11 checkpoint | `pass` | [`625db76` clean-checkout 证据](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md)；冻结全部实质文档 |
@@ -93,6 +99,10 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 | Gate | 最低真实环境 |
 | --- | --- |
+| `VAL-PRE1-SEQUENCE-001` final head | clean checkout / final PR head；当前 authoring tree 结果不作 commit-bound evidence |
+| `VAL-PACKAGED-SMOKE-001` | 独立 engineering-smoke mode 的 macOS arm64 packaged App |
+| 六个 `VAL-LEGACY-*` slice gate | exact before/after commit 与 fresh package digest；本 Work 不执行删除 |
+| `VAL-ENGINEERING-PACKAGE-001` | W10/W11 cleaned tree 的完整 non-release 工程包 |
 | `VAL-TRUST-001` | packaged App 的 renderer/Main 权限审计 |
 | `VAL-PY-001`、`VAL-GIT-001`、`VAL-IPC-001` | 无外部 runtime 的 clean macOS arm64 |
 | `VAL-QMD-001`、`VAL-QMD-EMBED-001`、`VAL-MODEL-EMBED-001` | bundled native QMD + 真实模型 |
@@ -103,8 +113,9 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 | `VAL-SECRET-001` | 真实 GitHub Environments/rulesets/Immutable Releases |
 | `VAL-RELEASE-001`、`VAL-INSTALL-001` | 真实签名 Draft 与 clean-user Gatekeeper/smoke |
 | `VAL-UPDATE-001` | 两个真实单调版本的 `N-1 → N` 与失败恢复 |
-| `VAL-ELECTRON-CUTOVER-001` | source + clean M4 packaged capability replacement matrix |
-| `VAL-LEGACY-ABSENCE-001` | final removal commit + packaged inventory + active-doc audit |
+| `VAL-ELECTRON-CUTOVER-001` | W13 final cleaned engineering package；W16 exact Draft digest 的完整第二次执行 |
+| `VAL-LEGACY-ABSENCE-001` | W13 同一 engineering digest；W16 exact Draft/tag source 的第二次 aggregate absence |
+| `VAL-RELEASE-CONTINUITY-001` | W13 checkpoint→formal tag allowlisted diff、tag source/absence 与 W16 exact Draft cutover/absence |
 
 `VAL-LEGACY-001` 与 `VAL-LEGACY-CONTROL-001` 从未运行，并由 ADR-0015 取代；它们保持
 `not-run (superseded)`，不再是退出或发布门禁。
@@ -113,17 +124,20 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 ## 当前阻塞
 
-1. Desktop 数据布局、backup/restore 和完整模型供应链尚未达到 P4 退出条件。
-2. `macos-signing`、`macos-release`、三组 ruleset 和 Immutable Releases 的真实设置没有
-   证据。
-3. `runtime/update-metadata-key.lock.json` 和
+1. 当前没有可用的 W02 packaged smoke harness；base builder 虽标记 UNOFFICIAL，仍会被
+   unprovisioned production update trust audit fail closed。
+2. W10/W11 的 decouple/deploy/transport/provider/release/docs slice 均未执行，container/GHCR
+   workflow 与 legacy runtime 仍在。
+3. W03 cleaned-tree engineering package 以及 Desktop data/backup/model/runtime/CLI/MCP/local 的
+   W04–W12 工程物理矩阵尚未完成。
+4. `macos-signing`、`macos-release`、三组 ruleset 和 Immutable Releases 的真实设置没有证据；
+   按 ADR-0016 这些工作后置到 W14，不是 W02/W10/W11 的当前前置。
+5. `runtime/update-metadata-key.lock.json` 和
    `runtime/macos-codesign-certificate.lock.json` 仍为 `unprovisioned`；生产公钥文件不存在。
-4. 没有由受保护 workflow 生成且通过真机测试的唯一 Draft 候选。
-5. 没有 clean-user M4、真实 Codex、native QMD/model、local source 和 MCP 的完整证据。
-6. 更新客户端当前只支持签名检查、下载和打开 DMG；automatic apply/install/restart/
+6. 没有由受保护 workflow 生成且通过 continuity、exact Draft cutover/absence 与真机测试的唯一
+   Draft 候选。
+7. 更新客户端当前只支持签名检查、下载和打开 DMG；automatic apply/install/restart/
    rollback 没有已接受设计和实现。
-7. Electron capability replacement、shared-code decoupling 和 legacy absence gate 均为
-   `not-run`；因此既不能直接粗暴删目录，也不能公开首个 Electron-only Release。
 8. `guide-site` 源和现有公开说明仍包含 legacy 安装/localhost/Host Runner 内容，且本 checkout
    没有可验证的 `.openai/hosting.json`；必须先恢复 exact Sites identity，再改写、测试和留下
    checkpoint deployment evidence。当前站点不是权威使用入口。
@@ -132,25 +146,30 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 ### Ready now：无需外部管理员或物理候选
 
-1. `TODO-GOV-EVIDENCE-001`：把剩余 source 结论统一绑定到公开 commit/Actions；
-2. `TODO-CI-COVERAGE-001`：决定并机器化 QMD worker/guide-site 的 source CI 覆盖；
-3. `TODO-ELECTRON-CUTOVER-001`：建立逐能力替代矩阵并补齐可在 source 环境运行的子门禁；
-4. `TODO-LEGACY-DECOUPLE-001`：在删除目录前拆开 renderer/sidecar 与 browser/TCP/spool 分支。
+1. 完成 W01 的 `TODO-PRE1-SEQUENCING-001`、`TODO-GOV-EVIDENCE-001` 与
+   `TODO-CI-COVERAGE-001` 三个 final-head gate；
+2. W01 全部退出后，执行 `TODO-PACKAGED-SMOKE-001`：实现明确隔离于 formal release 的 W02
+   harness；
+3. W02 通过后，按 [work plan](work-plan.md) 分别认领 W10/W11 slice；不能把它们合成无
+   owner 的大删除。
 
 ### Dependency-blocked：先取得前序设计/格式证据
 
-1. `TODO-DATA-LAYOUT-001` 需要先证明 ITER-0002 持久格式已经冻结到可建立新 desktop-only
-   baseline 的程度；
-2. Desktop backup/restore 依赖冻结后的 layout；不再开发 legacy migration；
-3. 完整 model supply、formal staging 和后续物理门禁依赖上述数据合同；
-4. legacy deploy/transport/release/docs 删除依赖 Electron replacement 与共享代码解耦；
-5. Draft、promotion 与真实 `N-1 → N` 依赖唯一正式候选、legacy absence 和相应前序 gate。
+1. W10/W11 每个 destructive slice 依赖 W02、exact ownership，以及 affected replacement 或合格
+   pure-legacy unsupported disposition；不依赖 unrelated full physical gate；
+2. W03 依赖全部 W10/W11 slice；W04 data/layout/backup 和 W05 model 再依赖 cleaned package；
+3. W06–W12 使用同一工程 artifact class 完成 runtime、QMD、CLI、MCP、local 与物理矩阵；
+4. W13 依赖 W03–W12，并在 final rebuilt digest 上同时运行 cutover/absence；
+5. Draft、promotion 与真实 `N-1 → N` 依赖 W13–W15；promotion 前还必须在 exact Draft
+   digest 重跑 cutover/absence，并通过 `VAL-RELEASE-CONTINUITY-001`。
 
 ### Admin-blocked：需要仓库控制面权限或独立 reviewer
 
-1. `TODO-REL-GOV-001`：配置两个 Environment、三组 ruleset 和 Immutable Releases；
-2. `TODO-REL-KEYS-001`：只能在前项通过后由可信管理员 provision credential bundle 并提交
-   public trust pins。
+以下任务已知需要管理员，但按新顺序必须等待 W13，不应现在执行：
+
+1. W14 `TODO-REL-GOV-001`：配置两个 Environment、三组 ruleset 和 Immutable Releases；
+2. W15 `TODO-REL-KEYS-001`：只能在 W14 通过后由可信管理员 provision credential bundle 并
+   提交 public trust pins。
 
 解除依赖后，才依次创建唯一 Draft、完成同一资产的 M4 物理测试、从
 `workflow_dispatch --ref main` promotion，并用两个真实单调版本完成 `N-1 → N`。Automatic

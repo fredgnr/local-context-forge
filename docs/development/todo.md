@@ -4,7 +4,8 @@
 做什么、为什么、由哪个组件负责、依赖什么、交付什么，以及怎样才算完成。
 
 当前状态见[状态快照](status.md)，架构见[系统设计](../17-system-design.md)，工作方法见
-[开发者手册](contributor-handbook.md)。
+[开发者手册](contributor-handbook.md)。W01–W16 的权威 execution rank 见
+[Pre-1.0 work plan](work-plan.md)；W 号是稳定 ID，不是执行序号。
 
 ## 1. 使用规则
 
@@ -21,32 +22,19 @@
 ## 2. 总体依赖
 
 ```text
-Governance/evidence cleanup
-        │
-        ├─────────────── GitHub release controls ── trust pins
-        │
-        ▼
-Desktop data layout ── desktop backup/restore
-        │
-        ├── model supply-chain completion
-        │
-        ▼
-Formal arm64 staging ── packaged component matrix ── shared-code decoupling
-                                                    │
-                                                    ▼
-                                         clean M4 replacement gate
-                                                    │
-                                                    ▼
-                                     legacy removal + absence gate
-                                                    │
-                                                    ▼
-                                      unique Draft → promotion
-                                                    │
-                                                    ▼
-                                        real N-1 → N update gate
+W01 governance/source baseline
+  → W02 minimal packaged smoke
+  → W10/W11 independent legacy slices
+  → W03 cleaned-tree engineering test package
+  → W04–W12 data/model/runtime/CLI/MCP/local/physical matrix
+  → W13 final cleaned engineering checkpoint：cutover + aggregate absence
+  → W14 GitHub production controls
+  → W15 production credentials/trust pins + formal RC + unique Draft
+  → W16 physical review + promotion + public Release + real N-1 → N
 ```
 
-GitHub settings 可以与数据实现并行准备，但真实公开 Release 必须等待所有阻断门禁。
+W02/W03 只允许明确 non-release 的 engineering artifact。GitHub settings、正式 credentials、
+production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W13 前提前实施。
 
 ## 3. 优先级总览
 
@@ -55,47 +43,98 @@ GitHub settings 可以与数据实现并行准备，但真实公开 Release 必�
 
 | Task ID | 优先级 | Roadmap | 状态 | Owner component | 主要依赖 | 验收 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TODO-GOV-EVIDENCE-001 | Priority-0 | P0 | `planned` | Governance/CI | 无 | commit-bound evidence |
-| TODO-CI-COVERAGE-001 | Priority-0 | P0 | `planned` | CI/QMD/Sites | 无 | `VAL-CI-COVERAGE-001` |
+| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `in-progress` | Governance/Architecture | 无 | `VAL-PRE1-SEQUENCE-001` final head |
+| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `planned` | Governance/CI | 无 | `VAL-GOV-001` final head |
+| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `planned` | CI/QMD/Sites | 无 | `VAL-CI-COVERAGE-001` |
+| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` | Desktop/Packaging/QA | W01 全部退出门禁 | `VAL-PACKAGED-SMOKE-001` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
-| TODO-DATA-LAYOUT-001 | Priority-0 | P4 | `planned` | Desktop runtime/Data | ADR-0004 | `VAL-DATA-001` foundation |
-| TODO-DATA-BACKUP-001 | Priority-0 | P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
+| TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
+| TODO-DATA-BACKUP-001 | Priority-1 | W04/P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
 | TODO-DATA-MIGRATION-001 | — | historical | `superseded` | Backend/Desktop migration | ADR-0015 | `not-run` |
-| TODO-MODEL-SUPPLY-001 | Priority-0 | P4 | `planned` | QMD/Model/Release | layout | `VAL-MODEL-001` |
-| TODO-REL-GOV-001 | Priority-0 | P5 | `blocked` | Release governance | GitHub admin | `VAL-SECRET-001` settings |
-| TODO-REL-KEYS-001 | Priority-0 | P5 | `blocked` | Release admin/Security | release controls | provisioned public pins |
-| TODO-PACK-ARM64-001 | Priority-1 | P2/P3→P5 | `planned` | Packaging/Python/QMD | data contracts、keys | `VAL-PACK-001` |
-| TODO-PHYS-TRUST-001 | Priority-1 | P1/P5 | `planned` | Desktop Security/QA | packaged candidate | `VAL-TRUST-001` |
-| TODO-PHYS-PY-001 | Priority-1 | P2/P5 | `planned` | Python/Desktop QA | packaged candidate | `VAL-PY/GIT/IPC-001` |
-| TODO-PHYS-QMD-001 | Priority-1 | P3/P4/P5 | `planned` | QMD/Retrieval QA | packaged candidate、model | QMD/model gates |
-| TODO-PHYS-CLI-001 | Priority-1 | P3/P5 | `planned` | Provider/QA | packaged candidate、real CLIs | `VAL-CLI-001` |
-| TODO-PHYS-MCP-001 | Priority-1 | P3/P5 | `planned` | MCP/QA | packaged candidate、Codex | MCP gates |
-| TODO-PHYS-LOCAL-001 | Priority-1 | P1/P4/P5 | `planned` | Local source/QA | packaged candidate | `VAL-LOCAL-SOURCE-003` |
-| TODO-ELECTRON-CUTOVER-001 | Priority-1 | P7 | `planned` | Desktop/Product/QA | packaged candidate、model、CLI/MCP | `VAL-ELECTRON-CUTOVER-001` |
-| TODO-LEGACY-DECOUPLE-001 | Priority-1 | P7 | `planned` | Desktop/Backend/Web | cutover source subgate | focused + aggregate source |
-| TODO-REL-DRAFT-001 | Priority-1 | P5 | `blocked` | Release engineering | all Priority-0 release prerequisites + legacy absence | unique verified Draft |
-| TODO-REL-PROMOTE-001 | Priority-1 | P5 | `blocked` | Release reviewer/Security | Draft physical pass | public immutable Release |
-| TODO-UPDATE-NMINUS1-001 | Priority-1 | P6 | `blocked` | Update/Data QA | two real releases | `VAL-UPDATE-001` |
+| TODO-MODEL-SUPPLY-001 | Priority-1 | W05/P4 | `planned` | QMD/Model/Release | layout | `VAL-MODEL-001` |
+| TODO-REL-GOV-001 | Priority-3 | W14/P5 | `blocked` | Release governance | W13 + GitHub admin | `VAL-SECRET-001` settings |
+| TODO-REL-KEYS-001 | Priority-3 | W15/P5 | `blocked` | Release admin/Security | W14 | provisioned public pins |
+| TODO-PACK-ENGINEERING-001 | Priority-1 | W03 | `planned` | Desktop/Packaging/QA | W10/W11 | `VAL-ENGINEERING-PACKAGE-001` |
+| TODO-PACK-ARM64-001 | Priority-3 | W15/P5 | `planned` | Packaging/Python/QMD | W13/W14、data contracts、keys | `VAL-RELEASE-CONTINUITY-001`、`VAL-PACK-001` |
+| TODO-PHYS-TRUST-001 | Priority-1 | W06/P1 | `planned` | Desktop Security/QA | W03 engineering package | `VAL-TRUST-001` |
+| TODO-PHYS-PY-001 | Priority-1 | W06/P2 | `planned` | Python/Desktop QA | W03 engineering package | `VAL-PY/GIT/IPC-001` |
+| TODO-PHYS-QMD-001 | Priority-1 | W07/P3/P4 | `planned` | QMD/Retrieval QA | W03、model | QMD/model gates |
+| TODO-PHYS-CLI-001 | Priority-1 | W08/P3 | `planned` | Provider/QA | W03、real CLIs | `VAL-CLI-001` |
+| TODO-PHYS-MCP-001 | Priority-1 | W09/P3 | `planned` | MCP/QA | W03、Codex | MCP gates |
+| TODO-PHYS-LOCAL-001 | Priority-1 | W12/P1/P4 | `planned` | Local source/QA | W03 | `VAL-LOCAL-SOURCE-003` |
+| TODO-ELECTRON-CUTOVER-001 | Priority-1 | W13/P7 | `planned` | Desktop/Product/QA | W04–W12 final package | `VAL-ELECTRON-CUTOVER-001` |
+| TODO-LEGACY-DECOUPLE-001 | Priority-0 | W10/P7 | `planned` | Desktop/Backend/Web | W02 + slice source gate | `VAL-LEGACY-DECOUPLE-001` |
+| TODO-REL-DRAFT-001 | Priority-3 | W15/P5 | `blocked` | Release engineering | W13/W14、keys、formal staging、continuity tag subgate | unique verified Draft |
+| TODO-REL-PROMOTE-001 | Priority-3 | W16/P5 | `blocked` | Release reviewer/Security | exact Draft cutover/absence + continuity + physical pass | public immutable Release |
+| TODO-UPDATE-NMINUS1-001 | Priority-3 | W16/P6 | `blocked` | Update/Data QA | two real releases | `VAL-UPDATE-001` |
 | TODO-UPDATE-APPLY-001 | Priority-2 | P6 | `planned` | Architecture/Update | superseding ADR | `VAL-UPDATE-APPLY-001` |
-| TODO-OPS-DIAGNOSTICS-001 | Priority-2 | P4/P5 | `planned` | Desktop Operations | data/log layout | `VAL-DIAGNOSTICS-001` |
-| TODO-RUNTIME-CANCEL-001 | Priority-2 | P2/P3 | `planned` | Main/Backend lifecycle | packaged harness | `VAL-CANCEL-001` |
-| TODO-MCP-PAIRING-001 | Priority-2 | P3 | `planned` | MCP/Security | physical MCP | `VAL-MCP-PAIRING-001` |
-| TODO-LOCAL-HARDEN-001 | Priority-2 | P1/P4 | `planned` | Local source/Security | physical local source | `VAL-LOCAL-HARDEN-001` |
-| TODO-QMD-COMPACT-001 | Priority-2 | P3/P4 | `planned` | QMD/Data | real corpus fixtures | `VAL-QMD-COMPACT-001` |
-| TODO-EVAL-CORPUS-001 | Priority-2 | P3/P5 | `planned` | Retrieval/Wiki QA | stable packaged stack | `VAL-EVAL-001` |
+| TODO-OPS-DIAGNOSTICS-001 | Priority-2 | W12/P4 | `planned` | Desktop Operations | data/log layout | `VAL-DIAGNOSTICS-001` |
+| TODO-RUNTIME-CANCEL-001 | Priority-2 | W06/P2/P3 | `planned` | Main/Backend lifecycle | W03 | `VAL-CANCEL-001` |
+| TODO-MCP-PAIRING-001 | Priority-2 | W09/P3 | `planned` | MCP/Security | physical MCP | `VAL-MCP-PAIRING-001` |
+| TODO-LOCAL-HARDEN-001 | Priority-2 | W12/P1/P4 | `planned` | Local source/Security | physical local source | `VAL-LOCAL-HARDEN-001` |
+| TODO-QMD-COMPACT-001 | Priority-2 | W07/P3/P4 | `planned` | QMD/Data | real corpus fixtures | `VAL-QMD-COMPACT-001` |
+| TODO-EVAL-CORPUS-001 | Priority-2 | W07/P3 | `planned` | Retrieval/Wiki QA | stable engineering package | `VAL-EVAL-001` |
 | TODO-WIKI-INCREMENTAL-001 | Priority-3 | post-P3 | `planned` | Backend/Wiki | eval corpus | `VAL-WIKI-INCREMENTAL-001` |
-| TODO-LEGACY-REMOVE-DEPLOY-001 | Priority-2 | P7 | `planned` | Desktop/Build/Operations | decoupling + cutover pass | absence inventory |
-| TODO-LEGACY-REMOVE-TRANSPORT-001 | Priority-2 | P7 | `planned` | Backend/Web/MCP | decoupling + cutover pass | private-UDS-only gate |
-| TODO-LEGACY-REMOVE-RELEASE-001 | Priority-2 | P7 | `planned` | CI/Release | deploy removal | no container/GHCR trigger |
-| TODO-LEGACY-REMOVE-DOCS-001 | Priority-2 | P7 | `planned` | Docs/Sites/Operations | deploy + transport + release removal | active-doc audit |
-| TODO-LEGACY-ABSENCE-001 | Priority-2 | P7 | `planned` | CI/Governance | all removal tasks | `VAL-LEGACY-ABSENCE-001` |
+| TODO-LEGACY-REMOVE-DEPLOY-001 | Priority-0 | W11/P7 | `planned` | Desktop/Build/Operations | W02 + decoupling | `VAL-LEGACY-DEPLOY-001` |
+| TODO-LEGACY-REMOVE-TRANSPORT-001 | Priority-0 | W10/P7 | `planned` | Backend/Web/MCP | W02 + decoupling | `VAL-LEGACY-TRANSPORT-001` |
+| TODO-LEGACY-REMOVE-PROVIDER-001 | Priority-0 | W10/P7 | `planned` | Desktop/Backend/Provider | W02 + decoupling | `VAL-LEGACY-PROVIDER-001` |
+| TODO-LEGACY-REMOVE-RELEASE-001 | Priority-0 | W11/P7 | `planned` | CI/Release | W02 + deploy inventory | `VAL-LEGACY-RELEASE-001` |
+| TODO-LEGACY-REMOVE-DOCS-001 | Priority-0 | W11/P7 | `planned` | Docs/Sites/Operations | prior slices | `VAL-LEGACY-DOCS-001` |
+| TODO-LEGACY-ABSENCE-001 | Priority-1 | W13/P7 | `planned` | CI/Governance | W03–W12 | `VAL-LEGACY-ABSENCE-001` |
 | TODO-LEGACY-EXIT-001 | — | historical | `superseded` | Migration/Product/Operations | ADR-0015 | `not-run` |
 | TODO-REMOTE-WORKER-001 | Priority-3 | future | `planned` | Product/Architecture | desktop GA | `VAL-REMOTE-WORKER-DECISION-001` |
 
 `blocked` 表示需要仓库管理员、真实 Release 或先行门禁；不是建议绕过。`superseded` 行是
 可追溯 tombstone，不再进入执行队列。
 
-## 4. Priority-0：先消除证据、数据和发布阻塞
+## 4. W01/W02、数据与后置 release prerequisites
+
+### TODO-PRE1-SEQUENCING-001：接受并机器化新的 Pre-1.0 顺序
+
+- 状态：`in-progress`
+- Owner：Governance/Architecture
+- 关联：REQ-PRE1-SEQUENCING-001、ADR-0016、ITER-0002/R13
+- 依赖：无
+
+交付：ADR-0016、W01–W16 execution rank、更新后的 TODO/traceability/roadmap/status/iteration/
+skills/runbook，以及接入 `ci-python` 的 `tools/check_pre1_work_plan.py` 和负向 unit fixtures。
+本任务不删除 legacy、不实现 package、不改 GitHub settings、不生成凭据、不创建 Release。
+
+验收：最终 PR head 的 links/version/plan/diff 与 CI 为 commit-bound `pass`，且所有 runtime、
+packaged、physical、settings 和 release gate 保持真实的 `not-run`。
+
+### TODO-PACKAGED-SMOKE-001：最小非发行 packaged smoke harness
+
+- 状态：`planned`
+- Owner：Desktop/Packaging/QA
+- 关联：REQ-PACKAGED-SMOKE-001、ADR-0016、ITER-0008/I01
+- 依赖：W01 的 `VAL-PRE1-SEQUENCE-001`、`VAL-GOV-001`、`VAL-CI-COVERAGE-001` 全部为 `pass`
+<!-- pre1-w02-requires: VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001 -->
+
+交付独立 engineering-smoke packaging mode：绑定 exact commit/digest/arch/inventory，启动
+packaged App，验证 renderer/preload handshake、Main → private UDS sidecar 的 health/一个领域
+请求、正常退出、无 orphan、无 public INET listener，并以 PATH trap 证明 exercised path 不发现
+系统 Python/Node/Git。
+
+必须显著 `UNOFFICIAL` / `engineering-only` / `publishable=false`，不读取 production secret，
+不要求 production trust pins，不生成 updater/release metadata，不由 tag 触发，不上传、不创建
+Draft/Release；updater `unavailable` 且不联网。不得放宽 formal `beforePack` trust audit。
+
+验收：`VAL-PACKAGED-SMOKE-001=pass`。它不证明 QMD/model、真实 CLI/MCP、backup、完整 SBOM、
+正式签名、Gatekeeper、Release 或 update。
+
+### TODO-PACK-ENGINEERING-001：清理后的完整工程测试包
+
+- 状态：`planned`
+- Owner：Desktop/Packaging/QA
+- 关联：REQ-ENGINEERING-PACKAGE-001、ADR-0016、ITER-0008/I08
+- 依赖：W10/W11 全部 slice gate `pass`
+
+从 cleaned tree 生成完整 non-release engineering package，包含 audited renderer、bundled
+Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W04–W12 测试入口。
+它继承 W02 的 production-secret/tag/upload/Draft/Release 禁令，updater 保持 unavailable。
+
+验收：`VAL-ENGINEERING-PACKAGE-001=pass`；不得提升 `VAL-PACK/INSTALL/RELEASE/SECRET-001`。
 
 ### TODO-GOV-EVIDENCE-001：统一可复现证据坐标
 
@@ -275,8 +314,11 @@ Desktop 自身的数据布局、backup/restore、unknown-layout fail-closed 仍�
 - 状态：`blocked`
 - Owner：Release governance/Security
 - 关联：REQ-RELEASE-GOV-001、ADR-0014、ITER-0004/P02/P02a
-- 依赖：canonical repository 管理员、至少一名独立 reviewer、公开仓库支持的保护能力
+- 依赖：W13 的 final cutover/absence 为 `pass`；canonical repository 管理员、至少一名独立
+  reviewer、公开仓库支持的保护能力
 - 阻塞：需要 canonical repository 管理员和独立 reviewer
+
+本任务属于 W14。W13 前不得为了 W02/W03 工程包提前修改任何 GitHub setting。
 
 交付：
 
@@ -313,7 +355,7 @@ Desktop 自身的数据布局、backup/restore、unknown-layout fail-closed 仍�
 - 状态：`blocked`
 - Owner：Release admin/Security
 - 关联：REQ-SECRET-001、REQ-UPDATE-001
-- 依赖：TODO-REL-GOV-001
+- 依赖：TODO-REL-GOV-001（W14）完整通过；本任务属于 W15
 
 执行：
 
@@ -339,14 +381,19 @@ python3 tools/bootstrap_desktop_release_keys.py \
 - 无 `.p12`、private key、password、bundle、keychain/export；
 - rotation/revocation 说明可执行。
 
-## 5. Priority-1：正式打包与物理 M4
+## 5. Engineering physical 与后置 formal packaging
 
 ### TODO-PACK-ARM64-001：正式 runtime staging 与候选打包
 
 - 状态：`planned`
 - Owner：Packaging/Python/QMD
-- 关联：REQ-PACK-001、ITER-0002/R02–R06、ITER-0004/P01/P03
-- 依赖：数据合同可冻结、trust pins provisioned
+- 关联：REQ-PACK-001、REQ-RELEASE-002、ADR-0016、ITER-0002/R02–R06、ITER-0004/P01/P03
+- 依赖：W13/W14、数据合同冻结、production trust pins provisioned；属于 W15
+
+本任务只生成正式候选，不得用来实现 W02/W03。`VAL-PACK-001` 继续要求 production trust、
+protected workflow 和 formal asset set。W13 checkpoint 到 formal tag 的 diff 必须只包含经审核
+allowlist 的 production public trust pins、release metadata 与版本变更；任何 runtime logic 或
+legacy surface 变化都使候选 fail closed，并要求回到 W13 重跑工程门禁。
 
 交付：
 
@@ -355,6 +402,8 @@ python3 tools/bootstrap_desktop_release_keys.py \
 - Node 22.23.2/QMD 2.5.3、better-sqlite3 arm64 source rebuild；
 - renderer/companion staging；
 - manifest/schema/version/source commit；
+- 调用 W13 前已冻结的 machine-checkable checkpoint → tag allowlisted source-diff verifier，以及
+  formal tag source/aggregate absence 入口；不得在 W13 后首次新增 verifier；
 - exact inventory、normalized digest、SBOM、notices；
 - Mach-O architecture、dylib/RPATH；
 - nested signing order、临时 keychain 清理；
@@ -364,6 +413,8 @@ python3 tools/bootstrap_desktop_release_keys.py \
 验收：
 
 - `macos-15` protected build 成功；
+- formal tag 已重跑 source/aggregate absence，`VAL-RELEASE-CONTINUITY-001` tag/diff subgate 为
+  `pass`；
 - artifact 与 Draft bytes 一致；
 - 失败 PATH 下 packaged smoke 不发现系统 runtime；
 - `VAL-PACK-001`、`VAL-RELEASE-001` 的构建子项为 `pass`。
@@ -372,7 +423,7 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 - 状态：`planned`
 - Owner：Desktop Security/QA
-- 依赖：formal candidate
+- 依赖：W03 engineering test package；正式候选在 W15 另行复核
 
 验证：
 
@@ -389,7 +440,7 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 - 状态：`planned`
 - Owner：Python/Desktop QA
-- 依赖：formal candidate
+- 依赖：W03 engineering test package；正式候选在 W15 另行复核
 
 验证：
 
@@ -406,7 +457,7 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 - 状态：`planned`
 - Owner：QMD/Retrieval QA
-- 依赖：formal candidate、TODO-MODEL-SUPPLY-001
+- 依赖：W03 engineering test package、TODO-MODEL-SUPPLY-001
 
 验证：
 
@@ -432,7 +483,7 @@ python3 tools/bootstrap_desktop_release_keys.py \
 - 状态：`planned`
 - Owner：Provider/QA
 - 关联：REQ-CLI-001、ADR-0005、ITER-0002/R05
-- 依赖：formal candidate、真实 CLI 登录
+- 依赖：W03 engineering test package、真实 CLI 登录
 
 产物与验证矩阵：
 
@@ -451,7 +502,8 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 - 状态：`planned`
 - Owner：MCP/QA
-- 依赖：formal `/Applications` App、真实官方签名 Codex
+- 依赖：W03 engineering test package 的 `/Applications` 安装、真实官方签名 Codex；formal
+  candidate 在 W15 另行复核
 
 验证：
 
@@ -470,7 +522,7 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 - 状态：`planned`
 - Owner：Local source/QA
-- 依赖：formal packaged App
+- 依赖：W03 engineering test package
 
 验证：
 
@@ -490,11 +542,15 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 - 状态：`blocked`
 - Owner：Release engineering
-- 依赖：所有 release P0、formal staging、目标版本同步、`VAL-LEGACY-ABSENCE-001=pass`
+- 关联：REQ-RELEASE-001、REQ-RELEASE-002、REQ-SECRET-001、ADR-0014、ADR-0016
+- 依赖：W13 checkpoint cutover/absence、W14 controls、keys/formal staging、目标版本同步，以及
+  `VAL-RELEASE-CONTINUITY-001` tag/diff subgate `pass`
 
 执行前：
 
 - clean protected `main`；
+- 记录 W13 checkpoint commit/package digest、formal tag commit，并证明二者之间只有 allowlisted
+  production public pins/release metadata/version diff；
 - runtime/package/QMD version 完全一致；
 - 确认 container workflow/GHCR tag 耦合已删除，同一 `vX.Y.Z` 只进入 desktop candidate path；
 - source/policy CI success；
@@ -514,7 +570,9 @@ python3 tools/bootstrap_desktop_release_keys.py \
 
 - 状态：`blocked`
 - Owner：Release reviewer/Security
-- 依赖：同一 Draft 上所有 physical gate `pass`
+- 关联：REQ-RELEASE-001、REQ-RELEASE-002、REQ-RELEASE-GOV-001、ADR-0014、ADR-0016
+- 依赖：同一 Draft exact digest 上完整 `VAL-ELECTRON-CUTOVER-001`、
+  `VAL-LEGACY-ABSENCE-001`、`VAL-RELEASE-CONTINUITY-001` 和所有 physical gate `pass`
 
 执行：
 
@@ -533,6 +591,8 @@ gh workflow run desktop-release.yml \
 - verifier 来自 fresh exact `main`；
 - tag detached worktree/fresh peel；
 - fixed Release ID；
+- exact Draft digest 的完整 cutover/absence 重新运行且
+  `VAL-RELEASE-CONTINUITY-001=pass`，不得复用 W13 engineering evidence；
 - PATCH 前 fresh `origin/main` promotion order；
 - 唯一 mutation 为 `draft=false` PATCH；
 - post-publish `gh release verify`、同一 ID、immutable、notes/assets；
@@ -753,19 +813,25 @@ gh workflow run desktop-release.yml \
 
 ## 7. Electron-only cutover、Legacy 删除与未来范围
 
-本节受 [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) 和
-[严格 removal manifest](legacy-retirement.md) 约束。项目允许无兼容窗口的大范围删除，但
+本节受 [ADR-0015](../adr/0015-electron-only-legacy-retirement.md)、
+[ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md) 和
+[严格 removal manifest](legacy-retirement.md) 约束。项目允许在 W02 后按独立 slice 无兼容窗口
+删除，但
 **不允许用目录名判断归属**：`web/src/**` 是 Electron renderer，`backend/app/**` 包含 private
 UDS sidecar 和领域层。任何实现 PR 必须先逐项声明 `remove`、`retain` 或 `split`，并引用本节
-task ID。
+task ID。shared 或最终必需 Electron capability 必须先证明 replacement；纯 legacy-only 且由
+REQ-PRE1-BREAKING-001 明确 unsupported 的 capability 可记录受限 `no-replacement / unsupported`，
+但必须证明无 Electron caller、用户数据或外部副作用，且不得用于 protected path 或 formal
+release safety。
 
 ### TODO-ELECTRON-CUTOVER-001：证明 Electron 已替代 legacy 能力
 
 - 状态：`planned`
 - 优先级：Priority-1
 - Owner：Desktop/Product/QA
-- 关联：REQ-ELECTRON-ONLY-001、ADR-0015、ITER-0007/E01
-- 依赖：packaged candidate、真实 embedding、Codex/Cursor、MCP 和本地仓库 gate
+- 关联：REQ-ELECTRON-ONLY-001、ADR-0015、ADR-0016、ITER-0008/I09
+- 依赖：W03 engineering package；W04–W12 的真实 embedding、Codex/Cursor、MCP、本地仓库和
+  工程物理 gate
 
 交付：
 
@@ -774,105 +840,134 @@ task ID。
 2. 验证 embedding 模型选择、状态、全局/单仓 rebuild 和 stale-index fallback；
 3. 验证 Codex 默认、Cursor 仅 preflight fallback、attempt audit 和取消语义；
 4. 验证 Context7 `resolve-library-id` / `query-docs`、Codex onboarding 和 stdio companion；
-5. 验证上述流程不调用 Docker、public TCP API、legacy `mcp/` 或 Host Runner spool；
-6. 为每个将删除的 legacy capability 指向唯一 Electron owner 和 failure UX。
+5. 从 final cleaned commit 重建 package，验证上述流程不调用 Docker、public TCP API、legacy
+   `mcp/` 或 Host Runner spool；
+6. 聚合每个已删除 slice 的 Electron owner、failure UX 和 absence evidence。
+7. 在 W13 checkpoint 前冻结 future formal continuity verifier、source-diff allowlist 与 evidence
+   schema；若以后修改它们，必须建立新 checkpoint 并重跑 W13。
 
-验收：`VAL-ELECTRON-CUTOVER-001` 为 `pass`。source `pass` 不能替代至少一次 clean M4
-packaged candidate smoke；该门禁也不替代 P5 的公开发行或 P6 的跨版本更新门禁。
+验收：final rebuilt package 的 `VAL-ELECTRON-CUTOVER-001` 为 `pass`。source 或早期 W02 smoke
+不能替代 clean M4 完整矩阵；该门禁也不替代 W14–W16 的正式发行或更新门禁。
 
 ### TODO-LEGACY-DECOUPLE-001：解耦共享 Renderer、Backend 与 provider
 
 - 状态：`planned`
-- 优先级：Priority-1
+- 优先级：Priority-0
 - Owner：Desktop/Backend/Web
-- 关联：REQ-ELECTRON-ONLY-001、ITER-0007/E02
-- 依赖：TODO-ELECTRON-CUTOVER-001 的 source 子门禁
+- 关联：REQ-ELECTRON-ONLY-001、REQ-LEGACY-SLICE-001、ADR-0016、ITER-0008/I02
+- 依赖：`VAL-PACKAGED-SMOKE-001=pass`；affected replacement source 子门禁
 
 交付：
 
-- renderer 只通过版本化 desktop bridge 调用；先隔离 `fetch()`/`VITE_API_BASE` browser fallback，
-  但在聚合 cutover `pass` 前不删除；保留 `web/src/**`、Vite/TypeScript build 和 renderer
+- renderer 只通过版本化 desktop bridge 调用；隔离 `fetch()`/`VITE_API_BASE` browser fallback，
+  经 transport slice 前后门禁后删除；保留 `web/src/**`、Vite/TypeScript build 和 renderer
   staging/audit；
 - Python app 只由 Main 以认证 private UDS 启动；先隔离 public TCP ASGI 入口和 CORS/browser
-  分支，聚合 gate 后由 transport task 删除；保留 FastAPI/uvicorn/h11、`backend/app/cli.py`、
+  分支，经 transport slice 前后门禁后删除；保留 FastAPI/uvicorn/h11、`backend/app/cli.py`、
   factory/domain/desktop routes；
 - provider 只使用 Main-owned Codex/Cursor attempt；拆出 Host Runner spool、heartbeat、direct
-  CLI/Ollama/browser-only provider 分支，聚合 gate 后再删除；
+  CLI/Ollama/browser-only provider 分支，由独立 provider slice 删除；
 - Context7 MCP 只保留 `desktop/companion/**` 与 Main bridge；
 - mixed tests 拆分后仍覆盖 queue/review/publish/query/Wiki/source-ref 和 cancellation。
 
 验收：renderer 的 Electron path 测试证明不会调用网络 fetch；sidecar packaged path 不监听
 TCP；Electron production path 不 import/call `mcp_server`/`host_runner`；legacy 分支仍在时由
-caller inventory 证明隔离；Web/Desktop/Backend/QMD focused 和 aggregate 均通过。实际删除
-继续等待 `VAL-ELECTRON-CUTOVER-001=pass`。
+caller inventory 证明隔离；Web/Desktop/Backend/QMD focused 和 aggregate 均通过；
+`VAL-LEGACY-DECOUPLE-001=pass`。它不把 final cutover 提前标为 pass。
 
 ### TODO-LEGACY-REMOVE-DEPLOY-001：删除 Docker、Web 容器与旧安装/运维面
 
 - 状态：`planned`
-- 优先级：Priority-2
+- 优先级：Priority-0
 - Owner：Desktop/Build/Operations
-- 关联：REQ-ELECTRON-ONLY-001、ITER-0007/E03
-- 依赖：TODO-LEGACY-DECOUPLE-001；`VAL-ELECTRON-CUTOVER-001=pass`
+- 关联：REQ-ELECTRON-ONLY-001、REQ-LEGACY-SLICE-001、ADR-0016、ITER-0008/I05
+- 依赖：`VAL-PACKAGED-SMOKE-001=pass`；TODO-LEGACY-DECOUPLE-001 affected subgate
 
 删除清单：
 
 - `docker-compose.yml`、`docker/**`；
 - `install.sh`、`install.command`；
-- `host_runner/**`；`mcp/**` gateway/tests/dependencies 由 transport task 唯一负责；
+- `mcp/**` gateway/tests/dependencies 由 transport task 唯一负责；`host_runner/**`、spool 与
+  provider helper 由 provider task 唯一负责；
 - `web/Dockerfile`、`web/nginx.conf`、`web/.dockerignore`；
 - `backend/.dockerignore`、重复的 `backend/requirements*.txt`（保留 `pyproject.toml`/`uv.lock`）；
-- `scripts/lcf`、legacy backup/restore/demo/reindex/smoke/native scripts 和 Windows/Ollama setup；
+- `scripts/lcf`、legacy backup/restore/demo/reindex/smoke/native deployment scripts；
 - `scripts/macos-bootstrap.sh` 的 legacy 内容；若仍需开发引导，改为 Electron-only bootstrap；
 - legacy HTTP/MCP examples 和只服务上述路径的环境模板。
 
 严格不做：不删除 `web/`、`backend/`、`desktop/companion/`、QMD worker；不停止或删除用户
 container/image/volume/LaunchAgent；不删除 `data/`、imports、backup 或 Application Support；
 不删除 GHCR 历史 package。最后两类外部清理需要独立管理员授权，且不属于本任务。
+legacy backup/restore 与 shell diagnostics 可按受限 `no-replacement / unsupported` disposition
+删除；W04 current-format Desktop backup 与 W12 Desktop diagnostics 仍是独立未来产品能力，删除
+脚本绝不授权读取、迁移或清理任何既有 data/backup/log。
 
-验收：清单路径不存在，Electron clean checkout 仍可构建；Make targets 和 CI 不引用被删路径；
-不产生用户数据副作用。
+验收：exact before/after commit 各有 fresh package digest 和相同 smoke；清单路径不存在，
+Electron clean checkout 仍可构建；Make targets 和 CI 不引用被删路径；protected paths 存在；
+不产生用户数据副作用；`VAL-LEGACY-DEPLOY-001=pass`。
 
 ### TODO-LEGACY-REMOVE-TRANSPORT-001：删除公开 API、browser adapter 与兼容分支
 
 - 状态：`planned`
-- 优先级：Priority-2
+- 优先级：Priority-0
 - Owner：Backend/Web/MCP
-- 关联：REQ-ELECTRON-ONLY-001、REQ-PRE1-BREAKING-001、ITER-0007/E04
-- 依赖：TODO-LEGACY-DECOUPLE-001；`VAL-ELECTRON-CUTOVER-001=pass`
+- 关联：REQ-ELECTRON-ONLY-001、REQ-PRE1-BREAKING-001、REQ-LEGACY-SLICE-001、ADR-0016、
+  ITER-0008/I03
+- 依赖：`VAL-PACKAGED-SMOKE-001=pass`；TODO-LEGACY-DECOUPLE-001 affected subgate
 
 “删除 API”只表示删除 host TCP listener、browser CORS、公开 REST/OpenAPI 部署和 HTTP MCP；
 Electron Main ↔ Python sidecar 的认证 UDS HTTP 协议及领域 service 必须保留。“删除 Web”只
 表示删除独立 browser/container 运行形态，React renderer 必须保留。
 
-交付：删除 `backend/app/main.py`、public-mode factory/config 分支、legacy runner/Ollama fields、
+交付：删除 `backend/app/main.py`、public-mode factory/config 分支、
 renderer HTTP adapter、Vite localhost proxy、legacy MCP/tests/dependencies；旧 schema/layout 直接
 fail closed，不实现 converter 或 compatibility shim。
 
-验收：生产进程没有 8000/8001/8080 TCP bind、CORS 或 browser transport；只有 Main-owned
-private UDS sidecar 和 bundled stdio MCP companion；核心 Desktop API/queue/Wiki/MCP 回归通过。
+验收：exact before/after package 重跑 smoke；生产进程没有 8000/8001/8080 TCP bind、CORS 或
+browser transport；只有 Main-owned private UDS sidecar 和 bundled stdio MCP companion；核心
+Desktop API/queue/Wiki/MCP 与 protected-path 回归通过；`VAL-LEGACY-TRANSPORT-001=pass`。
+
+### TODO-LEGACY-REMOVE-PROVIDER-001：删除 Host Runner 与 legacy provider helper
+
+- 状态：`planned`
+- 优先级：Priority-0
+- Owner：Desktop/Backend/Provider
+- 关联：REQ-ELECTRON-ONLY-001、REQ-LEGACY-SLICE-001、ADR-0016、ITER-0008/I04
+- 依赖：`VAL-PACKAGED-SMOKE-001=pass`；TODO-LEGACY-DECOUPLE-001 affected subgate
+
+交付：删除 `host_runner/**`、LaunchAgent/spool/heartbeat、legacy direct provider、Ollama、Windows
+helper 和只服务这些路径的 config/env/tests/scripts；保留 Main-owned Codex/Cursor discovery、
+preflight、attempt CAS、fixed argv、commit 后不 fallback/replay 与 cancellation 语义。
+
+验收：exact before/after package 重跑 smoke；产品 path 不 import/call Host Runner/spool/direct
+provider/Ollama/Windows helper；Main-owned provider focused/aggregate 与 protected-path tests 通过；
+不停止/删除用户 LaunchAgent 或外部进程；`VAL-LEGACY-PROVIDER-001=pass`。
 
 ### TODO-LEGACY-REMOVE-RELEASE-001：删除 container CI、GHCR 与 tag 耦合
 
 - 状态：`planned`
-- 优先级：Priority-2
+- 优先级：Priority-0
 - Owner：CI/Release
-- 关联：REQ-ELECTRON-ONLY-001、REQ-RELEASE-002、ITER-0007/E05
-- 依赖：TODO-LEGACY-REMOVE-DEPLOY-001
+- 关联：REQ-ELECTRON-ONLY-001、REQ-RELEASE-002、REQ-LEGACY-SLICE-001、ADR-0016、
+  ITER-0008/I06
+- 依赖：`VAL-PACKAGED-SMOKE-001=pass`；deploy inventory 已冻结
 
 交付：删除 `.github/workflows/container-images.yml`、container Docker build/cache、GHCR SemVer
 发布、container-only Make/CI targets，以及 desktop release 文档中的同-tag 非原子警告；保留
 desktop Draft/promotion、签名、trust pins、Environment 和 update safety chain。已发布 GHCR
 package 保留为 unsupported historical artifact，删除它需要另行、明确、不可逆管理员授权。
 
-验收：PR/main/tag 不构建或发布 container；release tag 只进入 desktop candidate path；CI 的
-Python aggregate 不再安装 `mcp/` 或运行 Host Runner 测试；Desktop release policy 回归通过。
+验收：exact before/after package 重跑 smoke；PR/main/tag 不构建或发布 container；release tag
+只进入 desktop candidate path；CI 的 Python aggregate 不再安装 `mcp/` 或运行 Host Runner
+测试；formal Desktop release policy 回归仍通过；不删除远端 GHCR package；
+`VAL-LEGACY-RELEASE-001=pass`。
 
 ### TODO-LEGACY-REMOVE-DOCS-001：把活跃文档与 Sites 收敛到 Electron
 
 - 状态：`planned`
-- 优先级：Priority-2
+- 优先级：Priority-0
 - Owner：Docs/Sites/Operations
-- 关联：REQ-ELECTRON-ONLY-001、ITER-0007/E06
+- 关联：REQ-ELECTRON-ONLY-001、REQ-LEGACY-SLICE-001、ADR-0016、ITER-0008/I07
 - 依赖：deploy/transport/release removal 已完成；最终路径集合已冻结
 
 交付：README、SECURITY、CONTRIBUTING、AGENTS、project skills、guide-site、quickstart、
@@ -887,23 +982,24 @@ Sites 安全前置：先恢复并验证现有公开站点的 exact project ident
 localhost/Host Runner 一键命令改成 Electron-only 内容并更新 tests，再按 Sites checkpoint /
 deployment-status 流程留下公开部署证据。
 
-验收：活跃用户文档不存在 `docker compose`、`./install.sh`、`scripts/lcf` 或 localhost HTTP
-使用路径；Markdown links、guide-site tests/build 通过；历史命中只出现在 allowlist。
+验收：exact before/after package 重跑 smoke；活跃用户文档不存在 `docker compose`、
+`./install.sh`、`scripts/lcf` 或 localhost HTTP 使用路径；Markdown links、guide-site
+tests/build 与 protected history allowlist 通过；`VAL-LEGACY-DOCS-001=pass`。
 
 ### TODO-LEGACY-ABSENCE-001：永久防止 legacy 回流
 
 - 状态：`planned`
-- 优先级：Priority-2
+- 优先级：Priority-1
 - Owner：CI/Governance
-- 关联：REQ-ELECTRON-ONLY-001、ITER-0007/E07
-- 依赖：全部 legacy removal task
+- 关联：REQ-ELECTRON-ONLY-001、REQ-LEGACY-SLICE-001、ADR-0016、ITER-0008/I09
+- 依赖：全部 legacy slice；W03 engineering package；W04–W12 physical matrix
 
 交付机器门禁，检查 forbidden paths 缺失、protected paths 存在、workflow/Make/package 无旧
 引用、产品代码无 legacy import/env/listener、活跃文档无旧命令、release tag 无 container path。
 历史 ADR/evidence 通过固定 allowlist 保留，不能用全仓库“零字符串命中”误删历史。
 
-验收：`VAL-LEGACY-ABSENCE-001` 在最终 removal commit 为 `pass`；从该 exact commit 构建新的
-candidate，并在同一 digest 上重跑完整核心 packaged capability matrix（仓库/队列/审核/发布/
+验收：`VAL-LEGACY-ABSENCE-001` 在 final cleaned commit 为 `pass`；从该 exact commit 构建新的
+engineering package，并在同一 digest 上重跑完整核心 packaged capability matrix（仓库/队列/审核/发布/
 查询、Wiki、model switch/rebuild、Codex/Cursor、MCP、当前数据 backup/recovery、无 listener）。
 只做启动 smoke 或复用删除前 candidate 证据均不合格。
 
@@ -911,7 +1007,8 @@ candidate，并在同一 digest 上重跑完整核心 packaged capability matrix
 
 - 状态：`superseded`
 - Owner：Migration/Product/Operations
-- 关联：REQ-LEGACY-001、ADR-0004、ITER-0006；由 ADR-0015/ITER-0007 取代
+- 关联：REQ-LEGACY-001、ADR-0004、ITER-0006；先由 ADR-0015/ITER-0007、再由
+  ADR-0016/ITER-0008 取代执行顺序
 - Disposition：不再实施 migration rehearsal、compatibility window 或 retention decision
 
 原任务的 `VAL-LEGACY-001` 保持 `not-run (superseded)`。实际删除由上面的稳定任务拆分执行；

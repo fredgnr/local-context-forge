@@ -8,6 +8,12 @@
   ADR-0008、ADR-0009、ADR-0010、ADR-0011、ADR-0012、ADR-0013、ADR-0014
 - 实施计划：[Electron-only legacy retirement](../development/legacy-retirement.md)
 
+> 后续关系：本 ADR 保持 Accepted；[ADR-0016](0016-pre1-incremental-retirement-engineering-package.md)
+> 精确部分取代 §1 第一段的全局 replacement/pass-before-deletion 语句、§3 全文、“后果”中
+> 退役前先完成完整 packaged M4 的成本条目，以及验证结尾的统一删除前置。Electron-only 目标、
+> 严格 remove/retain/split、用户数据/外部资产保护、历史证据和最终 cutover/absence 门禁继续
+> 有效。以下正文保留为 2026-07-31 的历史决策记录。
+
 ## 上下文
 
 项目仍处于 pre-1.0 早期研发阶段，当前仓库同时存在两套产品运行面：

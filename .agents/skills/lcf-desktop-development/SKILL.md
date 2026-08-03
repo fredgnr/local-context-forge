@@ -15,10 +15,16 @@ description: Implement or review Local Context Forge macOS Electron desktop chan
 4. State the affected processes and trust boundaries. Keep privileged behavior
    in Electron Main and expose only typed, allowlisted renderer operations.
 5. Keep the change scoped to the active milestone. For legacy retirement,
-   follow ADR-0015 and the strict `remove` / `retain` / `split` manifest; do
-   not delete any legacy capability before `VAL-ELECTRON-CUTOVER-001=pass`.
-   Pre-1.0 breaking changes need not preserve legacy behavior, but must protect
-   Electron-owned code and never delete user data or external assets.
+   follow ADR-0015, ADR-0016, the W01-W16 execution ranks, and the strict
+   `remove` / `retain` / `split` manifest. Require all W01 exits and then the W02
+   packaged smoke before a destructive slice. Require slice-local ownership and
+   either an affected replacement or the narrowly allowed pure-legacy
+   `no-replacement / unsupported` disposition, plus fresh before/after package
+   smoke, absence, and protected-path presence evidence. Reserve the W13
+   engineering cutover/absence for final cleaned bytes; formal Draft bytes must
+   independently pass release continuity and cutover/absence. Pre-1.0 breaking
+   changes need not preserve legacy behavior, but must never delete user data,
+   history, or external assets.
 6. Run the applicable tests and preserve honest failure evidence. Do not treat
    source-mode tests as packaged-app proof.
 7. Invoke `lcf-change-traceability` when behavior, a decision, a gate, or an

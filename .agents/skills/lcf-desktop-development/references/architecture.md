@@ -29,10 +29,14 @@ path.
   preflight fallback; never switch provider after a job starts.
 - Keep the MCP surface compatible with the documented Context7-style tools.
 - Treat legacy Docker/browser/public-HTTP/Host-Runner/container surfaces as
-  deprecated and scheduled for removal under ADR-0015. Before the packaged
-  cutover gate passes, only split Electron dependencies and add evidence; do
-  not delete a legacy capability. Never infer removal from a top-level name:
-  `web/src` is the renderer and `backend/app` contains the private UDS sidecar.
+  deprecated and scheduled for incremental removal under ADR-0015/0016. First
+  complete W01, then establish the W02 non-release packaged smoke. Each
+  destructive slice needs exact ownership, split-first, and either an affected
+  replacement or a narrowly allowed pure-legacy `no-replacement / unsupported`
+  disposition, plus fresh before/after package smoke, absence, and
+  protected-path presence; final aggregate cutover remains a later gate. Never
+  infer removal from a top-level name: `web/src` is
+  the renderer and `backend/app` contains the private UDS sidecar.
 - Keep self-signing, lack of notarization, and lack of hardened runtime visible
   as release limitations; do not imply Apple trust or notarization.
 
@@ -64,4 +68,6 @@ path.
 - [MCP companion ADR](../../../../docs/adr/0008-mcp-companion-main-bridge.md)
 - [Bundled runtime provenance ADR](../../../../docs/adr/0009-bundled-runtime-provenance.md)
 - [Electron-only legacy retirement ADR](../../../../docs/adr/0015-electron-only-legacy-retirement.md)
+- [Incremental retirement and engineering package ADR](../../../../docs/adr/0016-pre1-incremental-retirement-engineering-package.md)
+- [Pre-1.0 work plan](../../../../docs/development/work-plan.md)
 - [Strict retirement manifest](../../../../docs/development/legacy-retirement.md)

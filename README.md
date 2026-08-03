@@ -40,13 +40,15 @@ Cursor 只能作为用户明确同意的 preflight fallback。
 
 ## 当前状态：主要桌面 source foundation 已合并，发行仍 NO-GO
 
-`main@fb8bbbc` 已合并桌面进程边界、UI 工作流、provider 监督、本地 embedding、MCP
+`main@da40553` 已合并桌面进程边界、UI 工作流、provider 监督、本地 embedding、MCP
 onboarding 和 GitHub Release workflow 的主要 source 纵切，但 P1–P3 的 packaged/native
 门禁仍未通过，P4–P7 仍有未完成工作，也没有可以向非开发者推荐的公开 DMG：
 
 | 项目 | 状态 |
 | --- | --- |
 | 源码测试、类型检查与构建 | 已有自动化证据 |
+| W02 最小 packaged smoke harness | `planned` / `not-run` |
+| W03 cleaned-tree engineering test package | `planned` / `not-run` |
 | 经过审查的公开正式 DMG | 尚未产出 |
 | 干净 macOS 用户安装 | `not-run` |
 | 打包应用中的真实 Codex 采集 | `not-run` |
@@ -55,7 +57,10 @@ onboarding 和 GitHub Release workflow 的主要 source 纵切，但 P1–P3 的
 
 因此，**Electron 只在经过审查的 Release 资产出现后成为推荐安装路径**。legacy Docker/Web
 虽然尚未从当前源码树删除，但已经弃用且 unsupported；不要新建部署。`./install.sh` 不是
-Electron 安装器，并将在 ITER-0007 删除。
+Electron 安装器，并将在 ADR-0016/ITER-0008 的 W10/W11 slices 删除。W01 全部退出后先建立
+W02 non-release packaged smoke；清理后才构建 W03 engineering test package。GitHub production
+controls、credentials、formal Draft/Release 后置到 W13 final cutover/absence 之后；正式 tag 与
+exact Draft 仍需独立 continuity 和 cutover/absence 复验。
 
 完整安装、首次打开、MCP、恢复与发布说明：
 [Electron 桌面版完整指南](docs/16-electron-desktop-guide.md)。
@@ -66,6 +71,7 @@ Electron 安装器，并将在 ITER-0007 删除。
 - [系统设计](docs/17-system-design.md)
 - [部署与运维总手册](docs/18-deployment-operations.md)
 - [详细 TODO](docs/development/todo.md)
+- [Pre-1.0 W01–W16 work plan](docs/development/work-plan.md)
 
 ## M4 Pro 24 GB 默认选择
 
@@ -248,10 +254,13 @@ npm --prefix desktop run start:source
 
 ## Legacy Docker/Web retirement
 
-[ADR-0015](docs/adr/0015-electron-only-legacy-retirement.md) 已决定：Electron 完成能力替代后，
-彻底删除 Docker/Compose、browser Web、公开 TCP API、Python HTTP MCP、Host Runner、旧安装/
-运维脚本和 container/GHCR 发布。项目处于 pre-1.0 早期阶段，不提供旧数据、配置、API 或部署
-兼容，也不建设 migration importer。
+[ADR-0015](docs/adr/0015-electron-only-legacy-retirement.md) 与
+[ADR-0016](docs/adr/0016-pre1-incremental-retirement-engineering-package.md) 已决定：W01 全部退出后
+先建立 W02 最小 packaged smoke，再用 W10/W11 独立 slice 删除 Docker/Compose、browser Web、公开 TCP
+API、Python HTTP MCP、Host Runner、旧安装/运维脚本和 container/GHCR 发布；随后从 cleaned
+tree 构建 W03 engineering package，W13 才做工程 checkpoint 的最终能力/absence 聚合。正式
+候选不得复用该 evidence，必须通过 release continuity。项目处于 pre-1.0 早期阶段，不提供旧
+数据、配置、API 或部署兼容，也不建设 migration importer。
 
 当前仓库仍包含这些路径仅表示删除任务尚未实施，不表示它们继续受支持。严格 `remove` /
 `retain` / `split` 清单、门禁和任务见

@@ -80,7 +80,8 @@ lcf_managed install
 DMG，也不会写入桌面 Application Support。终端入口使用最小环境包装，是因为当前控制脚本尚未
 自行隔离 Compose project/data/port 等调用者覆盖；详情见
 [部署总手册](18-deployment-operations.md#22-安装)。该路径当前尚在源码树，但已经 unsupported，
-不要新建部署；它会在 Electron capability cutover 后删除。
+不要新建部署；W02 packaged smoke 通过后，它会在 ITER-0008/W10–W11 的独立 slice 中删除，
+不再等待完整 aggregate cutover。
 
 当前没有一个把未审查源码直接变成“可推荐桌面安装”的本地脚本；这样可以避免把 source smoke
 误当成签名、clean-user 和更新证据。
@@ -222,6 +223,11 @@ make ci-source
 发行门禁。
 
 ## 高级用户：发布管理
+
+本节是 W14–W16 的 formal 流程，必须等待 W13 final cutover/absence。W02/W03 engineering
+artifact 不使用本节 Environment/credential/pins，也不得 tag、upload、Draft 或 promotion。
+W15 必须证明 W13 checkpoint → formal tag 只有 allowlisted public pins/release metadata/version
+diff；W16 必须在 exact Draft digest 重新运行完整 cutover/absence 后才可 promotion。
 
 正式发布需要公开仓库中的两个受保护 Environment：
 

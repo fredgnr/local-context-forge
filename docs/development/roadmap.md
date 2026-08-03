@@ -5,31 +5,34 @@
 - 上游基线：`main@5d95e58cefa1c94b5c9ac8dd681671e2dfd6d8dd`
 - bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
 - two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
-- 文档审计基线：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
+- Electron-only planning merge：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
+- 当前治理基线：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
 - 平台目标：macOS Apple Silicon
 - 当前总体状态：`in-progress`
 
-本路线图是交付顺序，不是完成声明。各阶段只有在其退出门禁有可复现 `pass` 证据后，
+P0–P7 是历史产品阶段，不再直接表达执行顺序；权威 execution rank 见
+[W01–W16 work plan](work-plan.md)。本路线图不是完成声明。各阶段只有在其退出门禁有可复现
+`pass` 证据后，
 才能进入 `validated`。当前快照见[status](status.md)，可执行任务见[TODO](todo.md)。
 
 ## 依赖图
 
 ```text
-P0 Governance
- └─> P1 Electron shell and trust boundary
-      ├─> P2 Python sidecar
-      └─> P3 Node/QMD worker and MCP
-           └─> P4 Desktop runtime paths, backup and models
-                └─> P5 packaged DMG candidate
-                     └─> P7 Electron-only cutover and legacy retirement
-                          ├─> P5 trusted-main public promotion
-                          └─> P6 physical updater gate across real releases
+W01 governance/source baseline
+  → W02 minimal packaged smoke
+  → W10/W11 legacy slices
+  → W03 cleaned-tree engineering package
+  → W04–W12 engineering/physical gates
+  → W13 final cutover + aggregate absence
+  → W14–W16 production controls/credentials/formal release/update
 ```
 
-P2 与 P3 可在 P1 的 IPC 契约冻结后并行；P4 必须等两类持久数据格式和版本标识明确后
-再冻结 Desktop layout/backup。P0–P7 编号是历史阶段 ID，不再表示严格线性顺序：P7 删除
-发生在可替代能力的 packaged candidate 通过之后、首个受支持公开 Release 之前；它不再等待
-旧数据迁移或 P6 更新门禁。
+P2 与 P3 可在 P1 的 IPC 契约冻结后并行。W02 只建立最小 packaged feedback；W10/W11 每个
+slice 只等待受影响 replacement 或合格的 pure-legacy unsupported disposition，不等待无关完整
+物理矩阵。P4 的数据/model 与其他真实能力门禁改在 W03 cleaned engineering package 上完成。
+P7 的 slice 部分前置，final cutover/absence 保留为 W13；P5 production control/credential/
+formal candidate 延后到 W14–W16。W13 只解锁控制面，formal tag 与 exact Draft 仍需独立
+continuity 和 cutover/absence 复验。
 
 ## 里程碑总览
 
@@ -40,9 +43,9 @@ P2 与 P3 可在 P1 的 IPC 契约冻结后并行；P4 必须等两类持久数�
 | P2 Python sidecar | `in-progress` | ITER-0002 | Python 3.13.14 PyInstaller `onedir`、生命周期契约 | P1 source IPC contract | G2 |
 | P3 Node/QMD 与 MCP | `in-progress` | ITER-0002 | 独立 Node 22/QMD worker、Context7 兼容契约 | P1 source IPC contract；与 P2 并行 | G3 |
 | P4 路径、备份与模型 | `planned` | ITER-0003 | macOS 路径、Desktop backup/restore、模型供应链 | P2、P3 | G4 |
-| P5 DMG 发行基础 | `planned` | ITER-0004 | arm64 DMG、自签名、受保护发布流程 | P1–P4 | G5 |
+| P5 DMG 发行基础 | `planned` / W14–W16 | ITER-0004 | arm64 DMG、自签名、受保护发布流程 | W13 | G5 |
 | P6 更新实机门禁 | `planned` | ITER-0005 | 真实单调 `N-1 → N` 实机报告、DMG fallback | P5 | G6 |
-| P7 Electron-only 退出 | `planned` | ITER-0007 | capability cutover、legacy 全面删除与 absence gate | P1–P4 + packaged candidate | G7 |
+| P7 Electron-only 退出 | `planned` | ITER-0008（ITER-0007 superseded） | W10/W11 slices、W13 final cutover/absence | W02；final gate 另依赖 W03–W12 | G7 |
 
 表中状态表示阶段完整退出门禁，而不是“是否已有 source 实现”。P2/P3 依赖 P1 已冻结的
 source IPC contract，不要求先把 P1 packaged gate 标成完成。ITER-0001 的 source
@@ -140,6 +143,10 @@ G4：
 
 ## P5：DMG 发行基础
 
+P5 只指 W14–W16 的正式发行路径，不包含 W02/W03 engineering artifacts。最小 smoke 与完整
+工程测试包必须使用独立 non-release mode，不读取 production secret/pin、不由 tag 触发、
+不上传或创建 Draft/Release，updater unavailable/no-network。
+
 交付：
 
 - 默认用户产物是 macOS arm64 DMG；
@@ -153,8 +160,12 @@ G4：
 - PR、fork 与普通构建不接触发布秘密。
 - canonical release/update manifest、完整资产集合和独立 Ed25519 信任锚在打包前
   fail closed。
-- 当前 desktop tag path 只创建候选 Draft；在 P7 删除前，相同 tag 的 GHCR workflow 独立且
-  非原子；desktop 公开
+- W13 checkpoint 到 formal tag 的 diff 只允许 production public pins、release metadata/version；
+  formal tag 重跑 source/absence，exact Draft digest 重跑完整 cutover/absence，形成
+  `VAL-RELEASE-CONTINUITY-001`。
+- 当前 source foundation 的 desktop tag path 只创建候选 Draft；`container-images.yml` 仍会让
+  相同 tag 的 GHCR workflow 独立运行且非原子。W11 必须先删除该耦合；W14 前不得真实 push
+  release tag。未来 desktop 公开
   promotion 必须以 `workflow_dispatch --ref main` 运行，
   将 `release_tag` 只作为资料输入，由 trusted `main` verifier 在隔离 tag worktree 中
   fresh-peel、重新下载、绑定 candidate manifest digest；在 `PATCH` 前以 fresh
@@ -172,6 +183,8 @@ G5：
   且非发布工作流拿不到 Environment Secrets。
 - `VAL-LEGACY-ABSENCE-001` 在首个受支持 Electron-only 公开 Release 前为 `pass`；container
   workflow、GHCR tag 耦合和 legacy runtime 不进入该 Release。
+- `VAL-RELEASE-CONTINUITY-001` 绑定 W13 checkpoint、formal tag allowlisted diff 与 exact Draft
+  cutover/absence；W13 engineering pass 不得直接复用为候选 pass。
 
 当前 source 进度：release workflow、credential bootstrap、tag/provenance、trusted-main
 verifier、隔离 tag worktree、fresh peel、固定 Release ID 和 Draft/Published/immutable 远端复核
@@ -214,21 +227,27 @@ ADR-0003/0011 中描述的真实 `N-1 → N` 是版本关系而非固定版本�
 
 交付：
 
-- 用能力矩阵证明 Electron 已替代仓库索引、审核/排队/查询、Wiki、embedding/rebuild、
-  Codex/Cursor 和 Context7 MCP；
-- 先拆分 `web/src` renderer、`backend/app` private UDS sidecar 与 legacy transport/provider；
-- 删除 Docker/Compose、browser Web、公开 TCP API、legacy HTTP MCP、Host Runner、旧安装器/
-  脚本、container CI/GHCR 和活跃文档；
-- 建立永久 absence gate，防止 legacy 路径重新进入 product/release。
+- W02 先建立最小 packaged smoke；
+- W10/W11 按 decouple、transport、provider、deploy、release、docs 独立 slice，分别在 exact
+  before/after package 上证明 affected replacement 或受限 pure-legacy unsupported disposition、
+  absence、protected presence 与无数据副作用；
+- W03 从 cleaned tree 构建完整 engineering package；
+- W04–W12 在该包上完成数据、模型、runtime、QMD、CLI、MCP、本地仓库和工程物理矩阵；
+- W13 从 final commit 重建 package，在同一 digest 上运行 final cutover 与永久 absence gate。
 
 G7：
 
-- `VAL-ELECTRON-CUTOVER-001` 在 source 和 clean M4 packaged candidate 分层通过；
-- `VAL-LEGACY-ABSENCE-001` 证明 forbidden paths/listeners/imports/workflows/active docs 不存在，
+- `VAL-PACKAGED-SMOKE-001` 和六个 slice gate 分别有 commit/digest-bound `pass`；
+- `VAL-ENGINEERING-PACKAGE-001` 从 cleaned tree 为 `pass`；
+- `VAL-ELECTRON-CUTOVER-001` 在 final cleaned commit 的 clean M4 rebuilt package 通过；
+- `VAL-LEGACY-ABSENCE-001` 在同一 digest 证明 forbidden paths/listeners/imports/workflows/active docs 不存在，
   protected renderer/sidecar/companion/QMD/release paths 仍存在并通过回归；
 - 不要求 legacy migration、compatibility window、旧 API/config/data support、
   `VAL-LEGACY-001` 或 `VAL-LEGACY-CONTROL-001`；这些旧门禁保持 `not-run (superseded)`；
 - 删除源码不自动删除用户 data、volume、backup、container、image 或外部 GHCR package。
+
+只有 G7 完成才解锁 W14 production control plane；G7 本身不配置 GitHub、不 provision credentials，
+也不创建 formal candidate 或 Release。
 
 ## 阻断规则
 

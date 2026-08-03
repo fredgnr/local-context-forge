@@ -6,8 +6,9 @@
 - 前置检查点：`agent/electron-desktop-foundation@7e4524f`
 - bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
 - two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
-- 文档审计基线：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
-- 当前文档分支：`agent/documentation-handoff`
+- Electron-only planning merge：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
+- 当前治理基线：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
+- 当前文档分支：`agent/pre1-incremental-retirement-governance`
 - 依赖：[ITER-0001](0001-electron-foundation.md) 的源码模式 trust/IPC 契约
 - 路线图阶段：P2、P3；提前落地 P5/P6 source foundation
 - 追踪矩阵：[traceability](../traceability.md)
@@ -16,7 +17,8 @@
 
 把已验证的源码模式进程边界变成无需系统 Python/Node/Git/QMD 的应用内置运行时，同时
 保持 renderer 最小能力。最初“保持 legacy browser/Docker 兼容”的范围已由 R12/ADR-0015
-取代；本父迭代只做 retirement 的治理/解耦准备，不提前删除 capability：
+取代；R13/ADR-0016 又把 retirement 从“完整 cutover 后统一删除”改为“最小 packaged smoke
+后按独立 slice 删除”。本父迭代只记录这项治理，不执行删除或工程打包：
 
 - 固定 CPython 3.13.14，以 PyInstaller `onedir` 交付 Python sidecar；
 - 产品源码 snapshot/Wiki Git 改用受控 Dulwich，不调用系统 Git；
@@ -29,7 +31,7 @@
 - 原生 picker 以一次性 opaque grant 导入已预先 clone 的本地/私有仓库，不管理凭据；
 - 生成可复核的来源、依赖、许可证、SBOM、native closure 和精确资源清单。
 
-R07–R12 是本父迭代的追加纵切，保留最初 lexical-only/无模型下载/无发行的历史范围，同时
+R07–R13 是本父迭代的追加纵切，保留最初 lexical-only/无模型下载/无发行的历史范围，同时
 单独记录 embedding、MCP onboarding、signed update/release policy 和 local source 的
 source 实现、文档交接和 Electron-only 范围冻结。它们不是独立父迭代，不能绕过
 packaged/physical 退出门禁。
@@ -56,6 +58,7 @@ packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
 | Codex MCP onboarding 与签名 CLI discovery | [ADR-0013](../../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | R08 source discovery/onboarding 已实现；真实 OpenAI 签名 gate 待运行 |
 | 候选 Draft 与公开 promotion 分离 | [ADR-0014](../../adr/0014-two-stage-desktop-release-promotion.md) | R09 的 tag-only signing、trusted-main promotion（无配置 release secret/长期签名凭据，使用短期 `GITHUB_TOKEN`）、ruleset/immutable source policy 已实现并复验；真实 settings/promotion 待运行 |
 | Electron-only 与 legacy retirement | [ADR-0015](../../adr/0015-electron-only-legacy-retirement.md) | R12 已冻结 remove/retain/split；cutover/removal/absence gate 均 `not-run` |
+| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13 已接受新顺序；runtime/package/slice/final/release gate 均 `not-run` |
 
 ## 任务
 
@@ -91,6 +94,9 @@ packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
 - [x] **R12 Electron-only retirement scope**：接受 ADR-0015，建立严格路径矩阵、替代门禁和
   ITER-0007/TODO；实际删除不在本纵切，见
   [R12](0002-r12-legacy-retirement-scope.md)。
+- [ ] **R13 Pre-1.0 增量式 retirement 治理**：接受 ADR-0016，落盘 W01–W16、最小
+  packaged smoke、独立 slice、cleaned-tree engineering package 与正式发行后置门禁；最终
+  PR head 验证待运行，见 [R13](0002-r13-pre1-incremental-retirement.md)。
 
 以上 `[x]` 表示对应 source 纵切落地，不表示下列完整验收或父迭代完成。
 
@@ -163,15 +169,15 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 | Codex config 在最终 list 后并发变化 | 同名 target 可能在 add/remove 小窗口内改变 | 二次 recheck 缩小窗口；CLI 无 CAS/shared lock，明确单用户非对抗同 UID 边界 |
 | 同 uid 进程替换本地目录/cache/runtime | 路径或更新/MCP identity 漂移 | 重验 owner/mode/identity/hash；后续 bookmark/fd/App Sandbox 评估 |
 | 自签名、未 notarize/hardened | Gatekeeper 与用户信任限制 | manifest/release notes 明示；真实安装 gate 前不宣称 release-ready |
-| Electron cutover/absence 尚未执行 | 过早删除会破坏 renderer/sidecar 或留下半套运行面 | ADR-0015：先 split，再完成 clean M4 聚合 cutover；ITER-0007 删除代码但不删除用户旧数据 |
+| 增量 retirement 尚未执行 | 没有 packaged feedback 或 slice ownership 会破坏 renderer/sidecar | ADR-0016：先 W02 smoke，再逐 slice split/remove；每个 exact head 重建，最终 W13 聚合；不删除用户旧数据 |
 
 ## 当前变更清单
 
 治理与证据：
 
-- `docs/adr/{README,0003-*,0005-* 至 0015-*}.md`
+- `docs/adr/{README,0003-*,0005-* 至 0016-*}.md`
 - `docs/development/{README,roadmap,traceability,desktop-release,mcp-companion-protocol}.md`
-- `docs/development/iterations/{README,0002-bundled-runtimes,0002-r07-qmd-embeddings,0002-r08-mcp-onboarding,0002-r09-signed-update-client,0002-r10-local-repositories,0002-r11-documentation-handoff,0002-r12-legacy-retirement-scope,0007-electron-only-retirement}.md`
+- `docs/development/iterations/{README,0002-bundled-runtimes,0002-r07-qmd-embeddings,0002-r08-mcp-onboarding,0002-r09-signed-update-client,0002-r10-local-repositories,0002-r11-documentation-handoff,0002-r12-legacy-retirement-scope,0002-r13-pre1-incremental-retirement,0007-electron-only-retirement,0008-incremental-retirement-engineering-package}.md`
 - `README.md`、`SECURITY.md`、`desktop/README.md`
 - `docs/{README,00-overview,03-hardware-deployment,04-quickstart,06-api-and-mcp,10-security,14-all-in-one-macos,16-electron-desktop-guide}.md`
 

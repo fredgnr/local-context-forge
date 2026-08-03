@@ -1,7 +1,7 @@
 # HTTP API 与 MCP
 
 > **Deprecated reference：** 本页的 HTTP API/MCP 命令不再是受支持产品接口，将由
-> ITER-0007 删除。Electron 只保留 Main → private UDS sidecar 和 bundled stdio MCP companion。
+> ITER-0008/W10 transport slice 删除。Electron 只保留 Main → private UDS sidecar 和 bundled stdio MCP companion。
 > 内容暂留用于实施盘点，不应复制到新部署。
 
 本页的 HTTP 示例只适用于 legacy Docker/native browser 配置。Electron desktop 不公开

@@ -1,9 +1,11 @@
 # Electron 桌面版完整指南
 
 > **Release stop：** 仓库仍含会被 release tag 触发的 legacy container workflow。首个受支持
-> Electron-only Release 必须等待 `VAL-ELECTRON-CUTOVER-001`、legacy removal、最终 removal
-> candidate 的完整 M4 能力复验和 `VAL-LEGACY-ABSENCE-001`。在此之前不要创建 tag、Draft 或
-> 公开 Release；后文任何 GHCR 检查都只是待删除风险 inventory。
+> Electron-only Release 必须先在 W13 engineering checkpoint 通过 cutover/absence，再对 W15
+> formal tag 证明受限 diff，并在 W16 将要公开的 exact Draft digest 上重新运行完整
+> `VAL-ELECTRON-CUTOVER-001`、`VAL-LEGACY-ABSENCE-001` 与
+> `VAL-RELEASE-CONTINUITY-001`。在此之前不要创建 tag、Draft 或公开 Release；后文任何 GHCR
+> 检查都只是待删除风险 inventory。
 
 本文面向两类读者：
 
@@ -835,7 +837,8 @@ Main 只接受绝对 `LCF_RENDERER_DIR` 和 `LCF_SIDECAR_BIN`；不会从 PATH �
 
 ### 16.3 打包开发产物
 
-本地 `desktop/electron-builder.yml` 产生 ad-hoc、`*-UNOFFICIAL` 资产，禁用 update info：
+本地 `desktop/electron-builder.yml` 设计为 ad-hoc、`*-UNOFFICIAL`，但当前命令仍走 formal
+production trust audit：
 
 ```bash
 npm --prefix desktop run dist:mac
@@ -845,7 +848,15 @@ npm --prefix desktop run dist:mac
 已有经过 provision 的公共 update trust anchor；当前 `unprovisioned` marker 会让
 `beforePack` fail closed。它不会自动变成正式 Release，也不能使用正式 secret。
 
+因此当前没有可用的 W02 packaged smoke 或 W03 engineering test package 命令。ADR-0016 要求
+后续实现独立 non-release mode：显著 `engineering-only`/`publishable=false`，不读取 production
+secret/pin，不由 tag 触发、不上传、不创建 Draft/Release，updater unavailable/no-network；
+不得通过削弱 formal `beforePack` 来实现。W02 只支撑 legacy slice feedback，W03 只能从
+cleaned tree 构建并支撑工程物理验证。
+
 ## 17. 维护者：公开仓库与受保护 Environment
+
+本节属于 W14–W16，必须等待 W13 final cutover/absence；不应用于 W02/W03 工程包。
 
 ### 17.1 必须满足的 GitHub 配置
 

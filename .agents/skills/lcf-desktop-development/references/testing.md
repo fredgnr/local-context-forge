@@ -10,7 +10,7 @@ the change.
 | --- | --- | --- |
 | L1 | Unit or static test for one package | Cross-process wiring or packaged resources |
 | L2 | Main/renderer or sidecar contract integration test | Installed DMG behavior |
-| L3 | Unpacked/packaged app smoke test on arm64 | Clean-machine install or update |
+| L3 | Unpacked/packaged engineering app smoke test on arm64 | Complete engineering matrix, clean-machine install, signing, release, or update |
 | L4 | DMG install test on a clean macOS user | Upgrade safety across versions |
 | L5 | Physical 0.0.1 → 0.0.2 update rehearsal | Future releases without repeating the gate |
 
@@ -35,11 +35,16 @@ Never substitute a lower level for a required higher level.
 - Runtime paths/data: test fresh/current layout, current-format backup/restore,
   interrupted staging, corrupt input, insufficient disk, rollback, and
   unknown/legacy-layout fail-closed. Do not require or claim a legacy importer.
-- Legacy retirement: first prove the full packaged M4 capability matrix in
-  `VAL-ELECTRON-CUTOVER-001`; then validate forbidden-path/transport/release/
-  active-doc absence while protected renderer, private UDS sidecar, QMD,
-  desktop MCP, and release surfaces still build and pass. Source evidence does
-  not authorize early deletion.
+- Legacy retirement: first pass all W01 exits, then `VAL-PACKAGED-SMOKE-001`.
+  For each independent slice, record exact ownership/split and either affected
+  replacement or the constrained pure-legacy `no-replacement / unsupported`
+  disposition, fresh before/after package smoke, focused/aggregate source
+  regression, slice absence, protected
+  renderer/private-UDS/QMD/desktop-MCP/release-safety presence, and no user or
+  external-data effect. Build the full engineering package only from the
+  cleaned tree; reserve `VAL-ELECTRON-CUTOVER-001` and aggregate absence for
+  final engineering bytes. Formal Draft bytes independently require continuity
+  and complete cutover/absence. Source evidence alone never authorizes deletion.
 - Model download: test consent, digest/signature mismatch, partial resume,
   atomic activation, offline behavior, and cache cleanup without data loss.
 - Release/update: inspect the DMG and code identity, install as a clean user,

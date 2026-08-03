@@ -1,12 +1,13 @@
 # GitHub Actions 与 GHCR
 
 > **Deprecated historical runbook：** container/GHCR workflow 已进入
-> `TODO-LEGACY-REMOVE-RELEASE-001`，将在 Electron cutover 后删除。本页记录当前尚存行为与
+> `TODO-LEGACY-REMOVE-RELEASE-001`，将在 W02 后的 W11 独立 release-surface slice 删除，
+> 不再等待完整 Electron cutover。本页记录当前尚存行为与
 > 风险，不再承诺继续发布镜像，也不授权删除远端已有 GHCR package。
 
 > **操作停止：** 当前 tag 仍会同时触发 container 与 desktop，且 public locks 为
-> `unprovisioned`；在 `TODO-LEGACY-REMOVE-RELEASE-001`、最终 removal candidate 的完整 M4
-> 复验和 `VAL-LEGACY-ABSENCE-001` 通过前，禁止创建任何新 release tag。本页后续命令仅用于
+> `unprovisioned`；在 W11 slice、W13 final gates、W14/W15 production controls/credentials 与
+> W15/W16 release continuity 通过前，禁止创建新 release tag 或执行 promotion。本页后续命令仅用于
 > 审计现存 workflow，不是发布步骤。整体仍是 **source merge GO / release NO-GO**。
 
 仓库通过 `.github/workflows/container-images.yml` 构建并托管三个镜像：

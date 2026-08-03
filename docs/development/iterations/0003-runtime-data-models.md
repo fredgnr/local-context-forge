@@ -1,13 +1,15 @@
 # ITER-0003：Runtime data and models
 
 - 状态：`planned`
-- 依赖：ITER-0002 的持久格式与运行时版本冻结
+- 依赖：ITER-0002 的持久格式与运行时版本冻结；W03 cleaned engineering package
 - 路线图阶段：P4
 
 ## 目标与范围
 
 实现标准 macOS 数据路径、Desktop 自身的 backup/restore，以及按需模型获取。根据
-[ADR-0015](../../adr/0015-electron-only-legacy-retirement.md)，不再实现 legacy Docker 数据
+[ADR-0015](../../adr/0015-electron-only-legacy-retirement.md) 与
+[ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md)，本迭代属于
+W04/W05，在 W10/W11 cleanup 与 W03 engineering package 后执行；不再实现 legacy Docker 数据
 importer、converter 或 compatibility shim；未知旧 layout/schema 必须 fail closed，应用不得
 自动覆盖或删除旧数据。
 

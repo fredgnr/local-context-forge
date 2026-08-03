@@ -33,7 +33,8 @@ ADR 记录跨组件、难以逆转或具有安全/数据/发行影响的决策�
 | [ADR-0012](0012-local-repository-picker-opaque-grants.md) | Accepted；Docker/browser 兼容条款由 ADR-0015 取代 | 原生本地仓库选择与一次性不透明路径授权 |
 | [ADR-0013](0013-codex-mcp-onboarding-signed-cli-discovery.md) | Accepted | Codex MCP 一键接入、签名 CLI discovery、scoped ownership 与私有 rendezvous |
 | [ADR-0014](0014-two-stage-desktop-release-promotion.md) | Accepted | tag-only signing/Draft 与 trusted-main、secret-free、immutable promotion 分离 |
-| [ADR-0015](0015-electron-only-legacy-retirement.md) | Accepted | Electron-only 收敛、pre-1.0 不兼容政策与严格 legacy retirement 门禁 |
+| [ADR-0015](0015-electron-only-legacy-retirement.md) | Accepted；§1 首段全局删除语句、§3、对应后果条目与验证结尾由 ADR-0016 精确部分取代 | Electron-only 收敛、pre-1.0 不兼容政策与严格 legacy retirement 边界 |
+| [ADR-0016](0016-pre1-incremental-retirement-engineering-package.md) | Accepted | 最小 packaged smoke、增量 legacy slices、cleaned-tree 工程包、正式候选连续性与发行后置门禁 |
 
 ## 新 ADR 编号
 

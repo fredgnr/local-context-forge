@@ -1,7 +1,7 @@
 # ITER-0005：Updater physical gate
 
 - 状态：`planned`
-- 依赖：ITER-0004 的真实发布产物和受保护工作流
+- 依赖：W15 的正式候选与 ITER-0004 受保护工作流；W16 至少两个真实单调 Release
 - 路线图阶段：P6
 
 ## 目标与范围

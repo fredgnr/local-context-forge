@@ -7,7 +7,7 @@
 
 ## 1. 范围、状态与术语
 
-设计基线为 `main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`，产品版本
+当前治理基线为 `main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`，产品版本
 `0.3.0-alpha.1`。当前结论是：
 
 > **source merge GO / public release NO-GO**
@@ -26,7 +26,9 @@ Accepted ADR 只代表决定已接受；它不自动把能力变成 `validated`�
 唯一目标和受支持的产品配置是 **Electron desktop**。Docker/Compose、独立 browser Web、
 公开 TCP API、Python HTTP MCP、Host Runner 与 container/GHCR 是仓库中尚未删除的
 `deprecated/unsupported legacy`，不再是回退路径，也不承诺迁移或兼容窗口。严格的保留、
-拆分和删除清单见 [legacy retirement manifest](development/legacy-retirement.md)。
+拆分和删除清单见 [legacy retirement manifest](development/legacy-retirement.md)，执行顺序见
+[ADR-0016](adr/0016-pre1-incremental-retirement-engineering-package.md) 与
+[W01–W16 work plan](development/work-plan.md)。
 
 当前过渡期不得让 Electron 与旧部署写同一数据目录，也不得把 legacy HTTP/API 操作描述成
 desktop renderer 拥有的能力。删除支持代码不授权应用或脚本自动删除用户 data/volume/backup。
@@ -372,7 +374,7 @@ renderer、日志或诊断导出。稳定 Application Support 中的 MCP ownersh
 | Wiki | `wiki/` | Git 审计副本与 QMD corpus |
 | Jobs/locks | `jobs/`、`locks/` | request/control evidence 与 advisory lifecycle |
 | Desktop provider evidence | `provider-attempts/<job-id>/` | bounded evidence、schema、prompt、request/result；attempt 状态以 SQLite 为准 |
-| Legacy runner compatibility（待删除） | `runner/inbox/`、`runner/outbox/` | 仅供 legacy host runner；先从共享 Settings/service 拆出，再由 ITER-0007 删除 |
+| Legacy runner compatibility（待删除） | `runner/inbox/`、`runner/outbox/` | 仅供 legacy host runner；先从共享 Settings/service 拆出，再由 ITER-0008/W10 provider slice 删除 |
 | QMD worker DB/state | `qmd/worker/` | 可重建，但需 revision/profile 约束 |
 | MCP metadata | `mcp-target-ownership-<scope>.json`、`mcp-rendezvous.json` | ownership ledger 持久且非 secret；rendezvous 是当前 bridge 的短期路径指针 |
 | Update downloads | `updates/` | 可重下载；当前位于 Application Support |
@@ -431,8 +433,24 @@ child 退出确认和 packaged lifecycle 做物理观察。
 | 安装 | 将来的 reviewed DMG | `./install.sh` / `install.command` |
 | Windows 4060 | 不支持远程 worker | Ollama helper；无替代、直接退出 |
 
-右栏当前仍存在于仓库，但已经 unsupported；必须在左栏逐能力门禁通过后删除。领域模型、Wiki
-pipeline 和 React UI 是左栏的共享实现，不能随 legacy 外壳一起删除。
+右栏当前仍存在于仓库，但已经 unsupported。W01 全部退出后由 W02 建立最小 packaged smoke；
+随后每个 W10/W11 slice 只在 caller inventory、affected Electron replacement（或受限 pure-legacy
+unsupported disposition）、before/after package、absence 与 protected presence 通过后删除。
+未触及能力的完整物理门禁可继续 `not-run`；final
+aggregate cutover/absence 留到 W13。领域模型、Wiki pipeline 和 React UI 是左栏共享实现，
+不能随 legacy 外壳一起删除。
+
+### 8.1 Artifact classes 与 release boundary
+
+| Artifact class | 用途 | 允许 | 明确禁止 |
+| --- | --- | --- | --- |
+| W02 engineering smoke | deletion feedback loop | ad-hoc/unsigned、有限 inventory、launch/UDS/no-listener | production secret/pin、tag、upload、Draft/Release、update network |
+| W03 engineering test package | cleaned tree 的 W04–W12 工程物理载体 | 完整 bundled runtime/inventory/SBOM/test entry | 冒充 `VAL-PACK-001`、正式签名、promotion |
+| W13 engineering checkpoint | cleaned tree 的最终工程声明 | 同一 digest 的完整 cutover/absence | 作为 formal Draft evidence 直接复用 |
+| W15/W16 formal candidate | 受保护发行 | production controls/credentials/pins、checkpoint→tag allowlisted diff、exact Draft continuity/unique Draft | 在 W13/W14 前创建，或跳过 exact Draft cutover/absence |
+
+Engineering updater 必须 `unavailable` 且不联网；formal `beforePack` trust audit 和 ADR-0014
+Draft/promotion safety chain 不因 engineering mode 放宽。
 
 ## 9. 代码所有权地图
 
@@ -475,8 +493,9 @@ pipeline 和 React UI 是左栏的共享实现，不能随 legacy 外壳一起�
 - automatic update apply/install/restart/rollback；
 - diagnostics/support bundle；
 - fixed evaluation corpus、增量 Wiki 生成；
-- Electron capability cutover、共享代码解耦和 legacy deploy/transport/release/docs 删除；
-- permanent `VAL-LEGACY-ABSENCE-001` gate。
+- W02 最小 packaged smoke、W10/W11 增量 legacy slices、W03 cleaned-tree engineering package；
+- W04–W12 工程物理矩阵与 W13 final Electron cutover/absence；
+- W14–W16 production GitHub controls、credentials/trust pins、formal candidate continuity/Release/update。
 
 ### Unsupported
 

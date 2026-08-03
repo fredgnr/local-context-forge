@@ -10,7 +10,8 @@
 
 > Electron source 是唯一受支持的开发运行面。仓库中的 native browser、Docker/Compose、
 > public HTTP、Host Runner 和 legacy MCP 只用于静态 retirement inventory；不要运行它们建立
-> 新实例。实际删除受 ADR-0015 的全局 packaged cutover gate 与严格路径矩阵约束。
+> 新实例。实际删除受 ADR-0015/0016、[W01–W16 work plan](work-plan.md) 与严格路径矩阵约束：
+> W02 packaged smoke 后才可按独立 slice 删除，final cutover/absence 留到 W13。
 
 ## 1. Checkout 后先建立坐标
 
@@ -67,7 +68,7 @@ make --version
 2. [开发索引](README.md)和[状态快照](status.md)；
 3. [迭代索引](iterations/README.md)与活动
    [ITER-0002](iterations/0002-bundled-runtimes.md)；
-4. 你的改动对应的 R07–R12 记录；
+4. 你的改动对应的 R07–R13 记录与 [W01–W16 work plan](work-plan.md)；
 5. [追踪矩阵](traceability.md)；
 6. 所有相关 Accepted ADR；
 7. 与目录最接近的 `AGENTS.md`/`AGENTS.override.md`；
@@ -103,7 +104,7 @@ ADR、迭代、需求、证据、发布状态：
 | `backend/packaging/` | PyInstaller、locks、notices | macOS staging、SBOM/native closure |
 | `mcp/` | **deprecated / remove** Python HTTP/stdio gateway | 不得与 `desktop/companion/` 混淆 |
 | `host_runner/` | **deprecated / remove** 宿主 CLI spool | 先证明 Main provider 已替代 |
-| `docker/`、`docker-compose.yml` | **deprecated / remove** containers | 由 ITER-0007 删除 |
+| `docker/`、`docker-compose.yml` | **deprecated / remove** containers | 由 ITER-0008/W11 slice 删除 |
 | `scripts/` | 混合；legacy deploy/backup/restore/native dev 待删除 | 逐文件按 retirement manifest 处理 |
 | `runtime/` | 跨层版本、schema、public trust locks | version sync、packaging fail-closed |
 | `docs/adr/` | Accepted decisions | 架构历史，不是完成证据 |
@@ -157,7 +158,12 @@ npm --prefix desktop run start:source
 本机/container 状态，既不是“只读盘点”，也不能证明 Electron replacement。若维护者必须访问
 既有旧实例，应在固定旧 commit 和数据副本上自行承担风险；当前开发流程不提供操作 runbook。
 
-### 4.4 正式打包
+### 4.4 工程打包与正式打包
+
+W02 engineering smoke 与 W03 engineering test package 都尚未实现；它们必须明确 non-release，
+不用 production credential/pins，不由 tag 触发、不上传、不创建 Draft/Release，updater
+unavailable/no-network。W02 只支撑 slice feedback；W03 从 cleaned tree 构建并支撑 W04–W12。
+两者都不能提升 formal gate。
 
 普通开发者不要把本地 `dist:mac` 当成正式发行。正式流程只能由
 `.github/workflows/desktop-release.yml` 执行。详见
@@ -192,7 +198,8 @@ npm --prefix desktop run start:source
 | Provider | attempt/discovery/process tests | Backend + Desktop + Web |
 | Local source | localSource + source_security | Backend + Desktop + Web |
 | Update/release | update/release policy focused | Desktop + Backend policy + YAML/shell audit |
-| Legacy split/removal | caller/path focused tests | Electron aggregate + cutover/absence gate；不运行 Docker smoke |
+| Legacy split/removal | caller/path + affected replacement，或受限 pure-legacy unsupported disposition | W01 exits + W02 baseline；fresh before/after package smoke；focused/aggregate；slice absence + protected presence；不运行 Docker smoke |
+| Engineering package | explicit non-release profile + inventory | W03 cleaned tree；production trust/tag/upload/Draft/Release 禁止 |
 | Docs only | link checker、diff check | 无需伪跑 packaged gate |
 | Version/manifest | version sync + audit scripts | packaging gate |
 | Schema/data | migration focused tests | backup/restore/migration evidence |
@@ -356,7 +363,11 @@ REQ → ADR → ITER/task → owned paths → VAL → evidence
 ### Release/update
 
 - PR/fork/source job 不引用 release secret；
-- desktop release 的 tag 路径只能到 Draft；相同 tag 的独立 GHCR workflow 可能已公开镜像；
+- W13 前不配置 production controls/credentials，也不创建 release tag/Draft；
+- W11 删除前，相同 tag 的独立 GHCR workflow 可能公开镜像，因此当前禁止 tag；
+- W15 formal desktop tag 路径只能到 Draft；
+- W13 checkpoint → formal tag 只允许 public pins/release metadata/version diff；exact Draft 必须
+  重新运行完整 cutover/absence，不能复用 engineering evidence；
 - promotion 必须从 trusted `main`；
 - fixed Release ID 和 candidate digest；
 - public trust pins 入库，private material 永不入库；
@@ -416,6 +427,7 @@ guide-site、packaged 或 physical 是否未包含。
 git diff --check
 python3 tools/check_markdown_links.py
 python3 tools/check_version_sync.py
+python3 -B tools/check_pre1_work_plan.py
 ```
 
 再按改动运行 focused + aggregate。CI 必须在最终 head 上重新通过；head 变化后旧 approval/
@@ -437,6 +449,8 @@ evidence 不能自动代表新 bytes。
 12. **直接覆盖 legacy 数据**：不提供迁移；unknown/legacy layout fail closed 且不自动删除。
 13. **改写 Accepted ADR**：使用 superseding ADR 保留历史。
 14. **记录“当前工作树 pass”**：必须绑定 commit/Actions。
+15. **把 W02/W03 engineering artifact 当正式候选**：它们禁止 tag/upload/Draft/Release，不能
+    提升 secret/pack/install/release/update gate。
 
 ## 13. 新贡献者首个 PR 建议
 

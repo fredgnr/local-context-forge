@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 .PHONY: help install doctor status uninstall bootstrap up down stop restart build ps logs smoke demo backup restore \
 	qmd-status qmd-embed qmd-embed-native dev-native dev-api dev-mcp dev-web test handbook \
-	ci-source ci-python-install ci-python ci-ipc-source ci-web \
+	ci-source ci-python-install ci-python ci-ipc-source ci-web pre1-work-plan-check \
 	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci \
 	python-sidecar-source-verify python-sidecar-install-python python-sidecar-toolchain \
 	python-sidecar-build python-sidecar-audit python-sidecar-packaging-test \
@@ -40,6 +40,7 @@ help:
 	  'make dev-native  Start native api/mcp/web together' \
 	  'make ci-source   Run core Python, Web and Electron source gates (excludes QMD worker and guide-site)' \
 	  'make ci-python   Run frozen Python source tests and repository checks' \
+	  'make pre1-work-plan-check  Validate canonical W01-W16 governance mappings' \
 	  'make ci-ipc-source  Run the source-mode Python desktop IPC contract' \
 	  'make ci-web      Install and run Web source tests, typecheck and build' \
 	  'make desktop-ci  Install and run desktop tests, typecheck and build' \
@@ -146,6 +147,12 @@ ci-python: ci-python-install
 	backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .
 	backend/.venv/bin/python tools/check_version_sync.py
 	backend/.venv/bin/python tools/check_markdown_links.py
+	backend/.venv/bin/python -B tools/check_pre1_work_plan.py
+	backend/.venv/bin/python -B -m unittest discover -s tools/tests -p 'test_*.py'
+
+pre1-work-plan-check:
+	$(PYTHON) -B tools/check_pre1_work_plan.py
+	$(PYTHON) -B -m unittest discover -s tools/tests -p 'test_*.py'
 
 ci-ipc-source: ci-python-install
 	cd backend && .venv/bin/pytest ../tests/backend/test_desktop_transport.py

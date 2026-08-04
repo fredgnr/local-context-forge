@@ -71,32 +71,45 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_detailed_task_status_drift_fails(self) -> None:
         docs = documents()
-        original = "### TODO-GOV-EVIDENCE-001：统一可复现证据坐标\n\n- 状态：`in-progress`"
+        current_status = "done" if docs[9]["status"] == "pass" else "in-progress"
+        drifted_status = "planned" if current_status == "done" else "done"
+        original = (
+            "### TODO-GOV-EVIDENCE-001：统一可复现证据坐标\n\n"
+            f"- 状态：`{current_status}`"
+        )
         self.assertIn(original, docs[1])
         docs[1] = docs[1].replace(
             original,
-            "### TODO-GOV-EVIDENCE-001：统一可复现证据坐标\n\n- 状态：`planned`",
+            "### TODO-GOV-EVIDENCE-001：统一可复现证据坐标\n\n"
+            f"- 状态：`{drifted_status}`",
             1,
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("detail status" in error for error in errors))
 
-    def test_false_w01_evidence_pass_fails_open_documents(self) -> None:
+    def test_w01_evidence_state_must_match_documents(self) -> None:
         docs = documents()
-        docs[9]["status"] = "pass"
+        changed_status = "not-run" if docs[9]["status"] == "pass" else "pass"
+        docs[9]["status"] = changed_status
         docs[9]["gates"] = {
-            "VAL-PRE1-SEQUENCE-001": "pass",
-            "VAL-GOV-001": "pass",
-            "VAL-CI-COVERAGE-001": "pass",
+            "VAL-PRE1-SEQUENCE-001": changed_status,
+            "VAL-GOV-001": changed_status,
+            "VAL-CI-COVERAGE-001": changed_status,
         }
         errors = CHECKER.validate_documents(*docs)
-        self.assertTrue(any("expected 'done'" in error for error in errors))
+        self.assertTrue(any("status" in error and "expected" in error for error in errors))
 
     def test_r13_cannot_complete_before_w01_evidence(self) -> None:
         docs = documents()
-        docs[7] = docs[7].replace("- 状态：`in-progress`", "- 状态：`completed`", 1)
+        current_status = "completed" if docs[9]["status"] == "pass" else "in-progress"
+        drifted_status = "in-progress" if current_status == "completed" else "completed"
+        docs[7] = docs[7].replace(
+            f"- 状态：`{current_status}`",
+            f"- 状态：`{drifted_status}`",
+            1,
+        )
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("R13 status must be in-progress", errors)
+        self.assertIn(f"R13 status must be {current_status}", errors)
 
     def test_mixed_not_run_and_formal_pass_fails(self) -> None:
         docs = documents()

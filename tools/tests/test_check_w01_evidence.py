@@ -45,8 +45,10 @@ def pass_record() -> dict[str, object]:
                 "actions_run": {
                     "event": "push",
                     "head_sha": commit,
+                    "exact_checked_out_sha": commit,
                     "workflow_path": ".github/workflows/desktop-ci.yml",
                     "workflow_sha": commit,
+                    "github_context_sha": commit,
                     "source_ref": "refs/heads/agent/w01-governance-source-ci",
                     "run_id": 123,
                     "attempt": 1,
@@ -102,6 +104,25 @@ class W01EvidenceTests(unittest.TestCase):
         record["checkpoint"]["actions_run"]["head_sha"] = "c" * 40
         self.assertIn(
             "checkpoint Actions head does not match checkpoint commit",
+            CHECKER.validate_evidence(record),
+        )
+
+    def test_pull_request_synthetic_sha_is_recorded_but_not_used_as_source(self) -> None:
+        record = pass_record()
+        synthetic = "e" * 40
+        run = record["checkpoint"]["actions_run"]
+        run.update(
+            {
+                "event": "pull_request",
+                "source_ref": "refs/pull/20/merge",
+                "github_context_sha": synthetic,
+                "workflow_sha": synthetic,
+            }
+        )
+        self.assertEqual(CHECKER.validate_evidence(record), [])
+        run["exact_checked_out_sha"] = synthetic
+        self.assertIn(
+            "checkpoint Actions exact checked-out SHA does not match checkpoint commit",
             CHECKER.validate_evidence(record),
         )
 

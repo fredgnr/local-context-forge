@@ -134,12 +134,31 @@ def validate_evidence(record: dict[str, Any]) -> list[str]:
         errors.append("checkpoint Actions event is not an exact-head eligible event")
     if run.get("head_sha") != commit:
         errors.append("checkpoint Actions head does not match checkpoint commit")
+    if run.get("exact_checked_out_sha") != commit:
+        errors.append("checkpoint Actions exact checked-out SHA does not match checkpoint commit")
     if run.get("workflow_path") != ".github/workflows/desktop-ci.yml":
         errors.append("checkpoint Actions workflow path drifted")
-    if run.get("workflow_sha") != commit:
-        errors.append("checkpoint Actions workflow SHA does not match checkpoint commit")
-    if run.get("source_ref") != "refs/heads/agent/w01-governance-source-ci":
-        errors.append("checkpoint Actions source ref is wrong")
+    github_context_sha = run.get("github_context_sha")
+    workflow_sha = run.get("workflow_sha")
+    for name, value in (
+        ("github_context_sha", github_context_sha),
+        ("workflow_sha", workflow_sha),
+    ):
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+            errors.append(f"checkpoint Actions {name} must be a full SHA")
+    if run.get("event") == "push":
+        if github_context_sha != commit or workflow_sha != commit:
+            errors.append("push Actions context/workflow SHA must equal checkpoint commit")
+        if run.get("source_ref") != "refs/heads/agent/w01-governance-source-ci":
+            errors.append("push Actions source ref is wrong")
+    elif run.get("event") == "pull_request":
+        expected_ref = f"refs/pull/{record.get('pull_request')}/merge"
+        if run.get("source_ref") != expected_ref:
+            errors.append("pull-request Actions source ref is wrong")
+        if github_context_sha != workflow_sha:
+            errors.append("pull-request context and workflow SHA must name the same synthetic merge")
+        if github_context_sha == commit:
+            errors.append("pull-request synthetic context SHA must remain distinct from exact head")
     if run.get("conclusion") != "success":
         errors.append("checkpoint Actions run did not succeed")
     run_id = run.get("run_id")

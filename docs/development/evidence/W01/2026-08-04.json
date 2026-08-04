@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "work_id": "W01",
+  "repository": "fredgnr/local-context-forge",
+  "baseline_commit": "3eff97d97b2de4484d568bab5ac96d63830c79ee",
+  "status": "not-run",
+  "pull_request": null,
+  "checkpoint": null,
+  "gates": {
+    "VAL-PRE1-SEQUENCE-001": "not-run",
+    "VAL-GOV-001": "not-run",
+    "VAL-CI-COVERAGE-001": "not-run"
+  },
+  "final_head_binding": {
+    "mode": "github-actions-check-on-containing-commit",
+    "workflow_path": ".github/workflows/desktop-ci.yml",
+    "workflow_name": "Desktop source CI",
+    "events": [
+      "push",
+      "pull_request"
+    ],
+    "source_expression": "${{ github.event.pull_request.head.sha || github.sha }}",
+    "required_jobs": [
+      "python",
+      "web",
+      "desktop",
+      "macos-ipc"
+    ],
+    "summary_job": "source-coverage",
+    "runtime_artifact_prefix": "w01-source-coverage-"
+  },
+  "canonical_activation": [
+    "independent acceptance of the exact final PR head",
+    "merge of that accepted PR into canonical main",
+    "successful source-coverage job on the exact resulting canonical main commit"
+  ],
+  "out_of_scope": [
+    "W02 packaged smoke",
+    "Legacy deletion",
+    "engineering test package",
+    "GitHub production control plane",
+    "production credentials, signing, tags, Drafts, Releases, and updates"
+  ]
+}

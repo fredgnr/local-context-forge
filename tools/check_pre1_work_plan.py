@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -17,6 +18,7 @@ ADR = ROOT / "docs/adr/0016-pre1-incremental-retirement-engineering-package.md"
 STATUS = ROOT / "docs/development/status.md"
 R13 = ROOT / "docs/development/iterations/0002-r13-pre1-incremental-retirement.md"
 RELEASE_RUNBOOK = ROOT / "docs/development/desktop-release.md"
+W01_EVIDENCE = ROOT / "docs/development/evidence/W01/2026-08-04.json"
 
 EXPECTED_ORDER = [
     "W01",
@@ -172,6 +174,8 @@ EXPECTED_TASK_STATUS = {
 EXPECTED_TASK_STATUS.update(
     {
         "TODO-PRE1-SEQUENCING-001": "in-progress",
+        "TODO-GOV-EVIDENCE-001": "in-progress",
+        "TODO-CI-COVERAGE-001": "in-progress",
         "TODO-REL-GOV-001": "blocked",
         "TODO-REL-KEYS-001": "blocked",
         "TODO-REL-DRAFT-001": "blocked",
@@ -287,8 +291,19 @@ def validate_documents(
     status: str,
     r13: str,
     release_runbook: str,
+    w01_evidence: dict[str, object],
 ) -> list[str]:
     errors: list[str] = []
+    w01_closed = w01_evidence.get("status") == "pass"
+    expected_task_status = dict(EXPECTED_TASK_STATUS)
+    if w01_closed:
+        expected_task_status.update(
+            {
+                "TODO-PRE1-SEQUENCING-001": "done",
+                "TODO-GOV-EVIDENCE-001": "done",
+                "TODO-CI-COVERAGE-001": "done",
+            }
+        )
 
     marker = re.search(r"<!-- pre1-work-order: ([A-Z0-9,]+) -->", plan)
     actual_order = marker.group(1).split(",") if marker else []
@@ -356,7 +371,7 @@ def validate_documents(
             errors.append(f"traceability {task} maps to {trace_work!r}, expected {expected_work}")
         todo_status = normalized_status(todo_row[3])
         trace_status = normalized_status(trace_row[2])
-        expected_status = EXPECTED_TASK_STATUS[task]
+        expected_status = expected_task_status[task]
         if todo_status != expected_status:
             errors.append(f"TODO {task} status {todo_status!r}, expected {expected_status!r}")
         if trace_status != expected_status:
@@ -372,6 +387,26 @@ def validate_documents(
     if set(todo_headings) != set(trace_by_task):
         errors.append("TODO and traceability task sets differ")
 
+    detail_statuses: dict[str, str] = {}
+    heading_matches = list(
+        re.finditer(r"^### (TODO-[A-Z0-9-]+-[0-9]{3}).*$", todo, re.MULTILINE)
+    )
+    for index, match in enumerate(heading_matches):
+        end = heading_matches[index + 1].start() if index + 1 < len(heading_matches) else len(todo)
+        block = todo[match.end() : end]
+        status_match = re.search(r"^- 状态：`([^`]+)`\s*$", block, re.MULTILINE)
+        if status_match:
+            detail_statuses[match.group(1)] = status_match.group(1)
+    for task, overview_row in todo_by_task.items():
+        detail_status = detail_statuses.get(task)
+        overview_status = normalized_status(overview_row[3])
+        if detail_status is None:
+            errors.append(f"TODO detail missing status for {task}")
+        elif detail_status != overview_status:
+            errors.append(
+                f"TODO {task} detail status {detail_status!r} != overview {overview_status!r}"
+            )
+
     requirement_rows = table_rows(trace, r"REQ-[A-Z0-9-]+-[0-9]{3}", 7)
     requirement_ids = [row[0] for row in requirement_rows]
     if len(requirement_ids) != len(set(requirement_ids)):
@@ -386,12 +421,9 @@ def validate_documents(
     required_gates = set().union(*(work["gates"] for work in EXPECTED_WORK.values()))
     for gate in sorted(required_gates - set(validation_by_id)):
         errors.append(f"traceability validation definition missing {gate}")
-    expected_status_words = {
-        gate: ["not-run"] for gate in FORMAL_NOT_RUN | {"VAL-PRE1-SEQUENCE-001"}
-    }
+    expected_status_words = {gate: ["not-run"] for gate in FORMAL_NOT_RUN}
     expected_status_words.update(
         {
-            "VAL-PRE1-SEQUENCE-001": ["not-run", "pass"],
             "VAL-PACK-001": ["not-run", "pass"],
             "VAL-SECRET-001": ["not-run", "pass"],
         }
@@ -406,6 +438,36 @@ def validate_documents(
                 f"{gate} status words {actual_words!r} != {expected_words!r}; "
                 "gate must remain canonically not-run"
             )
+
+    expected_w01_gate = "pass" if w01_closed else "not-run"
+    for gate in ("VAL-PRE1-SEQUENCE-001", "VAL-GOV-001", "VAL-CI-COVERAGE-001"):
+        row = validation_by_id.get(gate)
+        if row is None:
+            continue
+        words = STATUS_WORD_PATTERN.findall(row[2])
+        actual = words[0] if words else None
+        if actual != expected_w01_gate:
+            errors.append(
+                f"{gate} canonical status {actual!r} != {expected_w01_gate!r}"
+            )
+
+    evidence_gates = w01_evidence.get("gates")
+    if not isinstance(evidence_gates, dict) or set(evidence_gates) != {
+        "VAL-PRE1-SEQUENCE-001",
+        "VAL-GOV-001",
+        "VAL-CI-COVERAGE-001",
+    }:
+        errors.append("W01 evidence gate set is incomplete")
+    elif any(value != expected_w01_gate for value in evidence_gates.values()):
+        errors.append("W01 evidence gate statuses disagree with canonical W01 state")
+
+    r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)
+    expected_r13_status = "completed" if w01_closed else "in-progress"
+    if r13_status is None or r13_status.group(1) != expected_r13_status:
+        errors.append(f"R13 status must be {expected_r13_status}")
+    r13_06_checked = "- [x] R13-06" in r13
+    if r13_06_checked != w01_closed:
+        errors.append("R13-06 checkbox must match W01 evidence closure")
 
     continuity_row = validation_by_id.get("VAL-RELEASE-CONTINUITY-001")
     if continuity_row is not None:
@@ -492,6 +554,7 @@ def main() -> int:
         read(STATUS),
         read(R13),
         read(RELEASE_RUNBOOK),
+        json.loads(read(W01_EVIDENCE)),
     )
     if errors:
         for error in errors:

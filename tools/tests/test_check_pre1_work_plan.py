@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import importlib.util
 import unittest
 from pathlib import Path
@@ -24,6 +25,7 @@ def documents() -> list[str]:
         CHECKER.read(CHECKER.STATUS),
         CHECKER.read(CHECKER.R13),
         CHECKER.read(CHECKER.RELEASE_RUNBOOK),
+        json.loads(CHECKER.read(CHECKER.W01_EVIDENCE)),
     ]
 
 
@@ -66,6 +68,35 @@ class Pre1WorkPlanTests(unittest.TestCase):
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("TODO-PACKAGED-SMOKE-001 status" in error for error in errors))
+
+    def test_detailed_task_status_drift_fails(self) -> None:
+        docs = documents()
+        original = "### TODO-GOV-EVIDENCE-001：统一可复现证据坐标\n\n- 状态：`in-progress`"
+        self.assertIn(original, docs[1])
+        docs[1] = docs[1].replace(
+            original,
+            "### TODO-GOV-EVIDENCE-001：统一可复现证据坐标\n\n- 状态：`planned`",
+            1,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertTrue(any("detail status" in error for error in errors))
+
+    def test_false_w01_evidence_pass_fails_open_documents(self) -> None:
+        docs = documents()
+        docs[9]["status"] = "pass"
+        docs[9]["gates"] = {
+            "VAL-PRE1-SEQUENCE-001": "pass",
+            "VAL-GOV-001": "pass",
+            "VAL-CI-COVERAGE-001": "pass",
+        }
+        errors = CHECKER.validate_documents(*docs)
+        self.assertTrue(any("expected 'done'" in error for error in errors))
+
+    def test_r13_cannot_complete_before_w01_evidence(self) -> None:
+        docs = documents()
+        docs[7] = docs[7].replace("- 状态：`in-progress`", "- 状态：`completed`", 1)
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("R13 status must be in-progress", errors)
 
     def test_mixed_not_run_and_formal_pass_fails(self) -> None:
         docs = documents()

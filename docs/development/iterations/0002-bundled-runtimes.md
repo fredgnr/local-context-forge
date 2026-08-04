@@ -7,8 +7,9 @@
 - bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
 - two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
 - Electron-only planning merge：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
-- 当前治理基线：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
-- 当前文档分支：`agent/pre1-incremental-retirement-governance`
+- Pre-1.0 planning merge：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
+- 当前治理基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
+- 当前文档/CI 分支：`agent/w01-governance-source-ci`
 - 依赖：[ITER-0001](0001-electron-foundation.md) 的源码模式 trust/IPC 契约
 - 路线图阶段：P2、P3；提前落地 P5/P6 source foundation
 - 追踪矩阵：[traceability](../traceability.md)

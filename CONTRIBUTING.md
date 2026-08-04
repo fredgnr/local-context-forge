@@ -78,26 +78,31 @@ container、volume、data、backup 或远端 GHCR package。
 先跑 focused tests，再跑受影响 aggregate：
 
 ```bash
+make ci-source
 make ci-python
+make ci-qmd-worker
 make ci-web
 make desktop-ci
 ```
 
-QMD worker 当前不在 `make ci-source`：
+`ci-qmd-worker` 使用精确 Node 22.23.2；依赖安装禁用 lifecycle scripts，测试阶段隔离
+HOME/XDG/tmp、拒绝外部网络/子进程，并拒绝模型文件生成。它只证明 QMD source tier，不能
+提升 native/model/packaged gate。
 
-```bash
-npm --prefix desktop/workers/qmd ci
-npm --prefix desktop/workers/qmd test
-```
+`guide-site/**` is excluded from `make ci-source` and Desktop source CI；机器声明见
+`.github/ci/source-coverage.json`。本 checkout 缺少可验证的 hosting identity 和独立
+commit-bound pipeline，因此站点保持 `external-blocked` / unvalidated，不能冒充已覆盖。
 
 文档与版本：
 
 ```bash
 python3 tools/check_markdown_links.py
 python3 tools/check_version_sync.py
+python3 -B tools/check_ci_coverage.py
+python3 -B tools/check_w01_evidence.py
 python3 -B tools/check_pre1_work_plan.py
 python3 -B -m unittest discover -s tools/tests -p 'test_*.py'
-git diff --check
+git diff --check 3eff97d97b2de4484d568bab5ac96d63830c79ee HEAD
 ```
 
 Legacy 解耦/删除变更还必须执行实施时固定的 affected Electron 回归（或合格 pure-legacy

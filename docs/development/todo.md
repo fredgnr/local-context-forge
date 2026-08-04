@@ -44,8 +44,8 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 | Task ID | 优先级 | Roadmap | 状态 | Owner component | 主要依赖 | 验收 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `in-progress` | Governance/Architecture | 无 | `VAL-PRE1-SEQUENCE-001` final head |
-| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `planned` | Governance/CI | 无 | `VAL-GOV-001` final head |
-| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `planned` | CI/QMD/Sites | 无 | `VAL-CI-COVERAGE-001` |
+| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `in-progress` | Governance/CI | 无 | `VAL-GOV-001` final head |
+| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `in-progress` | CI/QMD/Sites | 无 | `VAL-CI-COVERAGE-001` |
 | TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` | Desktop/Packaging/QA | W01 全部退出门禁 | `VAL-PACKAGED-SMOKE-001` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
@@ -138,19 +138,22 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 
 ### TODO-GOV-EVIDENCE-001：统一可复现证据坐标
 
-- 状态：`planned`
+- 状态：`in-progress`
 - Owner：Governance/CI
 - 目的：移除“当前工作树 pass”和混合历史 SHA，让每个 source 结论能追到公开 commit/Actions。
 - 依赖：无
 
 交付：
 
-- 为 `main@fb8bbbc` 或后续统一 checkpoint 收集 Python/Web/Desktop/QMD/Host Runner 的
-  Actions/本地 commit-bound 结果；
+- 从 exact W01 base `3eff97d97b2de4484d568bab5ac96d63830c79ee` 建立两阶段记录：已存在的
+  checkpoint commit/run + containing-commit exact-head check；
+- 在同一 checkpoint 收集 Python/MCP/Host Runner/demo SDK/Web/Desktop/QMD/governance 结果；
 - 保留 skip 数和最低环境；
 - 将 `traceability.md` 的“本次变更映射”改为带 PR/commit/date 的历史 ledger；
 - 迭代中不再使用无法复现的“当前工作树”；
 - 在 `docs/development/evidence/` 下按规范留存脱敏记录。
+- 合入后要求 canonical main exact commit 的 `source-coverage` 成功；PR head、synthetic merge SHA
+  和 canonical merge SHA 不得互换。
 
 验收：
 
@@ -161,16 +164,20 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 
 ### TODO-CI-COVERAGE-001：补齐并声明 source aggregate 覆盖
 
-- 状态：`planned`
+- 状态：`in-progress`
 - Owner：CI/QMD/Sites
 - 目的：`make ci-source` 当前遗漏 QMD worker，主 workflow 也不验证 guide-site。
 - 依赖：无
 
 交付：
 
-- 决定 QMD worker tests 是否并入 `make ci-source` 和 Desktop source workflow；
-- 决定 guide-site 是否作为主 CI 的独立 job，或明确为独立部署 pipeline；
-- 输出机器可读的 component coverage；
+- QMD worker tests 并入 `make ci-source`，并折叠进现有 Python source job，避免在 W14 前引入
+  merge-optional 的新 required-check 假设；
+- QMD 使用 Node 22.23.2、`npm ci --ignore-scripts --omit=optional`、隔离 HOME/XDG/tmp、
+  process-level external-network/child-process trap、模型文件扫描和唯一 native skip allowlist；
+- guide-site 明确为 `external-blocked` / unvalidated；恢复 exact hosting identity 和独立
+  commit-bound pipeline 前不在 aggregate 中；
+- 输出 `.github/ci/source-coverage.json`，并由 checker 反向核对 Make/workflow/QMD/docs；
 - 更新 Makefile help、developer handbook 和 CI docs；
 - 控制总耗时，避免隐式模型下载/native build。
 

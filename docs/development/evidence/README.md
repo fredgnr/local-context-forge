@@ -10,6 +10,7 @@
 | --- | --- | --- | --- |
 | `VAL-DOC-HANDOFF-001` | `625db7647d47fb6ff8f23c3136c4f45ded80384f` | `pass`（文档 source checkpoint） | [2026-07-31-625db76](VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) |
 | `VAL-LEGACY-SCOPE-001` | `64ec3c232d08f1e843d81dc7c4972dc5ebf96c9b` | `pass`（planning/documentation scope） | [2026-07-31-64ec3c2](VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) |
+| W01 三个 gate | 两阶段 binding；见记录 | `not-run`（checkpoint/final-head check 待完成） | [2026-08-04 W01 machine record](W01/2026-08-04.json) |
 
 这些记录不代表最终 PR head、packaged、physical、GitHub settings、legacy absence 或 release
 gate 已通过。
@@ -143,6 +144,19 @@ Markdown 记录可在 YAML 后补：
 - pass/fail/skip count；
 - Actions run/job URL；
 - 所有未覆盖组件。
+
+### 4.1 含 evidence 文件的 final head 不自指
+
+提交不能在自身 bytes 中写入自己的 SHA 或尚未产生的 Actions run URL。W01 因此使用两层
+binding：记录先引用已经存在且完整运行过的 checkpoint commit/run；随后只允许 evidence 与
+治理状态 attestation delta。最终 head 的 exact commit 由附着在 containing commit 上的
+`Desktop source CI` check 解析，runtime artifact 记录 checked-out SHA、GitHub context SHA、
+event/ref/run、各 job conclusion、manifest digest、QMD count/skip/network/model 结果。
+
+缺少 containing-commit check、head 变化、任一 required job 非 success，或 canonical main 合入
+后没有 exact merge commit 的成功 `source-coverage` job 时，记录中的 `pass` 对启动 W02 无效。
+W02 必须同时等待独立验收、合入 canonical `main` 和该 main commit 的检查；PR head、synthetic
+merge SHA 与 canonical merge SHA 不得静默视为相同 bytes。
 
 示例结论：
 

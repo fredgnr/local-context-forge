@@ -9,10 +9,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 截止日期 | 2026-08-03 |
+| 截止日期 | 2026-08-04 |
 | canonical repository | `fredgnr/local-context-forge` |
-| 本轮治理基线 | `main@da40553e43ec6272e1affc1f40abf4f9215f1ba5` |
-| 基线来源 | PR #7、#8、#17、#18 已合入 `main`；本 Work 开始时 open PR/tag/Release 均为 0 |
+| 本轮治理基线 | `main@3eff97d97b2de4484d568bab5ac96d63830c79ee` |
+| 基线来源 | PR #19 final head `a31f17c` 合入为 `3eff97d`，两者 tree 均为 `21fe2cbe`；W01 从该 exact main 开始 |
 | 产品版本 | `0.3.0-alpha.1` |
 | 数据库 schema | `5` |
 | 活动父迭代 | [ITER-0002](iterations/0002-bundled-runtimes.md) |
@@ -28,10 +28,12 @@
 
 ## 可复现的当前源码证据
 
-PR #17 的 head `71890ee99edc572f32a1e4eaf946853bc1e57f4e` 提供了既有 source contract。
-PR #18 随 merge commit `da40553e43ec6272e1affc1f40abf4f9215f1ba5` 进入 `main`。截至
-2026-08-03，最近 main 的 Desktop source CI run `30630283893` 与 container run
-`30630283873` 成功；container workflow 仍存在。历史 PR #17 证据包括：
+PR #19 final head `a31f17c367e0ff3d007d2334c37b403615173083` 的 branch push run
+[`30815933733`](https://github.com/fredgnr/local-context-forge/actions/runs/30815933733) 与 canonical
+merge `3eff97d97b2de4484d568bab5ac96d63830c79ee` 的 main push run
+[`30816291252`](https://github.com/fredgnr/local-context-forge/actions/runs/30816291252) 均有既有
+Python/Web/Desktop/macOS IPC success。它们早于 W01 QMD/coverage contract，不能关闭 W01。
+更早 PR #17 证据包括：
 
 - [Desktop source CI run 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112)：
   Python、Web、Desktop source checks，以及 macOS 15 arm64 source IPC contract 均成功；
@@ -80,7 +82,8 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 | Gate | 结果 | 说明 |
 | --- | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` authoring observation | gate `not-run`；local command `pass` | exact mappings、11 个负向 fixtures、links/version/ID-set/diff 通过；dirty authoring tree 不能替代 final PR head |
+| W01 final-head candidate | `not-run` | coverage manifest、QMD safe runner、exact-head checkout 与 runtime evidence 已在 authoring branch 落地；checkpoint/final-head run 尚未登记 |
+| `VAL-PRE1-SEQUENCE-001` authoring observation | gate `not-run`；local command `pass` | exact mappings、负向 fixtures、links/version/ID-set 通过；final diff 必须是固定 base→tested head，不接受 clean checkout 上的裸 `git diff --check` |
 | `VAL-GOV-001` baseline | `pass` | `71890ee` 的 Python source job（Actions 30611309112）包含 Markdown 相对链接检查 |
 | `VAL-DOC-HANDOFF-001` R11 local review | `pass`（仅本地） | 修复后三路只读审计无 Critical/High/Medium；dirty worktree 不能替代最终 commit/PR |
 | `VAL-DOC-HANDOFF-001` R11 checkpoint | `pass` | [`625db76` clean-checkout 证据](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md)；冻结全部实质文档 |
@@ -141,6 +144,9 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 8. `guide-site` 源和现有公开说明仍包含 legacy 安装/localhost/Host Runner 内容，且本 checkout
    没有可验证的 `.openai/hosting.json`；必须先恢复 exact Sites identity，再改写、测试和留下
    checkpoint deployment evidence。当前站点不是权威使用入口。
+
+`guide-site/**` is excluded from `make ci-source` and Desktop source CI；该机器声明表示
+`external-blocked` / unvalidated，不表示其源码、部署或公开站点已通过。
 
 ## 下一步工作分组
 

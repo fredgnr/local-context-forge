@@ -32,7 +32,9 @@
 ## 不可跨越的边界
 
 - W02 只在 W01 的 `VAL-PRE1-SEQUENCE-001`、`VAL-GOV-001`、`VAL-CI-COVERAGE-001` 全部
-  通过后开始；它是所有 W10/W11 destructive slice 的前置，但只证明最小 packaged feedback loop。
+  通过、对应 PR 经独立验收并合入 canonical `main`，且 exact canonical main commit 的
+  `source-coverage` job 成功后开始；PR head、synthetic merge SHA 与 canonical merge SHA 不得
+  静默互换。它是所有 W10/W11 destructive slice 的前置，但只证明最小 packaged feedback loop。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限
   pure-legacy unsupported disposition）、source regression、packaged smoke、absence 与
   protected-path presence；不同 slice 不能共享一个

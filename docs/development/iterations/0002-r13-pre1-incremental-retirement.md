@@ -1,8 +1,9 @@
 # ITER-0002/R13：Pre-1.0 增量式 retirement 治理
 
 - 状态：`in-progress`（继承 ITER-0002；待最终 PR head 证据）
-- 日期：2026-08-03
-- 上游基线：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
+- 日期：2026-08-03；W01 closure 续作 2026-08-04
+- 上游基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
+- 当前分支：`agent/w01-governance-source-ci`
 - 范围：决策、治理、计划、追踪关系与治理校验；不删除 runtime，不实现 package，不修改
   GitHub 控制面，不生成凭据，不创建 tag/Draft/Release
 - 关联决策：[ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md)
@@ -33,10 +34,13 @@ GitHub settings 或 Release gate 已运行。R13-06 完成前，本记录保持 
 
 ## 实时基线
 
-2026-08-03 开始工作时：
+2026-08-04 W01 closure 开始时：
 
-- 本地与远端 `main` 均为 `da40553e43ec6272e1affc1f40abf4f9215f1ba5`，ahead/behind `0/0`；
-- 工作区干净，open PR、tag、Release 均为 0；
+- 本地与远端 `main` 均为 `3eff97d97b2de4484d568bab5ac96d63830c79ee`，工作区干净；
+- PR #19 final head `a31f17c367e0ff3d007d2334c37b403615173083` 已合入为 `3eff97d`，两者
+  tree 都是 `21fe2cbe46d42bf351d2b0c84019ee63959081b7`；
+- PR #19 exact branch push run `30815933733` 与 canonical main push run `30816291252` 的既有
+  Python/Web/Desktop/macOS IPC jobs success，但都未执行 W01 QMD/coverage contract；
 - 仓库仍有历史 `agent/*` / Dependabot branches，但没有 open PR 或发现并行修改同一 ADR/TODO/
   iteration 的活动分支；
 - 最近 main 的 Desktop source CI run `30630283893` 与 container run `30630283873` 成功；
@@ -55,7 +59,8 @@ GitHub settings 或 Release gate 已运行。R13-06 完成前，本记录保持 
 
 | 验证 | 当前结果 | 最低环境 | 说明 |
 | --- | --- | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` authoring check | gate 仍 `not-run`；local observation `pass` | 当前工作树 | exact plan checker、11 个负向 fixtures（rank/work/gate/status/mixed-pass/W01 dependency/continuity/cross-document ID closure/legacy prerequisite/R13 state）、links、version、ID-set、`git diff --check` 通过；dirty worktree 结果不作为最终证据 |
+| W01 machine contract authoring | gate 仍 `not-run` | 当前工作树 | coverage manifest、反向 checker、QMD lifecycle/network/model trap、exact PR-head checkout、fixed base→head diff 与 runtime evidence renderer 已编写；checkpoint 尚未提交/运行 |
+| `VAL-PRE1-SEQUENCE-001` authoring check | gate 仍 `not-run`；local observation `pass` | 当前工作树 | exact plan checker 与负向 fixtures、links、version 通过；裸 `git diff --check` 不再计入 final evidence，必须比较 `3eff97d…`→tested head |
 | `VAL-PRE1-SEQUENCE-001` final head | `not-run` | clean checkout / final PR head | 必须绑定 commit 与 CI |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` | macOS arm64 packaged App | 本 Work 不实现 harness |
 | 六个 legacy slice gate | `not-run` | slice exact before/after package | 本 Work 不删除 runtime |

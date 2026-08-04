@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 .PHONY: help install doctor status uninstall bootstrap up down stop restart build ps logs smoke demo backup restore \
 	qmd-status qmd-embed qmd-embed-native dev-native dev-api dev-mcp dev-web test handbook \
-	ci-source ci-python-install ci-python ci-ipc-source ci-web pre1-work-plan-check \
+	ci-source ci-python-install ci-python ci-qmd-worker ci-ipc-source ci-web pre1-work-plan-check \
 	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci \
 	python-sidecar-source-verify python-sidecar-install-python python-sidecar-toolchain \
 	python-sidecar-build python-sidecar-audit python-sidecar-packaging-test \
@@ -22,6 +22,7 @@ PYTHON_SIDECAR_INSTALLER ?= $(PYTHON_SIDECAR_BUILD_ROOT)/python-3.13.14-macos11.
 NODE ?= node
 QMD_NODE_ARCHIVE ?=
 QMD_NODE_HASH_MANIFEST ?=
+QMD_SOURCE_RESULT ?=
 
 help:
 	@printf '%s\n' \
@@ -38,8 +39,9 @@ help:
 	  'make qmd-embed   Build local hybrid-search embeddings' \
 	  'make qmd-embed-native  Ask the current API to embed (first verify it is native)' \
 	  'make dev-native  Start native api/mcp/web together' \
-	  'make ci-source   Run core Python, Web and Electron source gates (excludes QMD worker and guide-site)' \
+	  'make ci-source   Run declared Python/MCP/Host, QMD, Web and Electron source gates (guide-site excluded)' \
 	  'make ci-python   Run frozen Python source tests and repository checks' \
+	  'make ci-qmd-worker  Install safely and run QMD source tests with network/model traps' \
 	  'make pre1-work-plan-check  Validate canonical W01-W16 governance mappings' \
 	  'make ci-ipc-source  Run the source-mode Python desktop IPC contract' \
 	  'make ci-web      Install and run Web source tests, typecheck and build' \
@@ -136,21 +138,32 @@ test:
 	cd web && npm run typecheck
 	cd web && npm run build
 
-ci-source: ci-python ci-web desktop-ci
+ci-source: ci-python ci-qmd-worker ci-web desktop-ci
 
 ci-python-install:
 	cd backend && $(UV) sync --frozen --extra dev
 	$(UV) pip install --python backend/.venv/bin/python --editable ./mcp
 
 ci-python: ci-python-install
+	backend/.venv/bin/python -m compileall -q mcp/mcp_server
+	backend/.venv/bin/python -c "import mcp_server.client; import mcp_server.server"
 	cd backend && .venv/bin/pytest
 	backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .
+	cd examples/demo-python-sdk && ../../backend/.venv/bin/python -m pytest
 	backend/.venv/bin/python tools/check_version_sync.py
 	backend/.venv/bin/python tools/check_markdown_links.py
+	backend/.venv/bin/python -B tools/check_ci_coverage.py
+	backend/.venv/bin/python -B tools/check_w01_evidence.py
 	backend/.venv/bin/python -B tools/check_pre1_work_plan.py
 	backend/.venv/bin/python -B -m unittest discover -s tools/tests -p 'test_*.py'
 
+ci-qmd-worker:
+	cd desktop/workers/qmd && $(NPM) ci --ignore-scripts --omit=optional --no-audit --no-fund
+	cd desktop/workers/qmd && NODE="$(NODE)" $(NPM) test $(if $(strip $(QMD_SOURCE_RESULT)),-- --result "$(QMD_SOURCE_RESULT)")
+
 pre1-work-plan-check:
+	$(PYTHON) -B tools/check_ci_coverage.py
+	$(PYTHON) -B tools/check_w01_evidence.py
 	$(PYTHON) -B tools/check_pre1_work_plan.py
 	$(PYTHON) -B -m unittest discover -s tools/tests -p 'test_*.py'
 

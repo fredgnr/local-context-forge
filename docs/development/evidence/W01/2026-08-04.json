@@ -3,13 +3,138 @@
   "work_id": "W01",
   "repository": "fredgnr/local-context-forge",
   "baseline_commit": "3eff97d97b2de4484d568bab5ac96d63830c79ee",
-  "status": "not-run",
-  "pull_request": null,
-  "checkpoint": null,
+  "status": "pass",
+  "pull_request": 20,
+  "checkpoint": {
+    "commit": "8573f608df589bc2ef9e05f0c75d84887464c825",
+    "tree": "40c039f240cdd8c6e0589c8608260c3d45c6ebaa",
+    "clean_checkout": true,
+    "base_to_head_diff_check": "pass",
+    "manifest_sha256": "7a19e41eaa12d5902951bb3d8475bbb1430fefe3e64c547d272ae464c6bea497",
+    "runtime_evidence_sha256": "e1a9b65e44b8258d8529c7018d64e3865b8135dc4677e9b9e6904484cb8bc6e7",
+    "runtime_artifact_archive_sha256": "9dc17f1163f9b111aff8b7ae603574d6c22f552e269e1cac299754c23051a91a",
+    "runtime_artifact_id": 8899870692,
+    "runtime_artifact_name": "w01-source-coverage-8573f608df589bc2ef9e05f0c75d84887464c825",
+    "environment": {
+      "python_job": "ubuntu-24.04 x86_64",
+      "web_job": "ubuntu-24.04 x86_64",
+      "desktop_job": "ubuntu-24.04 x86_64",
+      "macos_ipc_job": "macos-15 arm64",
+      "tool_versions": {
+        "python_job": {
+          "python": "Python 3.12.13",
+          "uv": "uv 0.11.29 (x86_64-unknown-linux-gnu)",
+          "qmd_node": "v22.23.2",
+          "qmd_npm": "10.9.8"
+        },
+        "web_job": {
+          "node": "v24.18.0",
+          "npm": "11.16.0"
+        },
+        "desktop_job": {
+          "node": "v24.18.0",
+          "npm": "11.16.0"
+        },
+        "macos_ipc_job": {
+          "python": "Python 3.12.10",
+          "uv": "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)"
+        }
+      }
+    },
+    "actions_run": {
+      "event": "pull_request",
+      "head_sha": "8573f608df589bc2ef9e05f0c75d84887464c825",
+      "exact_checked_out_sha": "8573f608df589bc2ef9e05f0c75d84887464c825",
+      "workflow_path": ".github/workflows/desktop-ci.yml",
+      "workflow_sha": "29e2498e666cfeebf162aa6bb726954e42d109ea",
+      "github_context_sha": "29e2498e666cfeebf162aa6bb726954e42d109ea",
+      "source_ref": "refs/pull/20/merge",
+      "run_id": 30927840380,
+      "attempt": 1,
+      "url": "https://github.com/fredgnr/local-context-forge/actions/runs/30927840380",
+      "conclusion": "success",
+      "job_results": {
+        "python": "success",
+        "web": "success",
+        "desktop": "success",
+        "macos-ipc": "success",
+        "source-coverage": "success"
+      }
+    },
+    "components": {
+      "python": {
+        "result": "pass",
+        "command": "make ci-python",
+        "tests": 323,
+        "skipped": 0
+      },
+      "host_runner": {
+        "result": "pass",
+        "command": "backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .",
+        "tests": 8,
+        "skipped": 0
+      },
+      "mcp": {
+        "result": "pass",
+        "command": "backend/.venv/bin/python -m compileall -q mcp/mcp_server && backend/.venv/bin/python -c 'import mcp_server.client; import mcp_server.server'",
+        "checks": 2,
+        "skipped": 0
+      },
+      "demo_python_sdk": {
+        "result": "pass",
+        "command": "cd examples/demo-python-sdk && ../../backend/.venv/bin/python -m pytest",
+        "tests": 3,
+        "skipped": 0
+      },
+      "web": {
+        "result": "pass",
+        "command": "make ci-web",
+        "tests": 51,
+        "skipped": 0
+      },
+      "desktop": {
+        "result": "pass",
+        "command": "make desktop-ci",
+        "tests": 252,
+        "skipped": 0
+      },
+      "qmd_worker": {
+        "result": "pass",
+        "command": "node --import desktop/scripts/qmdNetworkTrap.mjs --test desktop/workers/qmd/test/*.test.mjs",
+        "tests": 11,
+        "passed": 10,
+        "skipped": 1,
+        "allowed_skip_reason": "better-sqlite3 native binding is not built in source checkout",
+        "node_version": "22.23.2",
+        "network_trap": "active",
+        "network_policy": "deny-external-allow-af-unix",
+        "model_files_created": 0,
+        "model_cache_paths_created": 0
+      },
+      "governance": {
+        "result": "pass",
+        "command": "backend/.venv/bin/python -B -m unittest discover -s tools/tests -p 'test_*.py'",
+        "tests": 42,
+        "skipped": 0
+      }
+    },
+    "supplemental": {
+      "macos_ipc": {
+        "result": "pass",
+        "command": "make ci-ipc-source",
+        "tests": 49,
+        "skipped": 0
+      },
+      "guide_site": {
+        "disposition": "external-blocked",
+        "validated": false
+      }
+    }
+  },
   "gates": {
-    "VAL-PRE1-SEQUENCE-001": "not-run",
-    "VAL-GOV-001": "not-run",
-    "VAL-CI-COVERAGE-001": "not-run"
+    "VAL-PRE1-SEQUENCE-001": "pass",
+    "VAL-GOV-001": "pass",
+    "VAL-CI-COVERAGE-001": "pass"
   },
   "final_head_binding": {
     "mode": "github-actions-check-on-containing-commit",

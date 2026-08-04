@@ -9,7 +9,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 截止日期 | 2026-08-04 |
+| 截止日期 | 2026-08-05 |
 | canonical repository | `fredgnr/local-context-forge` |
 | 本轮治理基线 | `main@3eff97d97b2de4484d568bab5ac96d63830c79ee` |
 | 基线来源 | PR #19 final head `a31f17c` 合入为 `3eff97d`，两者 tree 均为 `21fe2cbe`；W01 从该 exact main 开始 |
@@ -33,6 +33,13 @@ PR #19 final head `a31f17c367e0ff3d007d2334c37b403615173083` 的 branch push run
 merge `3eff97d97b2de4484d568bab5ac96d63830c79ee` 的 main push run
 [`30816291252`](https://github.com/fredgnr/local-context-forge/actions/runs/30816291252) 均有既有
 Python/Web/Desktop/macOS IPC success。它们早于 W01 QMD/coverage contract，不能关闭 W01。
+W01 机械 checkpoint `8573f608df589bc2ef9e05f0c75d84887464c825` 的
+[PR #20 run 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380)
+在 exact checkout 上完成新的五 job aggregate：Python 323、Host Runner 8、demo SDK 3、Web
+51、Desktop 252、macOS IPC 49、governance 42，QMD 10 pass / 1 allowlisted native skip；
+network trap active，模型文件/缓存增量为 0。checkpoint→attestation 只允许治理文档路径，含本
+记录的最终提交再由附着于该 containing commit 的同名 check 绑定；缺少该 check 时 W01
+`pass` 无效。
 更早 PR #17 证据包括：
 
 - [Desktop source CI run 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112)：
@@ -82,8 +89,10 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 | Gate | 结果 | 说明 |
 | --- | --- | --- |
-| W01 final-head candidate | `not-run` | coverage manifest、QMD safe runner、exact-head checkout 与 runtime evidence 已在 authoring branch 落地；checkpoint/final-head run 尚未登记 |
-| `VAL-PRE1-SEQUENCE-001` authoring observation | gate `not-run`；local command `pass` | exact mappings、负向 fixtures、links/version/ID-set 通过；final diff 必须是固定 base→tested head，不接受 clean checkout 上的裸 `git diff --check` |
+| `VAL-PRE1-SEQUENCE-001` W01 PR gate | `pass` | fixed `3eff97d…`→`8573f608…` diff、W01–W16/state/formal-gate checks、42 governance tests；containing-commit exact-head check 必须附着 |
+| `VAL-GOV-001` W01 PR gate | `pass` | [machine record](evidence/W01/2026-08-04.json) 绑定 checkpoint、环境、命令、count/skip、manifest/artifact digest 与 [run 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380) |
+| `VAL-CI-COVERAGE-001` W01 PR gate | `pass` | existing required jobs + source-coverage 全部 success；QMD lifecycle/network/model fail-closed；guide-site 明确 external-blocked/unvalidated |
+| W02 canonical activation | blocked | 仍须 exact final PR head 独立验收、合入 canonical `main`，并在 resulting main commit 上取得成功 `source-coverage`；PR/synthetic merge/main SHA 不互换 |
 | `VAL-GOV-001` baseline | `pass` | `71890ee` 的 Python source job（Actions 30611309112）包含 Markdown 相对链接检查 |
 | `VAL-DOC-HANDOFF-001` R11 local review | `pass`（仅本地） | 修复后三路只读审计无 Critical/High/Medium；dirty worktree 不能替代最终 commit/PR |
 | `VAL-DOC-HANDOFF-001` R11 checkpoint | `pass` | [`625db76` clean-checkout 证据](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md)；冻结全部实质文档 |
@@ -102,7 +111,6 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 | Gate | 最低真实环境 |
 | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` final head | clean checkout / final PR head；当前 authoring tree 结果不作 commit-bound evidence |
 | `VAL-PACKAGED-SMOKE-001` | 独立 engineering-smoke mode 的 macOS arm64 packaged App |
 | 六个 `VAL-LEGACY-*` slice gate | exact before/after commit 与 fresh package digest；本 Work 不执行删除 |
 | `VAL-ENGINEERING-PACKAGE-001` | W10/W11 cleaned tree 的完整 non-release 工程包 |
@@ -127,21 +135,23 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 ## 当前阻塞
 
-1. 当前没有可用的 W02 packaged smoke harness；base builder 虽标记 UNOFFICIAL，仍会被
+1. PR #20 尚待 exact final head 的独立验收、canonical merge 与 resulting main commit 的
+   `source-coverage`；三项完成前 W02 不得启动。
+2. 当前没有可用的 W02 packaged smoke harness；base builder 虽标记 UNOFFICIAL，仍会被
    unprovisioned production update trust audit fail closed。
-2. W10/W11 的 decouple/deploy/transport/provider/release/docs slice 均未执行，container/GHCR
+3. W10/W11 的 decouple/deploy/transport/provider/release/docs slice 均未执行，container/GHCR
    workflow 与 legacy runtime 仍在。
-3. W03 cleaned-tree engineering package 以及 Desktop data/backup/model/runtime/CLI/MCP/local 的
+4. W03 cleaned-tree engineering package 以及 Desktop data/backup/model/runtime/CLI/MCP/local 的
    W04–W12 工程物理矩阵尚未完成。
-4. `macos-signing`、`macos-release`、三组 ruleset 和 Immutable Releases 的真实设置没有证据；
+5. `macos-signing`、`macos-release`、三组 ruleset 和 Immutable Releases 的真实设置没有证据；
    按 ADR-0016 这些工作后置到 W14，不是 W02/W10/W11 的当前前置。
-5. `runtime/update-metadata-key.lock.json` 和
+6. `runtime/update-metadata-key.lock.json` 和
    `runtime/macos-codesign-certificate.lock.json` 仍为 `unprovisioned`；生产公钥文件不存在。
-6. 没有由受保护 workflow 生成且通过 continuity、exact Draft cutover/absence 与真机测试的唯一
+7. 没有由受保护 workflow 生成且通过 continuity、exact Draft cutover/absence 与真机测试的唯一
    Draft 候选。
-7. 更新客户端当前只支持签名检查、下载和打开 DMG；automatic apply/install/restart/
+8. 更新客户端当前只支持签名检查、下载和打开 DMG；automatic apply/install/restart/
    rollback 没有已接受设计和实现。
-8. `guide-site` 源和现有公开说明仍包含 legacy 安装/localhost/Host Runner 内容，且本 checkout
+9. `guide-site` 源和现有公开说明仍包含 legacy 安装/localhost/Host Runner 内容，且本 checkout
    没有可验证的 `.openai/hosting.json`；必须先恢复 exact Sites identity，再改写、测试和留下
    checkpoint deployment evidence。当前站点不是权威使用入口。
 
@@ -152,10 +162,10 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 ### Ready now：无需外部管理员或物理候选
 
-1. 完成 W01 的 `TODO-PRE1-SEQUENCING-001`、`TODO-GOV-EVIDENCE-001` 与
-   `TODO-CI-COVERAGE-001` 三个 final-head gate；
-2. W01 全部退出后，执行 `TODO-PACKAGED-SMOKE-001`：实现明确隔离于 formal release 的 W02
-   harness；
+1. 完成 PR #20 exact final head 的独立验收、合入 canonical `main`，并等待 resulting main
+   commit 的 `source-coverage` success，以满足 W02 canonical activation；
+2. W01 全部退出且上述 canonical activation 完成后，执行 `TODO-PACKAGED-SMOKE-001`：
+   实现明确隔离于 formal release 的 W02 harness；
 3. W02 通过后，按 [work plan](work-plan.md) 分别认领 W10/W11 slice；不能把它们合成无
    owner 的大删除。
 

@@ -10,10 +10,11 @@
 | --- | --- | --- | --- |
 | `VAL-DOC-HANDOFF-001` | `625db7647d47fb6ff8f23c3136c4f45ded80384f` | `pass`（文档 source checkpoint） | [2026-07-31-625db76](VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) |
 | `VAL-LEGACY-SCOPE-001` | `64ec3c232d08f1e843d81dc7c4972dc5ebf96c9b` | `pass`（planning/documentation scope） | [2026-07-31-64ec3c2](VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) |
-| W01 三个 gate | 两阶段 binding；见记录 | `not-run`（checkpoint/final-head check 待完成） | [2026-08-04 W01 machine record](W01/2026-08-04.json) |
+| W01 三个 gate | checkpoint `8573f608df589bc2ef9e05f0c75d84887464c825` + containing-commit check | `pass`（PR #20 source gate） | [2026-08-04 W01 machine record](W01/2026-08-04.json)；[Actions 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380) |
 
-这些记录不代表最终 PR head、packaged、physical、GitHub settings、legacy absence 或 release
-gate 已通过。
+W01 行必须与附着在含该记录的 exact PR head 上的成功 check 一起读取；它不单独证明
+canonical activation。以上记录均不代表 packaged、physical、GitHub settings、legacy absence
+或 release gate 已通过。
 
 ## 1. 证据原则
 

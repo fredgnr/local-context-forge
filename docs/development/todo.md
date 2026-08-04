@@ -43,9 +43,9 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 
 | Task ID | 优先级 | Roadmap | 状态 | Owner component | 主要依赖 | 验收 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `in-progress` | Governance/Architecture | 无 | `VAL-PRE1-SEQUENCE-001` final head |
-| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `in-progress` | Governance/CI | 无 | `VAL-GOV-001` final head |
-| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `in-progress` | CI/QMD/Sites | 无 | `VAL-CI-COVERAGE-001` |
+| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `done` | Governance/Architecture | 无 | `VAL-PRE1-SEQUENCE-001` final head |
+| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `done` | Governance/CI | 无 | `VAL-GOV-001` final head |
+| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `done` | CI/QMD/Sites | 无 | `VAL-CI-COVERAGE-001` |
 | TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` | Desktop/Packaging/QA | W01 全部退出门禁 | `VAL-PACKAGED-SMOKE-001` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
@@ -91,7 +91,7 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 
 ### TODO-PRE1-SEQUENCING-001：接受并机器化新的 Pre-1.0 顺序
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：Governance/Architecture
 - 关联：REQ-PRE1-SEQUENCING-001、ADR-0016、ITER-0002/R13
 - 依赖：无
@@ -138,7 +138,7 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 
 ### TODO-GOV-EVIDENCE-001：统一可复现证据坐标
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：Governance/CI
 - 目的：移除“当前工作树 pass”和混合历史 SHA，让每个 source 结论能追到公开 commit/Actions。
 - 依赖：无
@@ -164,9 +164,9 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 
 ### TODO-CI-COVERAGE-001：补齐并声明 source aggregate 覆盖
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：CI/QMD/Sites
-- 目的：`make ci-source` 当前遗漏 QMD worker，主 workflow 也不验证 guide-site。
+- 目的：补齐原先 `make ci-source` 遗漏的 QMD worker，并对 guide-site 未验证状态作机器声明。
 - 依赖：无
 
 交付：

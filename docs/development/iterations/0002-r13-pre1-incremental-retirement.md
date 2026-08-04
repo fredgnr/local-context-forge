@@ -1,14 +1,14 @@
 # ITER-0002/R13：Pre-1.0 增量式 retirement 治理
 
-- 状态：`in-progress`（继承 ITER-0002；待最终 PR head 证据）
-- 日期：2026-08-03；W01 closure 续作 2026-08-04
+- 状态：`completed`（父 ITER-0002 继续）
+- 日期：2026-08-03；W01 closure 续作 2026-08-04–05
 - 上游基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
 - 当前分支：`agent/w01-governance-source-ci`
 - 范围：决策、治理、计划、追踪关系与治理校验；不删除 runtime，不实现 package，不修改
   GitHub 控制面，不生成凭据，不创建 tag/Draft/Release
 - 关联决策：[ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md)
 - 关联计划：[W01–W16 work plan](../work-plan.md)
-- 关联验证：VAL-PRE1-SEQUENCE-001
+- 关联验证：VAL-PRE1-SEQUENCE-001、VAL-GOV-001、VAL-CI-COVERAGE-001
 
 ## 目标
 
@@ -27,10 +27,13 @@ controls、credentials、trust pins 和 formal Release 最后处理。
   数据安全、历史证据和 final fail-closed 门禁。
 - [x] R13-04 首次落盘 W01–W16 稳定映射，以显式 execution rank 前置 W10/W11，不重编号。
 - [x] R13-05 新增最小 smoke、slice 与 engineering package 的 REQ/TODO/VAL，并同步权威文档。
-- [ ] R13-06 在最终 PR head 运行 commit-bound links/version/plan/diff 与 CI 验证并登记 evidence。
+- [x] R13-06 在 checkpoint 与 containing-commit PR head 运行 commit-bound
+  links/version/plan/diff/source aggregate，并登记 machine evidence。
 
-`[x]` 只表示 governance/source 文档已在本工作树编写，不表示 runtime、packaged、physical、
-GitHub settings 或 Release gate 已运行。R13-06 完成前，本记录保持 `in-progress`。
+`[x]` 只表示 R13 governance/source closure 已有 commit-bound 证据，不表示 runtime、
+packaged、physical、GitHub settings 或 Release gate 已运行。W01 PR gate 完成也不自动授权
+W02；仍须 exact final PR head 独立验收、合入 canonical `main`，以及 resulting main commit 的
+`source-coverage` success。
 
 ## 实时基线
 
@@ -59,9 +62,9 @@ GitHub settings 或 Release gate 已运行。R13-06 完成前，本记录保持 
 
 | 验证 | 当前结果 | 最低环境 | 说明 |
 | --- | --- | --- | --- |
-| W01 machine contract authoring | gate 仍 `not-run` | 当前工作树 | coverage manifest、反向 checker、QMD lifecycle/network/model trap、exact PR-head checkout、fixed base→head diff 与 runtime evidence renderer 已编写；checkpoint 尚未提交/运行 |
-| `VAL-PRE1-SEQUENCE-001` authoring check | gate 仍 `not-run`；local observation `pass` | 当前工作树 | exact plan checker 与负向 fixtures、links、version 通过；裸 `git diff --check` 不再计入 final evidence，必须比较 `3eff97d…`→tested head |
-| `VAL-PRE1-SEQUENCE-001` final head | `not-run` | clean checkout / final PR head | 必须绑定 commit 与 CI |
+| `VAL-PRE1-SEQUENCE-001` | `pass` | checkpoint `8573f608…`；PR #20 containing commit | fixed `3eff97d…`→checkpoint diff、exact plan/state/ID checks、42 governance tests；见 [machine record](../evidence/W01/2026-08-04.json) 与 [run 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380) |
+| `VAL-GOV-001` | `pass` | ubuntu-24.04 x64 + macos-15 arm64；同 checkpoint/run | Python 323、Host 8、MCP 2、demo SDK 3、Web 51、Desktop 252、macOS IPC 49，links/version/evidence checks 全部通过 |
+| `VAL-CI-COVERAGE-001` | `pass` | exact PR-head checkout；同 checkpoint/run | required jobs + summary success；QMD 10 pass / 1 allowlisted native skip、network trap active、0 model/cache；guide-site external-blocked/unvalidated |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` | macOS arm64 packaged App | 本 Work 不实现 harness |
 | 六个 legacy slice gate | `not-run` | slice exact before/after package | 本 Work 不删除 runtime |
 | `VAL-ENGINEERING-PACKAGE-001` | `not-run` | cleaned-tree non-release package | 本 Work 不实现工程包 |

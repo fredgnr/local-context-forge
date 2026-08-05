@@ -16,7 +16,7 @@ EVIDENCE = ROOT / "docs" / "development" / "evidence" / "W01" / "2026-08-04.json
 SCHEMA = ROOT / "docs" / "development" / "evidence" / "W01" / "schema-v2.json"
 REPOSITORY = "fredgnr/local-context-forge"
 WORKFLOW_PATH = ".github/workflows/desktop-ci.yml"
-SCHEMA_OBJECT_SHA256 = "83326237c94d76e6bc96b508f6e73e4babc3f1f404d2efa8dbd2f9e5aa133f4d"
+SCHEMA_OBJECT_SHA256 = "064952f183fb8024edab629e572b1d8d72c1c3cda8d0d161353a81b2755b85f5"
 BASELINE = {
     "commit": "3eff97d97b2de4484d568bab5ac96d63830c79ee",
     "tree": "21fe2cbe46d42bf351d2b0c84019ee63959081b7",
@@ -581,6 +581,29 @@ def validate_schema_document(schema: Any) -> list[str]:
     required = set(schema.get("required", []))
     if required != set(properties):
         errors.append("W01 schema top-level required/property sets differ")
+
+    def validate_fixed_tuples(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            prefix_items = value.get("prefixItems")
+            if isinstance(prefix_items, list) and value.get("items") is False:
+                expected_length = len(prefix_items)
+                if value.get("minItems") != expected_length:
+                    errors.append(
+                        f"W01 schema fixed tuple {path} must set minItems to "
+                        f"{expected_length}"
+                    )
+                if value.get("maxItems") != expected_length:
+                    errors.append(
+                        f"W01 schema fixed tuple {path} must set maxItems to "
+                        f"{expected_length}"
+                    )
+            for key, child in value.items():
+                validate_fixed_tuples(child, f"{path}/{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                validate_fixed_tuples(child, f"{path}/{index}")
+
+    validate_fixed_tuples(schema, "#")
     return errors
 
 

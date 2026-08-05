@@ -112,6 +112,8 @@
         { "const": "merge of that accepted candidate into canonical main" },
         { "const": "successful source-coverage on the exact resulting main commit" }
       ],
+      "minItems": 3,
+      "maxItems": 3,
       "items": false
     },
     "gate_results": {
@@ -326,6 +328,8 @@
                 { "const": "isolated XDG_DATA_HOME" },
                 { "const": "isolated TMPDIR" }
               ],
+              "minItems": 5,
+              "maxItems": 5,
               "items": false
             },
             "repository_worktree_scanned": { "const": false },
@@ -475,6 +479,8 @@
                 { "const": "pull_request" },
                 { "const": "workflow_dispatch" }
               ],
+              "minItems": 3,
+              "maxItems": 3,
               "items": false
             },
             "source_expression": {
@@ -488,6 +494,8 @@
                 { "const": "desktop" },
                 { "const": "macos-ipc" }
               ],
+              "minItems": 4,
+              "maxItems": 4,
               "items": false
             },
             "summary_job": { "const": "source-coverage" },

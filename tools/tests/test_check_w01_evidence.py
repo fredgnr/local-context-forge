@@ -178,6 +178,21 @@ class W01EvidenceTests(unittest.TestCase):
             CHECKER.validate_schema_document(schema),
         )
 
+    def test_schema_fixed_tuples_require_exact_length_bounds(self) -> None:
+        schema = json.loads(CHECKER.SCHEMA.read_text(encoding="utf-8"))
+        activation = schema["$defs"]["activation_conditions"]
+        self.assertIn("minItems", activation)
+        del activation["minItems"]
+        errors = CHECKER.validate_schema_document(schema)
+        self.assertTrue(
+            any(
+                "fixed tuple #/$defs/activation_conditions must set minItems to 3"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
     def test_pending_remediation_record_is_honest(self) -> None:
         self.assertEqual(CHECKER.validate_evidence(pending_record()), [])
 

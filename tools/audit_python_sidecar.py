@@ -295,9 +295,32 @@ def is_macho(path: Path) -> bool:
         raise AuditError("Unable to inspect a possible Mach-O file") from exc
 
 
+def _native_tool_label(arguments: Sequence[str]) -> str:
+    contracts = {
+        ("/usr/bin/otool", "-l"): "otool-load-commands",
+        ("/usr/bin/otool", "-L"): "otool-dependencies",
+        ("/usr/bin/otool", "-D"): "otool-install-name",
+        ("/usr/bin/lipo", "-archs"): "lipo-architectures",
+        ("/usr/bin/codesign", "--verify"): "codesign-verify",
+    }
+    if len(arguments) < 2:
+        raise AuditError("Native inspection tool contract is invalid")
+    label = contracts.get((arguments[0], arguments[1]))
+    expected_length = 4 if label == "codesign-verify" else 3
+    if (
+        label is None
+        or len(arguments) != expected_length
+        or (label == "codesign-verify" and arguments[2] != "--strict")
+        or not Path(arguments[-1]).is_absolute()
+    ):
+        raise AuditError("Native inspection tool contract is invalid")
+    return label
+
+
 def _run_native_tool(arguments: Sequence[str]) -> str:
     if platform.system() != "Darwin":
         raise AuditError("Real Mach-O inspection requires Darwin")
+    label = _native_tool_label(arguments)
     try:
         completed = subprocess.run(
             list(arguments),
@@ -312,8 +335,24 @@ def _run_native_tool(arguments: Sequence[str]) -> str:
                 "LC_ALL": "C",
             },
         )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise AuditError("Native inspection tool failed") from exc
+    except subprocess.CalledProcessError as exc:
+        return_code = (
+            exc.returncode
+            if isinstance(exc.returncode, int) and -255 <= exc.returncode <= 255
+            else "other"
+        )
+        raise AuditError(
+            "Native inspection tool failed "
+            f"(tool={label}; category=exit; code={return_code})"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise AuditError(
+            f"Native inspection tool failed (tool={label}; category=timeout)"
+        ) from exc
+    except OSError as exc:
+        raise AuditError(
+            f"Native inspection tool failed (tool={label}; category=launch)"
+        ) from exc
     return completed.stdout
 
 

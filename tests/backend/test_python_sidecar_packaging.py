@@ -1052,6 +1052,60 @@ def test_python_sidecar_build_root_rejects_unsafe_parent(
         build._create_private_build_root(destination_parent)
 
 
+@pytest.mark.parametrize(
+    ("arguments", "label"),
+    [
+        (("/usr/bin/otool", "-l", "/secret/path"), "otool-load-commands"),
+        (("/usr/bin/otool", "-L", "/secret/path"), "otool-dependencies"),
+        (("/usr/bin/otool", "-D", "/secret/path"), "otool-install-name"),
+        (("/usr/bin/lipo", "-archs", "/secret/path"), "lipo-architectures"),
+        (
+            ("/usr/bin/codesign", "--verify", "--strict", "/secret/path"),
+            "codesign-verify",
+        ),
+    ],
+)
+def test_native_tool_failure_reports_only_a_fixed_label(
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: tuple[str, ...],
+    label: str,
+) -> None:
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+
+    def failed_run(*_args: Any, **_kwargs: Any) -> Any:
+        raise subprocess.CalledProcessError(
+            1,
+            arguments,
+            stderr="token/path-must-not-leak",
+        )
+
+    monkeypatch.setattr(audit.subprocess, "run", failed_run)
+
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            rf"^Native inspection tool failed \(tool={label}; "
+            r"category=exit; code=1\)$"
+        ),
+    ) as failure:
+        audit._run_native_tool(arguments)
+
+    assert "must-not-leak" not in str(failure.value)
+    assert "/secret" not in str(failure.value)
+
+
+def test_native_tool_rejects_an_unreviewed_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Native inspection tool contract is invalid$",
+    ):
+        audit._run_native_tool(("/usr/bin/file", "--brief", "/secret/path"))
+
+
 def _install_fake_uds_socket(
     monkeypatch: pytest.MonkeyPatch,
     response: bytes,

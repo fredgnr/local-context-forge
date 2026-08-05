@@ -11,7 +11,7 @@
 | `VAL-DOC-HANDOFF-001` | `625db7647d47fb6ff8f23c3136c4f45ded80384f` | `pass`（文档 source checkpoint） | [2026-07-31-625db76](VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) |
 | `VAL-LEGACY-SCOPE-001` | `64ec3c232d08f1e843d81dc7c4972dc5ebf96c9b` | `pass`（planning/documentation scope） | [2026-07-31-64ec3c2](VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) |
 | W01 旧 candidate | final `2b7629468c711d0db5107f7001aa90c0271079ae` / tree `ad1b76febd1adcaf1ada96ed7dd43fbe1e5a3adf` | technical `pass`；independent `fail`；activation `not-eligible` | [schema v2 history](W01/2026-08-04.json)；[Actions 30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329)；旧 artifact `8900365901` |
-| W01 remediation candidate | exact final head 由 attached Actions payload/provenance 绑定 | PR/source `pending`；independent `pending`；canonical-main `not-run`；activation `blocked` | [schema v2 lifecycle record](W01/2026-08-04.json)；[closed schema](W01/schema-v2.json) |
+| W01 remediation candidate | Checkpoint A `d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca` / tree `6d9f31297b768f83f6084c7bc169faefaea8a8ef` | PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30979253786](https://github.com/fredgnr/local-context-forge/actions/runs/30979253786)；payload `8919488642`；provenance `8919488886`；[closed schema](W01/schema-v2.json) |
 
 旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。修复记录
 必须与 exact final head 上的新 payload/provenance 一起读取；仓库记录不能自行声明 independent

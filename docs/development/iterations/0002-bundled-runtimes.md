@@ -59,7 +59,7 @@ packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
 | Codex MCP onboarding 与签名 CLI discovery | [ADR-0013](../../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | R08 source discovery/onboarding 已实现；真实 OpenAI 签名 gate 待运行 |
 | 候选 Draft 与公开 promotion 分离 | [ADR-0014](../../adr/0014-two-stage-desktop-release-promotion.md) | R09 的 tag-only signing、trusted-main promotion（无配置 release secret/长期签名凭据，使用短期 `GITHUB_TOKEN`）、ruleset/immutable source policy 已实现并复验；真实 settings/promotion 待运行 |
 | Electron-only 与 legacy retirement | [ADR-0015](../../adr/0015-electron-only-legacy-retirement.md) | R12 已冻结 remove/retain/split；cutover/removal/absence gate 均 `not-run` |
-| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13/W01 旧 technical candidate 独立验收 `fail`；remediation/activation pending；runtime/package/slice/final/release gate 均 `not-run` |
+| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13/W01 旧 technical candidate 独立验收 `fail`；remediation technical checkpoint `pass` / activation pending；runtime/package/slice/final/release gate 均 `not-run` |
 
 ## 任务
 
@@ -131,7 +131,7 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 | --- | --- | --- | --- | --- |
 | VAL-GOV-001 baseline | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) 的 Python source job | 该基线包含 Markdown link check；R11 最终 head 仍在 [R11 validation](0002-r11-documentation-handoff.md#验证日志) 独立记录 |
 | W01 old candidate | technical `pass` / independent `fail` / activation `not-eligible` | 2026-08-04；checkpoint `8573f608…` + final `2b762946…` | [Actions 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380)、[30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329)；[machine record](../evidence/W01/2026-08-04.json) | 旧 run/artifact/NO-GO 保留；不解锁 W02 |
-| W01 remediation candidate | PR/source `pending`；independent `pending`；canonical-main `not-run`；activation `blocked` | 新 exact final head 待生成 | schema v2 historical record + attached payload/provenance | future descendant 与 merge/squash/rebase/main movement 不再由历史 ancestry/diff 限制 |
+| W01 remediation candidate | PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A `d39f2002…` / tree `6d9f3129…` | [Actions 30979253786](https://github.com/fredgnr/local-context-forge/actions/runs/30979253786)；payload `8919488642`；provenance `8919488886` | future descendant 与 merge/squash/rebase/main movement 不再由历史 ancestry/diff 限制；final containing-head CI 仍须重跑 |
 | VAL-P1-SOURCE-001 | `pass` | 2026-07-30；`7e4524f` | 继承 ITER-0001 Actions 证据 | 仅证明恢复基线 |
 | Backend source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Python source job success；历史本地计数 322 pass / 1 AF_UNIX skip |
 | Desktop source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Desktop source job success；历史本地计数 30 files / 245 pass / 7 skip |

@@ -232,9 +232,115 @@
       "W01-EVIDENCE-MERGE-STRATEGY-INCOMPATIBLE",
       "W01-ARTIFACT-PREMATURE-CANONICAL-PASS"
     ],
-    "checkpoint_a": null,
-    "checkpoint_a_record_sha256": null,
-    "technical_source_result": "pending",
+    "checkpoint_a": {
+      "source_commit": "d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
+      "source_tree": "6d9f31297b768f83f6084c7bc169faefaea8a8ef",
+      "lifecycle_phase": "pull-request-candidate",
+      "run": {
+        "id": 30979253786,
+        "attempt": 1,
+        "event": "pull_request",
+        "source_ref": "refs/pull/20/merge",
+        "exact_checked_out_sha": "d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
+        "synthetic_context_sha": "b7f9ea4a0e98ab0515b2d53076aaf39b18bd442c",
+        "workflow_path": ".github/workflows/desktop-ci.yml",
+        "workflow_sha": "b7f9ea4a0e98ab0515b2d53076aaf39b18bd442c",
+        "url": "https://github.com/fredgnr/local-context-forge/actions/runs/30979253786",
+        "conclusion": "success",
+        "job_results": {
+          "python": "success",
+          "web": "success",
+          "desktop": "success",
+          "macos-ipc": "success",
+          "source-coverage": "success"
+        }
+      },
+      "payload_artifact": {
+        "id": 8919488642,
+        "name": "w01-source-coverage-d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
+        "source_commit": "d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
+        "run_id": 30979253786,
+        "archive_sha256": "c295af5a94085640b8afb9c85bb07cd37cc93a0333b15b1f1cba922b3fdc7662",
+        "inner_json_sha256": "f559e03a302dcecc7be86f43fe58b114e6dd601bd202302b0bed0f5a302dea04",
+        "payload_schema_version": 2
+      },
+      "provenance_artifact": {
+        "id": 8919488886,
+        "name": "w01-source-coverage-provenance-d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
+        "source_commit": "d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
+        "run_id": 30979253786,
+        "archive_sha256": "24b1d4da178c3d31587d0ece86fc4d66d297fcb8f369747ca05d053e05aae809",
+        "inner_json_sha256": "b5aeef49f6bbbb0750d9d457e03bd617e5d4c2bcd5466e75ea540bc981ee9e5d",
+        "payload_binding": {
+          "artifact_id": 8919488642,
+          "artifact_name": "w01-source-coverage-d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
+          "archive_sha256": "c295af5a94085640b8afb9c85bb07cd37cc93a0333b15b1f1cba922b3fdc7662",
+          "inner_json_sha256": "f559e03a302dcecc7be86f43fe58b114e6dd601bd202302b0bed0f5a302dea04"
+        }
+      },
+      "provenance_absence_reason": null,
+      "technical_gate_results": {
+        "VAL-PRE1-SEQUENCE-001": "pass",
+        "VAL-GOV-001": "pass",
+        "VAL-CI-COVERAGE-001": "pass"
+      },
+      "legacy_payload_canonical_gate_results": null,
+      "tool_versions": {
+        "python": {
+          "python-version": "Python 3.12.13",
+          "qmd-node-version": "v22.23.2",
+          "npm-version": "10.9.8",
+          "uv-version": "uv 0.11.29 (x86_64-unknown-linux-gnu)"
+        },
+        "web": {
+          "node-version": "v24.18.0",
+          "npm-version": "11.16.0"
+        },
+        "desktop": {
+          "node-version": "v24.18.0",
+          "npm-version": "11.16.0"
+        },
+        "macos-ipc": {
+          "architecture": "arm64",
+          "python-version": "Python 3.12.10",
+          "uv-version": "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)"
+        }
+      },
+      "qmd_source": {
+        "tests": {
+          "tests": 11,
+          "pass": 10,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 1,
+          "todo": 0
+        },
+        "allowed_skip_reason": "better-sqlite3 native binding is not built in source checkout",
+        "network_trap": "active",
+        "network_policy": "deny-external-allow-af-unix",
+        "model_scan": {
+          "scope": [
+            "isolated HOME",
+            "isolated XDG_CACHE_HOME",
+            "isolated XDG_CONFIG_HOME",
+            "isolated XDG_DATA_HOME",
+            "isolated TMPDIR"
+          ],
+          "repository_worktree_scanned": false,
+          "global_tmp_scanned": false,
+          "model_files_created": 0,
+          "model_cache_paths_created": 0,
+          "scope_basis": "schema-v2 runtime payload from exact PR-head Actions"
+        }
+      },
+      "guide_site": {
+        "disposition": "external-blocked",
+        "included": false,
+        "validated": false
+      }
+    },
+    "checkpoint_a_record_sha256": "581b6d758b64af016ed45d74bcaff577dd8f6b1b963c348d81f3f22712515d87",
+    "technical_source_result": "pass",
     "independent_acceptance": "pending",
     "final_containing_head_binding": {
       "mode": "attached-exact-head-payload-and-provenance",

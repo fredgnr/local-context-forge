@@ -18,8 +18,9 @@
 | 活动父迭代 | [ITER-0002](iterations/0002-bundled-runtimes.md) |
 | 当前结论 | **W01 remediation in progress / PR merge blocked / public release NO-GO** |
 
-PR #20 的旧 final candidate 已被独立验收拒绝；当前修复候选仍须完成 exact-head source CI 与
-独立验收，不能称为 merge GO。即使 PR/source technical 结果为 `pass`，也不表示：
+PR #20 的旧 final candidate 已被独立验收拒绝；当前修复候选的 Checkpoint A exact-head source
+CI 已通过，但仍须完成 exact final containing-head CI 与独立验收，不能称为 merge GO。即使
+PR/source technical 结果为 `pass`，也不表示：
 
 - 存在可推荐给普通用户的 DMG；
 - 打包应用已经在干净 M4 用户上运行；
@@ -50,6 +51,16 @@ artifact 与 NO-GO 作为历史保留，不能解锁 W02。
 exact-head `Desktop source CI` payload 与独立 provenance artifact 证明；PR/branch artifact 的
 canonical activation 固定为 `blocked`，canonical-main source result 与 independent acceptance
 分开记录。
+
+修复 Checkpoint A `d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca` / tree
+`6d9f31297b768f83f6084c7bc169faefaea8a8ef` 的 [run 30979253786](https://github.com/fredgnr/local-context-forge/actions/runs/30979253786)
+五个 jobs 全部成功。payload artifact `8919488642` 的 archive / inner SHA-256 分别为
+`c295af5a94085640b8afb9c85bb07cd37cc93a0333b15b1f1cba922b3fdc7662` /
+`f559e03a302dcecc7be86f43fe58b114e6dd601bd202302b0bed0f5a302dea04`；provenance artifact
+`8919488886` 的 archive / inner SHA-256 分别为
+`24b1d4da178c3d31587d0ece86fc4d66d297fcb8f369747ca05d053e05aae809` /
+`b5aeef49f6bbbb0750d9d457e03bd617e5d4c2bcd5466e75ea540bc981ee9e5d`。该 PR artifact 只记录
+technical `pass`，independent acceptance 仍为 `pending`，canonical activation 仍为 `blocked`。
 更早 PR #17 证据包括：
 
 - [Desktop source CI run 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112)：
@@ -99,12 +110,13 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 | Gate | 旧 candidate technical / independent / activation | 修复 candidate PR/source | 修复 candidate independent acceptance | canonical-main source | canonical activation |
 | --- | --- | --- | --- | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` | `pass` / `fail` / `not-eligible` | `pending` | `pending` | `not-run` | `blocked` |
-| `VAL-GOV-001` | `pass` / `fail` / `not-eligible` | `pending` | `pending` | `not-run` | `blocked` |
-| `VAL-CI-COVERAGE-001` | `pass` / `fail` / `not-eligible` | `pending` | `pending` | `not-run` | `blocked` |
+| `VAL-PRE1-SEQUENCE-001` | `pass` / `fail` / `not-eligible` | `pass` | `pending` | `not-run` | `blocked` |
+| `VAL-GOV-001` | `pass` / `fail` / `not-eligible` | `pass` | `pending` | `not-run` | `blocked` |
+| `VAL-CI-COVERAGE-001` | `pass` / `fail` / `not-eligible` | `pass` | `pending` | `not-run` | `blocked` |
 
-修复 candidate 的 PR/source 列只能由新的 exact-head required jobs、payload 与 provenance 提升为
-`pass`；仓库内容不能自报 independent acceptance，PR event 也不能输出 canonical `pass`。W02
+修复 candidate 的 PR/source 列已由 Checkpoint A exact-head required jobs、payload 与 provenance
+提升为 `pass`；仓库内容不能自报 independent acceptance，PR event 也不能输出 canonical
+`pass`。Checkpoint B 的 exact final containing head 仍须重新运行同一 CI。W02
 仍须 exact final PR head 独立验收、被验收 candidate 合入 canonical `main`，并在 resulting exact
 main commit 上取得成功 `source-coverage`；PR head、synthetic merge SHA 与 resulting main SHA
 不得静默互换。
@@ -155,9 +167,9 @@ main commit 上取得成功 `source-coverage`；PR head、synthetic merge SHA �
 
 ## 当前阻塞
 
-1. PR #20 旧 candidate 已独立验收 `fail`；修复 candidate 尚待新的 exact-head technical
-   `pass`、独立验收、canonical merge 与 resulting main commit 的 `source-coverage`。这些条件
-   全部完成前 W02 不得启动。
+1. PR #20 旧 candidate 已独立验收 `fail`；修复 candidate Checkpoint A technical `pass`，但仍
+   待 exact final containing-head CI、独立验收、canonical merge 与 resulting main commit 的
+   `source-coverage`。这些条件全部完成前 W02 不得启动。
 2. 当前没有可用的 W02 packaged smoke harness；base builder 虽标记 UNOFFICIAL，仍会被
    unprovisioned production update trust audit fail closed。
 3. W10/W11 的 decouple/deploy/transport/provider/release/docs slice 均未执行，container/GHCR
@@ -183,9 +195,9 @@ main commit 上取得成功 `source-coverage`；PR head、synthetic merge SHA �
 
 ### Ready now：无需外部管理员或物理候选
 
-1. 先完成 PR #20 修复 candidate 的 exact-head PR/source CI，再取得独立验收 `pass`、合入
-   canonical `main`，并等待 resulting main commit 的 `source-coverage` success，以满足 W02
-   canonical activation；
+1. 先完成 PR #20 修复 candidate 的 exact final containing-head CI，再取得独立验收 `pass`、
+   合入 canonical `main`，并等待 resulting main commit 的 `source-coverage` success，以满足
+   W02 canonical activation；
 2. W01 全部退出且上述 canonical activation 完成后，执行 `TODO-PACKAGED-SMOKE-001`：
    实现明确隔离于 formal release 的 W02 harness；
 3. W02 通过后，按 [work plan](work-plan.md) 分别认领 W10/W11 slice；不能把它们合成无

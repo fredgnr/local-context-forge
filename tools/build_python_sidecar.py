@@ -77,6 +77,9 @@ MAX_SMOKE_BROKER_REVISION = 2**53 - 1
 EXPECTED_MISSING_IMPORT_PATTERN = re.compile(
     r"^missing module named ['\"]?([^ '\"(),]+)['\"]?"
 )
+SAFE_MISSING_IMPORT_NAME_PATTERN = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_.]{0,127}$"
+)
 WHEEL_REQUIREMENT_PATTERN = re.compile(
     r"^([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)\s+"
     r"--hash=sha256:([0-9a-f]{64})$"
@@ -1180,10 +1183,26 @@ def validate_missing_imports(
     for line in lines:
         match = EXPECTED_MISSING_IMPORT_PATTERN.match(line.strip())
         if match:
-            observed.add(match.group(1))
+            module = match.group(1)
+            if not SAFE_MISSING_IMPORT_NAME_PATTERN.fullmatch(module):
+                raise BuildError(
+                    "PyInstaller warning evidence contains a malformed module name"
+                )
+            observed.add(module)
+            if len(observed) > 256:
+                raise BuildError("PyInstaller warning evidence exceeds its module bound")
     unexpected = observed - set(modules)
     if unexpected:
-        raise BuildError("PyInstaller reported a non-allowlisted missing import")
+        names = ",".join(sorted(unexpected))
+        if len(names) > 2048:
+            names = (
+                "sha256:"
+                + hashlib.sha256(names.encode("ascii")).hexdigest()
+            )
+        raise BuildError(
+            "PyInstaller reported non-allowlisted missing imports "
+            f"(count={len(unexpected)}; modules={names})"
+        )
     return observed
 
 

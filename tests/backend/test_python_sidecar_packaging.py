@@ -544,6 +544,44 @@ def test_uv_lock_check_reports_only_a_controlled_failure_category(
     assert "must-not-leak" not in str(failure.value)
 
 
+def test_missing_import_validator_reports_only_safe_module_names(
+    tmp_path: Path,
+) -> None:
+    warning = tmp_path / "warn-lcf-service.txt"
+    warning.write_text(
+        "missing module named 'winreg' - imported by platform (optional)\n"
+        "missing module named 'safe_new.module' - imported by package (optional)\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        build.BuildError,
+        match=(
+            r"^PyInstaller reported non-allowlisted missing imports "
+            r"\(count=1; modules=safe_new\.module\)$"
+        ),
+    ):
+        build.validate_missing_imports(warning)
+
+
+def test_missing_import_validator_rejects_a_path_like_module_without_leaking_it(
+    tmp_path: Path,
+) -> None:
+    warning = tmp_path / "warn-lcf-service.txt"
+    warning.write_text(
+        "missing module named '/Users/runner/must-not-leak' - imported by package\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        build.BuildError,
+        match="malformed module name",
+    ) as failure:
+        build.validate_missing_imports(warning)
+
+    assert "must-not-leak" not in str(failure.value)
+
+
 def _install_binding_fixture(
     tmp_path: Path,
 ) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:

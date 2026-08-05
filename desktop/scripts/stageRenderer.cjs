@@ -21,6 +21,12 @@ const DESTINATION_ROOT = path.join(
   "renderer"
 );
 const PACKAGE_LOCK = path.join(REPOSITORY_ROOT, "web", "package-lock.json");
+const DESTINATION_REPOSITORY_PATH = "desktop/resources/renderer";
+const DESTINATION_REPOSITORY_DIRECTORY = `${DESTINATION_REPOSITORY_PATH}/`;
+const REVIEWED_DESTINATION_IGNORE_EVIDENCE = new RegExp(
+  "^\\.gitignore:[1-9][0-9]*:desktop/resources/renderer/\\t" +
+    "desktop/resources/renderer/$"
+);
 
 class RendererStageError extends Error {
   constructor(message) {
@@ -59,20 +65,56 @@ function selectSourceCommit(environment = process.env) {
   return commit;
 }
 
-function validateProvenance(environment = process.env) {
+function validateProvenance(
+  environment = process.env,
+  { gitCommand = git } = {}
+) {
+  const checkedGit = (arguments_, failureMessage) => {
+    try {
+      return gitCommand(arguments_);
+    } catch {
+      fail(failureMessage);
+    }
+  };
+  const provenanceFailure = "Renderer staging Git provenance check failed";
   const commit = selectSourceCommit(environment);
   const sourceDateEpoch = Number(environment.LCF_SOURCE_DATE_EPOCH);
   if (
     !Number.isSafeInteger(sourceDateEpoch) ||
     sourceDateEpoch < 100_000_000 ||
-    git(["rev-parse", "HEAD"]).toLowerCase() !== commit ||
-    Number(git(["show", "-s", "--format=%ct", "HEAD"])) !== sourceDateEpoch ||
-    git(["status", "--porcelain", "--untracked-files=all"]) !== ""
+    checkedGit(["rev-parse", "HEAD"], provenanceFailure).toLowerCase() !==
+      commit ||
+    Number(
+      checkedGit(
+        ["show", "-s", "--format=%ct", "HEAD"],
+        provenanceFailure
+      )
+    ) !== sourceDateEpoch ||
+    checkedGit(
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      provenanceFailure
+    ) !== ""
   ) {
     fail("Renderer staging requires a clean reviewed source commit");
   }
-  if (git(["check-ignore", "-q", "desktop/resources/renderer"]) !== "") {
-    fail("Renderer staging destination ignore policy is ambiguous");
+  const trackedDestinationFailure =
+    "Renderer staging destination overlaps tracked source";
+  if (
+    checkedGit(
+      ["ls-files", "--", DESTINATION_REPOSITORY_PATH],
+      trackedDestinationFailure
+    ) !== ""
+  ) {
+    fail(trackedDestinationFailure);
+  }
+  const ignorePolicyFailure =
+    "Renderer staging destination is not covered by the reviewed Git ignore policy";
+  const ignoreEvidence = checkedGit(
+    ["check-ignore", "-v", "--", DESTINATION_REPOSITORY_DIRECTORY],
+    ignorePolicyFailure
+  );
+  if (!REVIEWED_DESTINATION_IGNORE_EVIDENCE.test(ignoreEvidence)) {
+    fail(ignorePolicyFailure);
   }
   return { commit, sourceDateEpoch };
 }

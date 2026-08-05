@@ -27,6 +27,12 @@ const renderer = require("../scripts/auditRenderer.cjs") as {
 };
 const rendererStage = require("../scripts/stageRenderer.cjs") as {
   selectSourceCommit(environment: NodeJS.ProcessEnv): string;
+  validateProvenance(
+    environment: NodeJS.ProcessEnv,
+    dependencies?: {
+      gitCommand(arguments_: string[]): string;
+    }
+  ): { commit: string; sourceDateEpoch: number };
 };
 
 const roots: string[] = [];
@@ -92,6 +98,54 @@ function auditOptions(packageLockPath: string) {
     expectedCommit: commit,
     expectedSourceDateEpoch: sourceDateEpoch,
     packageLockPath
+  };
+}
+
+function provenanceGit(
+  overrides: Map<string, string | Error> = new Map()
+): {
+  calls: string[][];
+  gitCommand(arguments_: string[]): string;
+} {
+  const calls: string[][] = [];
+  const outputs = new Map<string, string | Error>([
+    [["rev-parse", "HEAD"].join("\0"), commit],
+    [
+      ["show", "-s", "--format=%ct", "HEAD"].join("\0"),
+      String(sourceDateEpoch)
+    ],
+    [
+      ["status", "--porcelain=v1", "--untracked-files=all"].join("\0"),
+      ""
+    ],
+    [
+      ["ls-files", "--", "desktop/resources/renderer"].join("\0"),
+      ""
+    ],
+    [
+      [
+        "check-ignore",
+        "-v",
+        "--",
+        "desktop/resources/renderer/"
+      ].join("\0"),
+      ".gitignore:26:desktop/resources/renderer/\tdesktop/resources/renderer/"
+    ],
+    ...overrides
+  ]);
+  return {
+    calls,
+    gitCommand(arguments_: string[]): string {
+      calls.push([...arguments_]);
+      const result = outputs.get(arguments_.join("\0"));
+      if (result instanceof Error) {
+        throw result;
+      }
+      if (result === undefined) {
+        throw new Error("unexpected Git command");
+      }
+      return result;
+    }
   };
 }
 
@@ -185,6 +239,138 @@ describe("production renderer packaging audit", () => {
 });
 
 describe("renderer staging source provenance", () => {
+  it("checks the exact clean source and ignored destination boundary", () => {
+    const fake = provenanceGit();
+
+    expect(
+      rendererStage.validateProvenance(
+        {
+          LCF_SOURCE_SHA: commit,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+        },
+        { gitCommand: fake.gitCommand }
+      )
+    ).toEqual({ commit, sourceDateEpoch });
+    expect(fake.calls).toEqual([
+      ["rev-parse", "HEAD"],
+      ["show", "-s", "--format=%ct", "HEAD"],
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      ["ls-files", "--", "desktop/resources/renderer"],
+      [
+        "check-ignore",
+        "-v",
+        "--",
+        "desktop/resources/renderer/"
+      ]
+    ]);
+  });
+
+  it("still rejects dirty source outside ignored build outputs", () => {
+    const status = [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all"
+    ].join("\0");
+    const fake = provenanceGit(
+      new Map([[status, "?? /private/token-must-not-leak"]])
+    );
+
+    expect(() =>
+      rendererStage.validateProvenance(
+        {
+          LCF_SOURCE_SHA: commit,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+        },
+        { gitCommand: fake.gitCommand }
+      )
+    ).toThrow(/^Renderer staging requires a clean reviewed source commit$/);
+  });
+
+  it("rejects a tracked renderer destination without leaking its path", () => {
+    const trackedDestination = [
+      "ls-files",
+      "--",
+      "desktop/resources/renderer"
+    ].join("\0");
+    const fake = provenanceGit(
+      new Map([
+        [
+          trackedDestination,
+          "desktop/resources/renderer/token-must-not-leak.js"
+        ]
+      ])
+    );
+
+    expect(() =>
+      rendererStage.validateProvenance(
+        {
+          LCF_SOURCE_SHA: commit,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+        },
+        { gitCommand: fake.gitCommand }
+      )
+    ).toThrow(/^Renderer staging destination overlaps tracked source$/);
+  });
+
+  it("rejects a missing destination ignore policy with a fixed error", () => {
+    const ignoreProbe = [
+      "check-ignore",
+      "-v",
+      "--",
+      "desktop/resources/renderer/"
+    ].join("\0");
+    const fake = provenanceGit(
+      new Map([
+        [
+          ignoreProbe,
+          new Error("token-must-not-leak /private/path-must-not-leak")
+        ]
+      ])
+    );
+
+    expect(() =>
+      rendererStage.validateProvenance(
+        {
+          LCF_SOURCE_SHA: commit,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+        },
+        { gitCommand: fake.gitCommand }
+      )
+    ).toThrow(
+      /^Renderer staging destination is not covered by the reviewed Git ignore policy$/
+    );
+  });
+
+  it("rejects ignore evidence from outside the reviewed root rule", () => {
+    const ignoreDirectory = [
+      "check-ignore",
+      "-v",
+      "--",
+      "desktop/resources/renderer/"
+    ].join("\0");
+    const fake = provenanceGit(
+      new Map([
+        [
+          ignoreDirectory,
+          "/private/global-ignore:1:desktop/resources/renderer/\t" +
+            "desktop/resources/renderer/"
+        ]
+      ])
+    );
+
+    expect(() =>
+      rendererStage.validateProvenance(
+        {
+          LCF_SOURCE_SHA: commit,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+        },
+        { gitCommand: fake.gitCommand }
+      )
+    ).toThrow(
+      /^Renderer staging destination is not covered by the reviewed Git ignore policy$/
+    );
+  });
+
   it("prefers the exact source SHA over a synthetic GitHub SHA", () => {
     expect(
       rendererStage.selectSourceCommit({

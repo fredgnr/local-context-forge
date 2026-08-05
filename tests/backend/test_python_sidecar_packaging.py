@@ -1784,7 +1784,10 @@ class _BrokerListenerFixture:
 
 
 def _broker_request(*, capability: str, protocol: str = "1.1") -> bytes:
-    payload = b'{"revision":4,"collections":[]}'
+    payload = (
+        b'{"revision":4,"collections":[],"embedding":'
+        b'{"mode":"lexical","profile":null}}'
+    )
     deadline = int(time.time() * 1000) + 60_000
     return (
         b"POST /reconcile HTTP/1.1\r\n"
@@ -1829,10 +1832,61 @@ def test_frozen_smoke_broker_accepts_only_capability_scoped_reconcile() -> None:
             "endpoint": "/reconcile",
             "revision": 4,
             "collections": 0,
+            "embedding": "lexical",
         }
     ]
     assert connection.responses
     assert connection.responses[0].startswith(b"HTTP/1.1 200 OK\r\n")
+    response_body = connection.responses[0].split(b"\r\n\r\n", 1)[1]
+    assert json.loads(response_body) == {
+        "indexed": True,
+        "revision": 4,
+        "collections": 0,
+        "update": {
+            "indexed": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "removed": 0,
+        },
+        "embedding": {
+            "status": "stale",
+            "profile": None,
+            "revision": None,
+            "model_status": "not_requested",
+            "error": None,
+        },
+    }
+
+
+def test_frozen_smoke_broker_rejects_nonlexical_embedding_mode() -> None:
+    import threading
+
+    capability = "a" * 43
+    stop = threading.Event()
+    request = _broker_request(capability=capability).replace(
+        b'"mode":"lexical"',
+        b'"mode":"rebuild"',
+    )
+    connection = _BrokerConnectionFixture(request)
+    listener = _BrokerListenerFixture(connection, stop)
+    requests: deque[dict[str, Any]] = deque()
+    failures: deque[str] = deque()
+
+    build._serve_smoke_broker(
+        listener,  # type: ignore[arg-type]
+        capability=capability,
+        launch_id="663e210a-f7e0-4e15-826a-25c3ae657eeb",
+        protocol="1.1",
+        stop=stop,
+        requests=requests,
+        failures=failures,
+    )
+
+    assert list(failures) == ["request"]
+    assert not requests
+    assert connection.responses[0].startswith(
+        b"HTTP/1.1 400 Bad Request\r\n"
+    )
 
 
 def test_frozen_smoke_broker_rejects_wrong_capability() -> None:

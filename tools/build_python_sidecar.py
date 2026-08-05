@@ -1985,7 +1985,7 @@ def _read_smoke_broker_request(
         headers[name] = value
     content_length = headers.get("content-length", "")
     if (
-        not content_length.isdigit()
+        re.fullmatch(r"[0-9]{1,10}", content_length) is None
         or int(content_length) > maximum_body
     ):
         raise BuildError("Frozen smoke broker request length is invalid")
@@ -1999,7 +1999,7 @@ def _read_smoke_broker_request(
         raise BuildError("Frozen smoke broker received trailing request bytes")
     try:
         payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise BuildError("Frozen smoke broker body is not JSON") from exc
     if not isinstance(payload, dict):
         raise BuildError("Frozen smoke broker body is not an object")
@@ -2057,6 +2057,7 @@ def _serve_smoke_broker(
                     deadline = 0
                 current_millis = int(time.time() * 1000)
                 collections = payload.get("collections")
+                embedding = payload.get("embedding")
                 collection_names = (
                     [
                         item["name"]
@@ -2082,7 +2083,7 @@ def _serve_smoke_broker(
                     is None
                     or deadline <= current_millis
                     or deadline > current_millis + 121_000
-                    or set(payload) != {"revision", "collections"}
+                    or set(payload) != {"revision", "collections", "embedding"}
                     or not isinstance(payload["revision"], int)
                     or isinstance(payload["revision"], bool)
                     or payload["revision"] < 0
@@ -2091,6 +2092,7 @@ def _serve_smoke_broker(
                     or len(collections) > MAX_SMOKE_BROKER_COLLECTIONS
                     or len(collection_names) != len(collections)
                     or len(collection_names) != len(set(collection_names))
+                    or embedding != {"mode": "lexical", "profile": None}
                     or not all(
                         isinstance(item, dict)
                         and set(item) == {"name", "wiki_root"}
@@ -2115,6 +2117,13 @@ def _serve_smoke_broker(
                         "unchanged": 0,
                         "removed": 0,
                     },
+                    "embedding": {
+                        "status": "stale",
+                        "profile": None,
+                        "revision": None,
+                        "model_status": "not_requested",
+                        "error": None,
+                    },
                 }
                 serialized = _canonical_json_bytes(response_payload)
                 response = (
@@ -2130,6 +2139,7 @@ def _serve_smoke_broker(
                         "endpoint": endpoint,
                         "revision": payload["revision"],
                         "collections": len(collections),
+                        "embedding": "lexical",
                     }
                 )
             except (BuildError, OSError, TimeoutError):
@@ -2825,10 +2835,12 @@ def run_frozen_smoke(
             if (
                 not isinstance(post_publish_health, dict)
                 or not isinstance(post_publish_health.get("qmd"), dict)
+                or post_publish_health["qmd"].get("enabled") is not False
                 or post_publish_health["qmd"].get("available") is not True
+                or post_publish_health["qmd"].get("hybrid_enabled") is not False
             ):
                 raise BuildError(
-                    "Frozen domain publication did not activate retrieval"
+                    "Frozen domain publication did not activate desktop retrieval"
                 )
             if broker_failures or not any(
                 request.get("endpoint") == "/reconcile"

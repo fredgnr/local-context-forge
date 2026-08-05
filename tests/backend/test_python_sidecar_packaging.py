@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import stat
+import subprocess
 import sys
 import tarfile
 import time
@@ -36,6 +37,12 @@ ArchiveEntry = tuple[str, bytes, str]
 
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _write_test_executable(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"synthetic executable")
+    path.chmod(0o755)
 
 
 def _write_source_archive(
@@ -436,6 +443,105 @@ version = "99"
 
     with pytest.raises(build.BuildError, match="forbidden Uvicorn"):
         build.runtime_dependency_versions(lock)
+
+
+def test_uv_lock_check_binds_the_build_venv_to_the_reviewed_python(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_bin = tmp_path / "build-venv" / "bin"
+    uv_executable = build_bin / "uv"
+    framework_python = tmp_path / "framework" / "bin" / "python3.13"
+    active_python = build_bin / "python"
+    _write_test_executable(uv_executable)
+    _write_test_executable(framework_python)
+    active_python.symlink_to(framework_python)
+    monkeypatch.setattr(build.sys, "executable", str(active_python))
+    observed: dict[str, Any] = {}
+
+    def checked_run(
+        arguments: list[str],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        observed["arguments"] = arguments
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(build.subprocess, "run", checked_run)
+
+    build.verify_uv_lock(uv_executable)
+
+    assert observed["arguments"] == [
+        str(uv_executable),
+        "lock",
+        "--check",
+        "--python",
+        str(framework_python),
+    ]
+    assert observed["cwd"] == build.BACKEND_ROOT
+    assert observed["check"] is False
+    assert observed["timeout"] == 180
+    environment = observed["env"]
+    assert environment["PATH"] == "/usr/bin:/bin"
+    assert environment["UV_NO_CONFIG"] == "1"
+    assert environment["UV_OFFLINE"] == "1"
+    assert environment["UV_PYTHON_DOWNLOADS"] == "never"
+    assert Path(environment["UV_CACHE_DIR"]).name.startswith("lcf-uv-lock-cache-")
+    assert "HOME" not in environment
+
+
+def test_uv_lock_check_rejects_a_python_from_another_venv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uv_executable = tmp_path / "build-venv" / "bin" / "uv"
+    active_python = tmp_path / "other-venv" / "bin" / "python"
+    _write_test_executable(uv_executable)
+    _write_test_executable(active_python)
+    monkeypatch.setattr(build.sys, "executable", str(active_python))
+
+    with pytest.raises(build.BuildError, match="same build venv"):
+        build.verify_uv_lock(uv_executable)
+
+
+@pytest.mark.parametrize(
+    ("stderr", "category"),
+    [
+        ("The lockfile needs to be updated; token=must-not-leak", "lock-drift"),
+        ("No interpreter found for Python >=3.11", "interpreter-unavailable"),
+        ("Packages were unavailable because the network was disabled", "offline-resolution"),
+        ("error: unexpected argument '--future'\nUsage: uv lock", "cli-contract"),
+        ("opaque failure with token=must-not-leak", "unclassified"),
+    ],
+)
+def test_uv_lock_check_reports_only_a_controlled_failure_category(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stderr: str,
+    category: str,
+) -> None:
+    build_bin = tmp_path / "build-venv" / "bin"
+    uv_executable = build_bin / "uv"
+    active_python = build_bin / "python"
+    _write_test_executable(uv_executable)
+    _write_test_executable(active_python)
+    monkeypatch.setattr(build.sys, "executable", str(active_python))
+
+    def failed_run(
+        arguments: list[str],
+        **_: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(arguments, 2, stdout="", stderr=stderr)
+
+    monkeypatch.setattr(build.subprocess, "run", failed_run)
+
+    with pytest.raises(
+        build.BuildError,
+        match=rf"^uv lock check failed \(exit=2; category={category}\)$",
+    ) as failure:
+        build.verify_uv_lock(uv_executable)
+
+    assert "must-not-leak" not in str(failure.value)
 
 
 def _install_binding_fixture(

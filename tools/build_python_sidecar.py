@@ -972,32 +972,116 @@ def verify_runtime_dependencies(expected: Mapping[str, str]) -> None:
             raise BuildError(f"Installed runtime dependency {name} differs from uv.lock")
 
 
+def _uv_lock_failure_category(stderr: str) -> str:
+    """Return a stable, non-sensitive category for uv lock failures."""
+
+    normalized = stderr.lower()
+    if (
+        re.search(
+            r"(?:lockfile|lock file)[^\n]{0,200}needs to be updated",
+            normalized,
+        )
+        or "no `uv.lock` found" in normalized
+        or "uv.lock is missing" in normalized
+    ):
+        return "lock-drift"
+    if any(
+        marker in normalized
+        for marker in (
+            "no interpreter found",
+            "python interpreter was not found",
+            "no python installation found",
+        )
+    ):
+        return "interpreter-unavailable"
+    if any(
+        marker in normalized
+        for marker in (
+            "network was disabled",
+            "not found in the cache",
+            "offline mode",
+        )
+    ):
+        return "offline-resolution"
+    if "unexpected argument" in normalized or "usage: uv lock" in normalized:
+        return "cli-contract"
+    return "unclassified"
+
+
 def verify_uv_lock(uv_executable: Path) -> None:
     if not uv_executable.is_absolute():
         raise BuildError("uv executable path must be absolute")
+    active_python = Path(sys.executable)
+    if not active_python.is_absolute():
+        raise BuildError("Build venv Python path must be absolute")
     try:
+        uv_path_info = uv_executable.lstat()
         resolved = uv_executable.resolve(strict=True)
         info = resolved.lstat()
-    except OSError as exc:
+        uv_bin = uv_executable.parent.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
         raise BuildError("uv executable is missing") from exc
-    if not stat.S_ISREG(info.st_mode) or not (stat.S_IMODE(info.st_mode) & 0o111):
+    try:
+        active_info = active_python.lstat()
+        resolved_python = active_python.resolve(strict=True)
+        resolved_python_info = resolved_python.lstat()
+        python_bin = active_python.parent.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise BuildError("Build venv Python is missing") from exc
+    if (
+        not stat.S_ISREG(uv_path_info.st_mode)
+        or stat.S_ISLNK(uv_path_info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or not (stat.S_IMODE(info.st_mode) & 0o111)
+    ):
         raise BuildError("uv executable is not a regular executable")
-    with tempfile.TemporaryDirectory(prefix="lcf-uv-lock-cache-") as cache:
-        _run_checked(
-            (str(resolved), "lock", "--check"),
-            cwd=BACKEND_ROOT,
-            env={
-                "PATH": "/usr/bin:/bin",
-                "LANG": "C",
-                "LC_ALL": "C",
-                "UV_CACHE_DIR": cache,
-                "UV_NO_PROGRESS": "1",
-                "UV_OFFLINE": "1",
-                "UV_PYTHON_DOWNLOADS": "never",
-            },
-            timeout=180,
-            label="uv lock check",
+    if (
+        uv_bin != python_bin
+        or (
+            not stat.S_ISREG(active_info.st_mode)
+            and not stat.S_ISLNK(active_info.st_mode)
         )
+        or not stat.S_ISREG(resolved_python_info.st_mode)
+        or not (stat.S_IMODE(resolved_python_info.st_mode) & 0o111)
+    ):
+        raise BuildError("uv and Python must come from the same build venv")
+    with tempfile.TemporaryDirectory(prefix="lcf-uv-lock-cache-") as cache:
+        try:
+            completed = subprocess.run(
+                [
+                    str(resolved),
+                    "lock",
+                    "--check",
+                    "--python",
+                    str(resolved_python),
+                ],
+                cwd=BACKEND_ROOT,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "LANG": "C",
+                    "LC_ALL": "C",
+                    "UV_CACHE_DIR": cache,
+                    "UV_NO_CONFIG": "1",
+                    "UV_NO_PROGRESS": "1",
+                    "UV_OFFLINE": "1",
+                    "UV_PYTHON_DOWNLOADS": "never",
+                },
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=180,
+            )
+        except OSError as exc:
+            raise BuildError("uv lock check could not start") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise BuildError("uv lock check timed out") from exc
+        if completed.returncode != 0:
+            category = _uv_lock_failure_category(completed.stderr)
+            raise BuildError(
+                "uv lock check failed "
+                f"(exit={completed.returncode}; category={category})"
+            )
 
 
 def _sanitize_text(

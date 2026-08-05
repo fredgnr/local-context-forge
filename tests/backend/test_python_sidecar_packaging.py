@@ -992,27 +992,10 @@ def test_frozen_socket_paths_reject_more_than_the_runtime_bound() -> None:
         build._frozen_socket_paths(root)
 
 
-@pytest.mark.parametrize(
-    ("status", "payload", "expected_category"),
-    [
-        (503, {"detail": "token-must-not-leak"}, "payload=object"),
-        (200, "token-must-not-leak", "payload=scalar"),
-    ],
-)
-def test_frozen_uds_failure_reports_only_a_fixed_check_and_shape(
-    tmp_path: Path,
+def _install_fake_uds_socket(
     monkeypatch: pytest.MonkeyPatch,
-    status: int,
-    payload: Any,
-    expected_category: str,
+    response: bytes,
 ) -> None:
-    body = json.dumps(payload).encode("utf-8")
-    response = (
-        f"HTTP/1.1 {status} Synthetic\r\n"
-        "Content-Type: application/json\r\n"
-        f"Content-Length: {len(body)}\r\n\r\n"
-    ).encode("ascii") + body
-
     class FakeSocket:
         def __init__(self) -> None:
             self.responses = deque((response, b""))
@@ -1034,6 +1017,29 @@ def test_frozen_uds_failure_reports_only_a_fixed_check_and_shape(
 
     monkeypatch.setattr(build.socket, "socket", lambda *_args: FakeSocket())
 
+
+@pytest.mark.parametrize(
+    ("status", "payload", "expected_category"),
+    [
+        (503, {"detail": "token-must-not-leak"}, "payload=object"),
+        (200, "token-must-not-leak", "payload=scalar"),
+    ],
+)
+def test_frozen_uds_failure_reports_only_a_fixed_check_and_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    payload: Any,
+    expected_category: str,
+) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    response = (
+        f"HTTP/1.1 {status} Synthetic\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n"
+    ).encode("ascii") + body
+    _install_fake_uds_socket(monkeypatch, response)
+
     with pytest.raises(build.BuildError) as failure:
         build._http_json_over_uds(
             tmp_path / "sidecar.sock",
@@ -1050,6 +1056,138 @@ def test_frozen_uds_failure_reports_only_a_fixed_check_and_shape(
         f"{expected_category})"
     )
     assert "must-not-leak" not in message
+
+
+@pytest.mark.parametrize(
+    "status_line",
+    [
+        b"HTTP/1.1 +200 OK",
+        b"HTTP/1.1 0200 OK",
+        b"HTTP/1.1 2_00 OK",
+        b"BOGUS 200 OK",
+        b"HTTP/1.0 200 OK",
+    ],
+)
+def test_frozen_uds_rejects_a_noncanonical_status_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status_line: bytes,
+) -> None:
+    response = status_line + b'\r\nContent-Length: 2\r\n\r\n{}'
+    _install_fake_uds_socket(monkeypatch, response)
+
+    with pytest.raises(
+        build.BuildError,
+        match=r"^Frozen UDS response is malformed \(check=handshake\)$",
+    ):
+        build._http_json_over_uds(
+            tmp_path / "sidecar.sock",
+            "/api/desktop/handshake",
+            check="handshake",
+            token="A" * 43,
+            launch_id="00000000-0000-4000-8000-000000000000",
+        )
+
+
+def test_frozen_uds_contains_json_recursion_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"{}"
+    response = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+        + body
+    )
+    _install_fake_uds_socket(monkeypatch, response)
+
+    def fail_json_loads(_value: str) -> Any:
+        raise RecursionError("token/path-must-not-leak")
+
+    monkeypatch.setattr(build.json, "loads", fail_json_loads)
+
+    with pytest.raises(
+        build.BuildError,
+        match=r"^Frozen UDS response is malformed \(check=handshake\)$",
+    ):
+        build._http_json_over_uds(
+            tmp_path / "sidecar.sock",
+            "/api/desktop/handshake",
+            check="handshake",
+            token="A" * 43,
+            launch_id="00000000-0000-4000-8000-000000000000",
+        )
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected"),
+    [
+        ("construct", "Frozen UDS request failed (check=handshake)"),
+        ("settimeout", "Frozen UDS request failed (check=handshake)"),
+        ("close", "Frozen UDS request cleanup failed (check=handshake)"),
+    ],
+)
+def test_frozen_uds_contains_socket_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    expected: str,
+) -> None:
+    response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}"
+
+    class FailingSocket:
+        def __init__(self) -> None:
+            self.responses = deque((response, b""))
+
+        def settimeout(self, _timeout: float) -> None:
+            if stage == "settimeout":
+                raise OSError("token/path-must-not-leak")
+
+        def connect(self, _path: str) -> None:
+            pass
+
+        def sendall(self, _request: bytes) -> None:
+            pass
+
+        def recv(self, _size: int) -> bytes:
+            return self.responses.popleft()
+
+        def close(self) -> None:
+            if stage == "close":
+                raise OSError("token/path-must-not-leak")
+
+    def create_socket(*_args: Any) -> FailingSocket:
+        if stage == "construct":
+            raise OSError("token/path-must-not-leak")
+        return FailingSocket()
+
+    monkeypatch.setattr(build.socket, "socket", create_socket)
+
+    with pytest.raises(build.BuildError) as failure:
+        build._http_json_over_uds(
+            tmp_path / "sidecar.sock",
+            "/api/desktop/handshake",
+            check="handshake",
+            token="A" * 43,
+            launch_id="00000000-0000-4000-8000-000000000000",
+        )
+
+    assert str(failure.value) == expected
+    assert "must-not-leak" not in str(failure.value)
+
+
+def test_frozen_uds_rejects_a_non_ascii_request_path(tmp_path: Path) -> None:
+    with pytest.raises(
+        build.BuildError,
+        match=r"^Frozen UDS request is invalid \(check=handshake\)$",
+    ):
+        build._http_json_over_uds(
+            tmp_path / "sidecar.sock",
+            "/api/秘密",
+            check="handshake",
+            token="A" * 43,
+            launch_id="00000000-0000-4000-8000-000000000000",
+        )
 
 
 def test_frozen_uds_rejects_an_unknown_diagnostic_check(tmp_path: Path) -> None:

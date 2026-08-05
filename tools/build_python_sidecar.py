@@ -1766,15 +1766,39 @@ def _http_json_over_uds(
         raise BuildError("Frozen UDS smoke requested an unsupported method")
     if not isinstance(expected_status, int) or not 100 <= expected_status <= 599:
         raise BuildError("Frozen UDS smoke expected an invalid status")
-    serialized = (
-        b""
-        if body is None
-        else json.dumps(
-            body,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
+    if (
+        not isinstance(request_path, str)
+        or re.fullmatch(
+            r"/api/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]{0,2042}",
+            request_path,
+        )
+        is None
+        or re.fullmatch(r"[A-Za-z0-9_-]{43}", token) is None
+        or re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            launch_id,
+        )
+        is None
+        or not isinstance(timeout, (int, float))
+        or isinstance(timeout, bool)
+        or not 0.1 <= timeout <= 120.0
+    ):
+        raise BuildError(f"Frozen UDS request is invalid (check={check})")
+    try:
+        serialized = (
+            b""
+            if body is None
+            else json.dumps(
+                body,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+    except (TypeError, ValueError, UnicodeEncodeError, RecursionError) as exc:
+        raise BuildError(
+            f"Frozen UDS request cannot be serialized (check={check})"
+        ) from exc
     if len(serialized) > 1024 * 1024:
         raise BuildError("Frozen UDS request exceeds its size bound")
     request_id = str(uuid.uuid4())
@@ -1793,10 +1817,16 @@ def _http_json_over_uds(
     )
     if body is not None:
         headers += "Content-Type: application/json\r\n"
-    request = headers.encode("ascii") + b"\r\n" + serialized
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(timeout)
     try:
+        request = headers.encode("ascii") + b"\r\n" + serialized
+    except UnicodeEncodeError as exc:
+        raise BuildError(
+            f"Frozen UDS request cannot be encoded (check={check})"
+        ) from exc
+    client: socket.socket | None = None
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(timeout)
         client.connect(str(socket_path))
         client.sendall(request)
         response = bytearray()
@@ -1810,20 +1840,38 @@ def _http_json_over_uds(
                     "Frozen UDS response exceeds its size bound "
                     f"(check={check})"
                 )
-    except OSError as exc:
+    except (OSError, TypeError, ValueError) as exc:
         raise BuildError(f"Frozen UDS request failed (check={check})") from exc
     finally:
-        client.close()
+        if client is not None:
+            active_error = sys.exception()
+            try:
+                client.close()
+            except OSError as exc:
+                if active_error is None:
+                    raise BuildError(
+                        f"Frozen UDS request cleanup failed (check={check})"
+                    ) from exc
     try:
         raw_headers, body = bytes(response).split(b"\r\n\r\n", 1)
-        status_line = raw_headers.split(b"\r\n", 1)[0].decode("ascii")
-        status = int(status_line.split(" ", 2)[1])
+        status_parts = raw_headers.split(b"\r\n", 1)[0].split(b" ", 2)
+        if (
+            len(status_parts) != 3
+            or status_parts[0] != b"HTTP/1.1"
+            or re.fullmatch(rb"[0-9]{3}", status_parts[1]) is None
+            or not status_parts[2]
+            or len(status_parts[2]) > 64
+            or any(byte < 0x20 or byte > 0x7E for byte in status_parts[2])
+        ):
+            raise ValueError("noncanonical status line")
+        status = int(status_parts[1].decode("ascii"))
         payload = json.loads(body.decode("utf-8"))
     except (
         ValueError,
         IndexError,
         UnicodeDecodeError,
         json.JSONDecodeError,
+        RecursionError,
     ) as exc:
         raise BuildError(
             f"Frozen UDS response is malformed (check={check})"
@@ -2561,6 +2609,8 @@ def run_frozen_smoke(
                     "3",
                     "--data-dir",
                     str(data_directory),
+                    "--local-source-root",
+                    str(source_root),
                     "--retrieval-broker-uds",
                     str(broker_socket_path),
                     "--retrieval-capability-fd",
@@ -2643,6 +2693,7 @@ def run_frozen_smoke(
             if (
                 not isinstance(library, dict)
                 or not isinstance(library.get("id"), str)
+                or re.fullmatch(r"[0-9a-f]{32}", library["id"]) is None
                 or library.get("source") != str(source_repository)
             ):
                 raise BuildError("Frozen domain smoke could not create a library")
@@ -2664,6 +2715,7 @@ def run_frozen_smoke(
             if (
                 not isinstance(job, dict)
                 or not isinstance(job.get("id"), str)
+                or re.fullmatch(r"[0-9a-f]{32}", job["id"]) is None
             ):
                 raise BuildError("Frozen domain smoke could not enqueue ingestion")
             job_id = job["id"]

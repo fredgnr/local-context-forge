@@ -1167,11 +1167,36 @@ def validate_missing_imports(
     allowlist_path: Path = MISSING_IMPORTS_ALLOWLIST,
 ) -> set[str]:
     allowlist = _load_json(allowlist_path, "Missing-import allowlist")
-    if allowlist.get("schemaVersion") != 1:
+    if set(allowlist) != {
+        "schemaVersion",
+        "target",
+        "pyinstallerVersion",
+        "pyinstallerHooksContribVersion",
+        "modules",
+    } or allowlist.get("schemaVersion") != 2:
         raise BuildError("Missing-import allowlist schema is unsupported")
+    toolchain = _load_json(TOOLCHAIN_LOCK, "Python toolchain lock")
+    target = _mapping(toolchain.get("target"), "toolchain target")
+    python = _mapping(toolchain.get("python"), "Python toolchain entry")
+    tools = _mapping(toolchain.get("tools"), "toolchain tools")
+    if allowlist.get("target") != {
+        "os": target.get("os"),
+        "architecture": target.get("architecture"),
+        "pythonVersion": python.get("version"),
+    }:
+        raise BuildError("Missing-import allowlist target differs from the toolchain")
+    if (
+        allowlist.get("pyinstallerVersion") != tools.get("pyinstaller")
+        or allowlist.get("pyinstallerHooksContribVersion")
+        != tools.get("pyinstallerHooksContrib")
+    ):
+        raise BuildError("Missing-import allowlist tool versions differ from the toolchain")
     modules = allowlist.get("modules")
     if not isinstance(modules, Mapping) or not all(
-        isinstance(name, str) and isinstance(reason, str) and reason
+        isinstance(name, str)
+        and SAFE_MISSING_IMPORT_NAME_PATTERN.fullmatch(name)
+        and isinstance(reason, str)
+        and reason
         for name, reason in modules.items()
     ):
         raise BuildError("Missing-import allowlist is malformed")
@@ -1192,16 +1217,24 @@ def validate_missing_imports(
             if len(observed) > 256:
                 raise BuildError("PyInstaller warning evidence exceeds its module bound")
     unexpected = observed - set(modules)
-    if unexpected:
-        names = ",".join(sorted(unexpected))
-        if len(names) > 2048:
-            names = (
-                "sha256:"
-                + hashlib.sha256(names.encode("ascii")).hexdigest()
-            )
+    missing = set(modules) - observed
+    if unexpected or missing:
+        def safe_names(values: set[str]) -> str:
+            names = ",".join(sorted(values))
+            if len(names) <= 2048:
+                return names
+            return "sha256:" + hashlib.sha256(names.encode("ascii")).hexdigest()
+
+        differences = []
+        if unexpected:
+            differences.append(f"unexpected={safe_names(unexpected)}")
+        if missing:
+            differences.append(f"missing={safe_names(missing)}")
         raise BuildError(
-            "PyInstaller reported non-allowlisted missing imports "
-            f"(count={len(unexpected)}; modules={names})"
+            "PyInstaller missing-import inventory differs from the reviewed target "
+            f"(observed={len(observed)}; reviewed={len(modules)}; "
+            + "; ".join(differences)
+            + ")"
         )
     return observed
 

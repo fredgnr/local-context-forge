@@ -45,6 +45,32 @@ def _write_test_executable(path: Path) -> None:
     path.chmod(0o755)
 
 
+def _write_missing_import_allowlist(
+    path: Path,
+    modules: set[str],
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "target": {
+                    "os": "darwin",
+                    "architecture": "arm64",
+                    "pythonVersion": "3.13.14",
+                },
+                "pyinstallerVersion": "6.21.0",
+                "pyinstallerHooksContribVersion": "2026.6",
+                "modules": {
+                    name: "synthetic reviewed reason"
+                    for name in sorted(modules)
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_source_archive(
     path: Path,
     entries: list[ArchiveEntry],
@@ -548,6 +574,8 @@ def test_missing_import_validator_reports_only_safe_module_names(
     tmp_path: Path,
 ) -> None:
     warning = tmp_path / "warn-lcf-service.txt"
+    allowlist = tmp_path / "allowlist.json"
+    _write_missing_import_allowlist(allowlist, {"winreg"})
     warning.write_text(
         "missing module named 'winreg' - imported by platform (optional)\n"
         "missing module named 'safe_new.module' - imported by package (optional)\n",
@@ -557,11 +585,29 @@ def test_missing_import_validator_reports_only_safe_module_names(
     with pytest.raises(
         build.BuildError,
         match=(
-            r"^PyInstaller reported non-allowlisted missing imports "
-            r"\(count=1; modules=safe_new\.module\)$"
+            r"^PyInstaller missing-import inventory differs from the reviewed target "
+            r"\(observed=2; reviewed=1; unexpected=safe_new\.module\)$"
         ),
     ):
-        build.validate_missing_imports(warning)
+        build.validate_missing_imports(warning, allowlist_path=allowlist)
+
+
+def test_missing_import_validator_rejects_a_stale_reviewed_entry(
+    tmp_path: Path,
+) -> None:
+    warning = tmp_path / "warn-lcf-service.txt"
+    allowlist = tmp_path / "allowlist.json"
+    _write_missing_import_allowlist(allowlist, {"expected.module", "winreg"})
+    warning.write_text(
+        "missing module named 'winreg' - imported by platform (optional)\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        build.BuildError,
+        match=r"observed=1; reviewed=2; missing=expected\.module",
+    ):
+        build.validate_missing_imports(warning, allowlist_path=allowlist)
 
 
 def test_missing_import_validator_rejects_a_path_like_module_without_leaking_it(

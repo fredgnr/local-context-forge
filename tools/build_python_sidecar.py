@@ -758,7 +758,8 @@ def validate_release_environment(
     if re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,2}", sdk_version) is None:
         raise BuildError("macOS SDK version output is malformed")
     install_root = Path(environment["LCF_PYTHON_INSTALL_ROOT"])
-    if install_root != Path(str(_mapping(toolchain.get("python")).get("installRoot"))):
+    locked_python = _mapping(toolchain.get("python"), "toolchain Python")
+    if install_root != Path(str(locked_python.get("installRoot"))):
         raise BuildError("LCF_PYTHON_INSTALL_ROOT differs from the reviewed lock")
     return {
         "repositoryCommit": repository_commit,

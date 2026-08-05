@@ -1103,3 +1103,69 @@ def test_selected_source_commit_rejects_invalid_explicit_input() -> None:
                 "GITHUB_SHA": "b" * 40,
             }
         )
+
+
+def test_release_environment_reads_the_locked_python_install_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commit = "a" * 40
+    epoch = 1_800_000_000
+    install_root = "/Library/Frameworks/Python.framework/Versions/3.13"
+    environment = {
+        "GITHUB_SHA": commit,
+        "LCF_SOURCE_DATE_EPOCH": str(epoch),
+        "ImageVersion": "20260729.1.0",
+        "LCF_PYTHON_DISTRIBUTION_ARCHIVE": "/tmp/python.tar.gz",
+        "LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST": "/tmp/hashes.sha256",
+        "LCF_PYTHON_INSTALL_ROOT": install_root,
+        "GITHUB_ACTIONS": "true",
+        "RUNNER_OS": "macOS",
+        "RUNNER_ARCH": "ARM64",
+        "ImageOS": "macos15",
+    }
+    toolchain = {
+        "requiredCiInputs": [
+            "GITHUB_SHA",
+            "LCF_SOURCE_DATE_EPOCH",
+            "ImageVersion",
+            "LCF_PYTHON_DISTRIBUTION_ARCHIVE",
+            "LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST",
+            "LCF_PYTHON_INSTALL_ROOT",
+        ],
+        "target": {
+            "runnerLabel": "macos-15",
+            "deploymentTarget": "14.0",
+        },
+        "python": {"installRoot": install_root},
+    }
+
+    monkeypatch.setattr(build.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(build.platform, "machine", lambda: "arm64")
+
+    def native_output(command: tuple[str, ...], **_: Any) -> str:
+        if command[:2] == ("/usr/sbin/sysctl", "-in"):
+            return "0"
+        if command == ("/usr/bin/xcodebuild", "-version"):
+            return "Xcode 16.4\nBuild version 16F6"
+        if command[:3] == ("/usr/bin/xcrun", "--sdk", "macosx"):
+            return "15.5"
+        raise AssertionError(command)
+
+    def git_output(*arguments: str) -> str:
+        if arguments == ("rev-parse", "HEAD"):
+            return commit
+        if arguments == ("status", "--porcelain", "--untracked-files=all"):
+            return ""
+        if arguments == ("show", "-s", "--format=%ct", "HEAD"):
+            return str(epoch)
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(build, "_run_checked", native_output)
+    monkeypatch.setattr(build, "_git_output", git_output)
+
+    release = build.validate_release_environment(environment, toolchain)
+
+    assert release["repositoryCommit"] == commit
+    assert release["runnerImage"] == "macos-15"
+    assert release["xcodeVersion"] == "16.4"
+    assert release["sdkVersion"] == "15.5"

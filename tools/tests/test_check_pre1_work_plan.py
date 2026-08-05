@@ -101,7 +101,11 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_w01_evidence_state_must_match_documents(self) -> None:
         docs = documents()
-        docs[9]["remediation"]["technical_source_result"] = "pass"
+        current = docs[9]["remediation"]["technical_source_result"]
+        self.assertIn(current, {"pending", "pass"})
+        docs[9]["remediation"]["technical_source_result"] = (
+            "pending" if current == "pass" else "pass"
+        )
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("lifecycle result missing" in error for error in errors))
         self.assertIn("R13-07 checkbox must match remediation technical closeout only", errors)

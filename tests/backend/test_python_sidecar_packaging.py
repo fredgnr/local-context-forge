@@ -2127,6 +2127,177 @@ def test_install_root_binding_rejects_alias_of_reviewed_root(
         )
 
 
+def test_otool_dependencies_remove_one_matching_install_name() -> None:
+    output = """/private/build/libfixture.dylib:
+\t@rpath/libfixture.dylib (compatibility version 1.0.0, current version 1.0.0)
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1345.120.2)
+"""
+
+    raw_dependencies = audit._parse_otool_dependencies(output)
+
+    assert raw_dependencies == [
+        "@rpath/libfixture.dylib",
+        "/usr/lib/libSystem.B.dylib",
+    ]
+    assert audit._reconcile_otool_dependencies(
+        raw_dependencies,
+        "@rpath/libfixture.dylib",
+    ) == ["/usr/lib/libSystem.B.dylib"]
+
+
+def test_otool_dependencies_reject_install_name_missing_from_listing() -> None:
+    install_name = "/secret/token-must-not-leak.dylib"
+
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            r"^Mach-O install name does not match dependency evidence exactly once$"
+        ),
+    ) as failure:
+        audit._reconcile_otool_dependencies(
+            [
+                "/usr/lib/libSystem.B.dylib",
+                "/secret/token-must-not-leak.dylib.backup",
+            ],
+            install_name,
+        )
+
+    assert install_name not in str(failure.value)
+    assert "/secret" not in str(failure.value)
+
+
+def test_otool_dependencies_reject_duplicate_self_reference() -> None:
+    output = """/private/build/libfixture.dylib:
+\t@rpath/libfixture.dylib (compatibility version 1.0.0, current version 1.0.0)
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1345.120.2)
+\t@rpath/libfixture.dylib (compatibility version 1.0.0, current version 1.0.0)
+"""
+
+    raw_dependencies = audit._parse_otool_dependencies(output)
+
+    assert raw_dependencies.count("@rpath/libfixture.dylib") == 2
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            r"^Mach-O install name does not match dependency evidence exactly once$"
+        ),
+    ):
+        audit._reconcile_otool_dependencies(
+            raw_dependencies,
+            "@rpath/libfixture.dylib",
+        )
+
+
+def test_otool_dependencies_canonicalize_executable_without_install_name() -> None:
+    dependencies = [
+        "@rpath/libfixture.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "@rpath/libfixture.dylib",
+    ]
+
+    assert audit._parse_otool_install_name("/private/build/lcf-service:\n") is None
+    assert audit._reconcile_otool_dependencies(dependencies, None) == [
+        "/usr/lib/libSystem.B.dylib",
+        "@rpath/libfixture.dylib",
+    ]
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "",
+        "/secret/path-without-header-terminator\n",
+        "/secret/libfixture.dylib:\n@rpath/one.dylib\n@rpath/two.dylib\n",
+    ],
+)
+def test_otool_install_name_rejects_malformed_evidence(output: str) -> None:
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Malformed Mach-O install name evidence$",
+    ) as failure:
+        audit._parse_otool_install_name(output)
+
+    assert "/secret" not in str(failure.value)
+
+
+def _mock_macho_scan_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    dependencies: str,
+    install_name: str,
+) -> None:
+    outputs = {
+        "-l": """/secret/lcf-service:
+Load command 0
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform 1
+    minos 14.0
+""",
+        "-L": dependencies,
+        "-D": install_name,
+        "-archs": "arm64\n",
+    }
+
+    def inspect(arguments: tuple[str, ...], **_kwargs: Any) -> str:
+        return outputs[arguments[1]]
+
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(audit, "is_macho", lambda _path: True)
+    monkeypatch.setattr(audit, "_verify_code_signature", lambda _root, _path: None)
+    monkeypatch.setattr(audit, "_run_native_tool", inspect)
+
+
+def test_scan_macho_inventory_pairs_install_name_with_raw_dependencies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "sidecar"
+    root.mkdir()
+    (root / audit.EXPECTED_EXECUTABLE).write_bytes(b"synthetic Mach-O")
+    _mock_macho_scan_tools(
+        monkeypatch,
+        dependencies="""/secret/lcf-service:
+\t@rpath/libfixture.dylib (compatibility version 1.0.0, current version 1.0.0)
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1345.120.2)
+""",
+        install_name="/secret/lcf-service:\n@rpath/libfixture.dylib\n",
+    )
+
+    records = audit.scan_macho_inventory(root)
+
+    assert records[0]["dylibs"] == ["/usr/lib/libSystem.B.dylib"]
+    assert records[0]["installName"] == "@rpath/libfixture.dylib"
+
+
+def test_scan_macho_inventory_pairing_failure_does_not_leak_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "secret-sidecar"
+    root.mkdir()
+    (root / audit.EXPECTED_EXECUTABLE).write_bytes(b"synthetic Mach-O")
+    install_name = "@rpath/token-must-not-leak.dylib"
+    _mock_macho_scan_tools(
+        monkeypatch,
+        dependencies="""/secret/lcf-service:
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1345.120.2)
+""",
+        install_name=f"/secret/lcf-service:\n{install_name}\n",
+    )
+
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            r"^Mach-O install name does not match dependency evidence exactly once$"
+        ),
+    ) as failure:
+        audit.scan_macho_inventory(root)
+
+    assert str(root) not in str(failure.value)
+    assert install_name not in str(failure.value)
+
+
 def _native_fixture(
     tmp_path: Path,
 ) -> tuple[Path, list[dict[str, Any]]]:
@@ -2180,6 +2351,21 @@ def test_native_inventory_policy_accepts_three_part_target_equivalent_minimum(
     records[0]["minimumMacosVersion"] = "14.0.0"
 
     audit.validate_native_inventory(root, records)
+
+
+def test_native_inventory_policy_rejects_dependency_equal_to_install_name(
+    tmp_path: Path,
+) -> None:
+    root, records = _native_fixture(tmp_path)
+    records[1]["dylibs"].append("@rpath/libfixture.dylib")
+
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            r"^Mach-O dependency evidence includes its install name$"
+        ),
+    ):
+        audit.validate_native_inventory(root, records)
 
 
 @pytest.mark.parametrize(

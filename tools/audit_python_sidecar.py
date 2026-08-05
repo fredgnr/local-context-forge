@@ -536,6 +536,8 @@ def _parse_lipo_architectures(output: str) -> list[str]:
 
 
 def _parse_otool_dependencies(output: str) -> list[str]:
+    """Return ``otool -L`` entries without losing order or multiplicity."""
+
     lines = output.splitlines()
     dependencies: list[str] = []
     for line in lines[1:]:
@@ -545,12 +547,29 @@ def _parse_otool_dependencies(output: str) -> list[str]:
         dependency = value.split(" (", 1)[0]
         if dependency:
             dependencies.append(dependency)
-    return sorted(set(dependencies))
+    return dependencies
 
 
 def _parse_otool_install_name(output: str) -> str | None:
     lines = [line.strip() for line in output.splitlines() if line.strip()]
-    return lines[1] if len(lines) > 1 else None
+    if not lines or not lines[0].endswith(":") or len(lines) > 2:
+        raise AuditError("Malformed Mach-O install name evidence")
+    return lines[1] if len(lines) == 2 else None
+
+
+def _reconcile_otool_dependencies(
+    raw_dependencies: Sequence[str], install_name: str | None
+) -> list[str]:
+    """Remove one LC_ID_DYLIB entry, then canonicalize real dependencies."""
+
+    dependencies = list(raw_dependencies)
+    if install_name is not None:
+        if dependencies.count(install_name) != 1:
+            raise AuditError(
+                "Mach-O install name does not match dependency evidence exactly once"
+            )
+        dependencies.remove(install_name)
+    return sorted(set(dependencies))
 
 
 def _parse_otool_rpaths(output: str) -> list[str]:
@@ -1574,22 +1593,26 @@ def scan_macho_inventory(root: Path) -> list[dict[str, Any]]:
         load_commands = _run_native_tool(("/usr/bin/otool", "-l", str(path)))
         native_platform, minimum_macos = _parse_otool_build_target(load_commands)
         _verify_code_signature(root, path)
+        raw_dependencies = _parse_otool_dependencies(
+            _run_native_tool(("/usr/bin/otool", "-L", str(path)))
+        )
+        install_name = _parse_otool_install_name(
+            _run_native_tool(("/usr/bin/otool", "-D", str(path)))
+        )
         record: dict[str, Any] = {
             "path": _relative_name(root, path),
             "architectures": _parse_lipo_architectures(
                 _run_native_tool(("/usr/bin/lipo", "-archs", str(path)))
             ),
-            "dylibs": _parse_otool_dependencies(
-                _run_native_tool(("/usr/bin/otool", "-L", str(path)))
+            "dylibs": _reconcile_otool_dependencies(
+                raw_dependencies,
+                install_name,
             ),
             "rpaths": _parse_otool_rpaths(load_commands),
             "platform": native_platform,
             "minimumMacosVersion": minimum_macos,
             "codeSignature": "valid",
         }
-        install_name = _parse_otool_install_name(
-            _run_native_tool(("/usr/bin/otool", "-D", str(path)))
-        )
         if install_name is not None:
             record["installName"] = install_name
         records.append(record)
@@ -1728,6 +1751,10 @@ def validate_native_inventory(
         if install_name is not None:
             if not isinstance(install_name, str) or not install_name:
                 raise AuditError("Mach-O install name is malformed")
+            if install_name in dylibs:
+                raise AuditError(
+                    "Mach-O dependency evidence includes its install name"
+                )
             raw_values.append(install_name)
             if install_name.startswith("/Library/Frameworks/Python.framework/"):
                 raise AuditError("Mach-O install name uses an external Python framework")

@@ -12,6 +12,7 @@ import sys
 import tarfile
 import time
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -1128,17 +1129,19 @@ def test_codesign_unsigned_failure_uses_only_fixed_categories(
 
 
 def test_codesign_framework_leaf_failure_uses_only_fixed_categories(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _configure_test_isolation_parent(tmp_path, monkeypatch)
+    source = _write_reviewed_python_framework(tmp_path / "sidecar")
+    isolation = audit._prepare_isolated_framework_leaf(source)
     monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
-    target = (
-        "/secret/_internal/Python.framework/Versions/3.13/Python"
-    )
+    target = isolation.copy
 
     def failed_run(*_args: Any, **_kwargs: Any) -> Any:
         raise subprocess.CalledProcessError(
             1,
-            ("/usr/bin/codesign", "--verify", target),
+            ("/usr/bin/codesign", "--verify", "--strict", str(target)),
             stderr=f"{target}: code object is not signed at all; token-must-not-leak",
         )
 
@@ -1147,40 +1150,105 @@ def test_codesign_framework_leaf_failure_uses_only_fixed_categories(
     with pytest.raises(
         audit.AuditError,
         match=(
-            r"^Native inspection tool failed \(tool=codesign-verify-leaf; "
+            r"^Native inspection tool failed "
+            r"\(tool=codesign-verify-isolated-leaf; "
             r"target=python-framework; category=unsigned; code=1\)$"
         ),
     ) as failure:
-        audit._run_native_tool(
-            ("/usr/bin/codesign", "--verify", target),
-            reviewed_framework_leaf=Path(target),
-        )
+        try:
+            audit._run_native_tool(
+                ("/usr/bin/codesign", "--verify", "--strict", str(target)),
+                isolated_framework_leaf=isolation,
+            )
+        finally:
+            _cleanup_test_isolation(isolation)
 
     assert "must-not-leak" not in str(failure.value)
-    assert "/secret" not in str(failure.value)
+    assert str(tmp_path) not in str(failure.value)
+
+
+@pytest.mark.parametrize("with_capability", [False, True])
+def test_three_argument_codesign_contract_is_always_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_capability: bool,
+) -> None:
+    _configure_test_isolation_parent(tmp_path, monkeypatch)
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+    target = "/secret/_internal/Python.framework/Versions/3.13/Python"
+    keyword_arguments: dict[str, Any] = {}
+    isolation: audit._IsolatedFrameworkLeaf | None = None
+    if with_capability:
+        source = _write_reviewed_python_framework(tmp_path / "sidecar")
+        isolation = audit._prepare_isolated_framework_leaf(source)
+        target = str(isolation.copy)
+        keyword_arguments["isolated_framework_leaf"] = isolation
+
+    try:
+        with pytest.raises(
+            audit.AuditError,
+            match=r"^Native inspection tool contract is invalid$",
+        ):
+            audit._run_native_tool(
+                ("/usr/bin/codesign", "--verify", target),
+                **keyword_arguments,
+            )
+    finally:
+        if isolation is not None:
+            _cleanup_test_isolation(isolation)
 
 
 @pytest.mark.parametrize(
-    "target",
+    "mutation",
     [
-        "/secret/path",
-        "/secret/_internal/Python.framework/Versions/3.12/Python",
+        "source-layout",
+        "target-mismatch",
+        "framework-copy",
+        "public-parent",
     ],
 )
-def test_codesign_leaf_contract_rejects_an_unreviewed_target(
+def test_isolated_framework_leaf_contract_rejects_mismatched_capability(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    target: str,
+    mutation: str,
 ) -> None:
+    _configure_test_isolation_parent(tmp_path, monkeypatch)
     monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
-
-    with pytest.raises(
-        audit.AuditError,
-        match=r"^Native inspection tool contract is invalid$",
-    ):
-        audit._run_native_tool(
-            ("/usr/bin/codesign", "--verify", target),
-            reviewed_framework_leaf=Path(target),
+    source = _write_reviewed_python_framework(tmp_path / "sidecar")
+    isolation = audit._prepare_isolated_framework_leaf(source)
+    capability = isolation
+    target = isolation.copy
+    if mutation == "source-layout":
+        capability = replace(
+            isolation,
+            source=(
+                source.parent.parent / "3.12" / "Python"
+            ),
         )
+    elif mutation == "target-mismatch":
+        target = isolation.child / "Other"
+    elif mutation == "framework-copy":
+        capability = replace(
+            isolation,
+            copy=(
+                isolation.child / "Copy.framework" / "Python"
+            ),
+        )
+        target = capability.copy
+    elif mutation == "public-parent":
+        capability = replace(isolation, parent=tmp_path.resolve())
+
+    try:
+        with pytest.raises(
+            audit.AuditError,
+            match=r"^Native inspection tool contract is invalid$",
+        ):
+            audit._run_native_tool(
+                ("/usr/bin/codesign", "--verify", "--strict", str(target)),
+                isolated_framework_leaf=capability,
+            )
+    finally:
+        _cleanup_test_isolation(isolation)
 
 
 @pytest.mark.parametrize(
@@ -1263,24 +1331,131 @@ def _write_reviewed_python_framework(root: Path) -> Path:
     return leaf
 
 
-def test_python_framework_leaf_uses_only_leaf_signature_verification(
+def _configure_test_isolation_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    parent = tmp_path / "private-tmp"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o1777)
+    canonical = parent.resolve()
+    monkeypatch.setattr(
+        audit,
+        "ISOLATED_FRAMEWORK_LEAF_PARENT",
+        canonical,
+    )
+    return canonical
+
+
+def _cleanup_test_isolation(
+    isolation: audit._IsolatedFrameworkLeaf,
+) -> None:
+    audit._cleanup_isolated_framework_leaf(
+        parent=isolation.parent,
+        child=isolation.child,
+        parent_descriptor=isolation.parent_descriptor,
+        child_descriptor=isolation.child_descriptor,
+        source_descriptor=isolation.source_descriptor,
+        copy_descriptor=isolation.copy_descriptor,
+        child_name=isolation.child_name,
+        copy_created=True,
+    )
+
+
+def test_python_framework_isolation_parent_is_fixed_private_tmp() -> None:
+    assert audit.PRODUCTION_ISOLATION_PARENT == Path("/private/tmp")
+    assert (
+        audit.ISOLATED_FRAMEWORK_LEAF_PARENT
+        == audit.PRODUCTION_ISOLATION_PARENT
+    )
+
+
+@pytest.mark.parametrize("mutation", ["mode", "symlink", "framework-parent"])
+def test_python_framework_isolation_parent_rejects_unsafe_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    if mutation == "symlink":
+        target = tmp_path / "real-private-tmp"
+        target.mkdir(mode=0o700)
+        target.chmod(0o1777)
+        parent = tmp_path / "private-tmp"
+        parent.symlink_to(target, target_is_directory=True)
+    elif mutation == "framework-parent":
+        parent = tmp_path / "Copy.FRAMEWORK" / "private-tmp"
+        parent.mkdir(parents=True, mode=0o700)
+        parent.chmod(0o1777)
+    else:
+        parent = tmp_path / "private-tmp"
+        parent.mkdir(mode=0o700)
+    monkeypatch.setattr(
+        audit,
+        "ISOLATED_FRAMEWORK_LEAF_PARENT",
+        parent,
+    )
+
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Python framework isolation parent is unsafe$",
+    ):
+        audit._open_isolation_parent()
+
+
+def test_python_framework_leaf_uses_strict_isolated_copy_verification(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    isolation_parent = _configure_test_isolation_parent(tmp_path, monkeypatch)
     root = tmp_path / "sidecar"
     leaf = _write_reviewed_python_framework(root)
     calls: list[tuple[str, ...]] = []
-    monkeypatch.setattr(
-        audit,
-        "_run_native_tool",
-        lambda arguments, **_kwargs: calls.append(tuple(arguments)) or "",
-    )
+    isolated_children: list[Path] = []
+
+    def record_isolated_verification(
+        arguments: tuple[str, ...],
+        *,
+        isolated_framework_leaf: audit._IsolatedFrameworkLeaf | None = None,
+    ) -> str:
+        assert isolated_framework_leaf is not None
+        source = isolated_framework_leaf.source
+        isolated_copy = isolated_framework_leaf.copy
+        assert source == leaf
+        assert isolated_copy == Path(arguments[-1])
+        assert isolated_framework_leaf.parent == isolation_parent
+        assert isolated_copy.read_bytes() == leaf.read_bytes()
+        assert stat.S_IMODE(isolated_copy.stat().st_mode) == 0o500
+        assert stat.S_IMODE(isolated_copy.parent.stat().st_mode) == 0o700
+        assert os.fstat(isolated_framework_leaf.parent_descriptor)
+        assert os.fstat(isolated_framework_leaf.child_descriptor)
+        assert os.fstat(isolated_framework_leaf.source_descriptor)
+        assert os.fstat(isolated_framework_leaf.copy_descriptor)
+        assert (
+            os.fstat(isolated_framework_leaf.source_descriptor).st_dev,
+            os.fstat(isolated_framework_leaf.source_descriptor).st_ino,
+        ) != (
+            os.fstat(isolated_framework_leaf.copy_descriptor).st_dev,
+            os.fstat(isolated_framework_leaf.copy_descriptor).st_ino,
+        )
+        assert tuple(sorted(os.listdir(isolated_framework_leaf.child_descriptor))) == (
+            "Python",
+        )
+        assert not any(
+            part.casefold().endswith(".framework")
+            for part in isolated_copy.parts
+        )
+        isolated_children.append(isolated_copy.parent)
+        calls.append(tuple(arguments[:3]))
+        return ""
+
+    monkeypatch.setattr(audit, "_run_native_tool", record_isolated_verification)
 
     audit._verify_code_signature(root, leaf)
 
     assert calls == [
-        ("/usr/bin/codesign", "--verify", str(leaf)),
+        ("/usr/bin/codesign", "--verify", "--strict"),
     ]
+    assert all(not child.exists() for child in isolated_children)
 
 
 def test_nonframework_macho_keeps_strict_signature_verification(
@@ -1335,7 +1510,7 @@ def test_unreviewed_framework_macho_cannot_use_leaf_verification(
         audit._verify_code_signature(root, leaf)
 
 
-def test_case_changed_framework_name_keeps_strict_verification(
+def test_case_changed_framework_name_is_an_unreviewed_layout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1343,18 +1518,17 @@ def test_case_changed_framework_name_keeps_strict_verification(
     leaf = root / "_internal" / "Python.FRAMEWORK" / "Versions" / "3.13" / "Python"
     leaf.parent.mkdir(parents=True)
     leaf.write_bytes(b"synthetic signed Mach-O")
-    calls: list[tuple[str, ...]] = []
     monkeypatch.setattr(
         audit,
         "_run_native_tool",
-        lambda arguments, **_kwargs: calls.append(tuple(arguments)) or "",
+        lambda _arguments, **_kwargs: pytest.fail("codesign must not run"),
     )
 
-    audit._verify_code_signature(root, leaf)
-
-    assert calls == [
-        ("/usr/bin/codesign", "--verify", "--strict", str(leaf)),
-    ]
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Mach-O uses an unreviewed framework layout$",
+    ):
+        audit._verify_code_signature(root, leaf)
 
 
 @pytest.mark.parametrize(
@@ -1445,6 +1619,7 @@ def test_python_framework_mutation_during_codesign_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _configure_test_isolation_parent(tmp_path, monkeypatch)
     root = tmp_path / "sidecar"
     leaf = _write_reviewed_python_framework(root)
 
@@ -1462,6 +1637,128 @@ def test_python_framework_mutation_during_codesign_fails_closed(
         match=r"^Reviewed Python framework changed during verification$",
     ):
         audit._verify_code_signature(root, leaf)
+
+
+def test_python_framework_isolated_copy_mutation_during_codesign_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_test_isolation_parent(tmp_path, monkeypatch)
+    root = tmp_path / "sidecar"
+    leaf = _write_reviewed_python_framework(root)
+
+    def mutate_after_verification(
+        _arguments: tuple[str, ...],
+        *,
+        isolated_framework_leaf: audit._IsolatedFrameworkLeaf | None = None,
+    ) -> str:
+        assert isolated_framework_leaf is not None
+        copy_descriptor = isolated_framework_leaf.copy_descriptor
+        os.ftruncate(copy_descriptor, 0)
+        os.pwrite(copy_descriptor, b"changed after codesign", 0)
+        os.fsync(copy_descriptor)
+        return ""
+
+    monkeypatch.setattr(audit, "_run_native_tool", mutate_after_verification)
+
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            r"^Isolated Python framework leaf changed during verification$"
+        ),
+    ):
+        audit._verify_code_signature(root, leaf)
+
+
+@pytest.mark.parametrize("mutation", ["replacement", "extra-entry"])
+def test_python_framework_cleanup_never_removes_unbound_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    _configure_test_isolation_parent(tmp_path, monkeypatch)
+    root = tmp_path / "sidecar"
+    leaf = _write_reviewed_python_framework(root)
+    observed_child: list[Path] = []
+
+    def replace_isolation_entry(
+        _arguments: tuple[str, ...],
+        *,
+        isolated_framework_leaf: audit._IsolatedFrameworkLeaf | None = None,
+    ) -> str:
+        assert isolated_framework_leaf is not None
+        observed_child.append(isolated_framework_leaf.child)
+        if mutation == "replacement":
+            os.unlink(
+                "Python",
+                dir_fd=isolated_framework_leaf.child_descriptor,
+            )
+            replacement = os.open(
+                "Python",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o500,
+                dir_fd=isolated_framework_leaf.child_descriptor,
+            )
+            try:
+                os.write(replacement, b"replacement must remain")
+            finally:
+                os.close(replacement)
+        else:
+            unexpected = os.open(
+                "Unexpected",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o500,
+                dir_fd=isolated_framework_leaf.child_descriptor,
+            )
+            try:
+                os.write(unexpected, b"unexpected must remain")
+            finally:
+                os.close(unexpected)
+        return ""
+
+    monkeypatch.setattr(audit, "_run_native_tool", replace_isolation_entry)
+
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Python framework isolation cleanup failed$",
+    ):
+        audit._verify_code_signature(root, leaf)
+
+    assert len(observed_child) == 1
+    child = observed_child[0]
+    assert child.is_dir()
+    if mutation == "replacement":
+        assert (child / "Python").read_bytes() == b"replacement must remain"
+    else:
+        assert (child / "Unexpected").read_bytes() == b"unexpected must remain"
+
+
+def test_python_framework_cleanup_without_child_dirfd_never_rmdirs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = _configure_test_isolation_parent(tmp_path, monkeypatch)
+    parent_path, parent_descriptor = audit._open_isolation_parent()
+    child_name = f"{audit.ISOLATED_FRAMEWORK_LEAF_TEMP_PREFIX}{'0' * 32}"
+    os.mkdir(child_name, mode=0o700, dir_fd=parent_descriptor)
+    child = parent / child_name
+
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Python framework isolation cleanup failed$",
+    ):
+        audit._cleanup_isolated_framework_leaf(
+            parent=parent_path,
+            child=child,
+            parent_descriptor=parent_descriptor,
+            child_descriptor=None,
+            source_descriptor=None,
+            copy_descriptor=None,
+            child_name=child_name,
+            copy_created=False,
+        )
+
+    assert child.is_dir()
 
 
 def _install_fake_uds_socket(

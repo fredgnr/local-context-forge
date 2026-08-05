@@ -16,10 +16,12 @@ import os
 import platform
 import plistlib
 import re
+import secrets
 import stat
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -83,10 +85,42 @@ EXPECTED_FROZEN_SMOKE = {
         "domain-lint",
     ],
 }
+MAX_REVIEWED_FRAMEWORK_LEAF_BYTES = 256 * 1024 * 1024
+ISOLATED_FRAMEWORK_LEAF_TEMP_PREFIX = "lcf-python-leaf-"
+PRODUCTION_ISOLATION_PARENT = Path("/private/tmp")
+ISOLATED_FRAMEWORK_LEAF_PARENT = PRODUCTION_ISOLATION_PARENT
+BOUND_FILE_STAT_FIELDS = (
+    "st_dev",
+    "st_ino",
+    "st_mode",
+    "st_uid",
+    "st_gid",
+    "st_nlink",
+    "st_size",
+    "st_mtime_ns",
+    "st_ctime_ns",
+)
 
 
 class AuditError(RuntimeError):
     """Raised when staged sidecar evidence is incomplete or unsafe."""
+
+
+@dataclass(frozen=True)
+class _IsolatedFrameworkLeaf:
+    parent: Path
+    child: Path
+    child_name: str
+    source: Path
+    copy: Path
+    parent_descriptor: int
+    child_descriptor: int
+    source_descriptor: int
+    copy_descriptor: int
+    parent_snapshot: tuple[Any, ...]
+    child_snapshot: tuple[Any, ...]
+    source_snapshot: tuple[Any, ...]
+    copy_snapshot: tuple[Any, ...]
 
 
 NativeScanner = Callable[[Path], list[dict[str, Any]]]
@@ -302,7 +336,7 @@ def is_macho(path: Path) -> bool:
 def _native_tool_label(
     arguments: Sequence[str],
     *,
-    reviewed_framework_leaf: Path | None = None,
+    isolated_framework_leaf: _IsolatedFrameworkLeaf | None = None,
 ) -> str:
     contracts = {
         ("/usr/bin/otool", "-l"): "otool-load-commands",
@@ -314,24 +348,25 @@ def _native_tool_label(
         raise AuditError("Native inspection tool contract is invalid")
     if (arguments[0], arguments[1]) == ("/usr/bin/codesign", "--verify"):
         if len(arguments) == 4 and arguments[2] == "--strict":
-            label = "codesign-verify"
-        elif (
-            len(arguments) == 3
-            and reviewed_framework_leaf is not None
-            and Path(arguments[-1]) == reviewed_framework_leaf
-            and tuple(
-                Path(arguments[-1]).parts[
-                    -len(REVIEWED_PYTHON_FRAMEWORK_LEAF.parts) :
-                ]
-            )
-            == REVIEWED_PYTHON_FRAMEWORK_LEAF.parts
-        ):
-            label = "codesign-verify-leaf"
+            if isolated_framework_leaf is None:
+                label = "codesign-verify"
+            elif _is_isolated_framework_leaf_contract(
+                arguments,
+                isolated_framework_leaf,
+            ):
+                label = "codesign-verify-isolated-leaf"
+            else:
+                label = None
         else:
             label = None
     else:
+        if isolated_framework_leaf is not None:
+            raise AuditError("Native inspection tool contract is invalid")
         label = contracts.get((arguments[0], arguments[1]))
-    expected_length = 4 if label == "codesign-verify" else 3
+    expected_length = 4 if label in {
+        "codesign-verify",
+        "codesign-verify-isolated-leaf",
+    } else 3
     if (
         label is None
         or len(arguments) != expected_length
@@ -341,7 +376,45 @@ def _native_tool_label(
     return label
 
 
-def _native_target_label(arguments: Sequence[str]) -> str:
+def _is_isolated_framework_leaf_contract(
+    arguments: Sequence[str],
+    capability: _IsolatedFrameworkLeaf,
+) -> bool:
+    if not isinstance(capability, _IsolatedFrameworkLeaf):
+        return False
+    source = capability.source
+    isolated_copy = capability.copy
+    if (
+        not source.is_absolute()
+        or not isolated_copy.is_absolute()
+        or Path(arguments[-1]) != isolated_copy
+        or source == isolated_copy
+        or capability.parent != ISOLATED_FRAMEWORK_LEAF_PARENT
+        or capability.child != capability.parent / capability.child_name
+        or isolated_copy != capability.child / "Python"
+        or isolated_copy.name != "Python"
+        or tuple(source.parts[-len(REVIEWED_PYTHON_FRAMEWORK_LEAF.parts) :])
+        != REVIEWED_PYTHON_FRAMEWORK_LEAF.parts
+        or any(
+            part.casefold().endswith(".framework")
+            for part in isolated_copy.parts
+        )
+    ):
+        return False
+    try:
+        _validate_isolated_framework_leaf_state(capability)
+    except AuditError:
+        return False
+    return True
+
+
+def _native_target_label(
+    arguments: Sequence[str],
+    *,
+    isolated_framework_leaf: _IsolatedFrameworkLeaf | None = None,
+) -> str:
+    if isolated_framework_leaf is not None:
+        return "python-framework"
     target = Path(arguments[-1])
     if target.name == EXPECTED_EXECUTABLE:
         return "entrypoint"
@@ -350,13 +423,16 @@ def _native_target_label(arguments: Sequence[str]) -> str:
     if target.suffix == ".dylib":
         return "dylib"
     framework_parts = {
-        part for part in target.parts if part.endswith(".framework")
+        part
+        for part in target.parts
+        if part.casefold().endswith(".framework")
     }
-    if "Python.framework" in framework_parts:
+    normalized_framework_parts = {part.casefold() for part in framework_parts}
+    if "python.framework" in normalized_framework_parts:
         return "python-framework"
-    if "Tcl.framework" in framework_parts:
+    if "tcl.framework" in normalized_framework_parts:
         return "tcl-framework"
-    if "Tk.framework" in framework_parts:
+    if "tk.framework" in normalized_framework_parts:
         return "tk-framework"
     if framework_parts:
         return "other-framework"
@@ -367,9 +443,10 @@ def _native_failure_category(
     tool: str,
     stderr: Any,
 ) -> str:
-    if tool not in {"codesign-verify", "codesign-verify-leaf"} or not isinstance(
-        stderr, str
-    ):
+    if tool not in {
+        "codesign-verify",
+        "codesign-verify-isolated-leaf",
+    } or not isinstance(stderr, str):
         return "exit"
     normalized = stderr.lower()
     if "code object is not signed at all" in normalized:
@@ -398,15 +475,18 @@ def _native_failure_category(
 def _run_native_tool(
     arguments: Sequence[str],
     *,
-    reviewed_framework_leaf: Path | None = None,
+    isolated_framework_leaf: _IsolatedFrameworkLeaf | None = None,
 ) -> str:
     if platform.system() != "Darwin":
         raise AuditError("Real Mach-O inspection requires Darwin")
     label = _native_tool_label(
         arguments,
-        reviewed_framework_leaf=reviewed_framework_leaf,
+        isolated_framework_leaf=isolated_framework_leaf,
     )
-    target = _native_target_label(arguments)
+    target = _native_target_label(
+        arguments,
+        isolated_framework_leaf=isolated_framework_leaf,
+    )
     try:
         completed = subprocess.run(
             list(arguments),
@@ -623,7 +703,9 @@ def _validate_reviewed_python_framework(
     except ValueError as exc:
         raise AuditError("Mach-O path escapes the sidecar") from exc
     framework_parts = [
-        part for part in relative.parts if part.endswith(".framework")
+        part
+        for part in relative.parts
+        if part.casefold().endswith(".framework")
     ]
     if not framework_parts:
         return None
@@ -795,15 +877,683 @@ def _validate_reviewed_python_framework(
     return tuple(sorted(snapshot, key=lambda item: str(item[0])))
 
 
+def _bound_file_identity(info: os.stat_result) -> tuple[Any, ...]:
+    return tuple(getattr(info, field) for field in BOUND_FILE_STAT_FIELDS)
+
+
+def _shared_parent_identity(info: os.stat_result) -> tuple[Any, ...]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_gid,
+    )
+
+
+def _bound_directory_snapshot(
+    descriptor: int,
+    path: Path,
+    *,
+    expected_uid: int,
+    expected_mode: int,
+    exact_entries: tuple[str, ...] | None,
+    shared_parent: bool,
+    error_message: str,
+) -> tuple[Any, ...]:
+    """Bind a real canonical directory path to its held descriptor."""
+
+    try:
+        canonical = path.resolve(strict=True)
+        path_before = path.lstat()
+        fd_before = os.fstat(descriptor)
+        identity = (
+            _shared_parent_identity(fd_before)
+            if shared_parent
+            else _bound_file_identity(fd_before)
+        )
+        path_identity = (
+            _shared_parent_identity(path_before)
+            if shared_parent
+            else _bound_file_identity(path_before)
+        )
+        if (
+            canonical != path
+            or not stat.S_ISDIR(path_before.st_mode)
+            or stat.S_ISLNK(path_before.st_mode)
+            or not stat.S_ISDIR(fd_before.st_mode)
+            or path_before.st_uid != expected_uid
+            or fd_before.st_uid != expected_uid
+            or stat.S_IMODE(path_before.st_mode) != expected_mode
+            or stat.S_IMODE(fd_before.st_mode) != expected_mode
+            or path_identity != identity
+        ):
+            raise AuditError(error_message)
+        entries = (
+            tuple(sorted(os.listdir(descriptor)))
+            if exact_entries is not None
+            else None
+        )
+        fd_after = os.fstat(descriptor)
+        path_after = path.lstat()
+        after_identity = (
+            _shared_parent_identity(fd_after)
+            if shared_parent
+            else _bound_file_identity(fd_after)
+        )
+        path_after_identity = (
+            _shared_parent_identity(path_after)
+            if shared_parent
+            else _bound_file_identity(path_after)
+        )
+        if (
+            after_identity != identity
+            or path_after_identity != identity
+            or (exact_entries is not None and entries != exact_entries)
+        ):
+            raise AuditError(error_message)
+        return (*identity, entries)
+    except AuditError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise AuditError(error_message) from exc
+
+
+def _bound_open_regular_file_snapshot(
+    descriptor: int,
+    path: Path,
+    *,
+    required_mode: int | None,
+    relative_parent_descriptor: int | None,
+    relative_name: str | None,
+    error_message: str,
+) -> tuple[Any, ...]:
+    """Hash a held regular-file fd and prove its no-follow path identity."""
+
+    try:
+        canonical = path.resolve(strict=True)
+        path_before = path.lstat()
+        fd_before = os.fstat(descriptor)
+        relative_before = (
+            os.stat(
+                relative_name,
+                dir_fd=relative_parent_descriptor,
+                follow_symlinks=False,
+            )
+            if relative_parent_descriptor is not None
+            and relative_name is not None
+            else path_before
+        )
+        identity = _bound_file_identity(fd_before)
+        mode = stat.S_IMODE(fd_before.st_mode)
+        if (
+            canonical != path
+            or not stat.S_ISREG(path_before.st_mode)
+            or stat.S_ISLNK(path_before.st_mode)
+            or not stat.S_ISREG(fd_before.st_mode)
+            or not stat.S_ISREG(relative_before.st_mode)
+            or path_before.st_uid != os.geteuid()
+            or fd_before.st_uid != os.geteuid()
+            or relative_before.st_uid != os.geteuid()
+            or path_before.st_nlink != 1
+            or fd_before.st_nlink != 1
+            or relative_before.st_nlink != 1
+            or fd_before.st_size <= 0
+            or fd_before.st_size > MAX_REVIEWED_FRAMEWORK_LEAF_BYTES
+            or mode & 0o022
+            or (required_mode is not None and mode != required_mode)
+            or _bound_file_identity(path_before) != identity
+            or _bound_file_identity(relative_before) != identity
+        ):
+            raise AuditError(error_message)
+
+        digest = hashlib.sha256()
+        offset = 0
+        while offset <= MAX_REVIEWED_FRAMEWORK_LEAF_BYTES:
+            remaining = MAX_REVIEWED_FRAMEWORK_LEAF_BYTES + 1 - offset
+            chunk = os.pread(descriptor, min(1024 * 1024, remaining), offset)
+            if not chunk:
+                break
+            digest.update(chunk)
+            offset += len(chunk)
+
+        fd_after = os.fstat(descriptor)
+        path_after = path.lstat()
+        relative_after = (
+            os.stat(
+                relative_name,
+                dir_fd=relative_parent_descriptor,
+                follow_symlinks=False,
+            )
+            if relative_parent_descriptor is not None
+            and relative_name is not None
+            else path_after
+        )
+        if (
+            offset != fd_before.st_size
+            or offset > MAX_REVIEWED_FRAMEWORK_LEAF_BYTES
+            or _bound_file_identity(fd_after) != identity
+            or _bound_file_identity(path_after) != identity
+            or _bound_file_identity(relative_after) != identity
+        ):
+            raise AuditError(error_message)
+        return (*identity, digest.hexdigest())
+    except AuditError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise AuditError(error_message) from exc
+
+
+def _open_isolation_parent() -> tuple[Path, int]:
+    parent = ISOLATED_FRAMEWORK_LEAF_PARENT
+    error_message = "Python framework isolation parent is unsafe"
+    descriptor: int | None = None
+    try:
+        if (
+            not parent.is_absolute()
+            or parent.resolve(strict=True) != parent
+            or any(
+                part.casefold().endswith(".framework")
+                for part in parent.parts
+            )
+        ):
+            raise AuditError(error_message)
+        descriptor = os.open(
+            parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        expected_uid = 0 if parent == PRODUCTION_ISOLATION_PARENT else os.geteuid()
+        _bound_directory_snapshot(
+            descriptor,
+            parent,
+            expected_uid=expected_uid,
+            expected_mode=0o1777,
+            exact_entries=None,
+            shared_parent=True,
+            error_message=error_message,
+        )
+        return parent, descriptor
+    except AuditError:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise
+    except (OSError, RuntimeError) as exc:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise AuditError(error_message) from exc
+
+
+def _cleanup_isolated_framework_leaf(
+    *,
+    parent: Path | None,
+    child: Path | None,
+    parent_descriptor: int | None,
+    child_descriptor: int | None,
+    source_descriptor: int | None,
+    copy_descriptor: int | None,
+    child_name: str | None,
+    copy_created: bool,
+) -> None:
+    """Remove only the fixed copy and exact private child via held dirfds."""
+
+    failed = False
+    if child_descriptor is None:
+        failed = (
+            child is not None
+            or child_name is not None
+            or copy_created
+            or copy_descriptor is not None
+        )
+        for descriptor in (
+            copy_descriptor,
+            source_descriptor,
+            parent_descriptor,
+        ):
+            if descriptor is None:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError:
+                failed = True
+        if failed:
+            raise AuditError("Python framework isolation cleanup failed")
+        return
+
+    safe_to_remove = False
+    expected_parent_uid = (
+        0 if parent == PRODUCTION_ISOLATION_PARENT else os.geteuid()
+    )
+    try:
+        if (
+            parent is None
+            or child is None
+            or parent_descriptor is None
+            or child_descriptor is None
+            or child_name is None
+            or child != parent / child_name
+            or re.fullmatch(
+                rf"{re.escape(ISOLATED_FRAMEWORK_LEAF_TEMP_PREFIX)}[0-9a-f]{{32}}",
+                child_name,
+            )
+            is None
+            or any(
+                part.casefold().endswith(".framework")
+                for part in child.parts
+            )
+        ):
+            raise AuditError("Python framework isolation cleanup failed")
+        _bound_directory_snapshot(
+            parent_descriptor,
+            parent,
+            expected_uid=expected_parent_uid,
+            expected_mode=0o1777,
+            exact_entries=None,
+            shared_parent=True,
+            error_message="Python framework isolation cleanup failed",
+        )
+        child_fd_info = os.fstat(child_descriptor)
+        child_relative_info = os.stat(
+            child_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        child_path_info = child.lstat()
+        child_stable_identity = (
+            child_fd_info.st_dev,
+            child_fd_info.st_ino,
+            child_fd_info.st_mode,
+            child_fd_info.st_uid,
+            child_fd_info.st_gid,
+            child_fd_info.st_nlink,
+        )
+        if (
+            not stat.S_ISDIR(child_fd_info.st_mode)
+            or stat.S_ISLNK(child_relative_info.st_mode)
+            or stat.S_ISLNK(child_path_info.st_mode)
+            or child_fd_info.st_uid != os.geteuid()
+            or stat.S_IMODE(child_fd_info.st_mode) != 0o700
+            or child_stable_identity
+            != (
+                child_relative_info.st_dev,
+                child_relative_info.st_ino,
+                child_relative_info.st_mode,
+                child_relative_info.st_uid,
+                child_relative_info.st_gid,
+                child_relative_info.st_nlink,
+            )
+            or child_stable_identity
+            != (
+                child_path_info.st_dev,
+                child_path_info.st_ino,
+                child_path_info.st_mode,
+                child_path_info.st_uid,
+                child_path_info.st_gid,
+                child_path_info.st_nlink,
+            )
+        ):
+            raise AuditError("Python framework isolation cleanup failed")
+        expected_entries = ("Python",) if copy_created else ()
+        if tuple(sorted(os.listdir(child_descriptor))) != expected_entries:
+            raise AuditError("Python framework isolation cleanup failed")
+        if copy_created:
+            if copy_descriptor is None:
+                raise AuditError("Python framework isolation cleanup failed")
+            copy_fd_info = os.fstat(copy_descriptor)
+            copy_relative_info = os.stat(
+                "Python",
+                dir_fd=child_descriptor,
+                follow_symlinks=False,
+            )
+            copy_path_info = (child / "Python").lstat()
+            copy_identity = _bound_file_identity(copy_fd_info)
+            if (
+                not stat.S_ISREG(copy_fd_info.st_mode)
+                or stat.S_ISLNK(copy_relative_info.st_mode)
+                or stat.S_ISLNK(copy_path_info.st_mode)
+                or copy_fd_info.st_uid != os.geteuid()
+                or copy_fd_info.st_nlink != 1
+                or stat.S_IMODE(copy_fd_info.st_mode) != 0o500
+                or _bound_file_identity(copy_relative_info) != copy_identity
+                or _bound_file_identity(copy_path_info) != copy_identity
+            ):
+                raise AuditError("Python framework isolation cleanup failed")
+        safe_to_remove = True
+    except (AuditError, OSError, RuntimeError):
+        failed = True
+
+    if safe_to_remove and copy_created:
+        try:
+            os.unlink("Python", dir_fd=child_descriptor)
+        except OSError:
+            failed = True
+    for descriptor in (copy_descriptor, source_descriptor):
+        if descriptor is None:
+            continue
+        try:
+            os.close(descriptor)
+        except OSError:
+            failed = True
+    if safe_to_remove and child_descriptor is not None:
+        try:
+            if os.listdir(child_descriptor):
+                failed = True
+        except OSError:
+            failed = True
+    if (
+        safe_to_remove
+        and parent_descriptor is not None
+        and child_descriptor is not None
+        and child_name is not None
+    ):
+        try:
+            os.rmdir(child_name, dir_fd=parent_descriptor)
+        except OSError:
+            failed = True
+        else:
+            try:
+                os.stat(
+                    child_name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            except OSError:
+                failed = True
+            else:
+                failed = True
+            try:
+                _bound_directory_snapshot(
+                    parent_descriptor,
+                    parent,
+                    expected_uid=expected_parent_uid,
+                    expected_mode=0o1777,
+                    exact_entries=None,
+                    shared_parent=True,
+                    error_message="Python framework isolation cleanup failed",
+                )
+            except AuditError:
+                failed = True
+    if child_descriptor is not None:
+        try:
+            os.close(child_descriptor)
+        except OSError:
+            failed = True
+    if parent_descriptor is not None:
+        try:
+            os.close(parent_descriptor)
+        except OSError:
+            failed = True
+    if failed:
+        raise AuditError("Python framework isolation cleanup failed")
+
+
+def _prepare_isolated_framework_leaf(source: Path) -> _IsolatedFrameworkLeaf:
+    """Create one byte-identical private copy while retaining every bound fd."""
+
+    parent: Path | None = None
+    child: Path | None = None
+    child_name: str | None = None
+    parent_descriptor: int | None = None
+    child_descriptor: int | None = None
+    source_descriptor: int | None = None
+    copy_descriptor: int | None = None
+    copy_created = False
+    error_message = "Reviewed Python framework leaf could not be isolated"
+    try:
+        parent, parent_descriptor = _open_isolation_parent()
+        for _attempt in range(8):
+            candidate = (
+                f"{ISOLATED_FRAMEWORK_LEAF_TEMP_PREFIX}{secrets.token_hex(16)}"
+            )
+            try:
+                os.mkdir(candidate, mode=0o700, dir_fd=parent_descriptor)
+            except FileExistsError:
+                continue
+            child_name = candidate
+            break
+        if child_name is None:
+            raise AuditError(error_message)
+        child = parent / child_name
+        child_descriptor = os.open(
+            child_name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_descriptor,
+        )
+        os.fchmod(child_descriptor, 0o700)
+        _bound_directory_snapshot(
+            child_descriptor,
+            child,
+            expected_uid=os.geteuid(),
+            expected_mode=0o700,
+            exact_entries=(),
+            shared_parent=False,
+            error_message=error_message,
+        )
+
+        source_descriptor = os.open(
+            source,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        source_snapshot = _bound_open_regular_file_snapshot(
+            source_descriptor,
+            source,
+            required_mode=None,
+            relative_parent_descriptor=None,
+            relative_name=None,
+            error_message=error_message,
+        )
+
+        copy_descriptor = os.open(
+            "Python",
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_CLOEXEC
+            | os.O_NOFOLLOW,
+            0o500,
+            dir_fd=child_descriptor,
+        )
+        copy_created = True
+
+        digest = hashlib.sha256()
+        bytes_copied = 0
+        while True:
+            chunk = os.read(source_descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            bytes_copied += len(chunk)
+            if bytes_copied > MAX_REVIEWED_FRAMEWORK_LEAF_BYTES:
+                raise AuditError(error_message)
+            digest.update(chunk)
+            remaining = memoryview(chunk)
+            while remaining:
+                written = os.write(copy_descriptor, remaining)
+                if written <= 0:
+                    raise AuditError(error_message)
+                remaining = remaining[written:]
+        os.fchmod(copy_descriptor, 0o500)
+        os.fsync(copy_descriptor)
+        copy = child / "Python"
+        source_after_copy = _bound_open_regular_file_snapshot(
+            source_descriptor,
+            source,
+            required_mode=None,
+            relative_parent_descriptor=None,
+            relative_name=None,
+            error_message=error_message,
+        )
+        copy_snapshot = _bound_open_regular_file_snapshot(
+            copy_descriptor,
+            copy,
+            required_mode=0o500,
+            relative_parent_descriptor=child_descriptor,
+            relative_name="Python",
+            error_message=error_message,
+        )
+        if (
+            source_after_copy != source_snapshot
+            or source_snapshot[-1] != digest.hexdigest()
+            or copy_snapshot[-1] != source_snapshot[-1]
+            or copy_snapshot[:2] == source_snapshot[:2]
+            or bytes_copied != source_snapshot[6]
+        ):
+            raise AuditError(error_message)
+        parent_snapshot = _bound_directory_snapshot(
+            parent_descriptor,
+            parent,
+            expected_uid=(
+                0 if parent == PRODUCTION_ISOLATION_PARENT else os.geteuid()
+            ),
+            expected_mode=0o1777,
+            exact_entries=None,
+            shared_parent=True,
+            error_message=error_message,
+        )
+        child_snapshot = _bound_directory_snapshot(
+            child_descriptor,
+            child,
+            expected_uid=os.geteuid(),
+            expected_mode=0o700,
+            exact_entries=("Python",),
+            shared_parent=False,
+            error_message=error_message,
+        )
+        return _IsolatedFrameworkLeaf(
+            parent=parent,
+            child=child,
+            child_name=child_name,
+            source=source,
+            copy=copy,
+            parent_descriptor=parent_descriptor,
+            child_descriptor=child_descriptor,
+            source_descriptor=source_descriptor,
+            copy_descriptor=copy_descriptor,
+            parent_snapshot=parent_snapshot,
+            child_snapshot=child_snapshot,
+            source_snapshot=source_snapshot,
+            copy_snapshot=copy_snapshot,
+        )
+    except AuditError:
+        _cleanup_isolated_framework_leaf(
+            parent=parent,
+            child=child,
+            parent_descriptor=parent_descriptor,
+            child_descriptor=child_descriptor,
+            source_descriptor=source_descriptor,
+            copy_descriptor=copy_descriptor,
+            child_name=child_name,
+            copy_created=copy_created,
+        )
+        raise
+    except (OSError, RuntimeError) as exc:
+        try:
+            _cleanup_isolated_framework_leaf(
+                parent=parent,
+                child=child,
+                parent_descriptor=parent_descriptor,
+                child_descriptor=child_descriptor,
+                source_descriptor=source_descriptor,
+                copy_descriptor=copy_descriptor,
+                child_name=child_name,
+                copy_created=copy_created,
+            )
+        except AuditError as cleanup_exc:
+            raise cleanup_exc from exc
+        raise AuditError(error_message) from exc
+
+
+def _validate_isolated_framework_leaf_state(
+    isolation: _IsolatedFrameworkLeaf,
+) -> None:
+    error_message = "Isolated Python framework leaf changed during verification"
+    expected_parent_uid = (
+        0
+        if isolation.parent == PRODUCTION_ISOLATION_PARENT
+        else os.geteuid()
+    )
+    if _bound_directory_snapshot(
+        isolation.parent_descriptor,
+        isolation.parent,
+        expected_uid=expected_parent_uid,
+        expected_mode=0o1777,
+        exact_entries=None,
+        shared_parent=True,
+        error_message=error_message,
+    ) != isolation.parent_snapshot:
+        raise AuditError(error_message)
+    if _bound_directory_snapshot(
+        isolation.child_descriptor,
+        isolation.child,
+        expected_uid=os.geteuid(),
+        expected_mode=0o700,
+        exact_entries=("Python",),
+        shared_parent=False,
+        error_message=error_message,
+    ) != isolation.child_snapshot:
+        raise AuditError(error_message)
+    source_snapshot = _bound_open_regular_file_snapshot(
+        isolation.source_descriptor,
+        isolation.source,
+        required_mode=None,
+        relative_parent_descriptor=None,
+        relative_name=None,
+        error_message="Reviewed Python framework changed during verification",
+    )
+    copy_snapshot = _bound_open_regular_file_snapshot(
+        isolation.copy_descriptor,
+        isolation.copy,
+        required_mode=0o500,
+        relative_parent_descriptor=isolation.child_descriptor,
+        relative_name="Python",
+        error_message=error_message,
+    )
+    if source_snapshot != isolation.source_snapshot:
+        raise AuditError("Reviewed Python framework changed during verification")
+    if (
+        copy_snapshot != isolation.copy_snapshot
+        or copy_snapshot[-1] != source_snapshot[-1]
+        or copy_snapshot[:2] == source_snapshot[:2]
+    ):
+        raise AuditError(error_message)
+
+
 def _verify_code_signature(root: Path, path: Path) -> None:
     framework_snapshot = _validate_reviewed_python_framework(root, path)
     if framework_snapshot is not None:
-        _run_native_tool(
-            ("/usr/bin/codesign", "--verify", str(path)),
-            reviewed_framework_leaf=path,
-        )
-        if _validate_reviewed_python_framework(root, path) != framework_snapshot:
-            raise AuditError("Reviewed Python framework changed during verification")
+        isolation = _prepare_isolated_framework_leaf(path)
+        try:
+            _run_native_tool(
+                (
+                    "/usr/bin/codesign",
+                    "--verify",
+                    "--strict",
+                    str(isolation.copy),
+                ),
+                isolated_framework_leaf=isolation,
+            )
+            _validate_isolated_framework_leaf_state(isolation)
+            if (
+                _validate_reviewed_python_framework(root, path)
+                != framework_snapshot
+            ):
+                raise AuditError(
+                    "Reviewed Python framework changed during verification"
+                )
+        finally:
+            _cleanup_isolated_framework_leaf(
+                parent=isolation.parent,
+                child=isolation.child,
+                parent_descriptor=isolation.parent_descriptor,
+                child_descriptor=isolation.child_descriptor,
+                source_descriptor=isolation.source_descriptor,
+                copy_descriptor=isolation.copy_descriptor,
+                child_name=isolation.child_name,
+                copy_created=True,
+            )
         return
     _run_native_tool(("/usr/bin/codesign", "--verify", "--strict", str(path)))
 

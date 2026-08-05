@@ -11,7 +11,9 @@
 > Electron source 是唯一受支持的开发运行面。仓库中的 native browser、Docker/Compose、
 > public HTTP、Host Runner 和 legacy MCP 只用于静态 retirement inventory；不要运行它们建立
 > 新实例。实际删除受 ADR-0015/0016、[W01–W16 work plan](work-plan.md) 与严格路径矩阵约束：
-> W02 packaged smoke 后才可按独立 slice 删除，final cutover/absence 留到 W13。
+> W01 修复 candidate 的 PR/source、independent acceptance、accepted merge 与 canonical-main
+> source 全部完成后才可启动 W02；W02 packaged smoke 后才可按独立 slice 删除，final
+> cutover/absence 留到 W13。仓库内容不能自报 canonical activation。
 
 ## 1. Checkout 后先建立坐标
 
@@ -109,7 +111,7 @@ ADR、迭代、需求、证据、发布状态：
 | `runtime/` | 跨层版本、schema、public trust locks | version sync、packaging fail-closed |
 | `docs/adr/` | Accepted decisions | 架构历史，不是完成证据 |
 | `docs/development/` | 状态、迭代、证据、TODO | 每个 scoped change |
-| `guide-site/` | 已部署使用说明站点源码 | 独立 build/test/deploy；当前不在主 source aggregate |
+| `guide-site/` | hosting identity 与当前部署均未验证的说明站点源码 | 独立 build/test/checkpoint deployment；当前 external-blocked，不在主 source aggregate |
 
 理解 desktop 的推荐代码阅读顺序：
 
@@ -193,12 +195,12 @@ unavailable/no-network。W02 只支撑 slice feedback；W03 从 cleaned tree 构
 | Python domain/API/DB | 对应 `tests/backend/test_*.py` | `make ci-python` |
 | Renderer/UI | 对应 Web vitest | `make ci-web` |
 | Main/preload/contracts | 对应 Desktop vitest | `make desktop-ci` + Web bridge tests |
-| QMD worker | worker test file | `npm --prefix desktop/workers/qmd test` |
+| QMD worker | worker test file | `make ci-qmd-worker`（Node 22.23.2、无 lifecycle script、test network/model trap） |
 | MCP companion | MCP Desktop tests | `make desktop-ci`；packaged gate仍 `not-run` |
 | Provider | attempt/discovery/process tests | Backend + Desktop + Web |
 | Local source | localSource + source_security | Backend + Desktop + Web |
 | Update/release | update/release policy focused | Desktop + Backend policy + YAML/shell audit |
-| Legacy split/removal | caller/path + affected replacement，或受限 pure-legacy unsupported disposition | W01 exits + W02 baseline；fresh before/after package smoke；focused/aggregate；slice absence + protected presence；不运行 Docker smoke |
+| Legacy split/removal | caller/path + affected replacement，或受限 pure-legacy unsupported disposition | W01 PR/source + independent acceptance + accepted merge + canonical-main source + W02 baseline；fresh before/after package smoke；focused/aggregate；slice absence + protected presence；不运行 Docker smoke |
 | Engineering package | explicit non-release profile + inventory | W03 cleaned tree；production trust/tag/upload/Draft/Release 禁止 |
 | Docs only | link checker、diff check | 无需伪跑 packaged gate |
 | Version/manifest | version sync + audit scripts | packaging gate |
@@ -214,30 +216,41 @@ make ci-source
 
 ```bash
 make ci-python
+make ci-qmd-worker
 make ci-web
 make desktop-ci
 ```
 
-当前缺口：`make ci-source` 不运行 QMD worker tests，也不运行 `guide-site` tests。涉及这些
-路径时必须显式运行：
+机器可读范围由 [source coverage manifest](../../.github/ci/source-coverage.json) 冻结，并由
+`tools/check_ci_coverage.py` 反向核对 Make 与 workflow。QMD 实际在 `ci-source` 和现有 Python
+source job 中执行，避免新增未受 required-check 约束的可选 job；唯一允许的 skip 是
+`better-sqlite3` 未在 source checkout 构建。
 
-```bash
-npm --prefix desktop/workers/qmd ci
-npm --prefix desktop/workers/qmd test
+QMD model scan 只覆盖 runner 创建的 isolated `HOME`、`XDG_CACHE_HOME`、`XDG_CONFIG_HOME`、
+`XDG_DATA_HOME` 与 `TMPDIR`。machine result 必须明确
+`repository_worktree_scanned=false`、`global_tmp_scanned=false`；0 个 model/cache delta 不表示整个
+runner/filesystem 已扫描。
 
-npm --prefix guide-site ci
-npm --prefix guide-site test
-```
-
-使用前先核对 `guide-site/package.json` 的实际 script；不要凭本页假设不存在的命令。
+`guide-site/**` is excluded from `make ci-source` and Desktop source CI；它不是“已覆盖”。当前
+tracked checkout 缺 `guide-site/.openai/hosting.json`，也没有仓库拥有、绑定 exact commit 的
+独立 build/test/checkpoint-deployment 结果，所以机器 disposition 为 `external-blocked` /
+unvalidated。恢复 exact Sites identity 前不得猜 identity、部署或把 legacy guide tests 改写为
+W01 pass。
 
 ### 6.2 单独治理检查
 
 ```bash
 python3 tools/check_markdown_links.py
 python3 tools/check_version_sync.py
-git diff --check
+python3 -B tools/check_ci_coverage.py
+python3 -B tools/check_w01_evidence.py
+git diff --check 3eff97d97b2de4484d568bab5ac96d63830c79ee HEAD
 ```
+
+W01 historical checker 只验证 versioned immutable coordinates 与 cross-field consistency，不读
+当前 Git ancestry，也不限制 future product descendant。当前 exact head 由 workflow payload 与
+独立 provenance artifact 绑定。PR/branch canonical activation 必须 `blocked`；canonical-main
+source result 也不能替代 external independent acceptance。
 
 ### 6.3 Packaged/physical
 
@@ -424,9 +437,11 @@ guide-site、packaged 或 physical 是否未包含。
 合并前：
 
 ```bash
-git diff --check
+git diff --check 3eff97d97b2de4484d568bab5ac96d63830c79ee HEAD
 python3 tools/check_markdown_links.py
 python3 tools/check_version_sync.py
+python3 -B tools/check_ci_coverage.py
+python3 -B tools/check_w01_evidence.py
 python3 -B tools/check_pre1_work_plan.py
 ```
 
@@ -439,7 +454,7 @@ evidence 不能自动代表新 bytes。
 2. **把 source mode 当 DMG**：它借用开发机 runtime。
 3. **把 `mcp/` 当 desktop companion**：前者是 legacy gateway。
 4. **把 `make test` 当全量**：它不覆盖 Desktop/QMD/Host Runner/governance。
-5. **忘记 QMD worker**：当前不在 `make ci-source`。
+5. **绕过 QMD source runner**：直接 `node --test` 不具备 lifecycle/network/model fail-closed 证据。
 6. **使用 native bootstrap**：它属于待删除 browser surface；Electron CI/source 用 `backend/.venv`。
 7. **运行 Compose/legacy installer**：它们已 unsupported，且可能改变旧 data/volume。
 8. **移动 release tag**：immutable policy 下不可恢复；container workflow 删除前禁止创建新 tag。

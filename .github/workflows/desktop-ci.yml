@@ -17,11 +17,26 @@ jobs:
     name: Python source checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      qmd-result: ${{ steps.qmd.outputs.result }}
+      python-version: ${{ steps.versions.outputs.python }}
+      qmd-node-version: ${{ steps.versions.outputs.node }}
+      npm-version: ${{ steps.versions.outputs.npm }}
+      uv-version: ${{ steps.versions.outputs.uv }}
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify exact clean source checkout
+        env:
+          LCF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$LCF_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1)"
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -38,15 +53,56 @@ jobs:
       - name: Run Python source checks
         run: make ci-python
 
+      - name: Set up exact QMD source Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: desktop/workers/qmd/package-lock.json
+
+      - name: Run QMD source checks without lifecycle scripts or model access
+        id: qmd
+        env:
+          QMD_SOURCE_RESULT: ${{ runner.temp }}/qmd-source-result.json
+        run: |
+          make ci-qmd-worker QMD_SOURCE_RESULT="$QMD_SOURCE_RESULT"
+          {
+            printf 'result='
+            tr -d '\n' < "$QMD_SOURCE_RESULT"
+            printf '\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record exact tool versions
+        id: versions
+        run: |
+          printf 'python=' >> "$GITHUB_OUTPUT"
+          python --version 2>&1 >> "$GITHUB_OUTPUT"
+          printf 'node=' >> "$GITHUB_OUTPUT"
+          node --version >> "$GITHUB_OUTPUT"
+          printf 'npm=' >> "$GITHUB_OUTPUT"
+          npm --version >> "$GITHUB_OUTPUT"
+          printf 'uv=' >> "$GITHUB_OUTPUT"
+          uv --version >> "$GITHUB_OUTPUT"
+
   web:
     name: Web source checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      node-version: ${{ steps.versions.outputs.node }}
+      npm-version: ${{ steps.versions.outputs.npm }}
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Assert exact source commit
+        env:
+          LCF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$LCF_SOURCE_SHA"
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -58,15 +114,33 @@ jobs:
       - name: Run Web source checks
         run: make ci-web
 
+      - name: Record exact tool versions
+        id: versions
+        run: |
+          printf 'node=' >> "$GITHUB_OUTPUT"
+          node --version >> "$GITHUB_OUTPUT"
+          printf 'npm=' >> "$GITHUB_OUTPUT"
+          npm --version >> "$GITHUB_OUTPUT"
+
   desktop:
     name: Desktop source checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      node-version: ${{ steps.versions.outputs.node }}
+      npm-version: ${{ steps.versions.outputs.npm }}
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Assert exact source commit
+        env:
+          LCF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$LCF_SOURCE_SHA"
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -78,6 +152,14 @@ jobs:
       - name: Run desktop source checks
         run: make desktop-ci
 
+      - name: Record exact tool versions
+        id: versions
+        run: |
+          printf 'node=' >> "$GITHUB_OUTPUT"
+          node --version >> "$GITHUB_OUTPUT"
+          printf 'npm=' >> "$GITHUB_OUTPUT"
+          npm --version >> "$GITHUB_OUTPUT"
+
   macos-ipc:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.repository.visibility == 'public' }}
     name: macOS 15 arm64 source IPC contract (not a DMG gate)
@@ -85,11 +167,22 @@ jobs:
     timeout-minutes: 30
     env:
       CI: "true"
+    outputs:
+      architecture: ${{ steps.versions.outputs.architecture }}
+      python-version: ${{ steps.versions.outputs.python }}
+      uv-version: ${{ steps.versions.outputs.uv }}
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Assert exact source commit
+        env:
+          LCF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$LCF_SOURCE_SHA"
 
       - name: Verify arm64 source runner
         run: test "$(uname -m)" = "arm64"
@@ -108,3 +201,67 @@ jobs:
 
       - name: Run source IPC contract (not a DMG validation)
         run: make ci-ipc-source
+
+      - name: Record exact tool versions
+        id: versions
+        run: |
+          printf 'architecture=' >> "$GITHUB_OUTPUT"
+          uname -m >> "$GITHUB_OUTPUT"
+          printf 'python=' >> "$GITHUB_OUTPUT"
+          python --version 2>&1 >> "$GITHUB_OUTPUT"
+          printf 'uv=' >> "$GITHUB_OUTPUT"
+          uv --version >> "$GITHUB_OUTPUT"
+
+  source-coverage:
+    if: ${{ always() }}
+    needs: [python, web, desktop, macos-ipc]
+    name: W01 exact-head source coverage evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Render fail-closed candidate/main payload
+        env:
+          LCF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 -B tools/render_source_coverage_evidence.py \
+            --manifest .github/ci/source-coverage.json \
+            --output "$RUNNER_TEMP/w01-source-coverage.json"
+
+      - name: Upload source payload even on failure
+        id: payload-artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: w01-source-coverage-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/w01-source-coverage.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Render non-self-referential payload provenance
+        if: ${{ always() }}
+        env:
+          LCF_PAYLOAD_ARTIFACT_ID: ${{ steps.payload-artifact.outputs.artifact-id }}
+          LCF_PAYLOAD_ARTIFACT_NAME: w01-source-coverage-${{ github.event.pull_request.head.sha || github.sha }}
+          LCF_PAYLOAD_ARTIFACT_URL: ${{ steps.payload-artifact.outputs.artifact-url }}
+          LCF_PAYLOAD_ARTIFACT_DIGEST: ${{ steps.payload-artifact.outputs.artifact-digest }}
+        run: |
+          python3 -B tools/render_source_coverage_provenance.py \
+            --payload "$RUNNER_TEMP/w01-source-coverage.json" \
+            --output "$RUNNER_TEMP/w01-source-coverage-provenance.json"
+
+      - name: Upload payload provenance even on failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: w01-source-coverage-provenance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/w01-source-coverage-provenance.json
+          if-no-files-found: error
+          retention-days: 30

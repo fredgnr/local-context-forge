@@ -172,7 +172,9 @@ window.
 
 The real packaged `/Applications`/official-Codex gate, protected signed
 release settings, clean-user DMG test, and physical real-version `N-1` to `N` update gate
-remain `not-run`. The current decision is **source merge GO / release NO-GO**.
+remain `not-run`. PR #20's old W01 candidate was independently rejected, and
+its remediation candidate has not completed external acceptance or canonical
+activation. The current decision is **PR #20 merge blocked / release NO-GO**.
 
 See [the detailed threat model](docs/10-security.md) and
 [the desktop boundary notes](desktop/README.md).

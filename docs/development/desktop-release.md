@@ -322,5 +322,6 @@ ruleset 与 reviewer 不会防御恶意根信任。GitHub Draft 也没有资产 
 workflow artifact、release manifest、Actions run URL 和脱敏测试记录；不要上传 keychain、
 credential bundle、私钥、P12、password、用户数据或绝对本地路径。
 
-因此当前整体结论保持 **source merge GO / release NO-GO**：source contract 可合并；真实
-settings、protected signing/promotion、签名 DMG 和物理 Mac 证据均仍为 `not-run`。
+因此当前整体结论保持 **PR merge blocked / release NO-GO**：PR #20 的 W01 remediation
+仍待 exact-head 独立验收；真实 settings、protected signing/promotion、签名 DMG 和物理 Mac
+证据均仍为 `not-run`。

@@ -11,12 +11,13 @@
 
 当前总体结论：
 
-> **source merge GO / public release NO-GO**
+> **W01 remediation in progress / PR #20 merge blocked / public release NO-GO**
 
 当前已接受 Electron-only 的 pre-1.0 不兼容收敛方向。Docker/Compose、browser Web、公开 TCP
 API、legacy MCP、Host Runner 与 container/GHCR 均进入删除计划；`web/src` renderer、
 `backend/app` private UDS sidecar/domain、Desktop MCP/QMD/release 路径明确受保护。旧数据不迁移，
-也不会被自动删除。实际顺序是 W01 governance/source exits → W02 最小 packaged smoke → W10/W11 独立 slices → W03 cleaned
+也不会被自动删除。实际顺序是 W01 exact-head PR/source technical + independent acceptance +
+accepted merge + canonical-main source → W02 最小 packaged smoke → W10/W11 独立 slices → W03 cleaned
 engineering package → W04–W12 工程物理矩阵 → W13 final cutover/absence → W14–W16 production
 controls/credentials/formal Release；单个 slice 不再等待完整聚合 cutover，但必须满足自己的
 before/after packaged、absence、protected-path 和数据安全门禁。正式候选还要绑定 W13 checkpoint

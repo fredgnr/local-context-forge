@@ -17,16 +17,31 @@ The handbook is a generated convenience copy. The live handoff authorities are
 regenerate the PDF after changing numbered chapters, and never treat an old PDF
 as newer evidence than those version-controlled files.
 
-The pre-1.0 governance mapping is validated independently of handbook generation:
+The pre-1.0 governance mapping and W01 source coverage/evidence contracts are
+validated independently of handbook generation:
 
 ```bash
+python3 -B tools/check_ci_coverage.py
+python3 -B tools/check_w01_evidence.py
 python3 -B tools/check_pre1_work_plan.py
 python3 -B -m unittest discover -s tools/tests -p 'test_*.py'
 ```
 
-`make ci-python` runs both commands. They validate exact W01-W16 ranks, complete
-work/task/gate mappings, TODO/trace status parity, and the formal-release
-`not-run` boundary.
+`make ci-python` runs these commands. They validate exact W01-W16 ranks,
+complete work/task/gate mappings, TODO/trace/detail status parity, the
+formal-release `not-run` boundary, the machine-readable Make/workflow component
+coverage, and the versioned W01 lifecycle record. The historical checker never
+requires an old PR commit to be an ancestor of the current `HEAD` and never
+diffs a checkpoint against future product descendants.
+
+QMD's source runner is `tools/run_qmd_source_ci.py`. Its model scan is limited
+to isolated HOME/XDG/TMP roots and explicitly excludes the repository worktree
+and global tmp. `tools/render_source_coverage_evidence.py` renders an exact-head
+payload with separate PR/source and canonical-main results; PR/branch canonical
+activation remains blocked and independent acceptance is external. After the
+payload upload, `tools/render_source_coverage_provenance.py` binds its artifact
+ID/archive digest and inner JSON digest in a second artifact, avoiding recursive
+self-hashing.
 
 ```bash
 python3 -m pip install -r tools/requirements.txt

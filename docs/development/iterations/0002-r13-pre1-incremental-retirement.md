@@ -1,13 +1,15 @@
 # ITER-0002/R13：Pre-1.0 增量式 retirement 治理
 
-- 状态：`in-progress`（继承 ITER-0002；待最终 PR head 证据）
-- 日期：2026-08-03
-- 上游基线：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
+- 状态：`in-progress`（W01 remediation technical checkpoint `pass` / canonical activation
+  pending；父 ITER-0002 继续）
+- 日期：2026-08-03；W01 closure 尝试 2026-08-04–05；remediation 自 2026-08-05
+- 上游基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
+- 当前分支：`agent/w01-governance-source-ci`
 - 范围：决策、治理、计划、追踪关系与治理校验；不删除 runtime，不实现 package，不修改
   GitHub 控制面，不生成凭据，不创建 tag/Draft/Release
 - 关联决策：[ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md)
 - 关联计划：[W01–W16 work plan](../work-plan.md)
-- 关联验证：VAL-PRE1-SEQUENCE-001
+- 关联验证：VAL-PRE1-SEQUENCE-001、VAL-GOV-001、VAL-CI-COVERAGE-001
 
 ## 目标
 
@@ -26,17 +28,27 @@ controls、credentials、trust pins 和 formal Release 最后处理。
   数据安全、历史证据和 final fail-closed 门禁。
 - [x] R13-04 首次落盘 W01–W16 稳定映射，以显式 execution rank 前置 W10/W11，不重编号。
 - [x] R13-05 新增最小 smoke、slice 与 engineering package 的 REQ/TODO/VAL，并同步权威文档。
-- [ ] R13-06 在最终 PR head 运行 commit-bound links/version/plan/diff 与 CI 验证并登记 evidence。
+- [x] R13-06 保留旧候选技术执行历史：checkpoint `8573f608…` 与 final
+  `2b762946…` 的 source aggregate 均为 technical `pass`，但旧候选 independent acceptance
+  `fail`、canonical activation `not-eligible`，不能作为 closure。
+- [x] R13-07 修复 evidence lifecycle、merge-strategy independence、PR canonical activation、
+  artifact/QMD schema 与 model scan scope；Checkpoint A `f4074a31…` / run `30980342634` 已生成
+  payload `8919891304` 与 provenance `8919891597`。
 
-`[x]` 只表示 governance/source 文档已在本工作树编写，不表示 runtime、packaged、physical、
-GitHub settings 或 Release gate 已运行。R13-06 完成前，本记录保持 `in-progress`。
+R13 保持 `in-progress`，直至修复候选 exact-head PR/source technical `pass`、independent
+acceptance `pass`、被验收 candidate 合入 canonical `main`，且 resulting main commit 的
+`source-coverage` success。R13-06 的 `[x]` 只保存旧技术执行事实；它不授权 W02，也不表示
+runtime、packaged、physical、GitHub settings 或 Release gate 已运行。
 
 ## 实时基线
 
-2026-08-03 开始工作时：
+2026-08-04 W01 closure 开始时：
 
-- 本地与远端 `main` 均为 `da40553e43ec6272e1affc1f40abf4f9215f1ba5`，ahead/behind `0/0`；
-- 工作区干净，open PR、tag、Release 均为 0；
+- 本地与远端 `main` 均为 `3eff97d97b2de4484d568bab5ac96d63830c79ee`，工作区干净；
+- PR #19 final head `a31f17c367e0ff3d007d2334c37b403615173083` 已合入为 `3eff97d`，两者
+  tree 都是 `21fe2cbe46d42bf351d2b0c84019ee63959081b7`；
+- PR #19 exact branch push run `30815933733` 与 canonical main push run `30816291252` 的既有
+  Python/Web/Desktop/macOS IPC jobs success，但都未执行 W01 QMD/coverage contract；
 - 仓库仍有历史 `agent/*` / Dependabot branches，但没有 open PR 或发现并行修改同一 ADR/TODO/
   iteration 的活动分支；
 - 最近 main 的 Desktop source CI run `30630283893` 与 container run `30630283873` 成功；
@@ -55,8 +67,9 @@ GitHub settings 或 Release gate 已运行。R13-06 完成前，本记录保持 
 
 | 验证 | 当前结果 | 最低环境 | 说明 |
 | --- | --- | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` authoring check | gate 仍 `not-run`；local observation `pass` | 当前工作树 | exact plan checker、11 个负向 fixtures（rank/work/gate/status/mixed-pass/W01 dependency/continuity/cross-document ID closure/legacy prerequisite/R13 state）、links、version、ID-set、`git diff --check` 通过；dirty worktree 结果不作为最终证据 |
-| `VAL-PRE1-SEQUENCE-001` final head | `not-run` | clean checkout / final PR head | 必须绑定 commit 与 CI |
+| `VAL-PRE1-SEQUENCE-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A `f4074a31…` / run `30980342634` | 旧 candidate technical `pass` / independent `fail` / activation `not-eligible`；历史 run/artifact 保留 |
+| `VAL-GOV-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | schema v2 + Checkpoint A exact-head Actions | 历史 checker 不再读取 current ancestry 或动态 diff；当前 bytes 由 payload/provenance 绑定 |
+| `VAL-CI-COVERAGE-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A exact PR-head checkout success | QMD 10 pass / 1 exact skip；扫描只覆盖 isolated HOME/XDG/TMP，repository/global tmp 未扫描；guide-site external-blocked/unvalidated |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` | macOS arm64 packaged App | 本 Work 不实现 harness |
 | 六个 legacy slice gate | `not-run` | slice exact before/after package | 本 Work 不删除 runtime |
 | `VAL-ENGINEERING-PACKAGE-001` | `not-run` | cleaned-tree non-release package | 本 Work 不实现工程包 |
@@ -75,6 +88,8 @@ GitHub settings 或 Release gate 已运行。R13-06 完成前，本记录保持 
 | 提前使用 production trust 或 GitHub controls | W14–W16 明确依赖 W13；engineering artifact 禁止 tag/upload/promotion |
 | W15 production 变更使 W13 bytes 证据失效 | allowlisted checkpoint→tag diff、tag absence 与 exact Draft cutover/absence 独立门禁 |
 | 文档 pass 冒充实现 pass | 所有 runtime/packaged/physical/control-plane gate 保持 `not-run` |
+| 旧 W01 evidence 冻结未来产品提交或只支持 merge commit | historical checker 只校验固定 record；future descendant、merge、squash、rebase 与 main movement fixture 必须通过 |
+| PR artifact 自报 canonical pass | PR/branch activation 固定 `blocked`；main source 也只可 `requires-external-conditions`，independent acceptance 由外部提供 |
 
 回退本治理变更只需普通 Git revert；不得因此修改用户数据、远端 package、GitHub settings、
 credential、tag 或 Release。

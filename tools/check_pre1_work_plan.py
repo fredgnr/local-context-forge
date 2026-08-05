@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -17,6 +18,7 @@ ADR = ROOT / "docs/adr/0016-pre1-incremental-retirement-engineering-package.md"
 STATUS = ROOT / "docs/development/status.md"
 R13 = ROOT / "docs/development/iterations/0002-r13-pre1-incremental-retirement.md"
 RELEASE_RUNBOOK = ROOT / "docs/development/desktop-release.md"
+W01_EVIDENCE = ROOT / "docs/development/evidence/W01/2026-08-04.json"
 
 EXPECTED_ORDER = [
     "W01",
@@ -172,6 +174,8 @@ EXPECTED_TASK_STATUS = {
 EXPECTED_TASK_STATUS.update(
     {
         "TODO-PRE1-SEQUENCING-001": "in-progress",
+        "TODO-GOV-EVIDENCE-001": "in-progress",
+        "TODO-CI-COVERAGE-001": "in-progress",
         "TODO-REL-GOV-001": "blocked",
         "TODO-REL-KEYS-001": "blocked",
         "TODO-REL-DRAFT-001": "blocked",
@@ -211,8 +215,22 @@ NEW_STABLE_IDS = REQUIRED_REQUIREMENTS | NEW_TASKS | NEW_VALIDATIONS
 
 W01_EXIT_MARKER = (
     "<!-- pre1-w02-requires: "
-    "VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001 -->"
+    "VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001,"
+    "independent-acceptance-exact-final-head,accepted-candidate-merged-to-main,"
+    "resulting-main-source-coverage -->"
 )
+
+OLD_REJECTED_TRACE_MARKER = (
+    "旧候选 technical source `pass`；independent acceptance `fail`；"
+    "canonical activation `not-eligible`"
+)
+
+
+def current_w01_trace_marker(technical_result: str) -> str:
+    return (
+        f"修复候选 PR/source `{technical_result}`；independent acceptance `pending`；"
+        "canonical-main source `not-run`；canonical activation `blocked`"
+    )
 
 CONTINUITY_COMPONENTS = {
     "W13 checkpoint commit/package digest",
@@ -287,8 +305,19 @@ def validate_documents(
     status: str,
     r13: str,
     release_runbook: str,
+    w01_evidence: dict[str, object],
 ) -> list[str]:
     errors: list[str] = []
+    expected_task_status = dict(EXPECTED_TASK_STATUS)
+    remediation = w01_evidence.get("remediation")
+    remediation_technical = (
+        remediation.get("technical_source_result")
+        if isinstance(remediation, dict)
+        else None
+    )
+    if remediation_technical not in {"pending", "pass"}:
+        errors.append("W01 remediation technical result must be pending or pass")
+        remediation_technical = "pending"
 
     marker = re.search(r"<!-- pre1-work-order: ([A-Z0-9,]+) -->", plan)
     actual_order = marker.group(1).split(",") if marker else []
@@ -356,7 +385,7 @@ def validate_documents(
             errors.append(f"traceability {task} maps to {trace_work!r}, expected {expected_work}")
         todo_status = normalized_status(todo_row[3])
         trace_status = normalized_status(trace_row[2])
-        expected_status = EXPECTED_TASK_STATUS[task]
+        expected_status = expected_task_status[task]
         if todo_status != expected_status:
             errors.append(f"TODO {task} status {todo_status!r}, expected {expected_status!r}")
         if trace_status != expected_status:
@@ -372,6 +401,26 @@ def validate_documents(
     if set(todo_headings) != set(trace_by_task):
         errors.append("TODO and traceability task sets differ")
 
+    detail_statuses: dict[str, str] = {}
+    heading_matches = list(
+        re.finditer(r"^### (TODO-[A-Z0-9-]+-[0-9]{3}).*$", todo, re.MULTILINE)
+    )
+    for index, match in enumerate(heading_matches):
+        end = heading_matches[index + 1].start() if index + 1 < len(heading_matches) else len(todo)
+        block = todo[match.end() : end]
+        status_match = re.search(r"^- 状态：`([^`]+)`\s*$", block, re.MULTILINE)
+        if status_match:
+            detail_statuses[match.group(1)] = status_match.group(1)
+    for task, overview_row in todo_by_task.items():
+        detail_status = detail_statuses.get(task)
+        overview_status = normalized_status(overview_row[3])
+        if detail_status is None:
+            errors.append(f"TODO detail missing status for {task}")
+        elif detail_status != overview_status:
+            errors.append(
+                f"TODO {task} detail status {detail_status!r} != overview {overview_status!r}"
+            )
+
     requirement_rows = table_rows(trace, r"REQ-[A-Z0-9-]+-[0-9]{3}", 7)
     requirement_ids = [row[0] for row in requirement_rows]
     if len(requirement_ids) != len(set(requirement_ids)):
@@ -386,12 +435,9 @@ def validate_documents(
     required_gates = set().union(*(work["gates"] for work in EXPECTED_WORK.values()))
     for gate in sorted(required_gates - set(validation_by_id)):
         errors.append(f"traceability validation definition missing {gate}")
-    expected_status_words = {
-        gate: ["not-run"] for gate in FORMAL_NOT_RUN | {"VAL-PRE1-SEQUENCE-001"}
-    }
+    expected_status_words = {gate: ["not-run"] for gate in FORMAL_NOT_RUN}
     expected_status_words.update(
         {
-            "VAL-PRE1-SEQUENCE-001": ["not-run", "pass"],
             "VAL-PACK-001": ["not-run", "pass"],
             "VAL-SECRET-001": ["not-run", "pass"],
         }
@@ -406,6 +452,38 @@ def validate_documents(
                 f"{gate} status words {actual_words!r} != {expected_words!r}; "
                 "gate must remain canonically not-run"
             )
+
+    for gate in ("VAL-PRE1-SEQUENCE-001", "VAL-GOV-001", "VAL-CI-COVERAGE-001"):
+        row = validation_by_id.get(gate)
+        if row is None:
+            continue
+        for marker in (
+            OLD_REJECTED_TRACE_MARKER,
+            current_w01_trace_marker(remediation_technical),
+        ):
+            if marker not in row[2]:
+                errors.append(f"{gate} lifecycle result missing {marker!r}")
+
+    if not isinstance(remediation, dict):
+        errors.append("W01 evidence remediation lifecycle is missing")
+    else:
+        if remediation.get("independent_acceptance") != "pending":
+            errors.append("W01 independent acceptance must remain pending")
+        activation = remediation.get("canonical_activation")
+        if not isinstance(activation, dict) or activation.get("status") != "blocked":
+            errors.append("W01 canonical activation must remain blocked")
+    canonical_main = w01_evidence.get("canonical_main_source")
+    if not isinstance(canonical_main, dict) or canonical_main.get("status") != "not-run":
+        errors.append("W01 canonical-main source result must remain not-run")
+
+    r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)
+    if r13_status is None or r13_status.group(1) != "in-progress":
+        errors.append("R13 status must remain in-progress until canonical activation")
+    if "- [x] R13-06" not in r13 or "旧候选" not in r13:
+        errors.append("R13-06 must preserve the old technical execution as rejected history")
+    remediation_checked = "- [x] R13-07" in r13
+    if remediation_checked != (remediation_technical == "pass"):
+        errors.append("R13-07 checkbox must match remediation technical closeout only")
 
     continuity_row = validation_by_id.get("VAL-RELEASE-CONTINUITY-001")
     if continuity_row is not None:
@@ -492,6 +570,7 @@ def main() -> int:
         read(STATUS),
         read(R13),
         read(RELEASE_RUNBOOK),
+        json.loads(read(W01_EVIDENCE)),
     )
     if errors:
         for error in errors:

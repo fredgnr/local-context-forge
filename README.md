@@ -219,8 +219,9 @@ updater；只有用户显式操作才可让 Main 打开固定的 canonical GitHu
 
 repository owner、`contents` writer/能改 workflow 的主体仍是根信任；GitHub Draft 没有资产
 CAS，verify→固定 ID `PATCH` 的竞态只能由发布后复核检测。真实 GitHub settings、受保护签名/
-promotion、签名 DMG 和物理 Mac 证据仍为 `not-run`，所以整体结论是
-**source merge GO / release NO-GO**。
+promotion、签名 DMG 和物理 Mac 证据仍为 `not-run`。此外 PR #20 的旧 W01 candidate 已被
+独立验收拒绝，修复 candidate 尚未完成 external acceptance/canonical activation，所以当前结论是
+**W01 remediation in progress / PR #20 merge blocked / release NO-GO**。
 
 ## 开发者验证
 
@@ -255,8 +256,10 @@ npm --prefix desktop run start:source
 ## Legacy Docker/Web retirement
 
 [ADR-0015](docs/adr/0015-electron-only-legacy-retirement.md) 与
-[ADR-0016](docs/adr/0016-pre1-incremental-retirement-engineering-package.md) 已决定：W01 全部退出后
-先建立 W02 最小 packaged smoke，再用 W10/W11 独立 slice 删除 Docker/Compose、browser Web、公开 TCP
+[ADR-0016](docs/adr/0016-pre1-incremental-retirement-engineering-package.md) 已决定：W01 exact final
+candidate 的 PR/source technical、independent acceptance、accepted merge 与 resulting
+canonical-main source run 全部完成后，才建立 W02 最小 packaged smoke；再用 W10/W11 独立
+slice 删除 Docker/Compose、browser Web、公开 TCP
 API、Python HTTP MCP、Host Runner、旧安装/运维脚本和 container/GHCR 发布；随后从 cleaned
 tree 构建 W03 engineering package，W13 才做工程 checkpoint 的最终能力/absence 聚合。正式
 候选不得复用该 evidence，必须通过 release continuity。项目处于 pre-1.0 早期阶段，不提供旧

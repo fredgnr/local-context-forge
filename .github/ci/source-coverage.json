@@ -1,0 +1,155 @@
+{
+  "schema_version": 2,
+  "work_id": "W01",
+  "repository": "fredgnr/local-context-forge",
+  "baseline_commit": "3eff97d97b2de4484d568bab5ac96d63830c79ee",
+  "aggregate": {
+    "make_target": "ci-source",
+    "required_make_dependencies": [
+      "ci-python",
+      "ci-qmd-worker",
+      "ci-web",
+      "desktop-ci"
+    ],
+    "workflow_path": ".github/workflows/desktop-ci.yml",
+    "workflow_name": "Desktop source CI",
+    "required_jobs": [
+      "python",
+      "web",
+      "desktop",
+      "macos-ipc"
+    ],
+    "summary_job": "source-coverage",
+    "exact_source_expression": "${{ github.event.pull_request.head.sha || github.sha }}",
+    "payload_schema_version": 2,
+    "payload_artifact_prefix": "w01-source-coverage-",
+    "provenance_artifact_prefix": "w01-source-coverage-provenance-",
+    "lifecycle_phases": [
+      "pull-request-candidate",
+      "branch-candidate",
+      "canonical-main-source"
+    ],
+    "canonical_activation_states": [
+      "blocked",
+      "requires-external-conditions"
+    ]
+  },
+  "components": [
+    {
+      "id": "python-mcp-host-governance",
+      "paths": [
+        "backend/**",
+        "mcp/**",
+        "host_runner/**",
+        "tools/**",
+        "docs/**"
+      ],
+      "disposition": "required",
+      "included": true,
+      "make_target": "ci-python",
+      "workflow_job": "python"
+    },
+    {
+      "id": "demo-python-sdk",
+      "paths": [
+        "examples/demo-python-sdk/**"
+      ],
+      "disposition": "required",
+      "included": true,
+      "make_target": "ci-python",
+      "workflow_job": "python"
+    },
+    {
+      "id": "web-renderer",
+      "paths": [
+        "web/**"
+      ],
+      "disposition": "required",
+      "included": true,
+      "make_target": "ci-web",
+      "workflow_job": "web"
+    },
+    {
+      "id": "electron-desktop-companion",
+      "paths": [
+        "desktop/**"
+      ],
+      "path_exclusions": [
+        "desktop/workers/qmd/**"
+      ],
+      "disposition": "required",
+      "included": true,
+      "make_target": "desktop-ci",
+      "workflow_job": "desktop"
+    },
+    {
+      "id": "qmd-worker",
+      "paths": [
+        "desktop/workers/qmd/**"
+      ],
+      "disposition": "required",
+      "included": true,
+      "make_target": "ci-qmd-worker",
+      "workflow_job": "python",
+      "safety": {
+        "node_version": "22.23.2",
+        "install_flags": [
+          "--ignore-scripts",
+          "--omit=optional",
+          "--no-audit",
+          "--no-fund"
+        ],
+        "network_policy": "deny-external-allow-af-unix",
+        "model_scan_scope": [
+          "isolated HOME",
+          "isolated XDG_CACHE_HOME",
+          "isolated XDG_CONFIG_HOME",
+          "isolated XDG_DATA_HOME",
+          "isolated TMPDIR"
+        ],
+        "repository_worktree_scanned": false,
+        "global_tmp_scanned": false,
+        "model_files_created": 0,
+        "model_cache_paths_created": 0,
+        "allowed_skip_count": 1,
+        "allowed_skip_reason": "better-sqlite3 native binding is not built in source checkout"
+      }
+    },
+    {
+      "id": "macos-source-ipc",
+      "paths": [
+        "tests/backend/test_desktop_transport.py"
+      ],
+      "disposition": "supplemental-required-in-workflow",
+      "included": true,
+      "make_target": "ci-ipc-source",
+      "workflow_job": "macos-ipc"
+    },
+    {
+      "id": "guide-site",
+      "paths": [
+        "guide-site/**"
+      ],
+      "disposition": "external-blocked",
+      "included": false,
+      "validated": false,
+      "reason": "The tracked checkout lacks guide-site/.openai/hosting.json and has no repository-owned independent source pipeline bound to the tested commit.",
+      "unblock_condition": "Recover and verify the exact Sites hosting identity, then add a separate commit-bound build/test/checkpoint-deployment result before changing this disposition."
+    },
+    {
+      "id": "legacy-container-install-operations",
+      "paths": [
+        "docker/**",
+        "scripts/**",
+        "install.sh",
+        "install.command",
+        "docker-compose.yml",
+        ".github/workflows/container-images.yml"
+      ],
+      "disposition": "legacy-pending-removal",
+      "included": false,
+      "validated": false,
+      "reason": "Legacy build and operations surfaces remain tracked until W10/W11; container image builds are not source tests."
+    }
+  ]
+}

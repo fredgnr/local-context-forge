@@ -6,7 +6,7 @@
 [TODO](todo.md)，验证状态见[追踪矩阵](traceability.md)。
 
 <!-- pre1-work-order: W01,W02,W10,W11,W03,W04,W05,W06,W07,W08,W09,W12,W13,W14,W15,W16 -->
-<!-- pre1-w02-requires: VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001 -->
+<!-- pre1-w02-requires: VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001,independent-acceptance-exact-final-head,accepted-candidate-merged-to-main,resulting-main-source-coverage -->
 
 ## 固定顺序
 
@@ -31,8 +31,12 @@
 
 ## 不可跨越的边界
 
-- W02 只在 W01 的 `VAL-PRE1-SEQUENCE-001`、`VAL-GOV-001`、`VAL-CI-COVERAGE-001` 全部
-  通过后开始；它是所有 W10/W11 destructive slice 的前置，但只证明最小 packaged feedback loop。
+- W02 只在 W01 的 `VAL-PRE1-SEQUENCE-001`、`VAL-GOV-001`、`VAL-CI-COVERAGE-001` 对 exact
+  final PR candidate 的 PR/source technical 结果全部为 `pass`、该 exact head 经 independent
+  acceptance、被验收 candidate 合入 canonical `main`，且 resulting exact main commit 的
+  `source-coverage` job 成功后开始。PR head、synthetic merge SHA 与 resulting main SHA 不得静默
+  互换；仓库内状态不能自我提升 canonical activation。它是所有 W10/W11 destructive slice 的
+  前置，但只证明最小 packaged feedback loop。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限
   pure-legacy unsupported disposition）、source regression、packaged smoke、absence 与
   protected-path presence；不同 slice 不能共享一个

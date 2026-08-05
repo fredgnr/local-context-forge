@@ -10,8 +10,11 @@ legacy Docker/browser/public-HTTP 代码。legacy 文件只用于 removal invent
 4. [活动迭代](docs/development/iterations/0002-bundled-runtimes.md)
 5. [详细 TODO](docs/development/todo.md)
 
-当前结论是 **source merge GO / public release NO-GO**。Source CI 不能证明 DMG、签名、
-真实 Codex/QMD、干净用户或跨版本更新。
+当前结论是 **W01 remediation in progress / PR merge blocked / public release NO-GO**。旧 PR #20
+candidate 的 technical source 虽为 `pass`，independent acceptance 是 `fail`，canonical activation
+为 `not-eligible`。修复 candidate 的 PR/source、independent acceptance、canonical-main source 与
+canonical activation 必须分开；Source CI 不能证明 DMG、签名、真实 Codex/QMD、干净用户或
+跨版本更新。
 
 ## 开发机前置检查
 
@@ -52,8 +55,10 @@ npm --prefix desktop run start:source
 `install.sh`、`scripts/lcf` 或裸 Compose 建立新的开发/测试实例。这些入口属于
 [legacy retirement manifest](docs/development/legacy-retirement.md) 的 `remove` / `split`
 范围。removal PR 必须遵循 [ADR-0016](docs/adr/0016-pre1-incremental-retirement-engineering-package.md)
-和 [W01–W16 work plan](docs/development/work-plan.md)：W01 三个 source/governance gate 全部通过
-后才建立 W02 packaged smoke，再按 slice 做 caller inventory、split、before/after package、
+和 [W01–W16 work plan](docs/development/work-plan.md)：W01 修复 candidate 的三个 PR/source
+technical gate 全部通过、exact final head 获得 independent acceptance、被验收 candidate 合入
+canonical `main`，且 resulting exact main 的 source run 成功后，才建立 W02 packaged smoke；再按
+slice 做 caller inventory、split、before/after package、
 absence 与 protected presence。shared/必需 Electron capability 要有 replacement；纯 legacy-only
 unsupported capability 可使用受限 no-replacement disposition。W13 才运行工程 checkpoint 的最终
 聚合 cutover/absence；formal Draft 还需独立 continuity 复验。在任何阶段都不得操作用户现有
@@ -78,26 +83,33 @@ container、volume、data、backup 或远端 GHCR package。
 先跑 focused tests，再跑受影响 aggregate：
 
 ```bash
+make ci-source
 make ci-python
+make ci-qmd-worker
 make ci-web
 make desktop-ci
 ```
 
-QMD worker 当前不在 `make ci-source`：
+`ci-qmd-worker` 使用精确 Node 22.23.2；依赖安装禁用 lifecycle scripts，测试阶段隔离
+HOME/XDG/tmp、拒绝外部网络/子进程，并拒绝模型文件生成。model scan 只覆盖 isolated
+`HOME`、`XDG_CACHE_HOME`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME` 和 `TMPDIR`；它明确不扫描
+repository worktree 或 global tmp。它只证明 QMD source tier，不能提升 native/model/packaged
+gate。
 
-```bash
-npm --prefix desktop/workers/qmd ci
-npm --prefix desktop/workers/qmd test
-```
+`guide-site/**` is excluded from `make ci-source` and Desktop source CI；机器声明见
+`.github/ci/source-coverage.json`。本 checkout 缺少可验证的 hosting identity 和独立
+commit-bound pipeline，因此站点保持 `external-blocked` / unvalidated，不能冒充已覆盖。
 
 文档与版本：
 
 ```bash
 python3 tools/check_markdown_links.py
 python3 tools/check_version_sync.py
+python3 -B tools/check_ci_coverage.py
+python3 -B tools/check_w01_evidence.py
 python3 -B tools/check_pre1_work_plan.py
 python3 -B -m unittest discover -s tools/tests -p 'test_*.py'
-git diff --check
+git diff --check origin/main HEAD
 ```
 
 Legacy 解耦/删除变更还必须执行实施时固定的 affected Electron 回归（或合格 pure-legacy

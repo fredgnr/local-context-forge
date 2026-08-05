@@ -1,0 +1,405 @@
+{
+  "schema_version": 2,
+  "schema_id": "lcf.w01.lifecycle.v2",
+  "repository": "fredgnr/local-context-forge",
+  "work_id": "W01",
+  "pull_request": 20,
+  "baseline": {
+    "commit": "3eff97d97b2de4484d568bab5ac96d63830c79ee",
+    "tree": "21fe2cbe46d42bf351d2b0c84019ee63959081b7"
+  },
+  "candidate_history": [
+    {
+      "candidate_id": "W01-original-rejected-final",
+      "source_commit": "2b7629468c711d0db5107f7001aa90c0271079ae",
+      "source_tree": "ad1b76febd1adcaf1ada96ed7dd43fbe1e5a3adf",
+      "technical_source_result": "pass",
+      "independent_acceptance": "fail",
+      "canonical_activation": {
+        "status": "not-eligible",
+        "required_conditions": [
+          "independent acceptance of the exact final PR head",
+          "merge of that accepted candidate into canonical main",
+          "successful source-coverage on the exact resulting main commit"
+        ]
+      },
+      "rejection_reason_ids": [
+        "W01-EVIDENCE-FUTURE-DESCENDANT-FREEZE",
+        "W01-EVIDENCE-MERGE-STRATEGY-INCOMPATIBLE",
+        "W01-ARTIFACT-PREMATURE-CANONICAL-PASS"
+      ],
+      "implementation_checkpoint": {
+        "source_commit": "8573f608df589bc2ef9e05f0c75d84887464c825",
+        "source_tree": "40c039f240cdd8c6e0589c8608260c3d45c6ebaa",
+        "lifecycle_phase": "pull-request-candidate",
+        "run": {
+          "id": 30927840380,
+          "attempt": 1,
+          "event": "pull_request",
+          "source_ref": "refs/pull/20/merge",
+          "exact_checked_out_sha": "8573f608df589bc2ef9e05f0c75d84887464c825",
+          "synthetic_context_sha": "29e2498e666cfeebf162aa6bb726954e42d109ea",
+          "workflow_path": ".github/workflows/desktop-ci.yml",
+          "workflow_sha": "29e2498e666cfeebf162aa6bb726954e42d109ea",
+          "url": "https://github.com/fredgnr/local-context-forge/actions/runs/30927840380",
+          "conclusion": "success",
+          "job_results": {
+            "python": "success",
+            "web": "success",
+            "desktop": "success",
+            "macos-ipc": "success",
+            "source-coverage": "success"
+          }
+        },
+        "payload_artifact": {
+          "id": 8899870692,
+          "name": "w01-source-coverage-8573f608df589bc2ef9e05f0c75d84887464c825",
+          "source_commit": "8573f608df589bc2ef9e05f0c75d84887464c825",
+          "run_id": 30927840380,
+          "archive_sha256": "9dc17f1163f9b111aff8b7ae603574d6c22f552e269e1cac299754c23051a91a",
+          "inner_json_sha256": "e1a9b65e44b8258d8529c7018d64e3865b8135dc4677e9b9e6904484cb8bc6e7",
+          "payload_schema_version": 1
+        },
+        "provenance_artifact": null,
+        "provenance_absence_reason": "pre-v2 single-artifact lifecycle",
+        "technical_gate_results": {
+          "VAL-PRE1-SEQUENCE-001": "pass",
+          "VAL-GOV-001": "pass",
+          "VAL-CI-COVERAGE-001": "pass"
+        },
+        "legacy_payload_canonical_gate_results": {
+          "VAL-PRE1-SEQUENCE-001": "not-run",
+          "VAL-GOV-001": "not-run",
+          "VAL-CI-COVERAGE-001": "not-run"
+        },
+        "tool_versions": {
+          "python": {
+            "python-version": "Python 3.12.13",
+            "qmd-node-version": "v22.23.2",
+            "npm-version": "10.9.8",
+            "uv-version": "uv 0.11.29 (x86_64-unknown-linux-gnu)"
+          },
+          "web": {
+            "node-version": "v24.18.0",
+            "npm-version": "11.16.0"
+          },
+          "desktop": {
+            "node-version": "v24.18.0",
+            "npm-version": "11.16.0"
+          },
+          "macos-ipc": {
+            "architecture": "arm64",
+            "python-version": "Python 3.12.10",
+            "uv-version": "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)"
+          }
+        },
+        "qmd_source": {
+          "tests": {
+            "tests": 11,
+            "pass": 10,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 1,
+            "todo": 0
+          },
+          "allowed_skip_reason": "better-sqlite3 native binding is not built in source checkout",
+          "network_trap": "active",
+          "network_policy": "deny-external-allow-af-unix",
+          "model_scan": {
+            "scope": [
+              "isolated HOME",
+              "isolated XDG_CACHE_HOME",
+              "isolated XDG_CONFIG_HOME",
+              "isolated XDG_DATA_HOME",
+              "isolated TMPDIR"
+            ],
+            "repository_worktree_scanned": false,
+            "global_tmp_scanned": false,
+            "model_files_created": 0,
+            "model_cache_paths_created": 0,
+            "scope_basis": "v1 isolated_home_xdg_tmp result plus reviewed runner environment mapping"
+          }
+        },
+        "guide_site": {
+          "disposition": "external-blocked",
+          "included": false,
+          "validated": false
+        }
+      },
+      "final_source_execution": {
+        "source_commit": "2b7629468c711d0db5107f7001aa90c0271079ae",
+        "source_tree": "ad1b76febd1adcaf1ada96ed7dd43fbe1e5a3adf",
+        "lifecycle_phase": "pull-request-candidate",
+        "run": {
+          "id": 30929070329,
+          "attempt": 1,
+          "event": "pull_request",
+          "source_ref": "refs/pull/20/merge",
+          "exact_checked_out_sha": "2b7629468c711d0db5107f7001aa90c0271079ae",
+          "synthetic_context_sha": "cb844bfb5502f948bf55a227300a12761427195e",
+          "workflow_path": ".github/workflows/desktop-ci.yml",
+          "workflow_sha": "cb844bfb5502f948bf55a227300a12761427195e",
+          "url": "https://github.com/fredgnr/local-context-forge/actions/runs/30929070329",
+          "conclusion": "success",
+          "job_results": {
+            "python": "success",
+            "web": "success",
+            "desktop": "success",
+            "macos-ipc": "success",
+            "source-coverage": "success"
+          }
+        },
+        "payload_artifact": {
+          "id": 8900365901,
+          "name": "w01-source-coverage-2b7629468c711d0db5107f7001aa90c0271079ae",
+          "source_commit": "2b7629468c711d0db5107f7001aa90c0271079ae",
+          "run_id": 30929070329,
+          "archive_sha256": "b446ef4e84eb60dfd3da5322c85737d8dab960a349933a565fd5bd7ed3965e4d",
+          "inner_json_sha256": "4d0deeb7fc6886e03c671e0df2dbc80b03586c6222a38ad27549a0a3f42c403d",
+          "payload_schema_version": 1
+        },
+        "provenance_artifact": null,
+        "provenance_absence_reason": "pre-v2 single-artifact lifecycle",
+        "technical_gate_results": {
+          "VAL-PRE1-SEQUENCE-001": "pass",
+          "VAL-GOV-001": "pass",
+          "VAL-CI-COVERAGE-001": "pass"
+        },
+        "legacy_payload_canonical_gate_results": {
+          "VAL-PRE1-SEQUENCE-001": "pass",
+          "VAL-GOV-001": "pass",
+          "VAL-CI-COVERAGE-001": "pass"
+        },
+        "tool_versions": {
+          "python": {
+            "python-version": "Python 3.12.13",
+            "qmd-node-version": "v22.23.2",
+            "npm-version": "10.9.8",
+            "uv-version": "uv 0.11.29 (x86_64-unknown-linux-gnu)"
+          },
+          "web": {
+            "node-version": "v24.18.0",
+            "npm-version": "11.16.0"
+          },
+          "desktop": {
+            "node-version": "v24.18.0",
+            "npm-version": "11.16.0"
+          },
+          "macos-ipc": {
+            "architecture": "arm64",
+            "python-version": "Python 3.12.10",
+            "uv-version": "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)"
+          }
+        },
+        "qmd_source": {
+          "tests": {
+            "tests": 11,
+            "pass": 10,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 1,
+            "todo": 0
+          },
+          "allowed_skip_reason": "better-sqlite3 native binding is not built in source checkout",
+          "network_trap": "active",
+          "network_policy": "deny-external-allow-af-unix",
+          "model_scan": {
+            "scope": [
+              "isolated HOME",
+              "isolated XDG_CACHE_HOME",
+              "isolated XDG_CONFIG_HOME",
+              "isolated XDG_DATA_HOME",
+              "isolated TMPDIR"
+            ],
+            "repository_worktree_scanned": false,
+            "global_tmp_scanned": false,
+            "model_files_created": 0,
+            "model_cache_paths_created": 0,
+            "scope_basis": "v1 isolated_home_xdg_tmp result plus reviewed runner environment mapping"
+          }
+        },
+        "guide_site": {
+          "disposition": "external-blocked",
+          "included": false,
+          "validated": false
+        }
+      }
+    }
+  ],
+  "remediation": {
+    "finding_ids": [
+      "W01-EVIDENCE-FUTURE-DESCENDANT-FREEZE",
+      "W01-EVIDENCE-MERGE-STRATEGY-INCOMPATIBLE",
+      "W01-ARTIFACT-PREMATURE-CANONICAL-PASS"
+    ],
+    "checkpoint_a": {
+      "source_commit": "f4074a31bde50710bb40e1e8509dfdcd232835c4",
+      "source_tree": "f059ad8bd3cfc6accac707745d5d8727bfb532bd",
+      "lifecycle_phase": "pull-request-candidate",
+      "run": {
+        "id": 30980342634,
+        "attempt": 1,
+        "event": "pull_request",
+        "source_ref": "refs/pull/20/merge",
+        "exact_checked_out_sha": "f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "synthetic_context_sha": "f86e608425742271e08e5261ef7f99d16200ebd8",
+        "workflow_path": ".github/workflows/desktop-ci.yml",
+        "workflow_sha": "f86e608425742271e08e5261ef7f99d16200ebd8",
+        "url": "https://github.com/fredgnr/local-context-forge/actions/runs/30980342634",
+        "conclusion": "success",
+        "job_results": {
+          "python": "success",
+          "web": "success",
+          "desktop": "success",
+          "macos-ipc": "success",
+          "source-coverage": "success"
+        }
+      },
+      "payload_artifact": {
+        "id": 8919891304,
+        "name": "w01-source-coverage-f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "source_commit": "f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "run_id": 30980342634,
+        "archive_sha256": "2d6801946e82b4acbd6621e722049c1a42f3e7578a8c959e19c3762259114d0a",
+        "inner_json_sha256": "f71615cc0112ee228dd3c17c2d77a3c07e14ad3e2212f08ef3c92b95e48313c3",
+        "payload_schema_version": 2
+      },
+      "provenance_artifact": {
+        "id": 8919891597,
+        "name": "w01-source-coverage-provenance-f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "source_commit": "f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "run_id": 30980342634,
+        "archive_sha256": "f65ce338d7c8bdbb1a8b5e25d60b82e139f81ebd4359562b26e498e605ff46c9",
+        "inner_json_sha256": "894567927446763c95b8a67bb92e8897a4ff3cc1dcdccfc590fb69a070b39cb0",
+        "payload_binding": {
+          "artifact_id": 8919891304,
+          "artifact_name": "w01-source-coverage-f4074a31bde50710bb40e1e8509dfdcd232835c4",
+          "archive_sha256": "2d6801946e82b4acbd6621e722049c1a42f3e7578a8c959e19c3762259114d0a",
+          "inner_json_sha256": "f71615cc0112ee228dd3c17c2d77a3c07e14ad3e2212f08ef3c92b95e48313c3"
+        }
+      },
+      "provenance_absence_reason": null,
+      "technical_gate_results": {
+        "VAL-PRE1-SEQUENCE-001": "pass",
+        "VAL-GOV-001": "pass",
+        "VAL-CI-COVERAGE-001": "pass"
+      },
+      "legacy_payload_canonical_gate_results": null,
+      "tool_versions": {
+        "python": {
+          "python-version": "Python 3.12.13",
+          "qmd-node-version": "v22.23.2",
+          "npm-version": "10.9.8",
+          "uv-version": "uv 0.11.29 (x86_64-unknown-linux-gnu)"
+        },
+        "web": {
+          "node-version": "v24.18.0",
+          "npm-version": "11.16.0"
+        },
+        "desktop": {
+          "node-version": "v24.18.0",
+          "npm-version": "11.16.0"
+        },
+        "macos-ipc": {
+          "architecture": "arm64",
+          "python-version": "Python 3.12.10",
+          "uv-version": "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)"
+        }
+      },
+      "qmd_source": {
+        "tests": {
+          "tests": 11,
+          "pass": 10,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 1,
+          "todo": 0
+        },
+        "allowed_skip_reason": "better-sqlite3 native binding is not built in source checkout",
+        "network_trap": "active",
+        "network_policy": "deny-external-allow-af-unix",
+        "model_scan": {
+          "scope": [
+            "isolated HOME",
+            "isolated XDG_CACHE_HOME",
+            "isolated XDG_CONFIG_HOME",
+            "isolated XDG_DATA_HOME",
+            "isolated TMPDIR"
+          ],
+          "repository_worktree_scanned": false,
+          "global_tmp_scanned": false,
+          "model_files_created": 0,
+          "model_cache_paths_created": 0,
+          "scope_basis": "schema-v2 runtime payload from exact PR-head Actions"
+        }
+      },
+      "guide_site": {
+        "disposition": "external-blocked",
+        "included": false,
+        "validated": false
+      }
+    },
+    "checkpoint_a_record_sha256": "e5bf406a47ad9a32e3f176f2a6865bc89e53c16825c1a160c4cfd48b0bc28e58",
+    "technical_source_result": "pass",
+    "independent_acceptance": "pending",
+    "final_containing_head_binding": {
+      "mode": "attached-exact-head-payload-and-provenance",
+      "workflow_path": ".github/workflows/desktop-ci.yml",
+      "workflow_name": "Desktop source CI",
+      "events": [
+        "push",
+        "pull_request",
+        "workflow_dispatch"
+      ],
+      "source_expression": "${{ github.event.pull_request.head.sha || github.sha }}",
+      "required_jobs": [
+        "python",
+        "web",
+        "desktop",
+        "macos-ipc"
+      ],
+      "summary_job": "source-coverage",
+      "payload_artifact_prefix": "w01-source-coverage-",
+      "provenance_artifact_prefix": "w01-source-coverage-provenance-"
+    },
+    "canonical_activation": {
+      "status": "blocked",
+      "required_conditions": [
+        "independent acceptance of the exact final PR head",
+        "merge of that accepted candidate into canonical main",
+        "successful source-coverage on the exact resulting main commit"
+      ]
+    }
+  },
+  "canonical_main_source": {
+    "status": "not-run",
+    "source_commit": null,
+    "source_tree": null,
+    "run_id": null
+  },
+  "downstream_gate_results": {
+    "VAL-PACKAGED-SMOKE-001": "not-run",
+    "VAL-LEGACY-DECOUPLE-001": "not-run",
+    "VAL-LEGACY-TRANSPORT-001": "not-run",
+    "VAL-LEGACY-PROVIDER-001": "not-run",
+    "VAL-LEGACY-DEPLOY-001": "not-run",
+    "VAL-LEGACY-RELEASE-001": "not-run",
+    "VAL-LEGACY-DOCS-001": "not-run",
+    "VAL-ENGINEERING-PACKAGE-001": "not-run",
+    "VAL-ELECTRON-CUTOVER-001": "not-run",
+    "VAL-LEGACY-ABSENCE-001": "not-run",
+    "VAL-RELEASE-CONTINUITY-001": "not-run",
+    "VAL-SECRET-001": "not-run",
+    "VAL-PACK-001": "not-run",
+    "VAL-INSTALL-001": "not-run",
+    "VAL-RELEASE-001": "not-run",
+    "VAL-UPDATE-001": "not-run"
+  },
+  "out_of_scope": [
+    "W02 packaged smoke",
+    "Legacy deletion",
+    "engineering test package",
+    "GitHub production control plane",
+    "production credentials, signing, tags, Drafts, Releases, and updates"
+  ]
+}

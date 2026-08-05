@@ -11,8 +11,8 @@ Electron all-in-one 的计划、证据和变更历史。它描述目标与门禁
 - bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
 - two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
 - Electron-only planning merge：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
-- 当前治理基线：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
-- 当前治理分支：`agent/pre1-incremental-retirement-governance`
+- 当前治理基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
+- 当前治理分支：`agent/w01-governance-source-ci`
 - 当前迁移状态：`in-progress`
 
 ## 从这里开始

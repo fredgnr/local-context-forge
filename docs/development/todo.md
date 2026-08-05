@@ -43,9 +43,9 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 
 | Task ID | 优先级 | Roadmap | 状态 | Owner component | 主要依赖 | 验收 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `in-progress` | Governance/Architecture | 无 | `VAL-PRE1-SEQUENCE-001` final head |
-| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `planned` | Governance/CI | 无 | `VAL-GOV-001` final head |
-| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `planned` | CI/QMD/Sites | 无 | `VAL-CI-COVERAGE-001` |
+| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `in-progress` | Governance/Architecture | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
+| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `in-progress` | Governance/CI | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
+| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `in-progress` | CI/QMD/Sites | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
 | TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` | Desktop/Packaging/QA | W01 全部退出门禁 | `VAL-PACKAGED-SMOKE-001` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
@@ -100,16 +100,23 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 skills/runbook，以及接入 `ci-python` 的 `tools/check_pre1_work_plan.py` 和负向 unit fixtures。
 本任务不删除 legacy、不实现 package、不改 GitHub settings、不生成凭据、不创建 Release。
 
-验收：最终 PR head 的 links/version/plan/diff 与 CI 为 commit-bound `pass`，且所有 runtime、
-packaged、physical、settings 和 release gate 保持真实的 `not-run`。
+验收分四层：修复候选 exact PR/source technical `pass`、该 exact final head 的 independent
+acceptance `pass`、被验收 candidate 合入后的 canonical-main source `pass`、随后 canonical
+activation 才可完成。当前旧 candidate 是 technical `pass` / independent `fail` /
+activation `not-eligible`；修复 candidate Checkpoint A 是 technical `pass` / independent
+`pending` / canonical-main `not-run` / activation `blocked`，绑定 commit `f4074a31…`、run
+`30980342634`、payload `8919891304` 与 provenance `8919891597`。所有 runtime、packaged、
+physical、settings 和 release gate 保持真实的 `not-run`。
 
 ### TODO-PACKAGED-SMOKE-001：最小非发行 packaged smoke harness
 
 - 状态：`planned`
 - Owner：Desktop/Packaging/QA
 - 关联：REQ-PACKAGED-SMOKE-001、ADR-0016、ITER-0008/I01
-- 依赖：W01 的 `VAL-PRE1-SEQUENCE-001`、`VAL-GOV-001`、`VAL-CI-COVERAGE-001` 全部为 `pass`
-<!-- pre1-w02-requires: VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001 -->
+- 依赖：W01 三个 gate 的修复 candidate PR/source technical `pass`、该 exact final head 独立验收
+  `pass`、被验收 candidate 合入 canonical `main`，以及 resulting exact main commit 的
+  `source-coverage` success
+<!-- pre1-w02-requires: VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001,independent-acceptance-exact-final-head,accepted-candidate-merged-to-main,resulting-main-source-coverage -->
 
 交付独立 engineering-smoke packaging mode：绑定 exact commit/digest/arch/inventory，启动
 packaged App，验证 renderer/preload handshake、Main → private UDS sidecar 的 health/一个领域
@@ -138,19 +145,25 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 
 ### TODO-GOV-EVIDENCE-001：统一可复现证据坐标
 
-- 状态：`planned`
+- 状态：`in-progress`
 - Owner：Governance/CI
 - 目的：移除“当前工作树 pass”和混合历史 SHA，让每个 source 结论能追到公开 commit/Actions。
 - 依赖：无
 
 交付：
 
-- 为 `main@fb8bbbc` 或后续统一 checkpoint 收集 Python/Web/Desktop/QMD/Host Runner 的
-  Actions/本地 commit-bound 结果；
+- 固定保留旧 checkpoint、旧 final candidate、两个 run/artifact/digest 与独立 NO-GO；
+- 历史 checker 只验证 versioned schema、固定坐标与 cross-field consistency，不读取当前 Git
+  ancestry，也不动态 diff 历史 checkpoint→未来 `HEAD`；
+- 当前 exact head 由 attached payload + provenance artifacts 绑定；payload 不嵌入自身 artifact
+  ID/archive digest，provenance 只绑定已上传 payload，避免递归自哈希；
+- 在同一 checkpoint 收集 Python/MCP/Host Runner/demo SDK/Web/Desktop/QMD/governance 结果；
 - 保留 skip 数和最低环境；
 - 将 `traceability.md` 的“本次变更映射”改为带 PR/commit/date 的历史 ledger；
 - 迭代中不再使用无法复现的“当前工作树”；
 - 在 `docs/development/evidence/` 下按规范留存脱敏记录。
+- 合入后要求 canonical main exact commit 的 `source-coverage` 成功；PR head、synthetic merge SHA
+  和 resulting main SHA 不得互换。
 
 验收：
 
@@ -161,16 +174,22 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 
 ### TODO-CI-COVERAGE-001：补齐并声明 source aggregate 覆盖
 
-- 状态：`planned`
+- 状态：`in-progress`
 - Owner：CI/QMD/Sites
-- 目的：`make ci-source` 当前遗漏 QMD worker，主 workflow 也不验证 guide-site。
+- 目的：补齐原先 `make ci-source` 遗漏的 QMD worker，并对 guide-site 未验证状态作机器声明。
 - 依赖：无
 
 交付：
 
-- 决定 QMD worker tests 是否并入 `make ci-source` 和 Desktop source workflow；
-- 决定 guide-site 是否作为主 CI 的独立 job，或明确为独立部署 pipeline；
-- 输出机器可读的 component coverage；
+- QMD worker tests 并入 `make ci-source`，并折叠进现有 Python source job，避免在 W14 前引入
+  merge-optional 的新 required-check 假设；
+- QMD 使用 Node 22.23.2、`npm ci --ignore-scripts --omit=optional`、隔离 HOME/XDG/tmp、
+  process-level external-network/child-process trap、模型文件扫描和唯一 native skip allowlist；
+  模型扫描只声明 isolated `HOME`、`XDG_CACHE_HOME`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME` 与
+  `TMPDIR`，明确 `repository_worktree_scanned=false`、`global_tmp_scanned=false`；
+- guide-site 明确为 `external-blocked` / unvalidated；恢复 exact hosting identity 和独立
+  commit-bound pipeline 前不在 aggregate 中；
+- 输出 `.github/ci/source-coverage.json`，并由 checker 反向核对 Make/workflow/QMD/docs；
 - 更新 Makefile help、developer handbook 和 CI docs；
 - 控制总耗时，避免隐式模型下载/native build。
 
@@ -180,7 +199,8 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 - QMD tests 在无模型网络下载条件下运行；
 - guide-site 未并入时在状态页明确；
 - CI 在最终 PR head 成功；
-- `VAL-CI-COVERAGE-001` 为 `pass`。
+- PR/source technical `pass` 不自动变成 independent、canonical-main 或 canonical activation
+  `pass`；在外部条件满足前后三者分别保持 `pending`、`not-run`、`blocked`。
 
 ### TODO-LEGACY-CONTROL-001：Legacy 实例控制与外置数据
 

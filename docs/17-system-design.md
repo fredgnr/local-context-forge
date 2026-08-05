@@ -7,10 +7,10 @@
 
 ## 1. 范围、状态与术语
 
-当前治理基线为 `main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`，产品版本
+当前治理基线为 `main@3eff97d97b2de4484d568bab5ac96d63830c79ee`，产品版本
 `0.3.0-alpha.1`。当前结论是：
 
-> **source merge GO / public release NO-GO**
+> **W01 remediation pending / PR merge blocked / public release NO-GO**
 
 本文使用四种状态，不能互换：
 

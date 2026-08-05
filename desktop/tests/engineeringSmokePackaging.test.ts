@@ -3,6 +3,7 @@ import {
   readFile,
   mkdtemp,
   mkdir,
+  realpath,
   rm,
   symlink,
   writeFile
@@ -86,7 +87,20 @@ const repositoryRoot = path.resolve(__dirname, "..", "..");
 const temporaryRoots: string[] = [];
 
 async function temporaryRoot(prefix: string): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), prefix));
+  const canonicalParent = await realpath(os.tmpdir());
+  const root = await mkdtemp(path.join(canonicalParent, prefix));
+  try {
+    if (
+      !path.isAbsolute(root) ||
+      path.resolve(root) !== root ||
+      (await realpath(root)) !== root
+    ) {
+      throw new Error("Engineering-smoke test root is not canonical");
+    }
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
   temporaryRoots.push(root);
   return root;
 }
@@ -306,12 +320,17 @@ describe("engineering-smoke manifest and boundary", () => {
     await mkdir(desktopRoot);
     await mkdir(outside);
     await symlink(outside, path.join(desktopRoot, "generated"));
+    expect(await realpath(root)).toBe(root);
+    expect(await realpath(desktopRoot)).toBe(desktopRoot);
+    expect(await realpath(path.join(desktopRoot, "generated"))).toBe(outside);
     expect(() =>
       prepare.requireSafeGeneratedRoot(
         path.join(desktopRoot, "generated"),
         desktopRoot
       )
-    ).toThrow(/real canonical directory/);
+    ).toThrow(
+      /^Engineering-smoke generated root must be a real canonical directory$/
+    );
   });
 
   it("requires the exact smoke product and refuses publish-enabled contexts", () => {
@@ -345,7 +364,11 @@ describe("engineering-smoke manifest and boundary", () => {
   });
 
   it("records contained symlinks canonically and rejects an escaping symlink", async () => {
-    const root = await temporaryRoot("lcf-engineering-inventory-");
+    const workspace = await temporaryRoot("lcf-engineering-inventory-");
+    const root = path.join(workspace, "inventory");
+    const outside = path.join(workspace, "outside");
+    await mkdir(root);
+    await mkdir(outside);
     await mkdir(path.join(root, "dir"));
     await writeFile(path.join(root, "dir", "payload"), "payload\n");
     await symlink("dir/payload", path.join(root, "payload-link"));
@@ -362,7 +385,21 @@ describe("engineering-smoke manifest and boundary", () => {
     expect(() => common.buildInventory(root)).toThrow(/world-writable/);
     await chmod(path.join(root, "dir", "payload"), 0o644);
     await symlink("../outside", path.join(root, "escape"));
-    expect(() => common.buildInventory(root)).toThrow();
+    expect(() => common.buildInventory(root)).toThrow(
+      /^Engineering-smoke symlink escapes the app bundle$/
+    );
+  });
+
+  it("keeps the inventory gate strict for a symlinked ancestor", async () => {
+    const workspace = await temporaryRoot("lcf-engineering-alias-");
+    const physical = path.join(workspace, "physical");
+    const inventory = path.join(physical, "inventory");
+    await mkdir(inventory, { recursive: true });
+    await symlink("physical", path.join(workspace, "alias"));
+
+    expect(() =>
+      common.buildInventory(path.join(workspace, "alias", "inventory"))
+    ).toThrow(/^Inventory root must be a real canonical directory$/);
   });
 });
 

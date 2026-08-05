@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import io
 import json
 import os
 import plistlib
+import socket
 import stat
 import subprocess
 import sys
@@ -925,6 +927,434 @@ def test_wait_for_socket_rejects_a_socket_owned_by_another_identity(
             )
     finally:
         log_handle.close()
+
+
+def test_wait_for_socket_probes_until_the_bound_socket_listens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RunningProcess:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    class ReadySocketPath:
+        @staticmethod
+        def lstat() -> os.stat_result:
+            values = list((tmp_path / "sidecar.log").stat())
+            values[0] = stat.S_IFSOCK | 0o600
+            values[3] = 1
+            values[4] = os.geteuid()
+            return os.stat_result(values)
+
+        @staticmethod
+        def __str__() -> str:
+            return "/private/path-that-must-not-leak.sock"
+
+    outcomes = deque(["refused", "success"])
+    probes: list[Any] = []
+    sleeps: list[float] = []
+
+    class Probe:
+        def __init__(self, outcome: str) -> None:
+            self.outcome = outcome
+            self.closed = False
+            self.timeout: float | None = None
+
+        def settimeout(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def connect(self, _path: str) -> None:
+            if self.outcome == "refused":
+                raise ConnectionRefusedError(
+                    errno.ECONNREFUSED,
+                    "token-must-not-leak /private/path-must-not-leak",
+                )
+
+        def sendall(self, _payload: bytes) -> None:
+            pytest.fail("a readiness probe must not send request bytes")
+
+        def recv(self, _size: int) -> bytes:
+            pytest.fail("a readiness probe must not read response bytes")
+
+        def close(self) -> None:
+            self.closed = True
+
+    def open_probe(family: int, kind: int) -> Probe:
+        assert (family, kind) == (socket.AF_UNIX, socket.SOCK_STREAM)
+        probe = Probe(outcomes.popleft())
+        probes.append(probe)
+        return probe
+
+    monkeypatch.setattr(build.socket, "socket", open_probe)
+    monkeypatch.setattr(build.time, "sleep", sleeps.append)
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    try:
+        build._wait_for_socket(
+            ReadySocketPath(),  # type: ignore[arg-type]
+            RunningProcess(),  # type: ignore[arg-type]
+            log_handle,
+            log_path,
+            identity,
+        )
+    finally:
+        log_handle.close()
+
+    assert not outcomes
+    assert len(probes) == 2
+    assert all(probe.closed for probe in probes)
+    assert all(probe.timeout is not None for probe in probes)
+    assert sleeps == [pytest.approx(0.05)]
+
+
+def test_wait_for_socket_reports_exit_during_listen_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ExitAfterRefusalProcess:
+        def __init__(self) -> None:
+            self.polls = deque([None, None, 7])
+
+        def poll(self) -> int | None:
+            return self.polls.popleft() if self.polls else 7
+
+    class ReadySocketPath:
+        @staticmethod
+        def lstat() -> os.stat_result:
+            values = list((tmp_path / "sidecar.log").stat())
+            values[0] = stat.S_IFSOCK | 0o600
+            values[3] = 1
+            values[4] = os.geteuid()
+            return os.stat_result(values)
+
+    class RefusedProbe:
+        @staticmethod
+        def settimeout(_timeout: float) -> None:
+            return None
+
+        @staticmethod
+        def connect(_path: str) -> None:
+            raise ConnectionRefusedError(
+                errno.ECONNREFUSED,
+                "token-must-not-leak /private/path-must-not-leak",
+            )
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr(
+        build.socket,
+        "socket",
+        lambda _family, _kind: RefusedProbe(),
+    )
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(
+        b"lcf-service: desktop transport setup failed; token-must-not-leak\n"
+    )
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=(
+                r"^Frozen sidecar exited before its UDS became ready "
+                r"\(exit=7; category=desktop-transport\)$"
+            ),
+        ) as failure:
+            build._wait_for_socket(
+                ReadySocketPath(),  # type: ignore[arg-type]
+                ExitAfterRefusalProcess(),  # type: ignore[arg-type]
+                log_handle,
+                log_path,
+                identity,
+            )
+    finally:
+        log_handle.close()
+
+    assert "token-must-not-leak" not in str(failure.value)
+    assert "/private" not in str(failure.value)
+
+
+@pytest.mark.parametrize("phase", ["construct", "settimeout", "connect"])
+def test_wait_for_socket_rejects_nontransient_probe_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    class RunningProcess:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    class ReadySocketPath:
+        @staticmethod
+        def lstat() -> os.stat_result:
+            values = list((tmp_path / "sidecar.log").stat())
+            values[0] = stat.S_IFSOCK | 0o600
+            values[3] = 1
+            values[4] = os.geteuid()
+            return os.stat_result(values)
+
+    probes = 0
+
+    class FailedProbe:
+        def settimeout(self, _timeout: float) -> None:
+            if phase == "settimeout":
+                raise OSError(
+                    errno.EACCES,
+                    "token-must-not-leak /private/path-must-not-leak",
+                )
+
+        def connect(self, _path: str) -> None:
+            if phase == "connect":
+                raise OSError(
+                    errno.EACCES,
+                    "token-must-not-leak /private/path-must-not-leak",
+                )
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    def open_probe(_family: int, _kind: int) -> FailedProbe:
+        nonlocal probes
+        probes += 1
+        if phase == "construct":
+            raise OSError(
+                errno.EACCES,
+                "token-must-not-leak /private/path-must-not-leak",
+            )
+        return FailedProbe()
+
+    monkeypatch.setattr(build.socket, "socket", open_probe)
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=r"^Frozen sidecar UDS readiness probe failed$",
+        ) as failure:
+            build._wait_for_socket(
+                ReadySocketPath(),  # type: ignore[arg-type]
+                RunningProcess(),  # type: ignore[arg-type]
+                log_handle,
+                log_path,
+                identity,
+            )
+    finally:
+        log_handle.close()
+
+    assert probes == 1
+    assert "token-must-not-leak" not in str(failure.value)
+    assert "/private" not in str(failure.value)
+
+
+def test_wait_for_socket_rejects_probe_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RunningProcess:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    class ReadySocketPath:
+        @staticmethod
+        def lstat() -> os.stat_result:
+            values = list((tmp_path / "sidecar.log").stat())
+            values[0] = stat.S_IFSOCK | 0o600
+            values[3] = 1
+            values[4] = os.geteuid()
+            return os.stat_result(values)
+
+    class FailedCleanupProbe:
+        @staticmethod
+        def settimeout(_timeout: float) -> None:
+            return None
+
+        @staticmethod
+        def connect(_path: str) -> None:
+            return None
+
+        @staticmethod
+        def close() -> None:
+            raise OSError(
+                errno.EIO,
+                "token-must-not-leak /private/path-must-not-leak",
+            )
+
+    monkeypatch.setattr(
+        build.socket,
+        "socket",
+        lambda _family, _kind: FailedCleanupProbe(),
+    )
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=(
+                r"^Frozen sidecar UDS readiness probe cleanup failed$"
+            ),
+        ) as failure:
+            build._wait_for_socket(
+                ReadySocketPath(),  # type: ignore[arg-type]
+                RunningProcess(),  # type: ignore[arg-type]
+                log_handle,
+                log_path,
+                identity,
+            )
+    finally:
+        log_handle.close()
+
+    assert "token-must-not-leak" not in str(failure.value)
+    assert "/private" not in str(failure.value)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["inode", "mode", "owner", "hardlink", "type", "missing"],
+)
+def test_wait_for_socket_rejects_socket_mutation_after_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    class RunningProcess:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    metadata_source = tmp_path / "metadata-source"
+    metadata_source.write_bytes(b"")
+    base = list(metadata_source.stat())
+    base[0] = stat.S_IFSOCK | 0o600
+    base[3] = 1
+    base[4] = os.geteuid()
+    changed = list(base)
+    if mutation == "inode":
+        changed[1] += 1
+    elif mutation == "mode":
+        changed[0] = stat.S_IFSOCK | 0o640
+    elif mutation == "owner":
+        changed[4] += 1
+    elif mutation == "hardlink":
+        changed[3] = 2
+    elif mutation == "type":
+        changed[0] = stat.S_IFREG | 0o600
+
+    class MutatedSocketPath:
+        def __init__(self) -> None:
+            self.inspections = 0
+
+        def lstat(self) -> os.stat_result:
+            self.inspections += 1
+            if self.inspections == 1:
+                return os.stat_result(base)
+            if mutation == "missing":
+                raise FileNotFoundError("/private/path-must-not-leak")
+            return os.stat_result(changed)
+
+    class SuccessfulProbe:
+        @staticmethod
+        def settimeout(_timeout: float) -> None:
+            return None
+
+        @staticmethod
+        def connect(_path: str) -> None:
+            return None
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr(
+        build.socket,
+        "socket",
+        lambda _family, _kind: SuccessfulProbe(),
+    )
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=r"^Frozen sidecar socket changed during readiness$",
+        ) as failure:
+            build._wait_for_socket(
+                MutatedSocketPath(),  # type: ignore[arg-type]
+                RunningProcess(),  # type: ignore[arg-type]
+                log_handle,
+                log_path,
+                identity,
+            )
+    finally:
+        log_handle.close()
+
+    assert "/private" not in str(failure.value)
+
+
+def test_wait_for_socket_times_out_while_bound_socket_refuses_connections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RunningProcess:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    class ReadySocketPath:
+        @staticmethod
+        def lstat() -> os.stat_result:
+            values = list((tmp_path / "sidecar.log").stat())
+            values[0] = stat.S_IFSOCK | 0o600
+            values[3] = 1
+            values[4] = os.geteuid()
+            return os.stat_result(values)
+
+    class RefusedProbe:
+        @staticmethod
+        def settimeout(_timeout: float) -> None:
+            return None
+
+        @staticmethod
+        def connect(_path: str) -> None:
+            raise ConnectionRefusedError(
+                errno.ECONNREFUSED,
+                "token-must-not-leak /private/path-must-not-leak",
+            )
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    clock = iter((0.0, 10.0, 20.0, 30.0, 40.0))
+    monkeypatch.setattr(build.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(build.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        build.socket,
+        "socket",
+        lambda _family, _kind: RefusedProbe(),
+    )
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=r"^Frozen sidecar UDS readiness timed out$",
+        ) as failure:
+            build._wait_for_socket(
+                ReadySocketPath(),  # type: ignore[arg-type]
+                RunningProcess(),  # type: ignore[arg-type]
+                log_handle,
+                log_path,
+                identity,
+            )
+    finally:
+        log_handle.close()
+
+    assert "token-must-not-leak" not in str(failure.value)
+    assert "/private" not in str(failure.value)
 
 
 def test_canonical_private_smoke_root_resolves_a_parent_alias(

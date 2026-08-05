@@ -2296,6 +2296,7 @@ def _wait_for_socket(
     log_identity: tuple[int, int],
 ) -> None:
     deadline = time.monotonic() + 30
+    socket_identity: tuple[int, int] | None = None
     while time.monotonic() < deadline:
         return_code = process.poll()
         if return_code is not None:
@@ -2311,7 +2312,11 @@ def _wait_for_socket(
         try:
             info = socket_path.lstat()
         except FileNotFoundError:
-            time.sleep(0.05)
+            if socket_identity is not None:
+                raise BuildError(
+                    "Frozen sidecar socket changed during readiness"
+                )
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
             continue
         except OSError as exc:
             raise BuildError("Frozen sidecar socket cannot be inspected") from exc
@@ -2321,19 +2326,107 @@ def _wait_for_socket(
             and info.st_uid == os.geteuid()
             and info.st_nlink == 1
         ):
-            return_code = process.poll()
-            if return_code is not None:
-                category = _frozen_start_failure_category(
-                    log_handle,
-                    log_path,
-                    log_identity,
-                )
+            current_identity = (info.st_dev, info.st_ino)
+            if socket_identity is None:
+                socket_identity = current_identity
+            elif current_identity != socket_identity:
                 raise BuildError(
-                    "Frozen sidecar exited before its UDS became ready "
-                    f"(exit={return_code}; category={category})"
+                    "Frozen sidecar socket changed during readiness"
                 )
+        else:
+            raise BuildError("Frozen sidecar created an unsafe socket")
+
+        return_code = process.poll()
+        if return_code is not None:
+            category = _frozen_start_failure_category(
+                log_handle,
+                log_path,
+                log_identity,
+            )
+            raise BuildError(
+                "Frozen sidecar exited before its UDS became ready "
+                f"(exit={return_code}; category={category})"
+            )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        probe: socket.socket | None = None
+        connection_refused = False
+        try:
+            try:
+                probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            except (OSError, TypeError, ValueError) as exc:
+                raise BuildError(
+                    "Frozen sidecar UDS readiness probe failed"
+                ) from exc
+            try:
+                probe.settimeout(min(1.0, remaining))
+            except (OSError, TypeError, ValueError) as exc:
+                raise BuildError(
+                    "Frozen sidecar UDS readiness probe failed"
+                ) from exc
+            try:
+                probe.connect(str(socket_path))
+            except OSError as exc:
+                if exc.errno != errno.ECONNREFUSED:
+                    raise BuildError(
+                        "Frozen sidecar UDS readiness probe failed"
+                    ) from exc
+                connection_refused = True
+            except (TypeError, ValueError) as exc:
+                raise BuildError(
+                    "Frozen sidecar UDS readiness probe failed"
+                ) from exc
+        finally:
+            if probe is not None:
+                active_error = sys.exception()
+                try:
+                    probe.close()
+                except OSError as exc:
+                    if active_error is None:
+                        raise BuildError(
+                            "Frozen sidecar UDS readiness probe cleanup failed"
+                        ) from exc
+
+        try:
+            after = socket_path.lstat()
+        except OSError as exc:
+            raise BuildError(
+                "Frozen sidecar socket changed during readiness"
+            ) from exc
+        if (
+            (after.st_dev, after.st_ino) != socket_identity
+            or not stat.S_ISSOCK(after.st_mode)
+            or stat.S_IMODE(after.st_mode) != 0o600
+            or after.st_uid != os.geteuid()
+            or after.st_nlink != 1
+        ):
+            raise BuildError("Frozen sidecar socket changed during readiness")
+        return_code = process.poll()
+        if return_code is not None:
+            category = _frozen_start_failure_category(
+                log_handle,
+                log_path,
+                log_identity,
+            )
+            raise BuildError(
+                "Frozen sidecar exited before its UDS became ready "
+                f"(exit={return_code}; category={category})"
+            )
+        if not connection_refused:
             return
-        raise BuildError("Frozen sidecar created an unsafe socket")
+        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+    return_code = process.poll()
+    if return_code is not None:
+        category = _frozen_start_failure_category(
+            log_handle,
+            log_path,
+            log_identity,
+        )
+        raise BuildError(
+            "Frozen sidecar exited before its UDS became ready "
+            f"(exit={return_code}; category={category})"
+        )
     raise BuildError("Frozen sidecar UDS readiness timed out")
 
 

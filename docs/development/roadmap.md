@@ -6,7 +6,7 @@
 - bundled runtime merge：`main@52a5ffa184da694519a906dbacc7ee9df26a3fcc`
 - two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
 - Electron-only planning merge：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
-- 当前治理基线：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
+- 当前治理基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
 - 平台目标：macOS Apple Silicon
 - 当前总体状态：`in-progress`
 
@@ -194,8 +194,9 @@ public trust locks 仍为 `unprovisioned`，真实 GitHub settings、protected b
 promotion 与 Gatekeeper 均为 `not-run`。
 
 repository owner、contents writer/可改 workflow 的主体和 settings admin 仍是根信任；GitHub
-Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。因此当前 P5 总结保持
-**source merge GO / release NO-GO**。
+Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。即使这些 P5 source contract
+已经实现，也不能覆盖 PR #20 的 W01 remediation 门禁；当前总结为
+**PR merge blocked / release NO-GO**。
 
 ## P6：真实 `N-1 → N` 更新实机门禁
 

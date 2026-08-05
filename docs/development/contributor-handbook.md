@@ -11,7 +11,9 @@
 > Electron source 是唯一受支持的开发运行面。仓库中的 native browser、Docker/Compose、
 > public HTTP、Host Runner 和 legacy MCP 只用于静态 retirement inventory；不要运行它们建立
 > 新实例。实际删除受 ADR-0015/0016、[W01–W16 work plan](work-plan.md) 与严格路径矩阵约束：
-> W02 packaged smoke 后才可按独立 slice 删除，final cutover/absence 留到 W13。
+> W01 修复 candidate 的 PR/source、independent acceptance、accepted merge 与 canonical-main
+> source 全部完成后才可启动 W02；W02 packaged smoke 后才可按独立 slice 删除，final
+> cutover/absence 留到 W13。仓库内容不能自报 canonical activation。
 
 ## 1. Checkout 后先建立坐标
 
@@ -109,7 +111,7 @@ ADR、迭代、需求、证据、发布状态：
 | `runtime/` | 跨层版本、schema、public trust locks | version sync、packaging fail-closed |
 | `docs/adr/` | Accepted decisions | 架构历史，不是完成证据 |
 | `docs/development/` | 状态、迭代、证据、TODO | 每个 scoped change |
-| `guide-site/` | 已部署使用说明站点源码 | 独立 build/test/deploy；当前不在主 source aggregate |
+| `guide-site/` | hosting identity 与当前部署均未验证的说明站点源码 | 独立 build/test/checkpoint deployment；当前 external-blocked，不在主 source aggregate |
 
 理解 desktop 的推荐代码阅读顺序：
 
@@ -198,7 +200,7 @@ unavailable/no-network。W02 只支撑 slice feedback；W03 从 cleaned tree 构
 | Provider | attempt/discovery/process tests | Backend + Desktop + Web |
 | Local source | localSource + source_security | Backend + Desktop + Web |
 | Update/release | update/release policy focused | Desktop + Backend policy + YAML/shell audit |
-| Legacy split/removal | caller/path + affected replacement，或受限 pure-legacy unsupported disposition | W01 exits + W02 baseline；fresh before/after package smoke；focused/aggregate；slice absence + protected presence；不运行 Docker smoke |
+| Legacy split/removal | caller/path + affected replacement，或受限 pure-legacy unsupported disposition | W01 PR/source + independent acceptance + accepted merge + canonical-main source + W02 baseline；fresh before/after package smoke；focused/aggregate；slice absence + protected presence；不运行 Docker smoke |
 | Engineering package | explicit non-release profile + inventory | W03 cleaned tree；production trust/tag/upload/Draft/Release 禁止 |
 | Docs only | link checker、diff check | 无需伪跑 packaged gate |
 | Version/manifest | version sync + audit scripts | packaging gate |
@@ -224,6 +226,11 @@ make desktop-ci
 source job 中执行，避免新增未受 required-check 约束的可选 job；唯一允许的 skip 是
 `better-sqlite3` 未在 source checkout 构建。
 
+QMD model scan 只覆盖 runner 创建的 isolated `HOME`、`XDG_CACHE_HOME`、`XDG_CONFIG_HOME`、
+`XDG_DATA_HOME` 与 `TMPDIR`。machine result 必须明确
+`repository_worktree_scanned=false`、`global_tmp_scanned=false`；0 个 model/cache delta 不表示整个
+runner/filesystem 已扫描。
+
 `guide-site/**` is excluded from `make ci-source` and Desktop source CI；它不是“已覆盖”。当前
 tracked checkout 缺 `guide-site/.openai/hosting.json`，也没有仓库拥有、绑定 exact commit 的
 独立 build/test/checkpoint-deployment 结果，所以机器 disposition 为 `external-blocked` /
@@ -239,6 +246,11 @@ python3 -B tools/check_ci_coverage.py
 python3 -B tools/check_w01_evidence.py
 git diff --check 3eff97d97b2de4484d568bab5ac96d63830c79ee HEAD
 ```
+
+W01 historical checker 只验证 versioned immutable coordinates 与 cross-field consistency，不读
+当前 Git ancestry，也不限制 future product descendant。当前 exact head 由 workflow payload 与
+独立 provenance artifact 绑定。PR/branch canonical activation 必须 `blocked`；canonical-main
+source result 也不能替代 external independent acceptance。
 
 ### 6.3 Packaged/physical
 

@@ -16,9 +16,10 @@
 | 产品版本 | `0.3.0-alpha.1` |
 | 数据库 schema | `5` |
 | 活动父迭代 | [ITER-0002](iterations/0002-bundled-runtimes.md) |
-| 当前结论 | **source merge GO / public release NO-GO** |
+| 当前结论 | **W01 remediation in progress / PR merge blocked / public release NO-GO** |
 
-这里的 `source merge GO` 只说明受审查的源码纵切和 source CI 可以继续合并。它不表示：
+PR #20 的旧 final candidate 已被独立验收拒绝；当前修复候选仍须完成 exact-head source CI 与
+独立验收，不能称为 merge GO。即使 PR/source technical 结果为 `pass`，也不表示：
 
 - 存在可推荐给普通用户的 DMG；
 - 打包应用已经在干净 M4 用户上运行；
@@ -33,13 +34,22 @@ PR #19 final head `a31f17c367e0ff3d007d2334c37b403615173083` 的 branch push run
 merge `3eff97d97b2de4484d568bab5ac96d63830c79ee` 的 main push run
 [`30816291252`](https://github.com/fredgnr/local-context-forge/actions/runs/30816291252) 均有既有
 Python/Web/Desktop/macOS IPC success。它们早于 W01 QMD/coverage contract，不能关闭 W01。
-W01 机械 checkpoint `8573f608df589bc2ef9e05f0c75d84887464c825` 的
+W01 旧机械 checkpoint `8573f608df589bc2ef9e05f0c75d84887464c825` 的
 [PR #20 run 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380)
 在 exact checkout 上完成新的五 job aggregate：Python 323、Host Runner 8、demo SDK 3、Web
 51、Desktop 252、macOS IPC 49、governance 42，QMD 10 pass / 1 allowlisted native skip；
-network trap active，模型文件/缓存增量为 0。checkpoint→attestation 只允许治理文档路径，含本
-记录的最终提交再由附着于该 containing commit 的同名 check 绑定；缺少该 check 时 W01
-`pass` 无效。
+network trap active；模型文件/缓存增量为 0 只覆盖 isolated `HOME`、三个 XDG 根和 isolated
+`TMPDIR`，未扫描 repository worktree 或 global tmp。旧 final candidate
+`2b7629468c711d0db5107f7001aa90c0271079ae` / tree `ad1b76febd1adcaf1ada96ed7dd43fbe1e5a3adf`
+的 [run 30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329) 也确实是
+technical source `pass`，但独立验收为 `fail`、canonical activation 为 `not-eligible`。旧 run、
+artifact 与 NO-GO 作为历史保留，不能解锁 W02。
+
+修复后的 schema v2 只验证固定历史坐标和字段一致性，不再要求旧 checkpoint 是当前 `HEAD`
+的 ancestor，也不再动态限制 checkpoint→未来 `HEAD` 的路径。当前 bytes 的正确性由每个
+exact-head `Desktop source CI` payload 与独立 provenance artifact 证明；PR/branch artifact 的
+canonical activation 固定为 `blocked`，canonical-main source result 与 independent acceptance
+分开记录。
 更早 PR #17 证据包括：
 
 - [Desktop source CI run 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112)：
@@ -87,12 +97,22 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 ### Source 级已有证据
 
+| Gate | 旧 candidate technical / independent / activation | 修复 candidate PR/source | 修复 candidate independent acceptance | canonical-main source | canonical activation |
+| --- | --- | --- | --- | --- | --- |
+| `VAL-PRE1-SEQUENCE-001` | `pass` / `fail` / `not-eligible` | `pending` | `pending` | `not-run` | `blocked` |
+| `VAL-GOV-001` | `pass` / `fail` / `not-eligible` | `pending` | `pending` | `not-run` | `blocked` |
+| `VAL-CI-COVERAGE-001` | `pass` / `fail` / `not-eligible` | `pending` | `pending` | `not-run` | `blocked` |
+
+修复 candidate 的 PR/source 列只能由新的 exact-head required jobs、payload 与 provenance 提升为
+`pass`；仓库内容不能自报 independent acceptance，PR event 也不能输出 canonical `pass`。W02
+仍须 exact final PR head 独立验收、被验收 candidate 合入 canonical `main`，并在 resulting exact
+main commit 上取得成功 `source-coverage`；PR head、synthetic merge SHA 与 resulting main SHA
+不得静默互换。
+
+其他既有 source 证据：
+
 | Gate | 结果 | 说明 |
 | --- | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` W01 PR gate | `pass` | fixed `3eff97d…`→`8573f608…` diff、W01–W16/state/formal-gate checks、42 governance tests；containing-commit exact-head check 必须附着 |
-| `VAL-GOV-001` W01 PR gate | `pass` | [machine record](evidence/W01/2026-08-04.json) 绑定 checkpoint、环境、命令、count/skip、manifest/artifact digest 与 [run 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380) |
-| `VAL-CI-COVERAGE-001` W01 PR gate | `pass` | existing required jobs + source-coverage 全部 success；QMD lifecycle/network/model fail-closed；guide-site 明确 external-blocked/unvalidated |
-| W02 canonical activation | blocked | 仍须 exact final PR head 独立验收、合入 canonical `main`，并在 resulting main commit 上取得成功 `source-coverage`；PR/synthetic merge/main SHA 不互换 |
 | `VAL-GOV-001` baseline | `pass` | `71890ee` 的 Python source job（Actions 30611309112）包含 Markdown 相对链接检查 |
 | `VAL-DOC-HANDOFF-001` R11 local review | `pass`（仅本地） | 修复后三路只读审计无 Critical/High/Medium；dirty worktree 不能替代最终 commit/PR |
 | `VAL-DOC-HANDOFF-001` R11 checkpoint | `pass` | [`625db76` clean-checkout 证据](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md)；冻结全部实质文档 |
@@ -135,8 +155,9 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 ## 当前阻塞
 
-1. PR #20 尚待 exact final head 的独立验收、canonical merge 与 resulting main commit 的
-   `source-coverage`；三项完成前 W02 不得启动。
+1. PR #20 旧 candidate 已独立验收 `fail`；修复 candidate 尚待新的 exact-head technical
+   `pass`、独立验收、canonical merge 与 resulting main commit 的 `source-coverage`。这些条件
+   全部完成前 W02 不得启动。
 2. 当前没有可用的 W02 packaged smoke harness；base builder 虽标记 UNOFFICIAL，仍会被
    unprovisioned production update trust audit fail closed。
 3. W10/W11 的 decouple/deploy/transport/provider/release/docs slice 均未执行，container/GHCR
@@ -162,8 +183,9 @@ P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物
 
 ### Ready now：无需外部管理员或物理候选
 
-1. 完成 PR #20 exact final head 的独立验收、合入 canonical `main`，并等待 resulting main
-   commit 的 `source-coverage` success，以满足 W02 canonical activation；
+1. 先完成 PR #20 修复 candidate 的 exact-head PR/source CI，再取得独立验收 `pass`、合入
+   canonical `main`，并等待 resulting main commit 的 `source-coverage` success，以满足 W02
+   canonical activation；
 2. W01 全部退出且上述 canonical activation 完成后，执行 `TODO-PACKAGED-SMOKE-001`：
    实现明确隔离于 formal release 的 W02 harness；
 3. W02 通过后，按 [work plan](work-plan.md) 分别认领 W10/W11 slice；不能把它们合成无

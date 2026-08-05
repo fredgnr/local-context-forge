@@ -31,14 +31,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact W01 source range
+      - name: Verify exact clean source checkout
         env:
           LCF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          LCF_W01_BASE_COMMIT: 3eff97d97b2de4484d568bab5ac96d63830c79ee
         run: |
           test "$(git rev-parse HEAD)" = "$LCF_SOURCE_SHA"
-          git merge-base --is-ancestor "$LCF_W01_BASE_COMMIT" "$LCF_SOURCE_SHA"
-          git diff --check "$LCF_W01_BASE_COMMIT" "$LCF_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1)"
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -228,7 +226,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Render fail-closed machine evidence
+      - name: Render fail-closed candidate/main payload
         env:
           LCF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           NEEDS_JSON: ${{ toJSON(needs) }}
@@ -237,11 +235,33 @@ jobs:
             --manifest .github/ci/source-coverage.json \
             --output "$RUNNER_TEMP/w01-source-coverage.json"
 
-      - name: Upload machine evidence even on failure
+      - name: Upload source payload even on failure
+        id: payload-artifact
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: w01-source-coverage-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/w01-source-coverage.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Render non-self-referential payload provenance
+        if: ${{ always() }}
+        env:
+          LCF_PAYLOAD_ARTIFACT_ID: ${{ steps.payload-artifact.outputs.artifact-id }}
+          LCF_PAYLOAD_ARTIFACT_NAME: w01-source-coverage-${{ github.event.pull_request.head.sha || github.sha }}
+          LCF_PAYLOAD_ARTIFACT_URL: ${{ steps.payload-artifact.outputs.artifact-url }}
+          LCF_PAYLOAD_ARTIFACT_DIGEST: ${{ steps.payload-artifact.outputs.artifact-digest }}
+        run: |
+          python3 -B tools/render_source_coverage_provenance.py \
+            --payload "$RUNNER_TEMP/w01-source-coverage.json" \
+            --output "$RUNNER_TEMP/w01-source-coverage-provenance.json"
+
+      - name: Upload payload provenance even on failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: w01-source-coverage-provenance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/w01-source-coverage-provenance.json
           if-no-files-found: error
           retention-days: 30

@@ -30,9 +30,18 @@ python3 -B -m unittest discover -s tools/tests -p 'test_*.py'
 `make ci-python` runs these commands. They validate exact W01-W16 ranks,
 complete work/task/gate mappings, TODO/trace/detail status parity, the
 formal-release `not-run` boundary, the machine-readable Make/workflow component
-coverage, and the checkpoint-to-containing-commit evidence binding. QMD's
-source runner is `tools/run_qmd_source_ci.py`; the final workflow result is
-rendered by `tools/render_source_coverage_evidence.py`.
+coverage, and the versioned W01 lifecycle record. The historical checker never
+requires an old PR commit to be an ancestor of the current `HEAD` and never
+diffs a checkpoint against future product descendants.
+
+QMD's source runner is `tools/run_qmd_source_ci.py`. Its model scan is limited
+to isolated HOME/XDG/TMP roots and explicitly excludes the repository worktree
+and global tmp. `tools/render_source_coverage_evidence.py` renders an exact-head
+payload with separate PR/source and canonical-main results; PR/branch canonical
+activation remains blocked and independent acceptance is external. After the
+payload upload, `tools/render_source_coverage_provenance.py` binds its artifact
+ID/archive digest and inner JSON digest in a second artifact, avoiding recursive
+self-hashing.
 
 ```bash
 python3 -m pip install -r tools/requirements.txt

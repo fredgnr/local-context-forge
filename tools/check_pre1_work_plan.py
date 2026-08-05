@@ -215,8 +215,22 @@ NEW_STABLE_IDS = REQUIRED_REQUIREMENTS | NEW_TASKS | NEW_VALIDATIONS
 
 W01_EXIT_MARKER = (
     "<!-- pre1-w02-requires: "
-    "VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001 -->"
+    "VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001,"
+    "independent-acceptance-exact-final-head,accepted-candidate-merged-to-main,"
+    "resulting-main-source-coverage -->"
 )
+
+OLD_REJECTED_TRACE_MARKER = (
+    "旧候选 technical source `pass`；independent acceptance `fail`；"
+    "canonical activation `not-eligible`"
+)
+
+
+def current_w01_trace_marker(technical_result: str) -> str:
+    return (
+        f"修复候选 PR/source `{technical_result}`；independent acceptance `pending`；"
+        "canonical-main source `not-run`；canonical activation `blocked`"
+    )
 
 CONTINUITY_COMPONENTS = {
     "W13 checkpoint commit/package digest",
@@ -294,16 +308,16 @@ def validate_documents(
     w01_evidence: dict[str, object],
 ) -> list[str]:
     errors: list[str] = []
-    w01_closed = w01_evidence.get("status") == "pass"
     expected_task_status = dict(EXPECTED_TASK_STATUS)
-    if w01_closed:
-        expected_task_status.update(
-            {
-                "TODO-PRE1-SEQUENCING-001": "done",
-                "TODO-GOV-EVIDENCE-001": "done",
-                "TODO-CI-COVERAGE-001": "done",
-            }
-        )
+    remediation = w01_evidence.get("remediation")
+    remediation_technical = (
+        remediation.get("technical_source_result")
+        if isinstance(remediation, dict)
+        else None
+    )
+    if remediation_technical not in {"pending", "pass"}:
+        errors.append("W01 remediation technical result must be pending or pass")
+        remediation_technical = "pending"
 
     marker = re.search(r"<!-- pre1-work-order: ([A-Z0-9,]+) -->", plan)
     actual_order = marker.group(1).split(",") if marker else []
@@ -439,35 +453,37 @@ def validate_documents(
                 "gate must remain canonically not-run"
             )
 
-    expected_w01_gate = "pass" if w01_closed else "not-run"
     for gate in ("VAL-PRE1-SEQUENCE-001", "VAL-GOV-001", "VAL-CI-COVERAGE-001"):
         row = validation_by_id.get(gate)
         if row is None:
             continue
-        words = STATUS_WORD_PATTERN.findall(row[2])
-        actual = words[0] if words else None
-        if actual != expected_w01_gate:
-            errors.append(
-                f"{gate} canonical status {actual!r} != {expected_w01_gate!r}"
-            )
+        for marker in (
+            OLD_REJECTED_TRACE_MARKER,
+            current_w01_trace_marker(remediation_technical),
+        ):
+            if marker not in row[2]:
+                errors.append(f"{gate} lifecycle result missing {marker!r}")
 
-    evidence_gates = w01_evidence.get("gates")
-    if not isinstance(evidence_gates, dict) or set(evidence_gates) != {
-        "VAL-PRE1-SEQUENCE-001",
-        "VAL-GOV-001",
-        "VAL-CI-COVERAGE-001",
-    }:
-        errors.append("W01 evidence gate set is incomplete")
-    elif any(value != expected_w01_gate for value in evidence_gates.values()):
-        errors.append("W01 evidence gate statuses disagree with canonical W01 state")
+    if not isinstance(remediation, dict):
+        errors.append("W01 evidence remediation lifecycle is missing")
+    else:
+        if remediation.get("independent_acceptance") != "pending":
+            errors.append("W01 independent acceptance must remain pending")
+        activation = remediation.get("canonical_activation")
+        if not isinstance(activation, dict) or activation.get("status") != "blocked":
+            errors.append("W01 canonical activation must remain blocked")
+    canonical_main = w01_evidence.get("canonical_main_source")
+    if not isinstance(canonical_main, dict) or canonical_main.get("status") != "not-run":
+        errors.append("W01 canonical-main source result must remain not-run")
 
     r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)
-    expected_r13_status = "completed" if w01_closed else "in-progress"
-    if r13_status is None or r13_status.group(1) != expected_r13_status:
-        errors.append(f"R13 status must be {expected_r13_status}")
-    r13_06_checked = "- [x] R13-06" in r13
-    if r13_06_checked != w01_closed:
-        errors.append("R13-06 checkbox must match W01 evidence closure")
+    if r13_status is None or r13_status.group(1) != "in-progress":
+        errors.append("R13 status must remain in-progress until canonical activation")
+    if "- [x] R13-06" not in r13 or "旧候选" not in r13:
+        errors.append("R13-06 must preserve the old technical execution as rejected history")
+    remediation_checked = "- [x] R13-07" in r13
+    if remediation_checked != (remediation_technical == "pass"):
+        errors.append("R13-07 checkbox must match remediation technical closeout only")
 
     continuity_row = validation_by_id.get("VAL-RELEASE-CONTINUITY-001")
     if continuity_row is not None:

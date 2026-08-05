@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "work_id": "W01",
   "repository": "fredgnr/local-context-forge",
   "baseline_commit": "3eff97d97b2de4484d568bab5ac96d63830c79ee",
@@ -21,7 +21,18 @@
     ],
     "summary_job": "source-coverage",
     "exact_source_expression": "${{ github.event.pull_request.head.sha || github.sha }}",
-    "runtime_artifact_prefix": "w01-source-coverage-"
+    "payload_schema_version": 2,
+    "payload_artifact_prefix": "w01-source-coverage-",
+    "provenance_artifact_prefix": "w01-source-coverage-provenance-",
+    "lifecycle_phases": [
+      "pull-request-candidate",
+      "branch-candidate",
+      "canonical-main-source"
+    ],
+    "canonical_activation_states": [
+      "blocked",
+      "requires-external-conditions"
+    ]
   },
   "components": [
     {
@@ -89,6 +100,15 @@
           "--no-fund"
         ],
         "network_policy": "deny-external-allow-af-unix",
+        "model_scan_scope": [
+          "isolated HOME",
+          "isolated XDG_CACHE_HOME",
+          "isolated XDG_CONFIG_HOME",
+          "isolated XDG_DATA_HOME",
+          "isolated TMPDIR"
+        ],
+        "repository_worktree_scanned": false,
+        "global_tmp_scanned": false,
         "model_files_created": 0,
         "model_cache_paths_created": 0,
         "allowed_skip_count": 1,

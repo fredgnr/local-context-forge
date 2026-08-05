@@ -159,7 +159,7 @@ ci-python: ci-python-install
 
 ci-qmd-worker:
 	cd desktop/workers/qmd && $(NPM) ci --ignore-scripts --omit=optional --no-audit --no-fund
-	cd desktop/workers/qmd && NODE="$(NODE)" $(NPM) test $(if $(strip $(QMD_SOURCE_RESULT)),-- --result "$(QMD_SOURCE_RESULT)")
+	cd desktop/workers/qmd && $(NPM) test -- --node "$(NODE)" $(if $(strip $(QMD_SOURCE_RESULT)),--result "$(QMD_SOURCE_RESULT)")
 
 pre1-work-plan-check:
 	$(PYTHON) -B tools/check_ci_coverage.py

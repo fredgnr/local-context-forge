@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,14 @@ EXPECTED_NODE = "v22.23.2"
 EXPECTED_SKIP_REASON = (
     "better-sqlite3 native binding is not built in source checkout"
 )
+ISOLATED_ROOTS = [
+    ("isolated HOME", "HOME", "home"),
+    ("isolated XDG_CACHE_HOME", "XDG_CACHE_HOME", "cache"),
+    ("isolated XDG_CONFIG_HOME", "XDG_CONFIG_HOME", "config"),
+    ("isolated XDG_DATA_HOME", "XDG_DATA_HOME", "data"),
+    ("isolated TMPDIR", "TMPDIR", "tmp"),
+]
+MODEL_SCAN_SCOPE = [label for label, _, _ in ISOLATED_ROOTS]
 MODEL_SUFFIXES = {".bin", ".gguf", ".onnx", ".safetensors", ".tflite"}
 MODEL_CACHE_NAMES = {"huggingface", "models", "node-llama-cpp", "transformers"}
 SUMMARY_KEYS = ("tests", "pass", "fail", "cancelled", "skipped", "todo")
@@ -45,33 +54,39 @@ def model_cache_paths(root: Path) -> list[str]:
     )
 
 
+def scoped_paths(
+    isolated_root: Path, roots: list[Path], scanner: Callable[[Path], list[str]]
+) -> list[str]:
+    discovered: list[str] = []
+    for root in roots:
+        for relative in scanner(root):
+            discovered.append(str((root / relative).relative_to(isolated_root)))
+    return sorted(discovered)
+
+
 def parse_test_summary(output: str) -> dict[str, int]:
     summary: dict[str, int] = {}
     for key in SUMMARY_KEYS:
         matches = re.findall(rf"^# {key} (\d+)\s*$", output, re.MULTILINE)
         if not matches:
             raise ValueError(f"Node test output is missing the {key!r} summary")
-        summary[key] = int(matches[-1])
+        if len(matches) != 1:
+            raise ValueError(f"Node test output contains duplicate {key!r} summaries")
+        summary[key] = int(matches[0])
     return summary
 
 
 def build_environment(isolated_root: Path) -> dict[str, str]:
     environment = os.environ.copy()
-    home = isolated_root / "home"
-    cache = isolated_root / "cache"
-    config = isolated_root / "config"
-    data = isolated_root / "data"
-    temporary = isolated_root / "tmp"
-    for path in (home, cache, config, data, temporary):
+    isolated_environment: dict[str, str] = {}
+    for _, environment_name, directory_name in ISOLATED_ROOTS:
+        path = isolated_root / directory_name
         path.mkdir(parents=True, exist_ok=True)
+        isolated_environment[environment_name] = str(path)
     environment.update(
         {
             "CI": "true",
-            "HOME": str(home),
-            "XDG_CACHE_HOME": str(cache),
-            "XDG_CONFIG_HOME": str(config),
-            "XDG_DATA_HOME": str(data),
-            "TMPDIR": str(temporary),
+            **isolated_environment,
             "LCF_QMD_SOURCE_TEST": "1",
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
@@ -100,8 +115,10 @@ def run(node: str, result_path: Path | None) -> int:
 
     with tempfile.TemporaryDirectory(prefix="lcf-qmd-source-") as temporary:
         isolated_root = Path(temporary)
-        before = model_files(isolated_root)
-        cache_paths_before = model_cache_paths(isolated_root)
+        environment = build_environment(isolated_root)
+        scan_roots = [Path(environment[name]) for _, name, _ in ISOLATED_ROOTS]
+        before = scoped_paths(isolated_root, scan_roots, model_files)
+        cache_paths_before = scoped_paths(isolated_root, scan_roots, model_cache_paths)
         command = [
             node,
             "--import",
@@ -112,7 +129,7 @@ def run(node: str, result_path: Path | None) -> int:
         completed = subprocess.run(
             command,
             cwd=ROOT,
-            env=build_environment(isolated_root),
+            env=environment,
             check=False,
             capture_output=True,
             text=True,
@@ -120,8 +137,8 @@ def run(node: str, result_path: Path | None) -> int:
         output = completed.stdout + completed.stderr
         sys.stdout.write(completed.stdout)
         sys.stderr.write(completed.stderr)
-        after = model_files(isolated_root)
-        cache_paths_after = model_cache_paths(isolated_root)
+        after = scoped_paths(isolated_root, scan_roots, model_files)
+        cache_paths_after = scoped_paths(isolated_root, scan_roots, model_cache_paths)
 
         errors: list[str] = []
         try:
@@ -138,10 +155,13 @@ def run(node: str, result_path: Path | None) -> int:
             errors.append(f"expected exactly one allowlisted skip, observed {summary['skipped']}")
         if summary["tests"] != summary["pass"] + summary["skipped"]:
             errors.append("test total does not equal pass + skipped")
-        if output.count(EXPECTED_SKIP_REASON) != 1:
-            errors.append("the sole skip reason is absent or duplicated")
+        skip_lines = re.findall(r"^.*# SKIP (.+?)\s*$", output, re.MULTILINE)
+        if skip_lines != [EXPECTED_SKIP_REASON]:
+            errors.append(f"the sole # SKIP reason is not allowlisted: {skip_lines}")
         if "LCF_QMD_NETWORK_TRAP=active:source-test" not in output:
             errors.append("QMD source network trap did not report active")
+        if "LCF_QMD_NETWORK_POLICY=deny-external-allow-af-unix" not in output:
+            errors.append("QMD source network policy marker is absent")
         created = sorted(set(after) - set(before))
         if created:
             errors.append(f"model-like files were created: {created}")
@@ -150,7 +170,7 @@ def run(node: str, result_path: Path | None) -> int:
             errors.append(f"model cache paths were created: {created_cache_paths}")
 
         result = {
-            "schema_version": 1,
+            "schema_version": 2,
             "node_version": node_version.removeprefix("v"),
             "command": "node --import desktop/scripts/qmdNetworkTrap.mjs --test "
             "desktop/workers/qmd/test/*.test.mjs",
@@ -158,11 +178,19 @@ def run(node: str, result_path: Path | None) -> int:
             "allowed_skip_reason": EXPECTED_SKIP_REASON,
             "network_trap": "active" if not errors or "LCF_QMD_NETWORK_TRAP=active:source-test" in output else "inactive",
             "network_policy": "deny-external-allow-af-unix",
-            "model_files_before": len(before),
-            "model_files_after": len(after),
-            "model_files_created": len(created),
-            "model_cache_paths_created": len(created_cache_paths),
-            "isolated_home_xdg_tmp": True,
+            "model_scan": {
+                "scope": MODEL_SCAN_SCOPE,
+                "repository_worktree_scanned": False,
+                "global_tmp_scanned": False,
+                "model_files_before": len(before),
+                "model_files_after": len(after),
+                "model_files_created": len(created),
+                "model_file_paths_created": created,
+                "model_cache_paths_before": len(cache_paths_before),
+                "model_cache_paths_after": len(cache_paths_after),
+                "model_cache_paths_created": len(created_cache_paths),
+                "model_cache_path_names_created": created_cache_paths,
+            },
             "result": "pass" if not errors else "fail",
             "errors": errors,
         }

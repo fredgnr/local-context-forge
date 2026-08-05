@@ -59,7 +59,7 @@ packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
 | Codex MCP onboarding 与签名 CLI discovery | [ADR-0013](../../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | R08 source discovery/onboarding 已实现；真实 OpenAI 签名 gate 待运行 |
 | 候选 Draft 与公开 promotion 分离 | [ADR-0014](../../adr/0014-two-stage-desktop-release-promotion.md) | R09 的 tag-only signing、trusted-main promotion（无配置 release secret/长期签名凭据，使用短期 `GITHUB_TOKEN`）、ruleset/immutable source policy 已实现并复验；真实 settings/promotion 待运行 |
 | Electron-only 与 legacy retirement | [ADR-0015](../../adr/0015-electron-only-legacy-retirement.md) | R12 已冻结 remove/retain/split；cutover/removal/absence gate 均 `not-run` |
-| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13/W01 governance/source gate 已 `pass`；runtime/package/slice/final/release gate 均 `not-run` |
+| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13/W01 旧 technical candidate 独立验收 `fail`；remediation/activation pending；runtime/package/slice/final/release gate 均 `not-run` |
 
 ## 任务
 
@@ -95,9 +95,9 @@ packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
 - [x] **R12 Electron-only retirement scope**：接受 ADR-0015，建立严格路径矩阵、替代门禁和
   ITER-0007/TODO；实际删除不在本纵切，见
   [R12](0002-r12-legacy-retirement-scope.md)。
-- [x] **R13 Pre-1.0 增量式 retirement 治理**：接受 ADR-0016，落盘 W01–W16、最小
-  packaged smoke、独立 slice、cleaned-tree engineering package 与正式发行后置门禁；W01
-  checkpoint + containing-commit evidence 已登记，见
+- [ ] **R13 Pre-1.0 增量式 retirement 治理**：接受 ADR-0016，落盘 W01–W16、最小
+  packaged smoke、独立 slice、cleaned-tree engineering package 与正式发行后置门禁；旧 W01
+  technical candidate 已被独立拒绝，remediation 与 canonical activation 尚未完成，见
   [R13](0002-r13-pre1-incremental-retirement.md)。
 
 以上 `[x]` 表示对应 source 纵切落地，不表示下列完整验收或父迭代完成。
@@ -130,7 +130,8 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 | 验证 | 结果 | 日期/提交 | 命令或过程 | 证据/说明 |
 | --- | --- | --- | --- | --- |
 | VAL-GOV-001 baseline | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) 的 Python source job | 该基线包含 Markdown link check；R11 最终 head 仍在 [R11 validation](0002-r11-documentation-handoff.md#验证日志) 独立记录 |
-| W01 VAL-PRE1-SEQUENCE/GOV/CI-COVERAGE-001 | `pass` | 2026-08-04；`8573f608` checkpoint + PR #20 containing commit | [Actions 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380)；[machine record](../evidence/W01/2026-08-04.json) | fixed base→head diff；Python/Host/MCP/demo/Web/Desktop/macOS/QMD/governance aggregate；W02 仍等待独立验收、canonical merge 与 exact main CI |
+| W01 old candidate | technical `pass` / independent `fail` / activation `not-eligible` | 2026-08-04；checkpoint `8573f608…` + final `2b762946…` | [Actions 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380)、[30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329)；[machine record](../evidence/W01/2026-08-04.json) | 旧 run/artifact/NO-GO 保留；不解锁 W02 |
+| W01 remediation candidate | PR/source `pending`；independent `pending`；canonical-main `not-run`；activation `blocked` | 新 exact final head 待生成 | schema v2 historical record + attached payload/provenance | future descendant 与 merge/squash/rebase/main movement 不再由历史 ancestry/diff 限制 |
 | VAL-P1-SOURCE-001 | `pass` | 2026-07-30；`7e4524f` | 继承 ITER-0001 Actions 证据 | 仅证明恢复基线 |
 | Backend source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Python source job success；历史本地计数 322 pass / 1 AF_UNIX skip |
 | Desktop source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Desktop source job success；历史本地计数 30 files / 245 pass / 7 skip |
@@ -204,4 +205,4 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 不入库。
 
 本轮最新 release source contract 不提升生产门禁：真实 GitHub settings 与物理 Mac 证据继续
-`not-run`，整体状态保持 **source merge GO / release NO-GO**。
+`not-run`，整体状态保持 **W01 remediation in progress / PR merge blocked / release NO-GO**。

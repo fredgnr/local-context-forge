@@ -1,7 +1,7 @@
 # ITER-0002/R13：Pre-1.0 增量式 retirement 治理
 
-- 状态：`completed`（父 ITER-0002 继续）
-- 日期：2026-08-03；W01 closure 续作 2026-08-04–05
+- 状态：`in-progress`（W01 remediation / canonical activation pending；父 ITER-0002 继续）
+- 日期：2026-08-03；W01 closure 尝试 2026-08-04–05；remediation 自 2026-08-05
 - 上游基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
 - 当前分支：`agent/w01-governance-source-ci`
 - 范围：决策、治理、计划、追踪关系与治理校验；不删除 runtime，不实现 package，不修改
@@ -27,13 +27,16 @@ controls、credentials、trust pins 和 formal Release 最后处理。
   数据安全、历史证据和 final fail-closed 门禁。
 - [x] R13-04 首次落盘 W01–W16 稳定映射，以显式 execution rank 前置 W10/W11，不重编号。
 - [x] R13-05 新增最小 smoke、slice 与 engineering package 的 REQ/TODO/VAL，并同步权威文档。
-- [x] R13-06 在 checkpoint 与 containing-commit PR head 运行 commit-bound
-  links/version/plan/diff/source aggregate，并登记 machine evidence。
+- [x] R13-06 保留旧候选技术执行历史：checkpoint `8573f608…` 与 final
+  `2b762946…` 的 source aggregate 均为 technical `pass`，但旧候选 independent acceptance
+  `fail`、canonical activation `not-eligible`，不能作为 closure。
+- [ ] R13-07 修复 evidence lifecycle、merge-strategy independence、PR canonical activation、
+  artifact/QMD schema 与 model scan scope，并为新 exact final head 生成 payload/provenance。
 
-`[x]` 只表示 R13 governance/source closure 已有 commit-bound 证据，不表示 runtime、
-packaged、physical、GitHub settings 或 Release gate 已运行。W01 PR gate 完成也不自动授权
-W02；仍须 exact final PR head 独立验收、合入 canonical `main`，以及 resulting main commit 的
-`source-coverage` success。
+R13 保持 `in-progress`，直至修复候选 exact-head PR/source technical `pass`、independent
+acceptance `pass`、被验收 candidate 合入 canonical `main`，且 resulting main commit 的
+`source-coverage` success。R13-06 的 `[x]` 只保存旧技术执行事实；它不授权 W02，也不表示
+runtime、packaged、physical、GitHub settings 或 Release gate 已运行。
 
 ## 实时基线
 
@@ -62,9 +65,9 @@ W02；仍须 exact final PR head 独立验收、合入 canonical `main`，以及
 
 | 验证 | 当前结果 | 最低环境 | 说明 |
 | --- | --- | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` | `pass` | checkpoint `8573f608…`；PR #20 containing commit | fixed `3eff97d…`→checkpoint diff、exact plan/state/ID checks、42 governance tests；见 [machine record](../evidence/W01/2026-08-04.json) 与 [run 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380) |
-| `VAL-GOV-001` | `pass` | ubuntu-24.04 x64 + macos-15 arm64；同 checkpoint/run | Python 323、Host 8、MCP 2、demo SDK 3、Web 51、Desktop 252、macOS IPC 49，links/version/evidence checks 全部通过 |
-| `VAL-CI-COVERAGE-001` | `pass` | exact PR-head checkout；同 checkpoint/run | required jobs + summary success；QMD 10 pass / 1 allowlisted native skip、network trap active、0 model/cache；guide-site external-blocked/unvalidated |
+| `VAL-PRE1-SEQUENCE-001` | 修复 PR/source `pending`；independent `pending`；canonical-main `not-run`；activation `blocked` | 新 exact final head 待生成 | 旧 candidate technical `pass` / independent `fail` / activation `not-eligible`；历史 run/artifact 保留 |
+| `VAL-GOV-001` | 修复 PR/source `pending`；independent `pending`；canonical-main `not-run`；activation `blocked` | schema v2 + exact-head Actions | 历史 checker 不再读取 current ancestry 或动态 diff；当前 bytes 由 payload/provenance 绑定 |
+| `VAL-CI-COVERAGE-001` | 修复 PR/source `pending`；independent `pending`；canonical-main `not-run`；activation `blocked` | exact PR-head checkout 待运行 | QMD 扫描只覆盖 isolated HOME/XDG/TMP，repository/global tmp 未扫描；guide-site external-blocked/unvalidated |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` | macOS arm64 packaged App | 本 Work 不实现 harness |
 | 六个 legacy slice gate | `not-run` | slice exact before/after package | 本 Work 不删除 runtime |
 | `VAL-ENGINEERING-PACKAGE-001` | `not-run` | cleaned-tree non-release package | 本 Work 不实现工程包 |
@@ -83,6 +86,8 @@ W02；仍须 exact final PR head 独立验收、合入 canonical `main`，以及
 | 提前使用 production trust 或 GitHub controls | W14–W16 明确依赖 W13；engineering artifact 禁止 tag/upload/promotion |
 | W15 production 变更使 W13 bytes 证据失效 | allowlisted checkpoint→tag diff、tag absence 与 exact Draft cutover/absence 独立门禁 |
 | 文档 pass 冒充实现 pass | 所有 runtime/packaged/physical/control-plane gate 保持 `not-run` |
+| 旧 W01 evidence 冻结未来产品提交或只支持 merge commit | historical checker 只校验固定 record；future descendant、merge、squash、rebase 与 main movement fixture 必须通过 |
+| PR artifact 自报 canonical pass | PR/branch activation 固定 `blocked`；main source 也只可 `requires-external-conditions`，independent acceptance 由外部提供 |
 
 回退本治理变更只需普通 Git revert；不得因此修改用户数据、远端 package、GitHub settings、
 credential、tag 或 Release。

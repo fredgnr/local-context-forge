@@ -10,11 +10,13 @@
 | --- | --- | --- | --- |
 | `VAL-DOC-HANDOFF-001` | `625db7647d47fb6ff8f23c3136c4f45ded80384f` | `pass`（文档 source checkpoint） | [2026-07-31-625db76](VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) |
 | `VAL-LEGACY-SCOPE-001` | `64ec3c232d08f1e843d81dc7c4972dc5ebf96c9b` | `pass`（planning/documentation scope） | [2026-07-31-64ec3c2](VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) |
-| W01 三个 gate | checkpoint `8573f608df589bc2ef9e05f0c75d84887464c825` + containing-commit check | `pass`（PR #20 source gate） | [2026-08-04 W01 machine record](W01/2026-08-04.json)；[Actions 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380) |
+| W01 旧 candidate | final `2b7629468c711d0db5107f7001aa90c0271079ae` / tree `ad1b76febd1adcaf1ada96ed7dd43fbe1e5a3adf` | technical `pass`；independent `fail`；activation `not-eligible` | [schema v2 history](W01/2026-08-04.json)；[Actions 30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329)；旧 artifact `8900365901` |
+| W01 remediation candidate | exact final head 由 attached Actions payload/provenance 绑定 | PR/source `pending`；independent `pending`；canonical-main `not-run`；activation `blocked` | [schema v2 lifecycle record](W01/2026-08-04.json)；[closed schema](W01/schema-v2.json) |
 
-W01 行必须与附着在含该记录的 exact PR head 上的成功 check 一起读取；它不单独证明
-canonical activation。以上记录均不代表 packaged、physical、GitHub settings、legacy absence
-或 release gate 已通过。
+旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。修复记录
+必须与 exact final head 上的新 payload/provenance 一起读取；仓库记录不能自行声明 independent
+acceptance 或 canonical activation。以上记录均不代表 packaged、physical、GitHub settings、
+legacy absence 或 release gate 已通过。
 
 ## 1. 证据原则
 
@@ -146,18 +148,49 @@ Markdown 记录可在 YAML 后补：
 - Actions run/job URL；
 - 所有未覆盖组件。
 
-### 4.1 含 evidence 文件的 final head 不自指
+### 4.1 历史 record 与当前 exact head 分离
 
-提交不能在自身 bytes 中写入自己的 SHA 或尚未产生的 Actions run URL。W01 因此使用两层
-binding：记录先引用已经存在且完整运行过的 checkpoint commit/run；随后只允许 evidence 与
-治理状态 attestation delta。最终 head 的 exact commit 由附着在 containing commit 上的
-`Desktop source CI` check 解析，runtime artifact 记录 checked-out SHA、GitHub context SHA、
-event/ref/run、各 job conclusion、manifest digest、QMD count/skip/network/model 结果。
+`W01/schema-v2.json` 与 `tools/check_w01_evidence.py` 验证固定历史 source/tree/run/artifact/digest、
+旧拒绝状态、remediation checkpoint 和 lifecycle cross-field consistency。historical checker：
 
-缺少 containing-commit check、head 变化、任一 required job 非 success，或 canonical main 合入
-后没有 exact merge commit 的成功 `source-coverage` job 时，记录中的 `pass` 对启动 W02 无效。
-W02 必须同时等待独立验收、合入 canonical `main` 和该 main commit 的检查；PR head、synthetic
-merge SHA 与 canonical merge SHA 不得静默视为相同 bytes。
+- 不读取当前 Git history；
+- 不要求旧 PR/checkpoint commit 是当前 `HEAD` 的 ancestor；
+- 不动态计算历史 checkpoint→任意未来 `HEAD` 的 path diff；
+- 不用 future allowlist 限制 W02/W10/W11 或 main movement；
+- 不根据仓库内的 `pass` 提升 independent acceptance 或 canonical activation。
+
+因此 future product descendant、merge commit、squash-equivalent、rebase-equivalent 与 merge 前
+main movement 都不会破坏合法历史证据。当前 bytes 的 source correctness 始终由当前 exact-head
+checkout、required jobs 和 runtime artifact 证明。
+
+### 4.2 Payload + provenance，不递归自哈希
+
+提交不能在自身 bytes 中写入自己的 SHA 或尚未产生的 Actions run。runtime payload 同样不能
+嵌入自身 ZIP digest/artifact ID。W01 schema v2 使用两个 artifact：
+
+1. renderer 生成 source payload 并先上传；
+2. upload step 返回 payload artifact ID/URL/archive SHA-256；
+3. provenance renderer 计算 payload JSON SHA-256，并绑定 payload source/tree/run、artifact
+   ID/name/archive digest/inner digest；
+4. provenance 作为第二个 artifact 上传，但不嵌入自己的 ID 或 digest；
+5. 后续 committed closeout record 可以记录已经存在的 checkpoint payload/provenance 两组坐标。
+
+closeout 中的 canonical record digest 用来捕获局部字段改写；权威锚点仍是 GitHub Actions
+服务中已存在的 exact run、payload/provenance artifact ID 与两层完整 digest，以及独立验收所钉住
+的 exact PR head。若后续提交协调替换全部坐标并重算 record digest，那是一个新的 candidate，
+必须重新运行 exact-head CI 并重新接受独立验收，不能继承旧 candidate 的 technical 或 acceptance
+结论。仓库内容本身始终不能把 `independent_acceptance` 从 `pending` 提升为 `pass`。
+
+PR 与 non-main branch payload 使用 `pull-request-candidate` / `branch-candidate`，只输出 technical
+candidate results，canonical activation 必须为 `blocked`。只有 `push` to `refs/heads/main` 可输出
+`canonical-main-source` results；workflow 无法观察 ChatGPT independent acceptance，因此即使 main
+source 成功，activation 仍是 `requires-external-conditions`，除非存在可验证的外部 acceptance
+reference。
+
+任一 required job 为 failed/missing/skipped/cancelled 时 summary 必须失败；payload/provenance 仍
+上传供诊断，不能由 summary job 洗绿。W02 必须同时等待 exact final head 独立验收、被验收
+candidate 合入 canonical `main` 和 resulting exact main commit 的成功 source run；PR head、
+synthetic merge SHA 与 resulting main SHA 不得静默视为相同 bytes。
 
 示例结论：
 

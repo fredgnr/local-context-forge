@@ -1,0 +1,512 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fredgnr/local-context-forge/blob/main/docs/development/evidence/W01/schema-v2.json",
+  "title": "Local Context Forge W01 lifecycle evidence v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "schema_id",
+    "repository",
+    "work_id",
+    "pull_request",
+    "baseline",
+    "candidate_history",
+    "remediation",
+    "canonical_main_source",
+    "downstream_gate_results",
+    "out_of_scope"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "schema_id": { "const": "lcf.w01.lifecycle.v2" },
+    "repository": { "const": "fredgnr/local-context-forge" },
+    "work_id": { "const": "W01" },
+    "pull_request": { "const": 20 },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree"],
+      "properties": {
+        "commit": { "$ref": "#/$defs/sha40" },
+        "tree": { "$ref": "#/$defs/sha40" }
+      }
+    },
+    "candidate_history": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": { "$ref": "#/$defs/historical_candidate" }
+    },
+    "remediation": { "$ref": "#/$defs/remediation" },
+    "canonical_main_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "source_commit", "source_tree", "run_id"],
+      "properties": {
+        "status": { "const": "not-run" },
+        "source_commit": { "type": "null" },
+        "source_tree": { "type": "null" },
+        "run_id": { "type": "null" }
+      }
+    },
+    "downstream_gate_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "VAL-PACKAGED-SMOKE-001",
+        "VAL-LEGACY-DECOUPLE-001",
+        "VAL-LEGACY-TRANSPORT-001",
+        "VAL-LEGACY-PROVIDER-001",
+        "VAL-LEGACY-DEPLOY-001",
+        "VAL-LEGACY-RELEASE-001",
+        "VAL-LEGACY-DOCS-001",
+        "VAL-ENGINEERING-PACKAGE-001",
+        "VAL-ELECTRON-CUTOVER-001",
+        "VAL-LEGACY-ABSENCE-001",
+        "VAL-RELEASE-CONTINUITY-001",
+        "VAL-SECRET-001",
+        "VAL-PACK-001",
+        "VAL-INSTALL-001",
+        "VAL-RELEASE-001",
+        "VAL-UPDATE-001"
+      ],
+      "properties": {
+        "VAL-PACKAGED-SMOKE-001": { "const": "not-run" },
+        "VAL-LEGACY-DECOUPLE-001": { "const": "not-run" },
+        "VAL-LEGACY-TRANSPORT-001": { "const": "not-run" },
+        "VAL-LEGACY-PROVIDER-001": { "const": "not-run" },
+        "VAL-LEGACY-DEPLOY-001": { "const": "not-run" },
+        "VAL-LEGACY-RELEASE-001": { "const": "not-run" },
+        "VAL-LEGACY-DOCS-001": { "const": "not-run" },
+        "VAL-ENGINEERING-PACKAGE-001": { "const": "not-run" },
+        "VAL-ELECTRON-CUTOVER-001": { "const": "not-run" },
+        "VAL-LEGACY-ABSENCE-001": { "const": "not-run" },
+        "VAL-RELEASE-CONTINUITY-001": { "const": "not-run" },
+        "VAL-SECRET-001": { "const": "not-run" },
+        "VAL-PACK-001": { "const": "not-run" },
+        "VAL-INSTALL-001": { "const": "not-run" },
+        "VAL-RELEASE-001": { "const": "not-run" },
+        "VAL-UPDATE-001": { "const": "not-run" }
+      }
+    },
+    "out_of_scope": {
+      "type": "array",
+      "minItems": 5,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "sha40": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "activation_conditions": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "independent acceptance of the exact final PR head" },
+        { "const": "merge of that accepted candidate into canonical main" },
+        { "const": "successful source-coverage on the exact resulting main commit" }
+      ],
+      "items": false
+    },
+    "gate_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "VAL-PRE1-SEQUENCE-001",
+        "VAL-GOV-001",
+        "VAL-CI-COVERAGE-001"
+      ],
+      "properties": {
+        "VAL-PRE1-SEQUENCE-001": { "enum": ["pass", "not-run"] },
+        "VAL-GOV-001": { "enum": ["pass", "not-run"] },
+        "VAL-CI-COVERAGE-001": { "enum": ["pass", "not-run"] }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "source_commit",
+        "run_id",
+        "archive_sha256",
+        "inner_json_sha256",
+        "payload_schema_version"
+      ],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "source_commit": { "$ref": "#/$defs/sha40" },
+        "run_id": { "type": "integer", "minimum": 1 },
+        "archive_sha256": { "$ref": "#/$defs/sha256" },
+        "inner_json_sha256": { "$ref": "#/$defs/sha256" },
+        "payload_schema_version": { "enum": [1, 2] }
+      }
+    },
+    "provenance_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "source_commit",
+        "run_id",
+        "archive_sha256",
+        "inner_json_sha256",
+        "payload_binding"
+      ],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "source_commit": { "$ref": "#/$defs/sha40" },
+        "run_id": { "type": "integer", "minimum": 1 },
+        "archive_sha256": { "$ref": "#/$defs/sha256" },
+        "inner_json_sha256": { "$ref": "#/$defs/sha256" },
+        "payload_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "artifact_id",
+            "artifact_name",
+            "archive_sha256",
+            "inner_json_sha256"
+          ],
+          "properties": {
+            "artifact_id": { "type": "integer", "minimum": 1 },
+            "artifact_name": { "type": "string", "minLength": 1 },
+            "archive_sha256": { "$ref": "#/$defs/sha256" },
+            "inner_json_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "tool_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "web", "desktop", "macos-ipc"],
+      "properties": {
+        "python": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["python-version", "qmd-node-version", "npm-version", "uv-version"],
+          "properties": {
+            "python-version": { "type": "string", "minLength": 1 },
+            "qmd-node-version": { "type": "string", "minLength": 1 },
+            "npm-version": { "type": "string", "minLength": 1 },
+            "uv-version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "web": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["node-version", "npm-version"],
+          "properties": {
+            "node-version": { "type": "string", "minLength": 1 },
+            "npm-version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "desktop": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["node-version", "npm-version"],
+          "properties": {
+            "node-version": { "type": "string", "minLength": 1 },
+            "npm-version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "macos-ipc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["architecture", "python-version", "uv-version"],
+          "properties": {
+            "architecture": { "type": "string", "minLength": 1 },
+            "python-version": { "type": "string", "minLength": 1 },
+            "uv-version": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "attempt",
+        "event",
+        "source_ref",
+        "exact_checked_out_sha",
+        "synthetic_context_sha",
+        "workflow_path",
+        "workflow_sha",
+        "url",
+        "conclusion",
+        "job_results"
+      ],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "event": { "enum": ["pull_request", "push", "workflow_dispatch"] },
+        "source_ref": { "type": "string", "minLength": 1 },
+        "exact_checked_out_sha": { "$ref": "#/$defs/sha40" },
+        "synthetic_context_sha": {
+          "oneOf": [{ "$ref": "#/$defs/sha40" }, { "type": "null" }]
+        },
+        "workflow_path": { "const": ".github/workflows/desktop-ci.yml" },
+        "workflow_sha": { "$ref": "#/$defs/sha40" },
+        "url": { "type": "string", "format": "uri" },
+        "conclusion": { "const": "success" },
+        "job_results": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["python", "web", "desktop", "macos-ipc", "source-coverage"],
+          "properties": {
+            "python": { "const": "success" },
+            "web": { "const": "success" },
+            "desktop": { "const": "success" },
+            "macos-ipc": { "const": "success" },
+            "source-coverage": { "const": "success" }
+          }
+        }
+      }
+    },
+    "qmd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tests",
+        "allowed_skip_reason",
+        "network_trap",
+        "network_policy",
+        "model_scan"
+      ],
+      "properties": {
+        "tests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tests", "pass", "fail", "cancelled", "skipped", "todo"],
+          "properties": {
+            "tests": { "type": "integer", "minimum": 1 },
+            "pass": { "type": "integer", "minimum": 1 },
+            "fail": { "const": 0 },
+            "cancelled": { "const": 0 },
+            "skipped": { "const": 1 },
+            "todo": { "const": 0 }
+          }
+        },
+        "allowed_skip_reason": {
+          "const": "better-sqlite3 native binding is not built in source checkout"
+        },
+        "network_trap": { "const": "active" },
+        "network_policy": { "const": "deny-external-allow-af-unix" },
+        "model_scan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scope",
+            "repository_worktree_scanned",
+            "global_tmp_scanned",
+            "model_files_created",
+            "model_cache_paths_created",
+            "scope_basis"
+          ],
+          "properties": {
+            "scope": {
+              "type": "array",
+              "prefixItems": [
+                { "const": "isolated HOME" },
+                { "const": "isolated XDG_CACHE_HOME" },
+                { "const": "isolated XDG_CONFIG_HOME" },
+                { "const": "isolated XDG_DATA_HOME" },
+                { "const": "isolated TMPDIR" }
+              ],
+              "items": false
+            },
+            "repository_worktree_scanned": { "const": false },
+            "global_tmp_scanned": { "const": false },
+            "model_files_created": { "const": 0 },
+            "model_cache_paths_created": { "const": 0 },
+            "scope_basis": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_commit",
+        "source_tree",
+        "lifecycle_phase",
+        "run",
+        "payload_artifact",
+        "provenance_artifact",
+        "provenance_absence_reason",
+        "technical_gate_results",
+        "legacy_payload_canonical_gate_results",
+        "tool_versions",
+        "qmd_source",
+        "guide_site"
+      ],
+      "properties": {
+        "source_commit": { "$ref": "#/$defs/sha40" },
+        "source_tree": { "$ref": "#/$defs/sha40" },
+        "lifecycle_phase": { "enum": ["pull-request-candidate", "branch-candidate"] },
+        "run": { "$ref": "#/$defs/run" },
+        "payload_artifact": { "$ref": "#/$defs/artifact" },
+        "provenance_artifact": {
+          "oneOf": [{ "$ref": "#/$defs/provenance_artifact" }, { "type": "null" }]
+        },
+        "provenance_absence_reason": { "type": ["string", "null"] },
+        "technical_gate_results": { "$ref": "#/$defs/gate_results" },
+        "legacy_payload_canonical_gate_results": {
+          "oneOf": [{ "$ref": "#/$defs/gate_results" }, { "type": "null" }]
+        },
+        "tool_versions": { "$ref": "#/$defs/tool_versions" },
+        "qmd_source": { "$ref": "#/$defs/qmd" },
+        "guide_site": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["disposition", "included", "validated"],
+          "properties": {
+            "disposition": { "const": "external-blocked" },
+            "included": { "const": false },
+            "validated": { "const": false }
+          }
+        }
+      }
+    },
+    "historical_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "source_commit",
+        "source_tree",
+        "technical_source_result",
+        "independent_acceptance",
+        "canonical_activation",
+        "rejection_reason_ids",
+        "implementation_checkpoint",
+        "final_source_execution"
+      ],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "source_commit": { "$ref": "#/$defs/sha40" },
+        "source_tree": { "$ref": "#/$defs/sha40" },
+        "technical_source_result": { "const": "pass" },
+        "independent_acceptance": { "const": "fail" },
+        "canonical_activation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "required_conditions"],
+          "properties": {
+            "status": { "const": "not-eligible" },
+            "required_conditions": { "$ref": "#/$defs/activation_conditions" }
+          }
+        },
+        "rejection_reason_ids": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "implementation_checkpoint": { "$ref": "#/$defs/execution" },
+        "final_source_execution": { "$ref": "#/$defs/execution" }
+      }
+    },
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_ids",
+        "checkpoint_a",
+        "checkpoint_a_record_sha256",
+        "technical_source_result",
+        "independent_acceptance",
+        "final_containing_head_binding",
+        "canonical_activation"
+      ],
+      "properties": {
+        "finding_ids": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "checkpoint_a": {
+          "oneOf": [{ "$ref": "#/$defs/execution" }, { "type": "null" }]
+        },
+        "checkpoint_a_record_sha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "technical_source_result": { "enum": ["pending", "pass"] },
+        "independent_acceptance": { "const": "pending" },
+        "final_containing_head_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "workflow_path",
+            "workflow_name",
+            "events",
+            "source_expression",
+            "required_jobs",
+            "summary_job",
+            "payload_artifact_prefix",
+            "provenance_artifact_prefix"
+          ],
+          "properties": {
+            "mode": { "const": "attached-exact-head-payload-and-provenance" },
+            "workflow_path": { "const": ".github/workflows/desktop-ci.yml" },
+            "workflow_name": { "const": "Desktop source CI" },
+            "events": {
+              "type": "array",
+              "prefixItems": [
+                { "const": "push" },
+                { "const": "pull_request" },
+                { "const": "workflow_dispatch" }
+              ],
+              "items": false
+            },
+            "source_expression": {
+              "const": "${{ github.event.pull_request.head.sha || github.sha }}"
+            },
+            "required_jobs": {
+              "type": "array",
+              "prefixItems": [
+                { "const": "python" },
+                { "const": "web" },
+                { "const": "desktop" },
+                { "const": "macos-ipc" }
+              ],
+              "items": false
+            },
+            "summary_job": { "const": "source-coverage" },
+            "payload_artifact_prefix": { "const": "w01-source-coverage-" },
+            "provenance_artifact_prefix": {
+              "const": "w01-source-coverage-provenance-"
+            }
+          }
+        },
+        "canonical_activation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "required_conditions"],
+          "properties": {
+            "status": { "const": "blocked" },
+            "required_conditions": { "$ref": "#/$defs/activation_conditions" }
+          }
+        }
+      }
+    }
+  }
+}

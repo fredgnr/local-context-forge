@@ -267,7 +267,7 @@ comparison ref 重算 promotion order/`make_latest`，再以一次 REST PATCH �
 repository owner、contents writer/可改 workflow 的主体和 settings admin 仍是根信任；GitHub
 Draft 无资产 CAS，verify→PATCH 竞态只能后验检测。
 
-真实 GitHub settings、protected signing/promotion 和物理 Mac 证据仍为 `not-run`，整体结论为
-**source merge GO / release NO-GO**。
+真实 GitHub settings、protected signing/promotion 和物理 Mac 证据仍为 `not-run`；PR #20 的
+W01 remediation 尚待 exact-head 独立验收，当前为 **PR merge blocked / release NO-GO**。
 
 完整发布和恢复操作见[桌面版完整指南](16-electron-desktop-guide.md)。

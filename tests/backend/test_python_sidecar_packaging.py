@@ -925,6 +925,36 @@ def test_wait_for_socket_rejects_a_socket_owned_by_another_identity(
         log_handle.close()
 
 
+def test_canonical_private_smoke_root_resolves_a_parent_alias(
+    tmp_path: Path,
+) -> None:
+    physical_parent = tmp_path / "physical"
+    physical_parent.mkdir(mode=0o700)
+    alias_parent = tmp_path / "alias"
+    alias_parent.symlink_to(physical_parent, target_is_directory=True)
+    lexical_root = alias_parent / "smoke"
+    lexical_root.mkdir(mode=0o700)
+
+    canonical = build._canonical_private_smoke_root(str(lexical_root))
+
+    assert canonical == physical_parent / "smoke"
+    assert canonical.resolve(strict=True) == canonical
+
+
+def test_canonical_private_smoke_root_rejects_a_nonprivate_directory(
+    tmp_path: Path,
+) -> None:
+    smoke_root = tmp_path / "smoke"
+    smoke_root.mkdir(mode=0o700)
+    smoke_root.chmod(0o755)
+
+    with pytest.raises(
+        build.BuildError,
+        match=r"^Frozen smoke root is not a private canonical directory$",
+    ):
+        build._canonical_private_smoke_root(str(smoke_root))
+
+
 def _install_binding_fixture(
     tmp_path: Path,
 ) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:

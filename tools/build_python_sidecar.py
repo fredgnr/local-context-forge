@@ -2240,6 +2240,33 @@ def _wait_for_socket(
     raise BuildError("Frozen sidecar UDS readiness timed out")
 
 
+def _canonical_private_smoke_root(raw_root: str) -> Path:
+    lexical_root = Path(raw_root)
+    if not lexical_root.is_absolute() or ".." in lexical_root.parts:
+        raise BuildError("Frozen smoke root is not an absolute path")
+    try:
+        lexical_info = lexical_root.lstat()
+        canonical_root = lexical_root.resolve(strict=True)
+        canonical_info = canonical_root.lstat()
+    except OSError as exc:
+        raise BuildError("Frozen smoke root cannot be inspected") from exc
+    if (
+        not stat.S_ISDIR(lexical_info.st_mode)
+        or stat.S_ISLNK(lexical_info.st_mode)
+        or not stat.S_ISDIR(canonical_info.st_mode)
+        or stat.S_ISLNK(canonical_info.st_mode)
+        or (lexical_info.st_dev, lexical_info.st_ino)
+        != (canonical_info.st_dev, canonical_info.st_ino)
+        or lexical_info.st_uid != os.geteuid()
+        or canonical_info.st_uid != os.geteuid()
+        or stat.S_IMODE(lexical_info.st_mode) != 0o700
+        or stat.S_IMODE(canonical_info.st_mode) != 0o700
+        or canonical_root.resolve(strict=True) != canonical_root
+    ):
+        raise BuildError("Frozen smoke root is not a private canonical directory")
+    return canonical_root
+
+
 def _duplicate_high(descriptor: int) -> int:
     try:
         import fcntl
@@ -2343,7 +2370,11 @@ def run_frozen_smoke(
 
     executable = (bundle / "lcf-service").resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix="lcf-frozen-smoke-") as raw_root:
-        smoke_root = Path(raw_root)
+        # macOS commonly exposes its temporary root through /var while the
+        # canonical inode lives below /private/var. Retrieval sockets reject
+        # that lexical alias, so derive every child path from the verified
+        # canonical directory without weakening the runtime validation.
+        smoke_root = _canonical_private_smoke_root(raw_root)
         trap_directory = smoke_root / "trap"
         trap_marker = smoke_root / "path-used.log"
         source_root = smoke_root / "source-root"

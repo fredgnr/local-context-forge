@@ -992,6 +992,80 @@ def test_frozen_socket_paths_reject_more_than_the_runtime_bound() -> None:
         build._frozen_socket_paths(root)
 
 
+@pytest.mark.parametrize(
+    ("status", "payload", "expected_category"),
+    [
+        (503, {"detail": "token-must-not-leak"}, "payload=object"),
+        (200, "token-must-not-leak", "payload=scalar"),
+    ],
+)
+def test_frozen_uds_failure_reports_only_a_fixed_check_and_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    payload: Any,
+    expected_category: str,
+) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    response = (
+        f"HTTP/1.1 {status} Synthetic\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n"
+    ).encode("ascii") + body
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.responses = deque((response, b""))
+
+        def settimeout(self, _timeout: float) -> None:
+            pass
+
+        def connect(self, _path: str) -> None:
+            pass
+
+        def sendall(self, _request: bytes) -> None:
+            pass
+
+        def recv(self, _size: int) -> bytes:
+            return self.responses.popleft()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(build.socket, "socket", lambda *_args: FakeSocket())
+
+    with pytest.raises(build.BuildError) as failure:
+        build._http_json_over_uds(
+            tmp_path / "sidecar.sock",
+            "/api/desktop/handshake",
+            check="handshake",
+            token="A" * 43,
+            launch_id="00000000-0000-4000-8000-000000000000",
+        )
+
+    message = str(failure.value)
+    assert message == (
+        "Frozen UDS response did not pass "
+        f"(check=handshake; expected=200; observed={status}; "
+        f"{expected_category})"
+    )
+    assert "must-not-leak" not in message
+
+
+def test_frozen_uds_rejects_an_unknown_diagnostic_check(tmp_path: Path) -> None:
+    with pytest.raises(
+        build.BuildError,
+        match=r"^Frozen UDS smoke requested an unknown check$",
+    ):
+        build._http_json_over_uds(
+            tmp_path / "sidecar.sock",
+            "/api/desktop/handshake",
+            check="token-must-not-leak",
+            token="A" * 43,
+            launch_id="00000000-0000-4000-8000-000000000000",
+        )
+
+
 def _install_binding_fixture(
     tmp_path: Path,
 ) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:

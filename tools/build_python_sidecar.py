@@ -76,6 +76,19 @@ MAX_SMOKE_BROKER_COLLECTIONS = 256
 MAX_SMOKE_BROKER_REVISION = 2**53 - 1
 MAX_FROZEN_START_LOG_BYTES = 1024 * 1024
 MAX_FROZEN_UDS_PATH_BYTES = 100
+FROZEN_UDS_CHECKS = frozenset(
+    {
+        "handshake",
+        "health",
+        "library-create",
+        "library-ingest",
+        "job-status",
+        "pages",
+        "lint",
+        "library-publish",
+        "post-publish-health",
+    }
+)
 EXPECTED_MISSING_IMPORT_PATTERN = re.compile(
     r"^missing module named ['\"]?([^ '\"(),]+)['\"]?"
 )
@@ -1739,6 +1752,7 @@ def _http_json_over_uds(
     socket_path: Path,
     request_path: str,
     *,
+    check: str,
     token: str,
     launch_id: str,
     method: str = "GET",
@@ -1746,8 +1760,12 @@ def _http_json_over_uds(
     expected_status: int = 200,
     timeout: float = 10.0,
 ) -> Any:
+    if check not in FROZEN_UDS_CHECKS:
+        raise BuildError("Frozen UDS smoke requested an unknown check")
     if method not in {"GET", "POST"}:
         raise BuildError("Frozen UDS smoke requested an unsupported method")
+    if not isinstance(expected_status, int) or not 100 <= expected_status <= 599:
+        raise BuildError("Frozen UDS smoke expected an invalid status")
     serialized = (
         b""
         if body is None
@@ -1788,9 +1806,12 @@ def _http_json_over_uds(
                 break
             response.extend(chunk)
             if len(response) > 1024 * 1024:
-                raise BuildError("Frozen UDS response exceeds its size bound")
+                raise BuildError(
+                    "Frozen UDS response exceeds its size bound "
+                    f"(check={check})"
+                )
     except OSError as exc:
-        raise BuildError("Frozen UDS request failed") from exc
+        raise BuildError(f"Frozen UDS request failed (check={check})") from exc
     finally:
         client.close()
     try:
@@ -1804,9 +1825,26 @@ def _http_json_over_uds(
         UnicodeDecodeError,
         json.JSONDecodeError,
     ) as exc:
-        raise BuildError("Frozen UDS response is malformed") from exc
+        raise BuildError(
+            f"Frozen UDS response is malformed (check={check})"
+        ) from exc
+    if not 100 <= status <= 599:
+        raise BuildError(
+            f"Frozen UDS response has an invalid status (check={check})"
+        )
     if status != expected_status or not isinstance(payload, (dict, list)):
-        raise BuildError("Frozen UDS response did not pass")
+        payload_kind = (
+            "object"
+            if isinstance(payload, dict)
+            else "array"
+            if isinstance(payload, list)
+            else "scalar"
+        )
+        raise BuildError(
+            "Frozen UDS response did not pass "
+            f"(check={check}; expected={expected_status}; "
+            f"observed={status}; payload={payload_kind})"
+        )
     return payload
 
 
@@ -2551,6 +2589,7 @@ def run_frozen_smoke(
             handshake = _http_json_over_uds(
                 socket_path,
                 "/api/desktop/handshake",
+                check="handshake",
                 token=token,
                 launch_id=launch_id,
             )
@@ -2575,6 +2614,7 @@ def run_frozen_smoke(
             health = _http_json_over_uds(
                 socket_path,
                 "/api/health",
+                check="health",
                 token=token,
                 launch_id=launch_id,
             )
@@ -2589,6 +2629,7 @@ def run_frozen_smoke(
             library = _http_json_over_uds(
                 socket_path,
                 "/api/libraries",
+                check="library-create",
                 token=token,
                 launch_id=launch_id,
                 method="POST",
@@ -2609,6 +2650,7 @@ def run_frozen_smoke(
             job = _http_json_over_uds(
                 socket_path,
                 f"/api/libraries/{library_id}/ingest",
+                check="library-ingest",
                 token=token,
                 launch_id=launch_id,
                 method="POST",
@@ -2630,6 +2672,7 @@ def run_frozen_smoke(
                 completed_job = _http_json_over_uds(
                     socket_path,
                     f"/api/jobs/{job_id}",
+                    check="job-status",
                     token=token,
                     launch_id=launch_id,
                 )
@@ -2673,6 +2716,7 @@ def run_frozen_smoke(
             pages = _http_json_over_uds(
                 socket_path,
                 f"/api/libraries/{library_id}/pages?version=1.0.0",
+                check="pages",
                 token=token,
                 launch_id=launch_id,
             )
@@ -2692,6 +2736,7 @@ def run_frozen_smoke(
             lint = _http_json_over_uds(
                 socket_path,
                 f"/api/libraries/{library_id}/lint?version=1.0.0",
+                check="lint",
                 token=token,
                 launch_id=launch_id,
                 method="POST",
@@ -2701,6 +2746,7 @@ def run_frozen_smoke(
             published_library = _http_json_over_uds(
                 socket_path,
                 f"/api/libraries/{library_id}",
+                check="library-publish",
                 token=token,
                 launch_id=launch_id,
             )
@@ -2720,6 +2766,7 @@ def run_frozen_smoke(
             post_publish_health = _http_json_over_uds(
                 socket_path,
                 "/api/health",
+                check="post-publish-health",
                 token=token,
                 launch_id=launch_id,
             )

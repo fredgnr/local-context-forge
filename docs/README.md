@@ -6,8 +6,9 @@ Local Context Forge 正在收敛为 macOS Apple Silicon Electron all-in-one 客�
 - **Electron 桌面版**：目标形态。应用内置 Python sidecar、Node/QMD、Web UI 与 MCP
   companion，并已有 tag-only Draft/trusted-main promotion source policy；但真实 GitHub
   settings、正式 Release、干净用户安装、真实 Codex 任务和物理更新门禁仍未完成。PR #20 的
-  W01 accepted remediation、canonical merge 与 resulting-main source 已闭环；当前进入 W02
-  boundary/assembly source implementation，整体保持 **release NO-GO**。
+  W01 accepted remediation、canonical merge 与 resulting-main source 已闭环；W02 Draft PR #21
+  static assembly/bundle audit 已通过，但 packaged launch/runtime 仍为 `not-run`，整体保持
+  **release NO-GO**。
 - **legacy Docker/Web**：已弃用、unsupported、待删除；`install.sh` 与
   `docs/15-github-actions-ghcr.md` 仍描述当前仓库残留，不再是受支持安装/回退路径。
 

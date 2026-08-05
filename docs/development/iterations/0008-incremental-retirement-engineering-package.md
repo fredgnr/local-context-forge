@@ -5,6 +5,10 @@
 - 实施基线：`main@1786255b55dd1a78659ed92235893876175a0722` / tree
   `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64`
 - 当前分支：`agent/w02a-engineering-smoke-boundary`
+- 当前静态 assembly checkpoint：Draft PR #21 exact source
+  `08137c7bce5469350b861cef7960e4a0530151bf` / tree
+  `d7814ac96136cea33fb7069d9538a4aad8dffa38`；Desktop source CI `31024794734`
+  success；engineering-smoke assembly run `31024794972` / job `92370351806` success
 - 依赖：ADR-0016；W01 的 `VAL-PRE1-SEQUENCE-001`、`VAL-GOV-001`、
   `VAL-CI-COVERAGE-001=pass` 已闭环；W10/W11 随后仍依赖 W02 的
   `VAL-PACKAGED-SMOKE-001=pass`
@@ -40,8 +44,10 @@
 
 - [ ] I01（W02）实现独立 non-release packaging mode 和最小 packaged smoke；不创建新的稳定
   task/VAL ID。内部执行阶段为：
-  - [ ] engineering-smoke boundary/assembly：本 Work，source implementation `in-progress`；只构建
-    和审计 macOS arm64 `.app`，不启动 App，不把 assembly 当成 packaged runtime smoke；
+  - [x] engineering-smoke boundary/assembly：本 Work，static assembly/bundle audit substage `pass`；
+    exact Draft head 上只构建和审计 macOS arm64 `.app`，不启动 assembled App；pre-pack frozen
+    sidecar staging smoke 已成功，但没有从 bundle 启动 sidecar，不把 assembly/staging 当成
+    packaged runtime smoke；见 [assembly evidence](../evidence/W02/2026-08-06-08137c7-assembly.md)；
   - [ ] packaged App launch/runtime smoke：后续 Work，`not-run`；验证 renderer/preload、private
     UDS health/domain request、quit/no orphan、无 public INET，以及 exercised path 不发现系统
     Python/Node/Git；
@@ -68,8 +74,10 @@
 | 验证/阶段 | 结果 | 坐标 | 说明 |
 | --- | --- | --- | --- |
 | W01 entry prerequisites | `pass` | accepted final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`；resulting `main@1786255b55dd1a78659ed92235893876175a0722`；run `30986208251` | [W02 entry record](../evidence/W02/2026-08-05-entry.md)；历史 W01 JSON 保持原样 |
-| W02 boundary/assembly source | `in-progress` | `agent/w02a-engineering-smoke-boundary` | 独立 config、manifest、staging/audit、policy/workflow 与 source tests 正在实施 |
-| engineering-smoke `.app` assembly | `not-run` | macOS 15 arm64 required | 本记录不把 source implementation 冒充 bundle assembly |
+| W02 boundary/assembly source | `pass`（Draft exact-head substage） | `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38`；source run `31024794734` | 独立 config、manifest、staging/audit、policy/workflow 与 source tests 成功；PR #21 仍是 Draft |
+| engineering-smoke `.app` static assembly / bundle audit | `pass` | [run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806) | inventory `879` / native `78` / SHA-256 `7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c`；remote artifacts empty；[evidence](../evidence/W02/2026-08-06-08137c7-assembly.md) |
+| pre-pack frozen sidecar staging smoke | `pass` | assembly job build step | 只证明 sidecar build/staging；assembled `.app` 未启动，sidecar 未从 bundle 启动 |
+| packaged App launch/runtime smoke | `not-run` | assembled macOS arm64 App required | renderer/preload、bundle-owned sidecar/UDS、quit/no-orphan、listener 与 packaged PATH trap 未运行 |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` | packaged App launch/runtime | 本 Work 明确不启动 packaged App |
 | W10/W11 six slice gates | `not-run` | exact before/after packages | W10/W11 locked；本 Work 不删除 legacy runtime |
 | public release | `not-run` / `NO-GO` | W14–W16 | 不改 settings/credentials/pins，不创建 tag/upload/Draft/Release |

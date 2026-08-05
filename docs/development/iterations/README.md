@@ -21,7 +21,7 @@ packaged/physical 退出门禁仍未满足而继续作为父 ledger 开放，这
 | [ITER-0005](0005-updater-physical-gate.md) | `planned` | 真实单调 `N-1 → N` 实机更新与 DMG fallback |
 | [ITER-0006](0006-legacy-exit.md) | `superseded` | 历史：迁移演练、Docker legacy 去留决策；由 ADR-0015 取代 |
 | [ITER-0007](0007-electron-only-retirement.md) | `superseded` | 历史计划：完整 cutover 后才删除；执行顺序由 ADR-0016/ITER-0008 取代 |
-| [ITER-0008](0008-incremental-retirement-engineering-package.md) | `in-progress`（W02 boundary/assembly source implementation；packaged launch `not-run`） | 最小 packaged smoke、增量 legacy slices、cleaned-tree 工程包与 final cutover |
+| [ITER-0008](0008-incremental-retirement-engineering-package.md) | `in-progress`（W02 static assembly/bundle audit `pass`；packaged launch/runtime `not-run`） | 最小 packaged smoke、增量 legacy slices、cleaned-tree 工程包与 final cutover |
 
 每个记录维护自己的范围、任务、验收、风险、验证日志和变更清单。Rxx 中 source task 的
 `[x]` 不代表父迭代完成，也不把 packaged/physical `not-run` 门禁提升为 `pass`。未开始的

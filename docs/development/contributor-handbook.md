@@ -12,7 +12,8 @@
 > public HTTP、Host Runner 和 legacy MCP 只用于静态 retirement inventory；不要运行它们建立
 > 新实例。实际删除受 ADR-0015/0016、[W01–W16 work plan](work-plan.md) 与严格路径矩阵约束：
 > W01 修复 candidate 的 PR/source、independent acceptance、accepted merge 与 canonical-main
-> source 已全部闭环；W02 当前只实施 engineering-smoke boundary/assembly，不启动 packaged App。
+> source 已全部闭环；W02 static assembly/bundle audit 已运行，但 assembled App 未启动，packaged
+> launch/runtime 仍为 `not-run`。
 > 只有 W02 完整 packaged smoke 通过后才可按独立 slice 删除，final cutover/absence 留到 W13。
 
 ## 1. Checkout 后先建立坐标
@@ -162,10 +163,12 @@ npm --prefix desktop run start:source
 
 ### 4.4 工程打包与正式打包
 
-W02 engineering smoke 与 W03 engineering test package 都尚未实现；它们必须明确 non-release，
-不用 production credential/pins，不由 tag 触发、不上传、不创建 Draft/Release，updater
-unavailable/no-network。W02 只支撑 slice feedback；W03 从 cleaned tree 构建并支撑 W04–W12。
-两者都不能提升 formal gate。
+W02 engineering smoke 目前只完成 exact Draft head 的 static `.app` directory assembly/bundle
+audit；pre-pack frozen sidecar staging smoke 已成功，但 assembled App 未启动、sidecar 未从 bundle
+启动，完整 packaged launch/runtime gate 仍为 `not-run`。W03 engineering test package 也尚未
+实现。两者必须明确 non-release，不用 production credential/pins，不由 tag 触发、不上传、不创建
+Draft/Release，updater unavailable/no-network。W02 只支撑 slice feedback；W03 从 cleaned tree
+构建并支撑 W04–W12。两者都不能提升 formal gate。
 
 普通开发者不要把本地 `dist:mac` 当成正式发行。正式流程只能由
 `.github/workflows/desktop-release.yml` 执行。详见

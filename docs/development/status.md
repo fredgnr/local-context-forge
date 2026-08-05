@@ -9,7 +9,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 截止日期 | 2026-08-05 |
+| 截止日期 | 2026-08-06 |
 | canonical repository | `fredgnr/local-context-forge` |
 | 本轮实施基线 | `main@1786255b55dd1a78659ed92235893876175a0722` |
 | 基线来源 | PR #20 accepted final `36885e04df09c4789d8ec3c9dc5c5e78a381a634` 合入；accepted/resulting-main tree 均为 `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64` |
@@ -17,7 +17,8 @@
 | 数据库 schema | `5` |
 | 活动父迭代 | [ITER-0002](iterations/0002-bundled-runtimes.md) |
 | 活动实施记录 | [ITER-0008](iterations/0008-incremental-retirement-engineering-package.md) / W02 |
-| 当前结论 | **W01 source/governance closed / W02 boundary-and-assembly in progress / public release NO-GO** |
+| W02 static assembly checkpoint | Draft PR #21 `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38`；assembly run `31024794972` / job `92370351806` |
+| 当前结论 | **W02 in-progress：static assembly/bundle audit `pass`；packaged launch/runtime `not-run`；public release NO-GO** |
 
 PR #20 的旧 final candidate 已被独立验收拒绝；remediation exact final
 `36885e04df09c4789d8ec3c9dc5c5e78a381a634` 已通过 PR/source 与独立验收并合入 canonical
@@ -73,6 +74,16 @@ technical `pass`，independent acceptance 在该历史记录时刻仍为 `pendin
 Web、Desktop、macOS arm64 IPC 与 exact-head source-coverage jobs 均为 `success`。当前 W01 三个
 source/governance gate、independent acceptance、canonical merge、resulting-main source 与
 activation 均为 `pass`。
+
+W02 Draft PR #21 exact head `08137c7bce5469350b861cef7960e4a0530151bf` 的
+[Desktop source CI `31024794734`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794734)
+与 [engineering-smoke assembly run `31024794972`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972)
+均为 `success`。static `.app` directory assembly 与 bundle audit 为 `pass`，inventory 为
+`879` entries / `78` native files，SHA-256 为
+`7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c`；见
+[canonical assembly record](evidence/W02/2026-08-06-08137c7-assembly.md)。该 job 的 pre-pack
+frozen sidecar staging smoke 已成功，但 assembled App 未启动、sidecar 未从 bundle 启动，remote
+artifacts empty，因此这不是 packaged runtime gate。
 更早 PR #17 证据包括：
 
 - [Desktop source CI run 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112)：
@@ -89,7 +100,7 @@ packaged/physical gate。
 | 路径 | 当前可用性 | 适用对象 | 主要限制 |
 | --- | --- | --- | --- |
 | Electron 源码模式 | 可用于开发和 source 验证 | 开发者 | 借用开发机 Python/Node；不是正式包 |
-| 最小 packaged smoke | boundary/assembly source `in-progress`；assembly/launch `not-run` | W02 removal feedback | 当前 Work 只建立隔离工程包边界与 `.app` assembly；不启动 App，不完成 `VAL-PACKAGED-SMOKE-001` |
+| 最小 packaged smoke | static assembly/bundle audit `pass`；packaged launch/runtime `not-run` | W02 removal feedback | exact Draft head 只完成非上传 `.app` directory 静态审计；没有启动 assembled App，不完成 `VAL-PACKAGED-SMOKE-001` |
 | 完整 engineering test package | `planned` / `not-run` | W04–W12 工程物理验证 | 只能从 W10/W11 cleaned tree 构建；UNOFFICIAL、无 production trust/tag/upload |
 | Electron 正式 DMG | `not-run` / 不推荐 | 将来的普通用户 | trust pins、签名、真机和 promotion 未完成 |
 | Legacy Docker/Web | 已弃用、unsupported、待删除 | 仅用于解释当前仓库残留 | 不承诺修复、迁移、兼容窗口或继续可用 |
@@ -111,7 +122,7 @@ ITER-0008 的 W10/W11 slices 移除。此状态变化不自动停止现有容器
 | P4 Desktop 数据、模型 | `planned` | 标准路径部分落地 | Desktop backup/restore、完整模型供应链、unknown layout fail-closed |
 | P5 DMG 与发布 | `planned` / 后置 W14–W16 | 两阶段 workflow/source policy | W13、GitHub settings、trust pins、签名 Draft、clean-user |
 | P6 更新实机门禁 | `planned` | signed check/download/open-DMG source client | 真实 `N-1 → N`、失败注入；automatic apply 尚未设计 |
-| P7 Electron-only 退出 | `in-progress` | W01 已闭环；ADR-0015/0016、W01–W16 与严格删除计划 | W02 assembly + runtime smoke、W10/W11 slices、W03 engineering package、W13 final gates |
+| P7 Electron-only 退出 | `in-progress` | W01 已闭环；W02 static assembly/audit 已运行；ADR-0015/0016、W01–W16 与严格删除计划 | W02 packaged runtime smoke、W10/W11 slices、W03 engineering package、W13 final gates |
 
 P2/P3 的实现依赖 P1 已冻结的 source IPC contract，而不是 P1 的完整 packaged gate。
 P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物理退出门禁。
@@ -149,6 +160,14 @@ settings、signing、Release gate。
 | `VAL-UPDATE-CLIENT-001` | `pass` | manifest、cache、IPC、verified DMG source 合同 |
 | `VAL-LOCAL-SOURCE-001/002` | `pass` | grant/path 与 Backend 双层 source policy |
 
+W02 static assembly substage（不等于 packaged runtime gate）：
+
+| Substage | 结果 | 证据与限制 |
+| --- | --- | --- |
+| engineering-smoke `.app` directory assembly / bundle audit | `pass` | Draft PR #21 exact `08137c7…`；[run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806)；inventory SHA-256 `7fcdb699…`；remote artifacts empty；assembled App 未启动 |
+| pre-pack frozen sidecar staging smoke | `pass` | assembly job build step；仅为 staging evidence，sidecar 未从 assembled bundle 启动 |
+| packaged App launch/runtime | `not-run` | `VAL-PACKAGED-SMOKE-001` 仍未运行，W10/W11 locked |
+
 ### 必须保持 `not-run`
 
 | Gate | 最低真实环境 |
@@ -177,9 +196,10 @@ settings、signing、Release gate。
 
 ## 当前阻塞
 
-1. W02 当前只在建立隔离的 engineering-smoke packaging boundary、manifest、`.app` assembly 和
-   bundle audit；本 Work 的 macOS assembly 尚未运行。
-2. packaged App launch/runtime harness 仍未实现或运行，`VAL-PACKAGED-SMOKE-001=not-run`；因此
+1. W02 static `.app` directory assembly/bundle audit 已在 Draft PR #21 exact head 运行成功，但
+   remote artifacts empty；没有 retained App/package digest 可供后续 launch 复用。
+2. packaged App launch/runtime harness 仍未实现或运行，assembled App 未启动、sidecar 未从
+   bundle 启动，`VAL-PACKAGED-SMOKE-001=not-run`；因此
    W10/W11 destructive slices 继续 locked。
 3. W10/W11 的 decouple/deploy/transport/provider/release/docs slice 均未执行，container/GHCR
    workflow 与 legacy runtime 仍在。
@@ -204,9 +224,9 @@ settings、signing、Release gate。
 
 ### Ready now：无需外部管理员或物理候选
 
-1. 在当前 Work 完成与 formal release 隔离的 W02 engineering-smoke boundary/assembly，构建但
-   不启动 macOS arm64 `.app`，并保留 assembly 与完整 gate 的真实状态；
-2. 后续 Work 在 independently accepted exact bundle implementation 上启动 App、运行 runtime
+1. 审阅 Draft PR #21 的 exact static assembly evidence；保持 remote artifact、production trust、
+   tag/Draft/Release 边界不变，且不把该 substage 提升为 packaged gate；
+2. 后续 Work 在 independently accepted exact bundle implementation 上 fresh build、绑定 digest、启动 App并运行 runtime
    smoke，并在 resulting `main` 重跑，才可把 `VAL-PACKAGED-SMOKE-001` 提升为 `pass`；
 3. W02 完整 gate 通过后，按 [work plan](work-plan.md) 分别认领 W10/W11 slice；不能把它们合成无
    owner 的大删除。

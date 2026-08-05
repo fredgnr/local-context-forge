@@ -13,6 +13,7 @@
 | W01 旧 candidate | final `2b7629468c711d0db5107f7001aa90c0271079ae` / tree `ad1b76febd1adcaf1ada96ed7dd43fbe1e5a3adf` | technical `pass`；independent `fail`；activation `not-eligible` | [schema v2 history](W01/2026-08-04.json)；[Actions 30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329)；旧 artifact `8900365901` |
 | W01 remediation historical Checkpoint A | `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree `f059ad8bd3cfc6accac707745d5d8727bfb532bd` | 记录时刻 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [immutable schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597`；[closed schema](W01/schema-v2.json) |
 | W01 accepted remediation / W02 entry | final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`；resulting main `1786255b55dd1a78659ed92235893876175a0722`；same tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64` | PR/source、independent acceptance、merge、resulting-main source、W02 activation `pass`；packaged smoke `not-run` | [W02 entry closeout](W02/2026-08-05-entry.md)；[Actions 30986208251](https://github.com/fredgnr/local-context-forge/actions/runs/30986208251) |
+| W02 static assembly substage | `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38` | `.app` directory assembly / bundle audit `pass`；packaged launch/runtime 与 `VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [assembly record](W02/2026-08-06-08137c7-assembly.md)；[run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806)；source run `31024794734` success |
 
 旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。W01 JSON
 冻结其记录时刻的 remediation lifecycle；后续 external acceptance/merge/main run 由新的 W02 entry
@@ -212,9 +213,14 @@ quit/no orphan、process/socket observation、exercised path 的 system Python/N
 updater unavailable/no-network。`tag`、`release_id`、
 credential generation 和 production pin 必须为 null/absent。
 
-[2026-08-05 entry record](W02/2026-08-05-entry.md) 只证明 W01 外部退出条件已满足。当前 W02
-boundary/assembly source implementation 不启动 packaged App；`.app` assembly 与上述 launch/runtime
-观察均为 `not-run`，因此 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。W10/W11 不得据此解锁。
+[2026-08-05 entry record](W02/2026-08-05-entry.md) 只证明 W01 外部退出条件已满足，保留其
+记录时刻的 assembly `not-run` 历史，不回写。[2026-08-06 assembly record](W02/2026-08-06-08137c7-assembly.md)
+随后证明 Draft PR #21 exact head 的 static `.app` directory assembly 与 bundle audit 为 `pass`；
+规范化 inventory SHA-256 为
+`7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c`，但 remote artifacts
+empty，没有 retained App/package digest。pre-pack frozen sidecar staging smoke 已成功；assembled
+App 未启动、sidecar 未从 bundle 启动，上述 launch/runtime 观察均为 `not-run`。因此
+`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W10/W11 不得据此解锁。
 
 ### W10/W11 slice
 

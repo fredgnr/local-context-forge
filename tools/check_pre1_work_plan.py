@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -20,6 +21,10 @@ R13 = ROOT / "docs/development/iterations/0002-r13-pre1-incremental-retirement.m
 RELEASE_RUNBOOK = ROOT / "docs/development/desktop-release.md"
 W01_EVIDENCE = ROOT / "docs/development/evidence/W01/2026-08-04.json"
 W02_ENTRY = ROOT / "docs/development/evidence/W02/2026-08-05-entry.md"
+W02_ASSEMBLY = (
+    ROOT
+    / "docs/development/evidence/W02/2026-08-06-08137c7-assembly.md"
+)
 
 EXPECTED_ORDER = [
     "W01",
@@ -242,7 +247,7 @@ CURRENT_W01_TRACE_MARKER = (
     "PR/source、independent acceptance、canonical merge 与 resulting-main source 均 `pass`"
 )
 W02_PHASE_MARKERS = {
-    "engineering-smoke boundary/assembly：本 Work，source implementation `in-progress`",
+    "engineering-smoke boundary/assembly：本 Work，static assembly/bundle audit substage `pass`",
     "packaged App launch/runtime smoke：后续 Work，`not-run`",
     "W10/W11 保持 locked",
 }
@@ -262,6 +267,55 @@ W02_ENTRY_REQUIRED_MARKERS = {
     "Desktop source checks | `success`",
     "macOS 15 arm64 source IPC | `success`",
     "W01 exact-head source coverage evidence | `success`",
+}
+W02_ASSEMBLY_SOURCE = "08137c7bce5469350b861cef7960e4a0530151bf"
+W02_ASSEMBLY_TREE = "d7814ac96136cea33fb7069d9538a4aad8dffa38"
+W02_ASSEMBLY_RUN = "31024794972"
+W02_ASSEMBLY_JOB = "92370351806"
+W02_ASSEMBLY_SOURCE_RUN = "31024794734"
+W02_ASSEMBLY_INVENTORY_SHA256 = (
+    "7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c"
+)
+W02_ASSEMBLY_DOCUMENT_SHA256 = (
+    "6404b2274348d10c5d1a4a18a3cf4ed15ae2cdfbddfa540b5f96b3ef600425a4"
+)
+W02_ASSEMBLY_AUTHORITY_MARKER = (
+    "<!-- w02-assembly-authority: "
+    f"source={W02_ASSEMBLY_SOURCE},tree={W02_ASSEMBLY_TREE},"
+    f"assembly-run={W02_ASSEMBLY_RUN},assembly-job={W02_ASSEMBLY_JOB},"
+    f"source-run={W02_ASSEMBLY_SOURCE_RUN},"
+    f"inventory-sha256={W02_ASSEMBLY_INVENTORY_SHA256},"
+    "inventory-entries=879,native-files=78,source-date-epoch=1785946811 -->"
+)
+W02_ASSEMBLY_REQUIRED_MARKERS = {
+    "Draft #21",
+    "assembly job conclusion | `success`；all steps `success`",
+    "remote artifacts | empty",
+    "| `assembly` | `pass` |",
+    "| `bundleAudit` | `pass` |",
+    "`identityName=-` / `identityHash=none`",
+    "| notarization | `false` |",
+    "pre-pack frozen sidecar staging smoke 已运行且成功",
+    "sidecar 未从 assembled bundle 启动",
+    "`packagedAppLaunch`：`not-run`",
+    "`packagedSmokeValidation`：`not-run`",
+    "`VAL-PACKAGED-SMOKE-001`：`not-run`",
+    "W10/W11：`locked`",
+    "public release：`NO-GO`",
+    "没有可下载的 `.app` archive 或 package digest",
+    f"| exact source commit | `{W02_ASSEMBLY_SOURCE}` |",
+    f"| exact source tree | `{W02_ASSEMBLY_TREE}` |",
+    (
+        "| normalized inventory SHA-256 | "
+        f"`{W02_ASSEMBLY_INVENTORY_SHA256}` |"
+    ),
+}
+W02_ASSEMBLY_FORBIDDEN_CLAIMS = {
+    "`VAL-PACKAGED-SMOKE-001`：`pass`",
+    "VAL-PACKAGED-SMOKE-001: pass",
+    "public release：`GO`",
+    "public release: GO",
+    "normalized inventory SHA-256 is the package digest",
 }
 
 CONTINUITY_COMPONENTS = {
@@ -339,6 +393,7 @@ def validate_documents(
     release_runbook: str,
     w01_evidence: dict[str, object],
     w02_entry: str,
+    w02_assembly: str,
 ) -> list[str]:
     errors: list[str] = []
     expected_task_status = dict(EXPECTED_TASK_STATUS)
@@ -523,6 +578,20 @@ def validate_documents(
         if marker not in w02_entry:
             errors.append(f"W02 entry missing required marker: {marker}")
 
+    if w02_assembly.count(W02_ASSEMBLY_AUTHORITY_MARKER) != 1:
+        errors.append("W02 assembly must contain the exact run authority marker once")
+    if (
+        hashlib.sha256(w02_assembly.encode("utf-8")).hexdigest()
+        != W02_ASSEMBLY_DOCUMENT_SHA256
+    ):
+        errors.append("W02 assembly reviewed document drifted")
+    for marker in sorted(W02_ASSEMBLY_REQUIRED_MARKERS):
+        if marker not in w02_assembly:
+            errors.append(f"W02 assembly missing required marker: {marker}")
+    for forbidden in sorted(W02_ASSEMBLY_FORBIDDEN_CLAIMS):
+        if forbidden in w02_assembly:
+            errors.append(f"W02 assembly contains forbidden claim: {forbidden}")
+
     r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)
     if r13_status is None or r13_status.group(1) != "completed":
         errors.append("R13 status must be completed after external W01 closeout")
@@ -563,6 +632,7 @@ def validate_documents(
         ("R13", r13),
         ("status", status),
         ("W02 entry", w02_entry),
+        ("W02 assembly", w02_assembly),
     ):
         if re.search(r"(?:REQ|TODO|VAL|ITER)-W02A\b|\bW02A\b", text):
             errors.append(f"{label} must not create a W02A stable ID")
@@ -639,13 +709,17 @@ def main() -> int:
         read(RELEASE_RUNBOOK),
         json.loads(read(W01_EVIDENCE)),
         read(W02_ENTRY),
+        read(W02_ASSEMBLY),
     )
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
         return 1
 
-    print("pre-1.0 work plan OK: exact ranks, mappings, gates, statuses, and release boundary")
+    print(
+        "pre-1.0 work plan OK: exact ranks, mappings, W02 static assembly evidence, "
+        "packaged gate status, and release boundary"
+    )
     return 0
 
 

@@ -27,6 +27,7 @@ def documents() -> list[str]:
         CHECKER.read(CHECKER.RELEASE_RUNBOOK),
         json.loads(CHECKER.read(CHECKER.W01_EVIDENCE)),
         CHECKER.read(CHECKER.W02_ENTRY),
+        CHECKER.read(CHECKER.W02_ASSEMBLY),
     ]
 
 
@@ -250,8 +251,9 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "| VAL-PACKAGED-SMOKE-001 | macOS arm64 engineering-smoke App；exact commit/digest/"
             "inventory、launch、renderer/preload、Main→private UDS health/domain request、quit/no "
             "orphan、无 public INET、exercised path 无系统 Python/Node/Git discovery、updater "
-            "unavailable/no-network | `not-run`；boundary/assembly source implementation 不替代 "
-            "packaged launch/runtime gate |"
+            "unavailable/no-network | `not-run`；[static assembly/audit record]"
+            "(evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging "
+            "smoke 不替代 packaged launch/runtime gate |"
         )
         self.assertIn(original, docs[2])
         docs[2] = replace_once(self, docs[2], original, original.replace("`not-run`", "`pass`"))
@@ -289,6 +291,94 @@ class Pre1WorkPlanTests(unittest.TestCase):
         docs[10] = replace_once(self, docs[10], marker, marker.replace("`not-run`", "`pass`"))
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"W02 entry missing required marker: {marker}", errors)
+
+    def test_w02_static_assembly_phase_marker_is_required(self) -> None:
+        docs = documents()
+        marker = (
+            "engineering-smoke boundary/assembly：本 Work，"
+            "static assembly/bundle audit substage `pass`"
+        )
+        docs[3] = replace_once(self, docs[3], marker, marker.replace("`pass`", "`not-run`"))
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
+
+    def test_w02_assembly_exact_run_coordinates_are_required(self) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_ASSEMBLY_AUTHORITY_MARKER.replace(
+            CHECKER.W02_ASSEMBLY_SOURCE,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[11] = replace_once(
+            self,
+            docs[11],
+            CHECKER.W02_ASSEMBLY_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("W02 assembly must contain the exact run authority marker once", errors)
+
+    def test_w02_assembly_visible_authority_and_limits_are_immutable(self) -> None:
+        mutations = (
+            (
+                f"| exact source commit | `{CHECKER.W02_ASSEMBLY_SOURCE}` |",
+                "| exact source commit | `0000000000000000000000000000000000000000` |",
+            ),
+            (
+                f"`{CHECKER.W02_ASSEMBLY_INVENTORY_SHA256}`",
+                f"`{'0' * 64}`",
+            ),
+            ("", "\nVAL-PACKAGED-SMOKE-001: pass\n"),
+            ("", "\npublic release: GO\n"),
+            ("", "\nnormalized inventory SHA-256 is the package digest\n"),
+        )
+        for old, new in mutations:
+            with self.subTest(new=new.strip()):
+                docs = documents()
+                if old:
+                    docs[11] = replace_once(self, docs[11], old, new)
+                else:
+                    docs[11] += new
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn("W02 assembly reviewed document drifted", errors)
+
+    def test_w02_static_assembly_cannot_promote_packaged_launch(self) -> None:
+        docs = documents()
+        marker = "`packagedAppLaunch`：`not-run`"
+        docs[11] = replace_once(
+            self,
+            docs[11],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"W02 assembly missing required marker: {marker}", errors)
+
+    def test_w02_static_assembly_cannot_promote_packaged_gate(self) -> None:
+        docs = documents()
+        marker = "- `VAL-PACKAGED-SMOKE-001`：`not-run`；"
+        docs[11] = replace_once(
+            self,
+            docs[11],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 assembly missing required marker: `VAL-PACKAGED-SMOKE-001`：`not-run`",
+            errors,
+        )
+
+    def test_w02_assembly_preserves_staging_vs_packaged_sidecar_boundary(self) -> None:
+        docs = documents()
+        marker = "pre-pack frozen sidecar staging smoke 已运行且成功"
+        docs[11] = replace_once(
+            self,
+            docs[11],
+            marker,
+            "pre-pack frozen sidecar staging smoke `not-run`",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"W02 assembly missing required marker: {marker}", errors)
 
 
 if __name__ == "__main__":

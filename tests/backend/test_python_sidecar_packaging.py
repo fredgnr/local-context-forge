@@ -992,6 +992,66 @@ def test_frozen_socket_paths_reject_more_than_the_runtime_bound() -> None:
         build._frozen_socket_paths(root)
 
 
+def test_python_sidecar_build_root_uses_private_ignored_parent(
+    tmp_path: Path,
+) -> None:
+    destination_parent = tmp_path / "generated"
+    destination_parent.mkdir(mode=0o755)
+
+    build_root, scratch_parent = build._create_private_build_root(
+        destination_parent
+    )
+    try:
+        assert build_root.parent == scratch_parent
+        assert stat.S_IMODE(scratch_parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(build_root.stat().st_mode) == 0o700
+    finally:
+        build_root.rmdir()
+        scratch_parent.rmdir()
+
+    ignore_lines = {
+        line.strip()
+        for line in (PROJECT_ROOT / ".gitignore").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    }
+    assert "desktop/generated/python-sidecar-build/" in ignore_lines
+    ignored_probe = subprocess.run(
+        (
+            "git",
+            "check-ignore",
+            "--quiet",
+            "desktop/generated/python-sidecar-build/candidate-probe/file",
+        ),
+        cwd=PROJECT_ROOT,
+        check=False,
+    )
+    assert ignored_probe.returncode == 0
+
+
+@pytest.mark.parametrize("unsafe_kind", ["symlink", "mode"])
+def test_python_sidecar_build_root_rejects_unsafe_parent(
+    tmp_path: Path,
+    unsafe_kind: str,
+) -> None:
+    destination_parent = tmp_path / "generated"
+    destination_parent.mkdir(mode=0o755)
+    scratch_parent = destination_parent / "python-sidecar-build"
+    if unsafe_kind == "symlink":
+        outside = tmp_path / "outside"
+        outside.mkdir(mode=0o700)
+        scratch_parent.symlink_to(outside, target_is_directory=True)
+    else:
+        scratch_parent.mkdir(mode=0o700)
+        scratch_parent.chmod(0o755)
+
+    with pytest.raises(
+        build.BuildError,
+        match=r"^Python sidecar scratch parent is unsafe$",
+    ):
+        build._create_private_build_root(destination_parent)
+
+
 def _install_fake_uds_socket(
     monkeypatch: pytest.MonkeyPatch,
     response: bytes,

@@ -2364,6 +2364,48 @@ def _canonical_private_smoke_root(raw_root: str) -> Path:
     return canonical_root
 
 
+def _create_private_build_root(destination_parent: Path) -> tuple[Path, Path]:
+    scratch_parent = destination_parent / "python-sidecar-build"
+    raw_build_root: str | None = None
+    try:
+        scratch_parent.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise BuildError("Python sidecar scratch parent cannot be created") from exc
+    try:
+        parent_info = scratch_parent.lstat()
+        if (
+            not stat.S_ISDIR(parent_info.st_mode)
+            or stat.S_ISLNK(parent_info.st_mode)
+            or parent_info.st_uid != os.geteuid()
+            or stat.S_IMODE(parent_info.st_mode) != 0o700
+            or scratch_parent.resolve(strict=True) != scratch_parent
+            or parent_info.st_dev != destination_parent.stat().st_dev
+        ):
+            raise BuildError("Python sidecar scratch parent is unsafe")
+        raw_build_root = tempfile.mkdtemp(prefix="candidate-", dir=scratch_parent)
+        build_root = Path(raw_build_root)
+        root_info = build_root.lstat()
+    except BuildError:
+        raise
+    except OSError as exc:
+        if raw_build_root is not None:
+            shutil.rmtree(raw_build_root, ignore_errors=True)
+        raise BuildError("Python sidecar scratch root cannot be created") from exc
+    if (
+        not stat.S_ISDIR(root_info.st_mode)
+        or stat.S_ISLNK(root_info.st_mode)
+        or root_info.st_uid != os.geteuid()
+        or stat.S_IMODE(root_info.st_mode) != 0o700
+        or build_root.parent != scratch_parent
+        or build_root.resolve(strict=True) != build_root
+    ):
+        shutil.rmtree(build_root, ignore_errors=True)
+        raise BuildError("Python sidecar scratch root is unsafe")
+    return build_root, scratch_parent
+
+
 def _frozen_socket_paths(smoke_root: Path) -> tuple[Path, Path, Path]:
     runtime_directory = smoke_root / "r"
     socket_path = runtime_directory / "s"
@@ -2487,8 +2529,7 @@ def run_frozen_smoke(
 
     executable = (bundle / "lcf-service").resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix="lcf-", dir="/tmp") as raw_root:
-        # macOS commonly exposes its temporary root through /var while the
-        # canonical inode lives below /private/var. Retrieval sockets reject
+        # macOS exposes /tmp through /private/tmp. Retrieval sockets reject
         # that lexical alias, so derive every child path from the verified
         # canonical directory without weakening the runtime validation.
         smoke_root = _canonical_private_smoke_root(raw_root)
@@ -3162,11 +3203,7 @@ def build_python_sidecar(
     destination = destination.resolve()
     evidence_destination = evidence_destination.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    raw_build_root = tempfile.mkdtemp(
-        prefix=".python-sidecar-build-",
-        dir=destination.parent,
-    )
-    build_root = Path(raw_build_root)
+    build_root, _scratch_parent = _create_private_build_root(destination.parent)
     evidence: Path | None = None
     try:
         bundle, evidence = run_pyinstaller(

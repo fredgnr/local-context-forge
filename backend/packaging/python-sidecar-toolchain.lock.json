@@ -11,6 +11,16 @@
     "version": "3.13.14",
     "installRoot": "/Library/Frameworks/Python.framework/Versions/3.13",
     "interpreterRelativePath": "bin/python3.13",
+    "reviewedBrokenSymlinks": [
+      {
+        "path": "Frameworks/Tcl.framework/PrivateHeaders",
+        "target": "Versions/Current/PrivateHeaders"
+      },
+      {
+        "path": "Frameworks/Tk.framework/PrivateHeaders",
+        "target": "Versions/Current/PrivateHeaders"
+      }
+    ],
     "distribution": {
       "provider": "actions/python-versions",
       "releaseTag": "3.13.14-27320626148",

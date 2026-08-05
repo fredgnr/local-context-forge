@@ -471,6 +471,60 @@ def _install_binding_fixture(
     return install_root, interpreter, toolchain, observed
 
 
+def test_install_root_fingerprint_requires_the_exact_reviewed_broken_links(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "python-root"
+    framework = root / "Frameworks" / "Tcl.framework"
+    framework.mkdir(parents=True)
+    private_headers = framework / "PrivateHeaders"
+    target = "Versions/Current/PrivateHeaders"
+    private_headers.symlink_to(target)
+    reviewed = {"Frameworks/Tcl.framework/PrivateHeaders": target}
+
+    with pytest.raises(build.BuildError, match="unreviewed broken symlink"):
+        build.fingerprint_install_root(root)
+
+    digest = build.fingerprint_install_root(
+        root,
+        reviewed_broken_symlinks=reviewed,
+    )
+    assert len(digest) == 64 and set(digest) <= set("0123456789abcdef")
+
+    with pytest.raises(build.BuildError, match="set changed"):
+        build.fingerprint_install_root(
+            root,
+            reviewed_broken_symlinks={
+                **reviewed,
+                "Frameworks/Tk.framework/PrivateHeaders": target,
+            },
+        )
+
+    private_headers.unlink()
+    (framework / target).mkdir(parents=True)
+    private_headers.symlink_to(target)
+    with pytest.raises(build.BuildError, match="set changed"):
+        build.fingerprint_install_root(
+            root,
+            reviewed_broken_symlinks=reviewed,
+        )
+
+
+def test_install_root_fingerprint_rejects_reviewed_broken_link_escape(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "python-root"
+    root.mkdir()
+    link = root / "escape"
+    link.symlink_to("../outside")
+
+    with pytest.raises(build.BuildError, match="unreviewed broken symlink"):
+        build.fingerprint_install_root(
+            root,
+            reviewed_broken_symlinks={"escape": "../outside"},
+        )
+
+
 def test_install_root_binding_accepts_fully_injected_reviewed_interpreter(
     tmp_path: Path,
 ) -> None:
@@ -861,6 +915,16 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
     assert provenance["implementation"]["const"] == python_lock["implementation"]
     assert provenance["version"]["const"] == python_lock["version"] == "3.13.14"
     assert provenance["installRoot"]["const"] == python_lock["installRoot"]
+    assert python_lock["reviewedBrokenSymlinks"] == [
+        {
+            "path": "Frameworks/Tcl.framework/PrivateHeaders",
+            "target": "Versions/Current/PrivateHeaders",
+        },
+        {
+            "path": "Frameworks/Tk.framework/PrivateHeaders",
+            "target": "Versions/Current/PrivateHeaders",
+        },
+    ]
     for key in (
         "provider",
         "releaseTag",

@@ -420,7 +420,49 @@ def _contained(root: Path, candidate: Path) -> bool:
     return True
 
 
-def fingerprint_install_root(root: Path) -> str:
+def _reviewed_broken_symlinks(
+    python_lock: Mapping[str, Any],
+) -> dict[str, str]:
+    raw_entries = python_lock.get("reviewedBrokenSymlinks")
+    if not isinstance(raw_entries, list):
+        raise BuildError("Python toolchain lock omits reviewed broken symlinks")
+    result: dict[str, str] = {}
+    for raw_entry in raw_entries:
+        entry = _mapping(raw_entry, "Reviewed Python broken symlink")
+        if set(entry) != {"path", "target"}:
+            raise BuildError("Reviewed Python broken symlink entry is malformed")
+        relative = entry.get("path")
+        target = entry.get("target")
+        if not isinstance(relative, str) or not isinstance(target, str):
+            raise BuildError("Reviewed Python broken symlink entry is malformed")
+        relative_path = PurePosixPath(relative)
+        target_path = PurePosixPath(target)
+        if (
+            not relative
+            or relative_path.is_absolute()
+            or relative_path.as_posix() != relative
+            or any(part in {"", ".", ".."} for part in relative_path.parts)
+            or "\\" in relative
+            or "\x00" in relative
+            or not target
+            or target_path.is_absolute()
+            or any(part in {"", ".", ".."} for part in target_path.parts)
+            or "\\" in target
+            or "\x00" in target
+            or relative in result
+        ):
+            raise BuildError("Reviewed Python broken symlink entry is unsafe")
+        result[relative] = target
+    if list(result) != sorted(result):
+        raise BuildError("Reviewed Python broken symlinks are not ordered")
+    return result
+
+
+def fingerprint_install_root(
+    root: Path,
+    *,
+    reviewed_broken_symlinks: Mapping[str, str] | None = None,
+) -> str:
     """Fingerprint immutable framework content without runtime bytecode caches."""
 
     try:
@@ -430,6 +472,8 @@ def fingerprint_install_root(root: Path) -> str:
     if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
         raise BuildError("Pinned Python install root must be a real directory")
     root = root.resolve(strict=True)
+    reviewed_broken = dict(reviewed_broken_symlinks or {})
+    observed_broken: dict[str, str] = {}
     inventory: list[dict[str, Any]] = []
     for path in sorted(
         root.rglob("*"),
@@ -453,10 +497,34 @@ def fingerprint_install_root(root: Path) -> str:
             try:
                 resolved = path.resolve(strict=True)
             except (OSError, RuntimeError) as exc:
-                raise BuildError(
-                    "Python install root contains a broken symlink: "
-                    f"{relative.as_posix()!r} -> {target!r}"
-                ) from exc
+                try:
+                    unresolved_target = (path.parent / target).resolve(strict=False)
+                except (OSError, RuntimeError) as target_exc:
+                    raise BuildError(
+                        "Python install root contains an unsafe broken symlink"
+                    ) from target_exc
+                relative_name = relative.as_posix()
+                if (
+                    not _contained(root, unresolved_target)
+                    or reviewed_broken.get(relative_name) != target
+                ):
+                    raise BuildError(
+                        "Python install root contains an unreviewed broken symlink: "
+                        f"{relative_name!r} -> {target!r}"
+                    ) from exc
+                observed_broken[relative_name] = target
+                item.update(
+                    {
+                        "type": "symlink",
+                        "target": target,
+                        "broken": True,
+                        "sha256": hashlib.sha256(
+                            target.encode("utf-8")
+                        ).hexdigest(),
+                    }
+                )
+                inventory.append(item)
+                continue
             if not _contained(root, resolved):
                 raise BuildError("Python install root symlink escapes the framework")
             item.update(
@@ -479,6 +547,8 @@ def fingerprint_install_root(root: Path) -> str:
         else:
             raise BuildError("Python install root contains a special file")
         inventory.append(item)
+    if observed_broken != reviewed_broken:
+        raise BuildError("Reviewed Python broken symlink set changed")
     if not inventory:
         raise BuildError("Python install root fingerprint is empty")
     return hashlib.sha256(_canonical_json_bytes(inventory)).hexdigest()
@@ -497,7 +567,7 @@ def verify_python_install_binding(
     executable: Path | None = None,
     cache_tag: str | None = None,
     gil_disabled: bool | None = None,
-    fingerprint: Callable[[Path], str] = fingerprint_install_root,
+    fingerprint: Callable[[Path], str] | None = None,
 ) -> str:
     """Bind the active interpreter/venv to the reviewed Python.org framework."""
 
@@ -568,7 +638,13 @@ def verify_python_install_binding(
             settings,
         ):
             raise BuildError("Build venv inherits system site-packages")
-    return fingerprint(canonical_root)
+    if fingerprint is not None:
+        return fingerprint(canonical_root)
+    reviewed_broken = _reviewed_broken_symlinks(python_lock)
+    return fingerprint_install_root(
+        canonical_root,
+        reviewed_broken_symlinks=reviewed_broken,
+    )
 
 
 def parse_build_requirements(path: Path = BUILD_REQUIREMENTS_LOCK) -> dict[str, str]:
@@ -2632,7 +2708,14 @@ def build_python_sidecar(
             repository_commit=str(release["repositoryCommit"]),
             source_date_epoch=int(release["sourceDateEpoch"]),
         )
-        if fingerprint_install_root(install_root) != python_fingerprint:
+        python_lock = _mapping(toolchain.get("python"), "Python toolchain entry")
+        if (
+            fingerprint_install_root(
+                install_root,
+                reviewed_broken_symlinks=_reviewed_broken_symlinks(python_lock),
+            )
+            != python_fingerprint
+        ):
             raise BuildError("Pinned Python framework changed during the build")
         verify_repository_provenance(release)
         normalize_tree(bundle, int(release["sourceDateEpoch"]))

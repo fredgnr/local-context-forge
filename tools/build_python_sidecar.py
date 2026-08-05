@@ -453,7 +453,10 @@ def fingerprint_install_root(root: Path) -> str:
             try:
                 resolved = path.resolve(strict=True)
             except (OSError, RuntimeError) as exc:
-                raise BuildError("Python install root contains a broken symlink") from exc
+                raise BuildError(
+                    "Python install root contains a broken symlink: "
+                    f"{relative.as_posix()!r} -> {target!r}"
+                ) from exc
             if not _contained(root, resolved):
                 raise BuildError("Python install root symlink escapes the framework")
             item.update(

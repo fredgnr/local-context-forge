@@ -32,8 +32,8 @@ controls、credentials、trust pins 和 formal Release 最后处理。
   `2b762946…` 的 source aggregate 均为 technical `pass`，但旧候选 independent acceptance
   `fail`、canonical activation `not-eligible`，不能作为 closure。
 - [x] R13-07 修复 evidence lifecycle、merge-strategy independence、PR canonical activation、
-  artifact/QMD schema 与 model scan scope；Checkpoint A `d39f2002…` / run `30979253786` 已生成
-  payload `8919488642` 与 provenance `8919488886`。
+  artifact/QMD schema 与 model scan scope；Checkpoint A `f4074a31…` / run `30980342634` 已生成
+  payload `8919891304` 与 provenance `8919891597`。
 
 R13 保持 `in-progress`，直至修复候选 exact-head PR/source technical `pass`、independent
 acceptance `pass`、被验收 candidate 合入 canonical `main`，且 resulting main commit 的
@@ -67,7 +67,7 @@ runtime、packaged、physical、GitHub settings 或 Release gate 已运行。
 
 | 验证 | 当前结果 | 最低环境 | 说明 |
 | --- | --- | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A `d39f2002…` / run `30979253786` | 旧 candidate technical `pass` / independent `fail` / activation `not-eligible`；历史 run/artifact 保留 |
+| `VAL-PRE1-SEQUENCE-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A `f4074a31…` / run `30980342634` | 旧 candidate technical `pass` / independent `fail` / activation `not-eligible`；历史 run/artifact 保留 |
 | `VAL-GOV-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | schema v2 + Checkpoint A exact-head Actions | 历史 checker 不再读取 current ancestry 或动态 diff；当前 bytes 由 payload/provenance 绑定 |
 | `VAL-CI-COVERAGE-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A exact PR-head checkout success | QMD 10 pass / 1 exact skip；扫描只覆盖 isolated HOME/XDG/TMP，repository/global tmp 未扫描；guide-site external-blocked/unvalidated |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` | macOS arm64 packaged App | 本 Work 不实现 harness |

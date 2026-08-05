@@ -104,8 +104,8 @@ skills/runbook，以及接入 `ci-python` 的 `tools/check_pre1_work_plan.py` �
 acceptance `pass`、被验收 candidate 合入后的 canonical-main source `pass`、随后 canonical
 activation 才可完成。当前旧 candidate 是 technical `pass` / independent `fail` /
 activation `not-eligible`；修复 candidate Checkpoint A 是 technical `pass` / independent
-`pending` / canonical-main `not-run` / activation `blocked`，绑定 commit `d39f2002…`、run
-`30979253786`、payload `8919488642` 与 provenance `8919488886`。所有 runtime、packaged、
+`pending` / canonical-main `not-run` / activation `blocked`，绑定 commit `f4074a31…`、run
+`30980342634`、payload `8919891304` 与 provenance `8919891597`。所有 runtime、packaged、
 physical、settings 和 release gate 保持真实的 `not-run`。
 
 ### TODO-PACKAGED-SMOKE-001：最小非发行 packaged smoke harness

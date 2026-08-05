@@ -233,19 +233,19 @@
       "W01-ARTIFACT-PREMATURE-CANONICAL-PASS"
     ],
     "checkpoint_a": {
-      "source_commit": "d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
-      "source_tree": "6d9f31297b768f83f6084c7bc169faefaea8a8ef",
+      "source_commit": "f4074a31bde50710bb40e1e8509dfdcd232835c4",
+      "source_tree": "f059ad8bd3cfc6accac707745d5d8727bfb532bd",
       "lifecycle_phase": "pull-request-candidate",
       "run": {
-        "id": 30979253786,
+        "id": 30980342634,
         "attempt": 1,
         "event": "pull_request",
         "source_ref": "refs/pull/20/merge",
-        "exact_checked_out_sha": "d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
-        "synthetic_context_sha": "b7f9ea4a0e98ab0515b2d53076aaf39b18bd442c",
+        "exact_checked_out_sha": "f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "synthetic_context_sha": "f86e608425742271e08e5261ef7f99d16200ebd8",
         "workflow_path": ".github/workflows/desktop-ci.yml",
-        "workflow_sha": "b7f9ea4a0e98ab0515b2d53076aaf39b18bd442c",
-        "url": "https://github.com/fredgnr/local-context-forge/actions/runs/30979253786",
+        "workflow_sha": "f86e608425742271e08e5261ef7f99d16200ebd8",
+        "url": "https://github.com/fredgnr/local-context-forge/actions/runs/30980342634",
         "conclusion": "success",
         "job_results": {
           "python": "success",
@@ -256,26 +256,26 @@
         }
       },
       "payload_artifact": {
-        "id": 8919488642,
-        "name": "w01-source-coverage-d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
-        "source_commit": "d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
-        "run_id": 30979253786,
-        "archive_sha256": "c295af5a94085640b8afb9c85bb07cd37cc93a0333b15b1f1cba922b3fdc7662",
-        "inner_json_sha256": "f559e03a302dcecc7be86f43fe58b114e6dd601bd202302b0bed0f5a302dea04",
+        "id": 8919891304,
+        "name": "w01-source-coverage-f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "source_commit": "f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "run_id": 30980342634,
+        "archive_sha256": "2d6801946e82b4acbd6621e722049c1a42f3e7578a8c959e19c3762259114d0a",
+        "inner_json_sha256": "f71615cc0112ee228dd3c17c2d77a3c07e14ad3e2212f08ef3c92b95e48313c3",
         "payload_schema_version": 2
       },
       "provenance_artifact": {
-        "id": 8919488886,
-        "name": "w01-source-coverage-provenance-d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
-        "source_commit": "d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
-        "run_id": 30979253786,
-        "archive_sha256": "24b1d4da178c3d31587d0ece86fc4d66d297fcb8f369747ca05d053e05aae809",
-        "inner_json_sha256": "b5aeef49f6bbbb0750d9d457e03bd617e5d4c2bcd5466e75ea540bc981ee9e5d",
+        "id": 8919891597,
+        "name": "w01-source-coverage-provenance-f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "source_commit": "f4074a31bde50710bb40e1e8509dfdcd232835c4",
+        "run_id": 30980342634,
+        "archive_sha256": "f65ce338d7c8bdbb1a8b5e25d60b82e139f81ebd4359562b26e498e605ff46c9",
+        "inner_json_sha256": "894567927446763c95b8a67bb92e8897a4ff3cc1dcdccfc590fb69a070b39cb0",
         "payload_binding": {
-          "artifact_id": 8919488642,
-          "artifact_name": "w01-source-coverage-d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca",
-          "archive_sha256": "c295af5a94085640b8afb9c85bb07cd37cc93a0333b15b1f1cba922b3fdc7662",
-          "inner_json_sha256": "f559e03a302dcecc7be86f43fe58b114e6dd601bd202302b0bed0f5a302dea04"
+          "artifact_id": 8919891304,
+          "artifact_name": "w01-source-coverage-f4074a31bde50710bb40e1e8509dfdcd232835c4",
+          "archive_sha256": "2d6801946e82b4acbd6621e722049c1a42f3e7578a8c959e19c3762259114d0a",
+          "inner_json_sha256": "f71615cc0112ee228dd3c17c2d77a3c07e14ad3e2212f08ef3c92b95e48313c3"
         }
       },
       "provenance_absence_reason": null,
@@ -339,7 +339,7 @@
         "validated": false
       }
     },
-    "checkpoint_a_record_sha256": "581b6d758b64af016ed45d74bcaff577dd8f6b1b963c348d81f3f22712515d87",
+    "checkpoint_a_record_sha256": "e5bf406a47ad9a32e3f176f2a6865bc89e53c16825c1a160c4cfd48b0bc28e58",
     "technical_source_result": "pass",
     "independent_acceptance": "pending",
     "final_containing_head_binding": {

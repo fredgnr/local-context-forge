@@ -52,14 +52,14 @@ exact-head `Desktop source CI` payload 与独立 provenance artifact 证明；PR
 canonical activation 固定为 `blocked`，canonical-main source result 与 independent acceptance
 分开记录。
 
-修复 Checkpoint A `d39f20024741f16e21cfdd9ff439ce8ba3b2e9ca` / tree
-`6d9f31297b768f83f6084c7bc169faefaea8a8ef` 的 [run 30979253786](https://github.com/fredgnr/local-context-forge/actions/runs/30979253786)
-五个 jobs 全部成功。payload artifact `8919488642` 的 archive / inner SHA-256 分别为
-`c295af5a94085640b8afb9c85bb07cd37cc93a0333b15b1f1cba922b3fdc7662` /
-`f559e03a302dcecc7be86f43fe58b114e6dd601bd202302b0bed0f5a302dea04`；provenance artifact
-`8919488886` 的 archive / inner SHA-256 分别为
-`24b1d4da178c3d31587d0ece86fc4d66d297fcb8f369747ca05d053e05aae809` /
-`b5aeef49f6bbbb0750d9d457e03bd617e5d4c2bcd5466e75ea540bc981ee9e5d`。该 PR artifact 只记录
+修复 Checkpoint A `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree
+`f059ad8bd3cfc6accac707745d5d8727bfb532bd` 的 [run 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)
+五个 jobs 全部成功。payload artifact `8919891304` 的 archive / inner SHA-256 分别为
+`2d6801946e82b4acbd6621e722049c1a42f3e7578a8c959e19c3762259114d0a` /
+`f71615cc0112ee228dd3c17c2d77a3c07e14ad3e2212f08ef3c92b95e48313c3`；provenance artifact
+`8919891597` 的 archive / inner SHA-256 分别为
+`f65ce338d7c8bdbb1a8b5e25d60b82e139f81ebd4359562b26e498e605ff46c9` /
+`894567927446763c95b8a67bb92e8897a4ff3cc1dcdccfc590fb69a070b39cb0`。该 PR artifact 只记录
 technical `pass`，independent acceptance 仍为 `pending`，canonical activation 仍为 `blocked`。
 更早 PR #17 证据包括：
 

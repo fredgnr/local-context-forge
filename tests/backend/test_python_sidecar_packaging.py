@@ -955,6 +955,43 @@ def test_canonical_private_smoke_root_rejects_a_nonprivate_directory(
         build._canonical_private_smoke_root(str(smoke_root))
 
 
+def test_frozen_socket_paths_fit_the_canonical_macos_runtime_bound() -> None:
+    from app.desktop_session import MAX_UDS_PATH_BYTES
+
+    typical_root = Path(
+        "/private/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/"
+        "T/lcf-abcdefgh"
+    )
+
+    runtime, sidecar, broker = build._frozen_socket_paths(typical_root)
+
+    assert runtime == typical_root / "r"
+    assert sidecar == runtime / "s"
+    assert broker == runtime / "b"
+    assert build.MAX_FROZEN_UDS_PATH_BYTES == MAX_UDS_PATH_BYTES
+    assert len(str(sidecar).encode("utf-8")) <= build.MAX_FROZEN_UDS_PATH_BYTES
+    assert len(str(broker).encode("utf-8")) <= build.MAX_FROZEN_UDS_PATH_BYTES
+
+
+def test_frozen_socket_paths_accept_exactly_the_runtime_bound() -> None:
+    root = Path("/" + ("a" * (build.MAX_FROZEN_UDS_PATH_BYTES - 5)))
+
+    _runtime, sidecar, broker = build._frozen_socket_paths(root)
+
+    assert len(str(sidecar).encode("utf-8")) == build.MAX_FROZEN_UDS_PATH_BYTES
+    assert len(str(broker).encode("utf-8")) == build.MAX_FROZEN_UDS_PATH_BYTES
+
+
+def test_frozen_socket_paths_reject_more_than_the_runtime_bound() -> None:
+    root = Path("/" + ("a" * (build.MAX_FROZEN_UDS_PATH_BYTES - 4)))
+
+    with pytest.raises(
+        build.BuildError,
+        match=r"^Frozen smoke socket path exceeds the runtime bound$",
+    ):
+        build._frozen_socket_paths(root)
+
+
 def _install_binding_fixture(
     tmp_path: Path,
 ) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:

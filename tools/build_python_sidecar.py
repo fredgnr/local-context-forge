@@ -75,6 +75,7 @@ MAX_SMOKE_BROKER_REQUEST_BYTES = 262_144
 MAX_SMOKE_BROKER_COLLECTIONS = 256
 MAX_SMOKE_BROKER_REVISION = 2**53 - 1
 MAX_FROZEN_START_LOG_BYTES = 1024 * 1024
+MAX_FROZEN_UDS_PATH_BYTES = 100
 EXPECTED_MISSING_IMPORT_PATTERN = re.compile(
     r"^missing module named ['\"]?([^ '\"(),]+)['\"]?"
 )
@@ -2267,6 +2268,26 @@ def _canonical_private_smoke_root(raw_root: str) -> Path:
     return canonical_root
 
 
+def _frozen_socket_paths(smoke_root: Path) -> tuple[Path, Path, Path]:
+    runtime_directory = smoke_root / "r"
+    socket_path = runtime_directory / "s"
+    broker_socket_path = runtime_directory / "b"
+    if (
+        not smoke_root.is_absolute()
+        or ".." in smoke_root.parts
+        or socket_path == broker_socket_path
+    ):
+        raise BuildError("Frozen smoke socket root is invalid")
+    for candidate in (socket_path, broker_socket_path):
+        try:
+            encoded = str(candidate).encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise BuildError("Frozen smoke socket path is not UTF-8") from exc
+        if b"\0" in encoded or len(encoded) > MAX_FROZEN_UDS_PATH_BYTES:
+            raise BuildError("Frozen smoke socket path exceeds the runtime bound")
+    return runtime_directory, socket_path, broker_socket_path
+
+
 def _duplicate_high(descriptor: int) -> int:
     try:
         import fcntl
@@ -2369,7 +2390,7 @@ def run_frozen_smoke(
     """Exercise the frozen API and a real domain lifecycle under PATH traps."""
 
     executable = (bundle / "lcf-service").resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix="lcf-frozen-smoke-") as raw_root:
+    with tempfile.TemporaryDirectory(prefix="lcf-", dir="/tmp") as raw_root:
         # macOS commonly exposes its temporary root through /var while the
         # canonical inode lives below /private/var. Retrieval sockets reject
         # that lexical alias, so derive every child path from the verified
@@ -2436,12 +2457,12 @@ def run_frozen_smoke(
         ):
             raise BuildError("Frozen doctor command differs from canonical versions")
 
-        runtime_directory = smoke_root / "runtime"
+        runtime_directory, socket_path, broker_socket_path = _frozen_socket_paths(
+            smoke_root
+        )
         data_directory = smoke_root / "data"
         runtime_directory.mkdir(mode=0o700)
         data_directory.mkdir(mode=0o700)
-        socket_path = runtime_directory / "sidecar.sock"
-        broker_socket_path = runtime_directory / "retrieval.sock"
         broker_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             broker_listener.bind(str(broker_socket_path))

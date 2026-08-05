@@ -89,6 +89,8 @@ const ALLOWED_ELECTRON_HELPER_APPS = Object.freeze([
   `${PRODUCT_NAME} Helper (Plugin).app`,
   `${PRODUCT_NAME} Helper (Renderer).app`
 ]);
+const REVIEWED_PYINSTALLER_ARCHIVE =
+  "Contents/Resources/sidecar/_internal/base_library.zip";
 
 function run(executable, arguments_, label) {
   try {
@@ -413,6 +415,7 @@ function assertNoInstallOrReleaseArtifacts(
   const appBundles = [];
   const unexpectedNestedApps = [];
   const unexpectedSymlinks = [];
+  let observedReviewedPyInstallerArchive = false;
   const expectedApp = path.resolve(expectedAppRoot);
   const expectedFrameworks = path.join(expectedApp, "Contents", "Frameworks");
   const allowedHelpers = new Set(ALLOWED_ELECTRON_HELPER_APPS);
@@ -423,6 +426,19 @@ function assertNoInstallOrReleaseArtifacts(
       const info = fs.lstatSync(candidate);
       const lower = name.toLowerCase();
       const resolvedCandidate = path.resolve(candidate);
+      const appRelative = path
+        .relative(expectedApp, resolvedCandidate)
+        .split(path.sep)
+        .join("/");
+      const isReviewedPyInstallerArchive =
+        appRelative === REVIEWED_PYINSTALLER_ARCHIVE &&
+        info.isFile() &&
+        !info.isSymbolicLink() &&
+        info.nlink === 1 &&
+        info.size > 0;
+      if (isReviewedPyInstallerArchive) {
+        observedReviewedPyInstallerArchive = true;
+      }
       if (lower.endsWith(".app")) {
         if (
           resolvedCandidate === expectedApp ||
@@ -443,7 +459,7 @@ function assertNoInstallOrReleaseArtifacts(
       if (
         lower.endsWith(".dmg") ||
         lower.endsWith(".pkg") ||
-        lower.endsWith(".zip") ||
+        (lower.endsWith(".zip") && !isReviewedPyInstallerArchive) ||
         lower.endsWith(".blockmap") ||
         /^(?:latest|alpha|beta|next)-mac\.yml$/.test(lower) ||
         lower === "release-manifest.json" ||
@@ -472,6 +488,9 @@ function assertNoInstallOrReleaseArtifacts(
   }
   if (unexpectedNestedApps.length > 0) {
     fail("Engineering-smoke output contains an unexpected nested app");
+  }
+  if (!observedReviewedPyInstallerArchive) {
+    fail("Engineering-smoke reviewed Python runtime archive is missing");
   }
   if (
     observedHelpers.size !== allowedHelpers.size ||
@@ -746,6 +765,7 @@ module.exports = {
   EVIDENCE_PATH,
   FORBIDDEN_RESOURCE_NAMES,
   ALLOWED_ELECTRON_HELPER_APPS,
+  REVIEWED_PYINSTALLER_ARCHIVE,
   EXPECTED_ASAR_ENTRIES,
   OUTPUT_ROOT,
   assertNoInstallOrReleaseArtifacts,

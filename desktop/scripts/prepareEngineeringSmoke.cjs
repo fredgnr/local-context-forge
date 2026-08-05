@@ -134,6 +134,12 @@ function inspectRepositoryProvenance(
 }
 
 function assertNoProductionEnvironment(environment) {
+  if (
+    Object.prototype.hasOwnProperty.call(environment, "CSC_FOR_PULL_REQUEST") &&
+    environment.CSC_FOR_PULL_REQUEST !== "true"
+  ) {
+    fail("Engineering-smoke PR ad-hoc signing control is invalid");
+  }
   const present = FORBIDDEN_PRODUCTION_ENVIRONMENT.filter(
     (name) => typeof environment[name] === "string" && environment[name].length > 0
   );

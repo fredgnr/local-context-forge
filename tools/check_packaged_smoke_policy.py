@@ -13,7 +13,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
 EXPECTED_WORKFLOW_SHA256 = (
-    "341aa99918d762f9d8a0e04aab1d53edb6e451773238c73891ba30e0c312956c"
+    "b20bc6a18960ec2140de4f0ea3562b8a8df244e55f9bb8a7894a53cfc089d996"
 )
 MAKEFILE = ROOT / "Makefile"
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
@@ -23,12 +23,198 @@ PREPARE = ROOT / "desktop" / "scripts" / "prepareEngineeringSmoke.cjs"
 BEFORE_PACK = ROOT / "desktop" / "scripts" / "beforePackEngineeringSmoke.cjs"
 AFTER_PACK = ROOT / "desktop" / "scripts" / "afterPackEngineeringSmoke.cjs"
 BUNDLE_AUDIT = ROOT / "desktop" / "scripts" / "auditEngineeringSmokeBundle.cjs"
+EXPECTED_PREPARE_SHA256 = (
+    "45b37fe3b963bcd6c8f55dd63a722c250ade0978f822cbc9e1f7ba791fcaac4c"
+)
+EXPECTED_PREPARE_ENVIRONMENT_FUNCTION_SHA256 = (
+    "54e0bb6b7722aec67c7df07674604fcf83d7680f4e097c3366a89004be4bc48c"
+)
+EXPECTED_BUNDLE_AUDIT_SHA256 = (
+    "54bdc6bafcf402b668be246c502219d0bdaeec448cbd43fc2233851fb1bf9c8a"
+)
+EXPECTED_BEFORE_PACK_SHA256 = (
+    "b6302a9c76ab7ca13b1890032691e9b290e0b133c768c9dc9a1a2898e0b7855a"
+)
+EXPECTED_AFTER_PACK_SHA256 = (
+    "d513011fcbc5252665f8ab73ae24bea36448821bffb3fbf9aa888b6a1f836d93"
+)
+EXPECTED_INSTALL_ARTIFACT_FUNCTION_SHA256 = (
+    "dd363bbe9ac46885f86c40f12a03570a6bec0bfb05ef6e019ce67974d84699b4"
+)
+EXPECTED_PREPARE_ENVIRONMENT_FUNCTION = '''function assertNoProductionEnvironment(environment) {
+  if (
+    Object.prototype.hasOwnProperty.call(environment, "CSC_FOR_PULL_REQUEST") &&
+    environment.CSC_FOR_PULL_REQUEST !== "true"
+  ) {
+    fail("Engineering-smoke PR ad-hoc signing control is invalid");
+  }
+  const present = FORBIDDEN_PRODUCTION_ENVIRONMENT.filter(
+    (name) => typeof environment[name] === "string" && environment[name].length > 0
+  );
+  if (present.length > 0) {
+    fail("Engineering-smoke assembly rejects production or mutable release inputs");
+  }
+}
+'''
+EXPECTED_FORBIDDEN_PRODUCTION_ENVIRONMENT = '''const FORBIDDEN_PRODUCTION_ENVIRONMENT = Object.freeze([
+  "APPLE_API_ISSUER",
+  "APPLE_API_KEY",
+  "APPLE_API_KEY_ID",
+  "APPLE_APP_SPECIFIC_PASSWORD",
+  "APPLE_ID",
+  "APPLE_TEAM_ID",
+  "APPLE_KEYCHAIN_PROFILE",
+  "APPLE_NOTARIZATION_PASSWORD",
+  "APPLE_NOTARIZE",
+  "APPVEYOR_BUILD_NUMBER",
+  "BUILD_BUILDNUMBER",
+  "BUILD_NUMBER",
+  "CIRCLE_BUILD_NUM",
+  "CSC_IDENTITY",
+  "CSC_IDENTITY_AUTO_DISCOVERY",
+  "CSC_KEYCHAIN",
+  "CSC_KEY_PASSWORD",
+  "CSC_LINK",
+  "CSC_NAME",
+  "DESKTOP_RELEASE_CREDENTIAL_BUNDLE_BASE64",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "LCF_CODESIGN_CERTIFICATE_P12",
+  "LCF_CODESIGN_CERTIFICATE_PASSWORD",
+  "LCF_FORMAL_RELEASE",
+  "LCF_UPDATE_METADATA_PRIVATE_KEY",
+  "NPM_TOKEN",
+  "TRAVIS_BUILD_NUMBER",
+  "CI_PIPELINE_IID"
+]);'''
+EXPECTED_ELECTRON_HELPER_ALLOWLIST = '''const ALLOWED_ELECTRON_HELPER_APPS = Object.freeze([
+  `${PRODUCT_NAME} Helper.app`,
+  `${PRODUCT_NAME} Helper (GPU).app`,
+  `${PRODUCT_NAME} Helper (Plugin).app`,
+  `${PRODUCT_NAME} Helper (Renderer).app`
+]);'''
+EXPECTED_INSTALL_ARTIFACT_FUNCTION = r'''function assertNoInstallOrReleaseArtifacts(
+  outputRoot,
+  expectedAppRoot = APP_ROOT
+) {
+  const forbidden = [];
+  const appBundles = [];
+  const unexpectedNestedApps = [];
+  const unexpectedSymlinks = [];
+  let observedReviewedPyInstallerArchive = false;
+  const expectedApp = path.resolve(expectedAppRoot);
+  const expectedFrameworks = path.join(expectedApp, "Contents", "Frameworks");
+  const allowedHelpers = new Set(ALLOWED_ELECTRON_HELPER_APPS);
+  const observedHelpers = new Set();
+  function visit(directory) {
+    for (const name of fs.readdirSync(directory)) {
+      const candidate = path.join(directory, name);
+      const info = fs.lstatSync(candidate);
+      const lower = name.toLowerCase();
+      const resolvedCandidate = path.resolve(candidate);
+      const appRelative = path
+        .relative(expectedApp, resolvedCandidate)
+        .split(path.sep)
+        .join("/");
+      const isReviewedPyInstallerArchive =
+        appRelative === REVIEWED_PYINSTALLER_ARCHIVE &&
+        info.isFile() &&
+        !info.isSymbolicLink() &&
+        info.nlink === 1 &&
+        info.size > 0;
+      if (isReviewedPyInstallerArchive) {
+        observedReviewedPyInstallerArchive = true;
+      }
+      if (lower.endsWith(".app")) {
+        if (
+          resolvedCandidate === expectedApp ||
+          !isContained(expectedApp, resolvedCandidate)
+        ) {
+          appBundles.push(candidate);
+        } else if (
+          path.dirname(resolvedCandidate) !== expectedFrameworks ||
+          !allowedHelpers.has(name) ||
+          !info.isDirectory() ||
+          info.isSymbolicLink()
+        ) {
+          unexpectedNestedApps.push(candidate);
+        } else {
+          observedHelpers.add(name);
+        }
+      }
+      if (
+        lower.endsWith(".dmg") ||
+        lower.endsWith(".pkg") ||
+        (lower.endsWith(".zip") && !isReviewedPyInstallerArchive) ||
+        lower.endsWith(".blockmap") ||
+        /^(?:latest|alpha|beta|next)-mac\.yml$/.test(lower) ||
+        lower === "release-manifest.json" ||
+        lower === "update-manifest.json" ||
+        lower === "update-manifest.json.sig"
+      ) {
+        forbidden.push(candidate);
+      }
+      if (info.isSymbolicLink()) {
+        if (!isContained(expectedApp, resolvedCandidate)) {
+          unexpectedSymlinks.push(candidate);
+        }
+        continue;
+      }
+      if (info.isDirectory()) {
+        visit(candidate);
+      }
+    }
+  }
+  visit(outputRoot);
+  if (forbidden.length > 0) {
+    fail("Engineering-smoke output contains an install or release artifact");
+  }
+  if (unexpectedSymlinks.length > 0) {
+    fail("Engineering-smoke output contains an unexpected symlink");
+  }
+  if (unexpectedNestedApps.length > 0) {
+    fail("Engineering-smoke output contains an unexpected nested app");
+  }
+  if (!observedReviewedPyInstallerArchive) {
+    fail("Engineering-smoke reviewed Python runtime archive is missing");
+  }
+  if (
+    observedHelpers.size !== allowedHelpers.size ||
+    [...allowedHelpers].some((name) => !observedHelpers.has(name))
+  ) {
+    fail("Engineering-smoke Electron helper app closure is incomplete");
+  }
+  if (
+    appBundles.length !== 1 ||
+    path.resolve(appBundles[0]) !== expectedApp
+  ) {
+    fail("Engineering-smoke output must contain exactly one canonical app");
+  }
+}
+'''
 MANIFEST_SCHEMA = ROOT / "runtime" / "engineering-smoke-manifest.schema.json"
 FORMAL_BASE_CONFIG = ROOT / "desktop" / "electron-builder.yml"
 FORMAL_RELEASE_CONFIG = ROOT / "desktop" / "electron-builder.release.yml"
 FORMAL_BEFORE_PACK = ROOT / "desktop" / "scripts" / "beforePack.cjs"
 FORMAL_AFTER_PACK = ROOT / "desktop" / "scripts" / "afterPack.cjs"
 FORMAL_WORKFLOW = ROOT / ".github" / "workflows" / "desktop-release.yml"
+EXPECTED_FORMAL_BOUNDARY_SHA256 = {
+    "formal base config": (
+        "cede533e71bdfb00401451e3016b7c7032b5867b5ba0147682d72029d08cafb4"
+    ),
+    "formal release config": (
+        "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd"
+    ),
+    "formal beforePack": (
+        "39425d047bfc81d1f5135eac3527109642897e7c82c73252d47a0146b3cba6de"
+    ),
+    "formal afterPack": (
+        "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5"
+    ),
+    "formal workflow": (
+        "a44cb63f1ede79509040edca8fcb8ced8717e065f3b4b803f062b345e9ab857e"
+    ),
+}
 STATUS = ROOT / "docs" / "development" / "status.md"
 TODO = ROOT / "docs" / "development" / "todo.md"
 TRACE = ROOT / "docs" / "development" / "traceability.md"
@@ -178,8 +364,44 @@ EXPECTED_RUN_BLOCK_SHA256 = (
     ("Python sidecar", "1047ddb0d37ac0cd187a065151c45a26aa2250f4303a6ac06f2689d896084710"),
     ("renderer", "5023492b7a69f172b1859fbcf6ffdc1089b2b655779b95770496afee816f44a7"),
     ("Desktop", "fbf322ed5f784aab2efc94a425944c3d61a25485bea226961c0ab746c21dc961"),
-    ("assembly audit", "67a914452c62079632e208576ba4b19e302d246fedb3e124179164f20a689d88"),
+    ("assembly audit", "680ea587ac29dd021002d2bdbc7f3459277b1c8ce3af41e8ba86e76105becb62"),
 )
+ENGINEERING_ADHOC_PACK_COMMAND = (
+    "CSC_FOR_PULL_REQUEST=true "
+    "npm --prefix desktop run pack:engineering-smoke"
+)
+EXPECTED_PREPARE_PR_SIGNING_GUARD = '''if (
+    Object.prototype.hasOwnProperty.call(environment, "CSC_FOR_PULL_REQUEST") &&
+    environment.CSC_FOR_PULL_REQUEST !== "true"
+  ) {
+    fail("Engineering-smoke PR ad-hoc signing control is invalid");
+  }'''
+EXPECTED_PYINSTALLER_ARCHIVE_GUARD = '''const REVIEWED_PYINSTALLER_ARCHIVE =
+  "Contents/Resources/sidecar/_internal/base_library.zip";'''
+EXPECTED_PYINSTALLER_ARCHIVE_INITIALIZER = (
+    "let observedReviewedPyInstallerArchive = false;"
+)
+EXPECTED_PYINSTALLER_ARCHIVE_PREDICATE = '''const isReviewedPyInstallerArchive =
+        appRelative === REVIEWED_PYINSTALLER_ARCHIVE &&
+        info.isFile() &&
+        !info.isSymbolicLink() &&
+        info.nlink === 1 &&
+        info.size > 0;'''
+EXPECTED_PYINSTALLER_ARCHIVE_CLOSURE = '''if (!observedReviewedPyInstallerArchive) {
+    fail("Engineering-smoke reviewed Python runtime archive is missing");
+  }'''
+EXPECTED_INSTALL_ARTIFACT_DECISION = r'''if (
+        lower.endsWith(".dmg") ||
+        lower.endsWith(".pkg") ||
+        (lower.endsWith(".zip") && !isReviewedPyInstallerArchive) ||
+        lower.endsWith(".blockmap") ||
+        /^(?:latest|alpha|beta|next)-mac\.yml$/.test(lower) ||
+        lower === "release-manifest.json" ||
+        lower === "update-manifest.json" ||
+        lower === "update-manifest.json.sig"
+      ) {
+        forbidden.push(candidate);
+      }'''
 
 
 def read(path: Path) -> str:
@@ -262,6 +484,71 @@ def _run_blocks(workflow: str) -> list[str]:
             index += 1
         blocks.append("\n".join(body))
     return blocks
+
+
+def _canonical_signing_control_text(document: str) -> str:
+    continued = re.sub(r"\\\r?\n[ \t]*", "", document)
+    yaml_escape = re.compile(
+        r"\\(?:x(?P<x>[0-9a-fA-F]{2})|u(?P<u>[0-9a-fA-F]{4})|"
+        r"U(?P<U>[0-9a-fA-F]{8})|u\{(?P<ubrace>[0-9a-fA-F]{1,6})\})",
+    )
+
+    def decode(match: re.Match[str]) -> str:
+        encoded = (
+            match.group("x")
+            or match.group("u")
+            or match.group("U")
+            or match.group("ubrace")
+        )
+        try:
+            value = int(encoded, 16)
+            if value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
+                return "\ufffd"
+            return chr(value)
+        except (TypeError, ValueError):
+            return "\ufffd"
+
+    decoded = yaml_escape.sub(decode, continued)
+    without_ansi_c_quotes = re.sub(
+        r"\$'([^'\r\n]*)'",
+        r"\1",
+        decoded,
+    )
+    without_quoted_simple_parameters = re.sub(
+        r'''([\"'])\$(?:[A-Za-z_][A-Za-z0-9_]*|[@*])\1''',
+        "",
+        without_ansi_c_quotes,
+    )
+    without_parameter_joins = re.sub(
+        r"\$\{[^{}\r\n]*\}",
+        "",
+        without_quoted_simple_parameters,
+    )
+    without_string_joins = re.sub(r"\s*\+\s*", "", without_parameter_joins)
+    return re.sub(
+        r'''['\"\\]+''',
+        "",
+        without_string_joins,
+    ).upper()
+
+
+def _has_dynamic_signing_control_construction(document: str) -> bool:
+    for line in document.splitlines():
+        upper = line.upper()
+        if (
+            "CSC_" in upper
+            and "$" in line
+            and "FOR" in upper
+            and "REQUEST" in upper
+        ):
+            return True
+    return False
+
+
+def _source_block(document: str, start: str, end: str) -> str:
+    if document.count(start) != 1 or document.count(end) != 1:
+        return ""
+    return start + document.split(start, 1)[1].split(end, 1)[0]
 
 
 def _target_recipe(makefile: str, target: str) -> str:
@@ -463,6 +750,73 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
 
     if hashlib.sha256(workflow.encode("utf-8")).hexdigest() != EXPECTED_WORKFLOW_SHA256:
         errors.append("workflow document contract drifted")
+    if hashlib.sha256(prepare.encode("utf-8")).hexdigest() != EXPECTED_PREPARE_SHA256:
+        errors.append("engineering prepare document contract drifted")
+    if (
+        hashlib.sha256(bundle_audit.encode("utf-8")).hexdigest()
+        != EXPECTED_BUNDLE_AUDIT_SHA256
+    ):
+        errors.append("engineering bundle auditor document contract drifted")
+    if (
+        hashlib.sha256(before_pack.encode("utf-8")).hexdigest()
+        != EXPECTED_BEFORE_PACK_SHA256
+    ):
+        errors.append("engineering beforePack document contract drifted")
+    if (
+        hashlib.sha256(after_pack.encode("utf-8")).hexdigest()
+        != EXPECTED_AFTER_PACK_SHA256
+    ):
+        errors.append("engineering afterPack document contract drifted")
+    if prepare.count(EXPECTED_FORBIDDEN_PRODUCTION_ENVIRONMENT) != 1:
+        errors.append("engineering forbidden production environment set drifted")
+    if bundle_audit.count(EXPECTED_ELECTRON_HELPER_ALLOWLIST) != 1:
+        errors.append("engineering Electron helper allowlist drifted")
+    if prepare.count(EXPECTED_PREPARE_PR_SIGNING_GUARD) != 1:
+        errors.append("engineering PR signing guard drifted")
+    prepare_environment_function = _source_block(
+        prepare,
+        "function assertNoProductionEnvironment",
+        "\nfunction assertEngineeringSmokeMode",
+    )
+    if (
+        hashlib.sha256(prepare_environment_function.encode("utf-8")).hexdigest()
+        != EXPECTED_PREPARE_ENVIRONMENT_FUNCTION_SHA256
+        or prepare_environment_function != EXPECTED_PREPARE_ENVIRONMENT_FUNCTION
+        or re.search(r"\breturn\b", prepare_environment_function)
+    ):
+        errors.append("engineering production-environment control flow drifted")
+    install_artifact_function = _source_block(
+        bundle_audit,
+        "function assertNoInstallOrReleaseArtifacts",
+        "\nfunction writeExternalEvidence",
+    )
+    if (
+        hashlib.sha256(install_artifact_function.encode("utf-8")).hexdigest()
+        != EXPECTED_INSTALL_ARTIFACT_FUNCTION_SHA256
+        or install_artifact_function != EXPECTED_INSTALL_ARTIFACT_FUNCTION
+        or install_artifact_function.count("observedReviewedPyInstallerArchive") != 3
+        or re.search(r"\breturn\b", install_artifact_function)
+    ):
+        errors.append("engineering install-artifact control flow drifted")
+    if (
+        prepare.count("assertNoProductionEnvironment") != 4
+        or prepare.count("assertNoProductionEnvironment(environment);") != 2
+        or before_pack.count("assertNoProductionEnvironment") != 2
+        or before_pack.count("assertNoProductionEnvironment(environment);") != 1
+        or after_pack.count("assertNoProductionEnvironment") != 2
+        or after_pack.count("assertNoProductionEnvironment(environment);") != 1
+        or bundle_audit.count("assertNoProductionEnvironment") != 2
+        or bundle_audit.count("assertNoProductionEnvironment(environment);") != 1
+    ):
+        errors.append("engineering production-environment caller closure drifted")
+    if (
+        bundle_audit.count("assertNoInstallOrReleaseArtifacts") != 3
+        or bundle_audit.count(
+            "assertNoInstallOrReleaseArtifacts(outputRoot, appRoot);"
+        )
+        != 1
+    ):
+        errors.append("engineering install-artifact caller closure drifted")
 
     trigger = workflow.split("concurrency:", 1)[0]
     exact_trigger = (
@@ -583,7 +937,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "npm --prefix desktop run test:engineering-smoke",
         "npm --prefix desktop run build:engineering-smoke",
         "npm --prefix desktop run prepare:engineering-smoke",
-        "npm --prefix desktop run pack:engineering-smoke",
+        ENGINEERING_ADHOC_PACK_COMMAND,
         (
             "npm --prefix desktop --silent run audit:engineering-smoke "
             '> "${audit_json}"'
@@ -592,6 +946,11 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     for command in required_commands:
         if run_lines.count(command) != 1:
             errors.append(f"workflow required command missing {command!r}")
+    if (
+        workflow.count("CSC_FOR_PULL_REQUEST") != 1
+        or run_lines.count(ENGINEERING_ADHOC_PACK_COMMAND) != 1
+    ):
+        errors.append("workflow PR ad-hoc signing control drifted")
     if re.search(r"npm --prefix desktop run build(?:\s|$)", workflow):
         errors.append("workflow must not use the companion-building generic build script")
     if "build:companion" in workflow or "audit:companion" in workflow:
@@ -778,8 +1137,21 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     }
     for label, document in formal_documents.items():
         lowered = document.lower()
+        if (
+            hashlib.sha256(document.encode("utf-8")).hexdigest()
+            != EXPECTED_FORMAL_BOUNDARY_SHA256[label]
+        ):
+            errors.append(f"{label} document contract drifted")
         if "engineering-smoke" in lowered or "electron-builder.smoke.yml" in lowered:
             errors.append(f"{label} must not reference the engineering boundary")
+        if (
+            re.search(
+                r"(?<![A-Z0-9_])CSC_FOR_PULL_REQUEST(?![A-Z0-9_])",
+                _canonical_signing_control_text(document),
+            )
+            or _has_dynamic_signing_control_construction(document)
+        ):
+            errors.append(f"{label} must not use the engineering PR signing control")
 
     engineering_scripts = {
         "prepare": prepare,
@@ -819,6 +1191,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "inspectAsarContents",
         "EXPECTED_ASAR_ENTRIES",
         "ALLOWED_ELECTRON_HELPER_APPS",
+        "REVIEWED_PYINSTALLER_ARCHIVE",
         "codesign",
         "lipo",
         EXPECTED_MANIFEST_PATH,
@@ -832,6 +1205,15 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     ):
         if marker not in bundle_audit:
             errors.append(f"bundle auditor missing static assertion {marker!r}")
+    for reviewed_fragment in (
+        EXPECTED_PYINSTALLER_ARCHIVE_GUARD,
+        EXPECTED_PYINSTALLER_ARCHIVE_INITIALIZER,
+        EXPECTED_PYINSTALLER_ARCHIVE_PREDICATE,
+        EXPECTED_INSTALL_ARTIFACT_DECISION,
+        EXPECTED_PYINSTALLER_ARCHIVE_CLOSURE,
+    ):
+        if bundle_audit.count(reviewed_fragment) != 1:
+            errors.append("engineering PyInstaller archive exception drifted")
     engineering_package_scripts = "\n".join(
         str(scripts.get(name, "")) for name in EXPECTED_PACKAGE_SCRIPTS
     )

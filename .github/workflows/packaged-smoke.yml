@@ -110,7 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           npm --prefix desktop run prepare:engineering-smoke
-          npm --prefix desktop run pack:engineering-smoke
+          CSC_FOR_PULL_REQUEST=true npm --prefix desktop run pack:engineering-smoke
           audit_json="${RUNNER_TEMP}/engineering-smoke-audit.json"
           npm --prefix desktop --silent run audit:engineering-smoke > "${audit_json}"
           node - "${audit_json}" <<'NODE'

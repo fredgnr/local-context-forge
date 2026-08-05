@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -241,6 +243,41 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             any("run-step contract" in error for error in CHECKER.validate_policy(current))
         )
 
+    def test_pr_ad_hoc_signing_control_is_pack_command_local(self) -> None:
+        for replacement in (
+            "npm --prefix desktop run pack:engineering-smoke",
+            "CSC_FOR_PULL_REQUEST=1 npm --prefix desktop run pack:engineering-smoke",
+            (
+                "CSC_FOR_PULL_REQUEST=true "
+                "npm --prefix desktop run prepare:engineering-smoke"
+            ),
+        ):
+            with self.subTest(replacement=replacement):
+                current = inputs()
+                changed(
+                    current,
+                    "workflow",
+                    CHECKER.ENGINEERING_ADHOC_PACK_COMMAND,
+                    replacement,
+                )
+                self.assertIn(
+                    "workflow PR ad-hoc signing control drifted",
+                    CHECKER.validate_policy(current),
+                )
+
+        current = inputs()
+        changed(
+            current,
+            "workflow",
+            CHECKER.ENGINEERING_ADHOC_PACK_COMMAND,
+            f"{CHECKER.ENGINEERING_ADHOC_PACK_COMMAND}\n"
+            "          export CSC_FOR_PULL_REQUEST=true",
+        )
+        self.assertIn(
+            "workflow PR ad-hoc signing control drifted",
+            CHECKER.validate_policy(current),
+        )
+
     def test_only_locked_python_installer_spctl_is_allowed(self) -> None:
         current = inputs()
         current["makefile"] = str(current["makefile"]) + "\n\t/usr/sbin/spctl --assess Bad.app\n"
@@ -314,6 +351,82 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         )
         self.assertTrue(any("formal workflow" in error for error in CHECKER.validate_policy(current)))
 
+        for addition in (
+            '\nenv:\n  "CSC_FOR_PULL\\u005fREQUEST": true\n',
+            '\nenv:\n  "CSC_FOR_PULL\\x5fREQUEST": true\n',
+            '\nenv:\n  "CSC_FOR_PU\\u004cL_REQUEST": true\n',
+            '\nenv:\n  "CSC_FOR_PU\\x4cL_REQUEST": true\n',
+            '\nenv:\n  "CSC_FOR_PU\\U0000004cL_REQUEST": true\n',
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            '    steps:\n      - run: export CSC_FOR_PULL"_"REQUEST=true\n',
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            '    steps:\n      - run: export CSC_FOR_PU${EMPTY}LL_REQUEST=true\n',
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            '    steps:\n      - run: |\n'
+            '          export CSC_FOR_PU\\\n'
+            '            LL_REQUEST=true\n',
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            '    steps:\n      - run: |\n'
+            '          unset EMPTY\n'
+            '          export CSC_FOR_PU"$EMPTY"LL_REQUEST=true\n',
+            '\nenv:\n  "CSC_FOR_PU\\u{4c}L_REQUEST": true\n',
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            "    steps:\n      - run: export CSC_FOR_PU$'\\x4c'L_REQUEST=true\n",
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            '    steps:\n      - run: export CSC_FOR_PU$(printf L)L_REQUEST=true\n',
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            '    steps:\n      - run: export CSC_FOR_PU"$@"LL_REQUEST=true\n',
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            '    steps:\n      - run: export CSC_FOR_PU"$(true)"LL_REQUEST=true\n',
+            '\njobs:\n  bypass:\n    runs-on: macos-15\n'
+            '    steps:\n      - run: node -e \'process.env["CSC_FOR_PU" + "LL_REQUEST"]="true"\'\n',
+        ):
+            with self.subTest(addition=addition):
+                current = inputs()
+                current["formal_workflow"] = str(current["formal_workflow"]) + addition
+                self.assertIn(
+                    "formal workflow document contract drifted",
+                    CHECKER.validate_policy(current),
+                )
+                expected_hashes = dict(CHECKER.EXPECTED_FORMAL_BOUNDARY_SHA256)
+                expected_hashes["formal workflow"] = hashlib.sha256(
+                    str(current["formal_workflow"]).encode("utf-8")
+                ).hexdigest()
+                with mock.patch.object(
+                    CHECKER,
+                    "EXPECTED_FORMAL_BOUNDARY_SHA256",
+                    expected_hashes,
+                ):
+                    self.assertIn(
+                        "formal workflow must not use the engineering PR signing control",
+                        CHECKER.validate_policy(current),
+                    )
+
+        current = inputs()
+        current["formal_workflow"] = (
+            str(current["formal_workflow"])
+            + "\n# CSC_FOR_PULLING_NOT_A_CONTROL\n"
+        )
+        expected_hashes = dict(CHECKER.EXPECTED_FORMAL_BOUNDARY_SHA256)
+        expected_hashes["formal workflow"] = hashlib.sha256(
+            str(current["formal_workflow"]).encode("utf-8")
+        ).hexdigest()
+        with mock.patch.object(
+            CHECKER,
+            "EXPECTED_FORMAL_BOUNDARY_SHA256",
+            expected_hashes,
+        ):
+            self.assertNotIn(
+                "formal workflow must not use the engineering PR signing control",
+                CHECKER.validate_policy(current),
+            )
+
+        current = inputs()
+        current["formal_workflow"] = (
+            str(current["formal_workflow"]) + "\nCSC_FOR_PULL_REQUEST=true\n"
+        )
+        self.assertTrue(any("formal workflow" in error for error in CHECKER.validate_policy(current)))
+
     def test_engineering_hooks_cannot_import_formal_release_logic(self) -> None:
         current = inputs()
         current["before_pack"] = str(current["before_pack"]) + '\nrequire("./prepareRelease.cjs");\n'
@@ -330,6 +443,270 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             + '\nexecFileSync("release-smoke/App.app/Contents/MacOS/App");\n'
         )
         self.assertTrue(any("launch" in error for error in CHECKER.validate_policy(current)))
+
+    def test_pyinstaller_archive_exception_cannot_expand(self) -> None:
+        mutations = (
+            (
+                "Contents/Resources/sidecar/_internal/base_library.zip",
+                "Contents/Resources/sidecar/evil.zip",
+            ),
+            ("        info.nlink === 1 &&", "        true &&"),
+            (
+                '(lower.endsWith(".zip") && !isReviewedPyInstallerArchive)',
+                'lower.endsWith(".zip") && false',
+            ),
+            (
+                "if (!observedReviewedPyInstallerArchive) {",
+                "if (false) {",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "bundle_audit", old, new)
+                self.assertIn(
+                    "engineering PyInstaller archive exception drifted",
+                    CHECKER.validate_policy(current),
+                )
+
+        document_contract_mutations = (
+            (
+                "let observedReviewedPyInstallerArchive = false;",
+                "let observedReviewedPyInstallerArchive = true;",
+            ),
+            (
+                '(lower.endsWith(".zip") && !isReviewedPyInstallerArchive)',
+                '((lower.endsWith(".zip") && !isReviewedPyInstallerArchive) && false)',
+            ),
+        )
+        for old, new in document_contract_mutations:
+            with self.subTest(document_contract=old):
+                current = inputs()
+                changed(current, "bundle_audit", old, new)
+                self.assertIn(
+                    "engineering bundle auditor document contract drifted",
+                    CHECKER.validate_policy(current),
+                )
+                with mock.patch.object(
+                    CHECKER,
+                    "EXPECTED_BUNDLE_AUDIT_SHA256",
+                    hashlib.sha256(
+                        str(current["bundle_audit"]).encode("utf-8")
+                    ).hexdigest(),
+                ):
+                    self.assertIn(
+                        "engineering PyInstaller archive exception drifted",
+                        CHECKER.validate_policy(current),
+                    )
+
+    def test_prepare_pr_signing_guard_cannot_be_neutralized(self) -> None:
+        current = inputs()
+        changed(
+            current,
+            "prepare",
+            '    Object.prototype.hasOwnProperty.call(environment, "CSC_FOR_PULL_REQUEST") &&',
+            '    false &&\n'
+            '    Object.prototype.hasOwnProperty.call(environment, "CSC_FOR_PULL_REQUEST") &&',
+        )
+        self.assertIn(
+            "engineering prepare document contract drifted",
+            CHECKER.validate_policy(current),
+        )
+        mutated_prepare = str(current["prepare"])
+        mutated_prepare_function = CHECKER._source_block(
+            mutated_prepare,
+            "function assertNoProductionEnvironment",
+            "\nfunction assertEngineeringSmokeMode",
+        )
+        with mock.patch.object(
+            CHECKER,
+            "EXPECTED_PREPARE_SHA256",
+            hashlib.sha256(mutated_prepare.encode("utf-8")).hexdigest(),
+        ), mock.patch.object(
+            CHECKER,
+            "EXPECTED_PREPARE_ENVIRONMENT_FUNCTION_SHA256",
+            hashlib.sha256(mutated_prepare_function.encode("utf-8")).hexdigest(),
+        ):
+            self.assertIn(
+                "engineering PR signing guard drifted",
+                CHECKER.validate_policy(current),
+            )
+
+        current = inputs()
+        changed(
+            current,
+            "prepare",
+            "function assertNoProductionEnvironment(environment) {",
+            "function assertNoProductionEnvironment(environment) {\n  return;",
+        )
+        mutated_prepare = str(current["prepare"])
+        mutated_prepare_function = CHECKER._source_block(
+            mutated_prepare,
+            "function assertNoProductionEnvironment",
+            "\nfunction assertEngineeringSmokeMode",
+        )
+        with mock.patch.object(
+            CHECKER,
+            "EXPECTED_PREPARE_SHA256",
+            hashlib.sha256(mutated_prepare.encode("utf-8")).hexdigest(),
+        ), mock.patch.object(
+            CHECKER,
+            "EXPECTED_PREPARE_ENVIRONMENT_FUNCTION_SHA256",
+            hashlib.sha256(mutated_prepare_function.encode("utf-8")).hexdigest(),
+        ):
+            self.assertIn(
+                "engineering production-environment control flow drifted",
+                CHECKER.validate_policy(current),
+            )
+
+        current = inputs()
+        original_function = CHECKER._source_block(
+            str(current["prepare"]),
+            "function assertNoProductionEnvironment",
+            "\nfunction assertEngineeringSmokeMode",
+        )
+        body = original_function.split("{\n", 1)[1].rsplit("\n}", 1)[0]
+        wrapped_function = (
+            "function assertNoProductionEnvironment(environment) {\n"
+            "  if (false) {\n  "
+            + body.replace("\n", "\n  ")
+            + "\n  }\n}\n"
+        )
+        current["prepare"] = str(current["prepare"]).replace(
+            original_function,
+            wrapped_function,
+            1,
+        )
+        with mock.patch.object(
+            CHECKER,
+            "EXPECTED_PREPARE_SHA256",
+            hashlib.sha256(str(current["prepare"]).encode("utf-8")).hexdigest(),
+        ), mock.patch.object(
+            CHECKER,
+            "EXPECTED_PREPARE_ENVIRONMENT_FUNCTION_SHA256",
+            hashlib.sha256(wrapped_function.encode("utf-8")).hexdigest(),
+        ):
+            self.assertIn(
+                "engineering production-environment control flow drifted",
+                CHECKER.validate_policy(current),
+            )
+
+    def test_archive_observation_cannot_be_preseeded_after_initialization(self) -> None:
+        current = inputs()
+        changed(
+            current,
+            "bundle_audit",
+            "  let observedReviewedPyInstallerArchive = false;",
+            "  let observedReviewedPyInstallerArchive = false;\n"
+            "  observedReviewedPyInstallerArchive = true;",
+        )
+        mutated_bundle_audit = str(current["bundle_audit"])
+        mutated_artifact_function = CHECKER._source_block(
+            mutated_bundle_audit,
+            "function assertNoInstallOrReleaseArtifacts",
+            "\nfunction writeExternalEvidence",
+        )
+        with mock.patch.object(
+            CHECKER,
+            "EXPECTED_BUNDLE_AUDIT_SHA256",
+            hashlib.sha256(mutated_bundle_audit.encode("utf-8")).hexdigest(),
+        ), mock.patch.object(
+            CHECKER,
+            "EXPECTED_INSTALL_ARTIFACT_FUNCTION_SHA256",
+            hashlib.sha256(mutated_artifact_function.encode("utf-8")).hexdigest(),
+        ):
+            self.assertIn(
+                "engineering install-artifact control flow drifted",
+                CHECKER.validate_policy(current),
+            )
+
+        current = inputs()
+        changed(
+            current,
+            "bundle_audit",
+            "  if (forbidden.length > 0) {",
+            "  forbidden.length = 0;\n  if (forbidden.length > 0) {",
+        )
+        mutated_bundle_audit = str(current["bundle_audit"])
+        mutated_artifact_function = CHECKER._source_block(
+            mutated_bundle_audit,
+            "function assertNoInstallOrReleaseArtifacts",
+            "\nfunction writeExternalEvidence",
+        )
+        with mock.patch.object(
+            CHECKER,
+            "EXPECTED_BUNDLE_AUDIT_SHA256",
+            hashlib.sha256(mutated_bundle_audit.encode("utf-8")).hexdigest(),
+        ), mock.patch.object(
+            CHECKER,
+            "EXPECTED_INSTALL_ARTIFACT_FUNCTION_SHA256",
+            hashlib.sha256(mutated_artifact_function.encode("utf-8")).hexdigest(),
+        ):
+            self.assertIn(
+                "engineering install-artifact control flow drifted",
+                CHECKER.validate_policy(current),
+            )
+
+    def test_critical_allowlists_and_callers_are_closed(self) -> None:
+        mutations = (
+            (
+                "prepare",
+                '  "CSC_KEYCHAIN",\n',
+                "",
+                "engineering forbidden production environment set drifted",
+            ),
+            (
+                "bundle_audit",
+                "  `${PRODUCT_NAME} Helper (Renderer).app`\n",
+                "  `${PRODUCT_NAME} Helper (Renderer).app`,\n"
+                '  "Evil Helper.app"\n',
+                "engineering Electron helper allowlist drifted",
+            ),
+            (
+                "prepare",
+                "function validateHost(platformName, architecture) {",
+                "assertNoProductionEnvironment = () => {};\n\n"
+                "function validateHost(platformName, architecture) {",
+                "engineering production-environment caller closure drifted",
+            ),
+            (
+                "bundle_audit",
+                "function createAuditEngineeringSmokeBundle(dependencies = {}) {",
+                "assertNoInstallOrReleaseArtifacts = () => {};\n\n"
+                "function createAuditEngineeringSmokeBundle(dependencies = {}) {",
+                "engineering install-artifact caller closure drifted",
+            ),
+            (
+                "bundle_audit",
+                "    assertNoInstallOrReleaseArtifacts(outputRoot, appRoot);\n",
+                "",
+                "engineering install-artifact caller closure drifted",
+            ),
+        )
+        for key, old, new, expected in mutations:
+            with self.subTest(key=key, old=old):
+                current = inputs()
+                changed(current, key, old, new)
+                if key == "prepare":
+                    document_hash = hashlib.sha256(
+                        str(current[key]).encode("utf-8")
+                    ).hexdigest()
+                    patch = mock.patch.object(
+                        CHECKER,
+                        "EXPECTED_PREPARE_SHA256",
+                        document_hash,
+                    )
+                else:
+                    document_hash = hashlib.sha256(
+                        str(current[key]).encode("utf-8")
+                    ).hexdigest()
+                    patch = mock.patch.object(
+                        CHECKER,
+                        "EXPECTED_BUNDLE_AUDIT_SHA256",
+                        document_hash,
+                    )
+                with patch:
+                    self.assertIn(expected, CHECKER.validate_policy(current))
 
     def test_manifest_schema_cannot_be_open_or_publishable(self) -> None:
         current = inputs()

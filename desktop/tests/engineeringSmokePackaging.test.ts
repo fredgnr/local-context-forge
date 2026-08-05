@@ -1,5 +1,6 @@
 import {
   chmod,
+  link,
   readFile,
   mkdtemp,
   mkdir,
@@ -59,6 +60,7 @@ const bundleAudit = require(
   "../scripts/auditEngineeringSmokeBundle.cjs"
 ) as {
   ALLOWED_ELECTRON_HELPER_APPS: readonly string[];
+  REVIEWED_PYINSTALLER_ARCHIVE: string;
   assertNoInstallOrReleaseArtifacts(
     outputRoot: string,
     expectedAppRoot: string
@@ -267,6 +269,12 @@ describe("engineering-smoke manifest and boundary", () => {
 
   it("rejects production credentials, non-arm64 hosts, and ambiguous source commits", () => {
     expect(() => prepare.assertNoProductionEnvironment({})).not.toThrow();
+    expect(() =>
+      prepare.assertNoProductionEnvironment({ CSC_FOR_PULL_REQUEST: "true" })
+    ).not.toThrow();
+    expect(() =>
+      prepare.assertNoProductionEnvironment({ CSC_FOR_PULL_REQUEST: "1" })
+    ).toThrow(/ad-hoc signing control/);
     expect(() =>
       prepare.assertNoProductionEnvironment({ CSC_LINK: "secret" })
     ).toThrow();
@@ -589,9 +597,80 @@ describe("engineering-smoke post-pack policy", () => {
         { recursive: true }
       );
     }
+    const reviewedArchive = path.join(
+      appRoot,
+      ...bundleAudit.REVIEWED_PYINSTALLER_ARCHIVE.split("/")
+    );
+    await mkdir(path.dirname(reviewedArchive), { recursive: true });
+    await writeFile(reviewedArchive, "reviewed PyInstaller stdlib\n");
     expect(() =>
       bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
     ).not.toThrow();
+    await rm(reviewedArchive);
+    expect(() =>
+      bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
+    ).toThrow(/reviewed Python runtime archive is missing/);
+    await writeFile(reviewedArchive, "reviewed PyInstaller stdlib\n");
+
+    const unreviewedArchive = path.join(
+      appRoot,
+      "Contents",
+      "Resources",
+      "payload.zip"
+    );
+    await writeFile(unreviewedArchive, "unreviewed archive\n");
+    expect(() =>
+      bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
+    ).toThrow(/install or release/);
+    await rm(unreviewedArchive);
+
+    const sidecarArchive = path.join(
+      path.dirname(reviewedArchive),
+      "evil.zip"
+    );
+    await writeFile(sidecarArchive, "unreviewed sidecar archive\n");
+    expect(() =>
+      bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
+    ).toThrow(/install or release/);
+    await rm(sidecarArchive);
+
+    const archivePayload = path.join(
+      path.dirname(reviewedArchive),
+      "base_library.payload"
+    );
+    await writeFile(archivePayload, "archive payload\n");
+    await rm(reviewedArchive);
+    await symlink("base_library.payload", reviewedArchive);
+    expect(() =>
+      bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
+    ).toThrow(/install or release/);
+    await rm(reviewedArchive);
+    await link(archivePayload, reviewedArchive);
+    expect(() =>
+      bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
+    ).toThrow(/install or release/);
+    await rm(reviewedArchive);
+    await rm(archivePayload);
+    await writeFile(reviewedArchive, "");
+    expect(() =>
+      bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
+    ).toThrow(/install or release/);
+    await rm(reviewedArchive);
+    await mkdir(reviewedArchive);
+    expect(() =>
+      bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
+    ).toThrow(/install or release/);
+    await rm(reviewedArchive, { recursive: true });
+    const caseDriftArchive = path.join(
+      path.dirname(reviewedArchive),
+      "base_library.ZIP"
+    );
+    await writeFile(caseDriftArchive, "case drift\n");
+    expect(() =>
+      bundleAudit.assertNoInstallOrReleaseArtifacts(root, appRoot)
+    ).toThrow(/install or release/);
+    await rm(caseDriftArchive);
+    await writeFile(reviewedArchive, "reviewed PyInstaller stdlib\n");
 
     const missingHelper = path.join(
       appRoot,

@@ -325,8 +325,17 @@ def _native_target_label(arguments: Sequence[str]) -> str:
         return "extension-module"
     if target.suffix == ".dylib":
         return "dylib"
-    if any(part.endswith(".framework") for part in target.parts):
-        return "framework"
+    framework_parts = {
+        part for part in target.parts if part.endswith(".framework")
+    }
+    if "Python.framework" in framework_parts:
+        return "python-framework"
+    if "Tcl.framework" in framework_parts:
+        return "tcl-framework"
+    if "Tk.framework" in framework_parts:
+        return "tk-framework"
+    if framework_parts:
+        return "other-framework"
     return "other-macho"
 
 
@@ -344,10 +353,19 @@ def _native_failure_category(
         or "invalid or unsupported format" in normalized
     ):
         return "invalid-signature"
-    if "resource envelope" in normalized or "sealed resource" in normalized:
+    if (
+        "resource envelope" in normalized
+        or "sealed resource" in normalized
+        or "unsealed content" in normalized
+    ):
         return "resource-seal"
     if "bundle format" in normalized:
         return "unsupported-format"
+    if (
+        "main executable failed strict validation" in normalized
+        or "errseccsbadmainexecutable" in normalized
+    ):
+        return "strict-layout"
     return "exit"
 
 

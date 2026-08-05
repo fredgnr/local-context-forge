@@ -1126,6 +1126,50 @@ def test_codesign_unsigned_failure_uses_only_fixed_categories(
     assert "/secret" not in str(failure.value)
 
 
+@pytest.mark.parametrize(
+    ("framework", "expected_target"),
+    [
+        ("Python.framework", "python-framework"),
+        ("Tcl.framework", "tcl-framework"),
+        ("Tk.framework", "tk-framework"),
+        ("Widget.framework", "other-framework"),
+    ],
+)
+def test_codesign_framework_failure_reports_only_a_fixed_framework_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    framework: str,
+    expected_target: str,
+) -> None:
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+    target = f"/secret/{framework}/Versions/A/{framework.removesuffix('.framework')}"
+
+    def failed_run(*_args: Any, **_kwargs: Any) -> Any:
+        raise subprocess.CalledProcessError(
+            1,
+            ("/usr/bin/codesign", "--verify", "--strict", target),
+            stderr=(
+                f"{target}: main executable failed strict validation; "
+                "token-must-not-leak"
+            ),
+        )
+
+    monkeypatch.setattr(audit.subprocess, "run", failed_run)
+
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            r"^Native inspection tool failed \(tool=codesign-verify; "
+            rf"target={expected_target}; category=strict-layout; code=1\)$"
+        ),
+    ) as failure:
+        audit._run_native_tool(
+            ("/usr/bin/codesign", "--verify", "--strict", target)
+        )
+
+    assert "must-not-leak" not in str(failure.value)
+    assert "/secret" not in str(failure.value)
+
+
 def test_native_tool_rejects_an_unreviewed_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -12,6 +12,9 @@ from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
+EXPECTED_WORKFLOW_SHA256 = (
+    "341aa99918d762f9d8a0e04aab1d53edb6e451773238c73891ba30e0c312956c"
+)
 MAKEFILE = ROOT / "Makefile"
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 SMOKE_CONFIG = ROOT / "desktop" / "electron-builder.smoke.yml"
@@ -38,6 +41,12 @@ ITERATION = (
 )
 
 SOURCE_EXPRESSION = "${{ github.event.pull_request.head.sha || github.sha }}"
+EXPECTED_JOB_ENV = (
+    '      CI: "true"\n'
+    '      LCF_ENGINEERING_SMOKE: "true"\n'
+    f"      LCF_SOURCE_SHA: {SOURCE_EXPRESSION}\n"
+    "      LCF_GITHUB_CONTEXT_SHA: ${{ github.sha }}\n"
+)
 CHECKOUT_SHA = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
 SETUP_NODE_SHA = "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e"
 SETUP_PYTHON_SHA = "a309ff8b426b58ec0e2a45f0f869d46889d02405"
@@ -60,6 +69,20 @@ PYTHON_ARCHIVE_SHA256 = (
 PYTHON_HASHES_SHA256 = (
     "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17"
 )
+PYTHON_INSTALL_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13"
+PYTHON_RUNNER_INPUTS = (
+    "LCF_PYTHON_DISTRIBUTION_ARCHIVE",
+    "LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST",
+    "LCF_PYTHON_INSTALL_ROOT",
+)
+EXPECTED_PYTHON_RUNNER_BINDING = '''{
+  printf 'PYTHON_SIDECAR_ARCHIVE=%s\\n' "${python_archive}"
+  printf 'PYTHON_SIDECAR_HASH_MANIFEST=%s\\n' "${python_hashes}"
+  printf 'LCF_PYTHON_DISTRIBUTION_ARCHIVE=%s\\n' "${python_archive}"
+  printf 'LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST=%s\\n' "${python_hashes}"
+  printf 'LCF_PYTHON_INSTALL_ROOT=%s\\n' \\
+    "/Library/Frameworks/Python.framework/Versions/3.13"
+} >> "${GITHUB_ENV}"'''
 EXPECTED_APP_ID = "dev.localcontextforge.engineering-smoke"
 EXPECTED_PRODUCT_NAME = "Local Context Forge Engineering Smoke"
 EXPECTED_MANIFEST_PATH = (
@@ -151,7 +174,7 @@ EXPECTED_PACKAGE_SCRIPTS = {
 EXPECTED_RUN_BLOCK_SHA256 = (
     ("exact provenance", "3777a7ddc6ae77f06ef0ae683ceaa4e4b8a1491f7c6c1be763bda06dd5292588"),
     ("policy", "fd7b010b95d7af1e8f5954b7e3f863235aebb9ccd723ec84c2fd084ecdc1838b"),
-    ("Python sources", "020e9649073f290a046f05aeef2bcd62974055f7cf85e6fff95f521b122068f1"),
+    ("Python sources", "d60af92a5cfcf963ad99530243f3d5c00ea6e4910c863967667244229bce4495"),
     ("Python sidecar", "1047ddb0d37ac0cd187a065151c45a26aa2250f4303a6ac06f2689d896084710"),
     ("renderer", "5023492b7a69f172b1859fbcf6ffdc1089b2b655779b95770496afee816f44a7"),
     ("Desktop", "fbf322ed5f784aab2efc94a425944c3d61a25485bea226961c0ab746c21dc961"),
@@ -438,6 +461,9 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     after_pack = str(inputs["after_pack"])
     bundle_audit = str(inputs["bundle_audit"])
 
+    if hashlib.sha256(workflow.encode("utf-8")).hexdigest() != EXPECTED_WORKFLOW_SHA256:
+        errors.append("workflow document contract drifted")
+
     trigger = workflow.split("concurrency:", 1)[0]
     exact_trigger = (
         "name: Engineering smoke bundle assembly\n\n"
@@ -515,6 +541,17 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             errors.append(f"workflow exact-source/tool contract missing {marker!r}")
     if re.search(r"^\s+GITHUB_SHA:\s*", workflow, re.MULTILINE):
         errors.append("workflow must not overwrite the GitHub context SHA")
+    job_env = re.search(
+        r"^    env:\n(?P<body>(?:      [^\n]+\n)+)    steps:\n",
+        workflow,
+        re.MULTILINE,
+    )
+    if (
+        len(re.findall(r"^\s+env\s*:", workflow, re.MULTILINE)) != 1
+        or job_env is None
+        or job_env.group("body") != EXPECTED_JOB_ENV
+    ):
+        errors.append("workflow environment surface drifted")
     if "cache:" in workflow or "actions/cache@" in workflow:
         errors.append("workflow must not use a mutable dependency cache")
 
@@ -567,6 +604,42 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     ):
         if "\n".join(run_blocks).count(value) != 1:
             errors.append("workflow Python source lock drifted")
+
+    python_source_blocks = [
+        block for block in run_blocks if PYTHON_ARCHIVE_URL in block
+    ]
+    runner_binding_markers = (
+        "printf 'LCF_PYTHON_DISTRIBUTION_ARCHIVE=%s\\n' \"${python_archive}\"",
+        (
+            "printf 'LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST=%s\\n' "
+            '"${python_hashes}"'
+        ),
+        "printf 'LCF_PYTHON_INSTALL_ROOT=%s\\n' \\",
+        f'    "{PYTHON_INSTALL_ROOT}"',
+    )
+    if len(python_source_blocks) != 1:
+        errors.append("workflow Python runner input binding drifted")
+    else:
+        python_source_block = python_source_blocks[0]
+        binding_offset = python_source_block.find(EXPECTED_PYTHON_RUNNER_BINDING)
+        final_hash_check_offset = python_source_block.rfind(
+            "shasum -a 256 --check"
+        )
+        if (
+            binding_offset < 0
+            or python_source_block.count(EXPECTED_PYTHON_RUNNER_BINDING) != 1
+            or python_source_block.count("shasum -a 256 --check") != 2
+            or final_hash_check_offset < 0
+            or binding_offset <= final_hash_check_offset
+            or python_source_block.count('} >> "${GITHUB_ENV}"') != 1
+        ):
+            errors.append("workflow Python runner input binding drifted")
+    for marker in runner_binding_markers:
+        if workflow.count(marker) != 1:
+            errors.append("workflow Python runner input binding drifted")
+    for input_name in PYTHON_RUNNER_INPUTS:
+        if workflow.count(input_name) != 1:
+            errors.append("workflow Python runner input binding drifted")
 
     forbidden_workflow = (
         "actions/upload-artifact@",

@@ -128,6 +128,94 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         changed(current, "workflow", CHECKER.PYTHON_ARCHIVE_SHA256, "0" * 64)
         self.assertTrue(any("Python source lock" in error for error in CHECKER.validate_policy(current)))
 
+    def test_python_runner_inputs_are_persisted_after_source_verification(self) -> None:
+        mutations = (
+            (
+                "printf 'LCF_PYTHON_DISTRIBUTION_ARCHIVE=%s\\n' \"${python_archive}\"\n",
+                "",
+            ),
+            (
+                "printf 'LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST=%s\\n' \"${python_hashes}\"\n",
+                "",
+            ),
+            (
+                "printf 'LCF_PYTHON_INSTALL_ROOT=%s\\n' \\\n"
+                '              "/Library/Frameworks/Python.framework/Versions/3.13"\n',
+                "",
+            ),
+            (
+                "printf 'LCF_PYTHON_DISTRIBUTION_ARCHIVE=%s\\n' \"${python_archive}\"",
+                "printf 'LCF_PYTHON_DISTRIBUTION_ARCHIVE=%s\\n' \"${python_hashes}\"",
+            ),
+            (
+                "printf 'LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST=%s\\n' \"${python_hashes}\"",
+                "printf 'LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST=%s\\n' \"${python_archive}\"",
+            ),
+            (
+                "/Library/Frameworks/Python.framework/Versions/3.13",
+                "/Library/Frameworks/Python.framework/Versions/3.12",
+            ),
+            ('} >> "${GITHUB_ENV}"', '} >> "${GITHUB_OUTPUT}"'),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "workflow", old, new)
+                self.assertIn(
+                    "workflow Python runner input binding drifted",
+                    CHECKER.validate_policy(current),
+                )
+
+        current = inputs()
+        binding = (
+            "            printf 'LCF_PYTHON_DISTRIBUTION_ARCHIVE=%s\\n' "
+            '"${python_archive}"'
+        )
+        changed(current, "workflow", binding, f"{binding}\n{binding}")
+        self.assertIn(
+            "workflow Python runner input binding drifted",
+            CHECKER.validate_policy(current),
+        )
+
+        overrides = (
+            (
+                "      LCF_GITHUB_CONTEXT_SHA: ${{ github.sha }}",
+                "      LCF_GITHUB_CONTEXT_SHA: ${{ github.sha }}\n"
+                "      LCF_PYTHON_INSTALL_ROOT: /tmp/unreviewed",
+            ),
+            (
+                "      - name: Assemble and statically audit app directory",
+                "      - name: Assemble and statically audit app directory\n"
+                "        env:\n"
+                "          LCF_PYTHON_DISTRIBUTION_ARCHIVE: /tmp/unreviewed",
+            ),
+        )
+        for old, new in overrides:
+            with self.subTest(override=new):
+                current = inputs()
+                changed(current, "workflow", old, new)
+                errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "workflow Python runner input binding drifted",
+                    errors,
+                )
+                if "\n        env:" in new:
+                    self.assertIn("workflow environment surface drifted", errors)
+
+        current = inputs()
+        changed(
+            current,
+            "workflow",
+            "      - name: Assemble and statically audit app directory",
+            "      - name: Assemble and statically audit app directory\n"
+            '        "env":\n'
+            '          "LCF_PYTHON\\u005fINSTALL_ROOT": /tmp/unreviewed',
+        )
+        self.assertIn(
+            "workflow document contract drifted",
+            CHECKER.validate_policy(current),
+        )
+
     def test_required_commands_cannot_be_satisfied_by_comments(self) -> None:
         current = inputs()
         changed(

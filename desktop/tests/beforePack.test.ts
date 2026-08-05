@@ -569,11 +569,17 @@ describe("Python sidecar beforePack gate", () => {
       /runner image differs from the current runner input/
     );
 
-    const missingFixture = await createFixture();
-    delete missingFixture.environment.LCF_PYTHON_DISTRIBUTION_ARCHIVE;
-    expect(() => auditFixture(missingFixture)).toThrow(
-      /runner inputs are missing/
-    );
+    for (const input of [
+      "LCF_PYTHON_DISTRIBUTION_ARCHIVE",
+      "LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST",
+      "LCF_PYTHON_INSTALL_ROOT"
+    ]) {
+      const missingFixture = await createFixture();
+      delete missingFixture.environment[input];
+      expect(() => auditFixture(missingFixture)).toThrow(
+        /runner inputs are missing/
+      );
+    }
   });
 
   it("rejects unsafe reviewed Python framework broken symlinks", async () => {

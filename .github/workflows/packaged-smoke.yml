@@ -79,6 +79,10 @@ jobs:
           {
             printf 'PYTHON_SIDECAR_ARCHIVE=%s\n' "${python_archive}"
             printf 'PYTHON_SIDECAR_HASH_MANIFEST=%s\n' "${python_hashes}"
+            printf 'LCF_PYTHON_DISTRIBUTION_ARCHIVE=%s\n' "${python_archive}"
+            printf 'LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST=%s\n' "${python_hashes}"
+            printf 'LCF_PYTHON_INSTALL_ROOT=%s\n' \
+              "/Library/Frameworks/Python.framework/Versions/3.13"
           } >> "${GITHUB_ENV}"
 
       - name: Build and audit locked Python sidecar

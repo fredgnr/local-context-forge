@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -626,6 +627,302 @@ def test_missing_import_validator_rejects_a_path_like_module_without_leaking_it(
         build.validate_missing_imports(warning)
 
     assert "must-not-leak" not in str(failure.value)
+
+
+@pytest.mark.parametrize(
+    ("log", "category"),
+    [
+        (
+            "Traceback (most recent call last):\n"
+            "ModuleNotFoundError: No module named 'safe_runtime.module'\n",
+            "module-not-found",
+        ),
+        (
+            "Traceback (most recent call last):\n"
+            "ImportError: cannot import name 'SafeSymbol' from 'safe.module' "
+            "(/private/path-that-must-not-leak.py)\n",
+            "import-error",
+        ),
+        (
+            "Traceback (most recent call last):\n"
+            "AttributeError: module 'safe.module' has no attribute 'SafeSymbol'\n",
+            "attribute-error",
+        ),
+        (
+            "lcf-service: desktop transport setup failed\n",
+            "desktop-transport",
+        ),
+        (
+            "ModuleNotFoundError: No module named '"
+            + ("A" * 43)
+            + "'\n",
+            "module-not-found",
+        ),
+        ("Traceback (most recent call last):\nopaque secret\n", "python-traceback"),
+        ("opaque secret\n", "unclassified"),
+        ("", "no-output"),
+    ],
+)
+def test_frozen_start_failure_category_is_controlled(
+    tmp_path: Path,
+    log: str,
+    category: str,
+) -> None:
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(log.encode("utf-8"))
+    try:
+        observed = build._frozen_start_failure_category(
+            log_handle,
+            log_path,
+            identity,
+        )
+    finally:
+        log_handle.close()
+
+    assert observed == category
+
+
+def test_frozen_start_failure_category_does_not_expose_malformed_name(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(
+        (
+            "Traceback (most recent call last):\n"
+            "ModuleNotFoundError: No module named "
+            "'/Users/runner/token-must-not-leak'\n"
+        ).encode("utf-8"),
+    )
+    try:
+        category = build._frozen_start_failure_category(
+            log_handle,
+            log_path,
+            identity,
+        )
+    finally:
+        log_handle.close()
+
+    assert category == "module-not-found"
+    assert "runner" not in category
+    assert "token" not in category
+
+
+def test_frozen_start_failure_category_rejects_non_utf8_output(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(b"\xfftoken-must-not-leak")
+    try:
+        category = build._frozen_start_failure_category(
+            log_handle,
+            log_path,
+            identity,
+        )
+    finally:
+        log_handle.close()
+
+    assert category == "log-non-utf8"
+    assert "token" not in category
+
+
+@pytest.mark.parametrize("return_code", [2, -9])
+def test_wait_for_socket_reports_only_exit_and_controlled_category(
+    tmp_path: Path,
+    return_code: int,
+) -> None:
+    class ExitedProcess:
+        def poll(self) -> int:
+            return return_code
+
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(
+        (
+            "lcf-service: desktop transport setup failed; "
+            "token=must-not-leak; /private/path-must-not-leak\n"
+        ).encode("utf-8"),
+    )
+
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=(
+                r"^Frozen sidecar exited before its UDS became ready "
+                rf"\(exit={return_code}; category=desktop-transport\)$"
+            ),
+        ) as failure:
+            build._wait_for_socket(
+                tmp_path / "missing.sock",
+                ExitedProcess(),  # type: ignore[arg-type]
+                log_handle,
+                log_path,
+                identity,
+            )
+    finally:
+        log_handle.close()
+
+    assert "must-not-leak" not in str(failure.value)
+    assert "/private" not in str(failure.value)
+
+
+@pytest.mark.parametrize("mutation", ["hardlink", "mode", "oversize", "owner"])
+def test_frozen_start_failure_category_rejects_metadata_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(b"original-log\n")
+    if mutation == "hardlink":
+        (tmp_path / "second-link.log").hardlink_to(log_path)
+    elif mutation == "mode":
+        log_path.chmod(0o640)
+    elif mutation == "oversize":
+        log_handle.write(b"x" * build.MAX_FROZEN_START_LOG_BYTES)
+    else:
+        owner = log_path.stat().st_uid
+        monkeypatch.setattr(build.os, "geteuid", lambda: owner + 1)
+    try:
+        category = build._frozen_start_failure_category(
+            log_handle,
+            log_path,
+            identity,
+        )
+    finally:
+        log_handle.close()
+
+    assert category == "log-unsafe"
+
+
+def test_frozen_start_failure_category_rechecks_metadata_after_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(b"original-log\n")
+    original_read = build.os.read
+    mutated = False
+
+    def read_then_mutate(descriptor: int, size: int) -> bytes:
+        nonlocal mutated
+        result = original_read(descriptor, size)
+        if result and not mutated:
+            mutated = True
+            log_path.chmod(0o640)
+        return result
+
+    monkeypatch.setattr(build.os, "read", read_then_mutate)
+    try:
+        category = build._frozen_start_failure_category(
+            log_handle,
+            log_path,
+            identity,
+        )
+    finally:
+        log_handle.close()
+
+    assert category == "log-changed"
+
+
+def test_frozen_start_failure_category_rejects_path_replacement(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(b"original-log\n")
+    log_path.unlink()
+    replacement = tmp_path / "replacement.log"
+    replacement.write_text("secret-that-must-not-leak\n", encoding="utf-8")
+    log_path.symlink_to(replacement)
+    try:
+        category = build._frozen_start_failure_category(
+            log_handle,
+            log_path,
+            identity,
+        )
+    finally:
+        log_handle.close()
+
+    assert category == "log-changed"
+
+
+def test_wait_for_socket_rechecks_process_after_socket_is_ready(
+    tmp_path: Path,
+) -> None:
+    class ExitAtReadyProcess:
+        def __init__(self) -> None:
+            self.polls = 0
+
+        def poll(self) -> int | None:
+            self.polls += 1
+            return None if self.polls == 1 else 2
+
+    class ReadySocketPath:
+        @staticmethod
+        def lstat() -> os.stat_result:
+            values = list((tmp_path / "sidecar.log").stat())
+            values[0] = stat.S_IFSOCK | 0o600
+            values[3] = 1
+            values[4] = os.geteuid()
+            return os.stat_result(values)
+
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    log_handle.write(b"lcf-service: desktop transport setup failed\n")
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=r"exit=2; category=desktop-transport",
+        ):
+            build._wait_for_socket(
+                ReadySocketPath(),  # type: ignore[arg-type]
+                ExitAtReadyProcess(),  # type: ignore[arg-type]
+                log_handle,
+                log_path,
+                identity,
+            )
+    finally:
+        log_handle.close()
+
+
+def test_wait_for_socket_rejects_a_socket_owned_by_another_identity(
+    tmp_path: Path,
+) -> None:
+    class RunningProcess:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    class ForeignSocketPath:
+        @staticmethod
+        def lstat() -> os.stat_result:
+            values = list((tmp_path / "sidecar.log").stat())
+            values[0] = stat.S_IFSOCK | 0o600
+            values[3] = 1
+            values[4] = os.geteuid() + 1
+            return os.stat_result(values)
+
+    log_path = tmp_path / "sidecar.log"
+    log_handle, identity = build._open_frozen_log(log_path)
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=r"^Frozen sidecar created an unsafe socket$",
+        ):
+            build._wait_for_socket(
+                ForeignSocketPath(),  # type: ignore[arg-type]
+                RunningProcess(),  # type: ignore[arg-type]
+                log_handle,
+                log_path,
+                identity,
+            )
+    finally:
+        log_handle.close()
 
 
 def _install_binding_fixture(

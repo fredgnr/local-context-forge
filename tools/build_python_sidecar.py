@@ -74,6 +74,7 @@ MAX_ARCHIVE_TOTAL_BYTES = 384 * 1024 * 1024
 MAX_SMOKE_BROKER_REQUEST_BYTES = 262_144
 MAX_SMOKE_BROKER_COLLECTIONS = 256
 MAX_SMOKE_BROKER_REVISION = 2**53 - 1
+MAX_FROZEN_START_LOG_BYTES = 1024 * 1024
 EXPECTED_MISSING_IMPORT_PATTERN = re.compile(
     r"^missing module named ['\"]?([^ '\"(),]+)['\"]?"
 )
@@ -2058,11 +2059,158 @@ def _serve_smoke_broker(
                     pass
 
 
-def _wait_for_socket(socket_path: Path, process: subprocess.Popen[Any]) -> None:
+def _open_frozen_log(log_path: Path) -> tuple[Any, tuple[int, int]]:
+    if not log_path.is_absolute() or not hasattr(os, "O_NOFOLLOW"):
+        raise BuildError("Frozen smoke log cannot be created securely")
+    try:
+        descriptor = os.open(
+            log_path,
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_CLOEXEC
+            | os.O_NOFOLLOW,
+            0o600,
+        )
+    except OSError as exc:
+        raise BuildError("Frozen smoke log cannot be created securely") from exc
+    try:
+        handle = os.fdopen(descriptor, "w+b", buffering=0)
+    except Exception as exc:
+        os.close(descriptor)
+        raise BuildError("Frozen smoke log cannot be opened securely") from exc
+    try:
+        info = os.fstat(handle.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_size != 0
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise BuildError("Frozen smoke log has unsafe metadata")
+    except Exception:
+        handle.close()
+        raise
+    return handle, (info.st_dev, info.st_ino)
+
+
+def _frozen_log_metadata(info: os.stat_result) -> tuple[int, ...]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _read_bound_frozen_log(
+    log_handle: Any,
+    log_path: Path,
+    identity: tuple[int, int],
+) -> tuple[str, bytes | None]:
+    try:
+        before = os.fstat(log_handle.fileno())
+        path_before = log_path.lstat()
+        if (
+            (before.st_dev, before.st_ino) != identity
+            or (path_before.st_dev, path_before.st_ino) != identity
+            or _frozen_log_metadata(before) != _frozen_log_metadata(path_before)
+        ):
+            return "log-changed", None
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(path_before.st_mode)
+            or stat.S_ISLNK(path_before.st_mode)
+            or before.st_uid != os.geteuid()
+            or path_before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or path_before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or stat.S_IMODE(path_before.st_mode) != 0o600
+            or before.st_size > MAX_FROZEN_START_LOG_BYTES
+        ):
+            return "log-unsafe", None
+        os.lseek(log_handle.fileno(), 0, os.SEEK_SET)
+        raw = bytearray()
+        while len(raw) <= MAX_FROZEN_START_LOG_BYTES:
+            chunk = os.read(
+                log_handle.fileno(),
+                min(64 * 1024, MAX_FROZEN_START_LOG_BYTES + 1 - len(raw)),
+            )
+            if not chunk:
+                break
+            raw.extend(chunk)
+        after = os.fstat(log_handle.fileno())
+        path_after = log_path.lstat()
+        if (
+            len(raw) > MAX_FROZEN_START_LOG_BYTES
+            or len(raw) != before.st_size
+            or _frozen_log_metadata(after) != _frozen_log_metadata(before)
+            or _frozen_log_metadata(path_after)
+            != _frozen_log_metadata(path_before)
+            or _frozen_log_metadata(after) != _frozen_log_metadata(path_after)
+        ):
+            return "log-changed", None
+    except (OSError, ValueError):
+        return "log-unavailable", None
+    return "ok", bytes(raw)
+
+
+def _frozen_start_failure_category(
+    log_handle: Any,
+    log_path: Path,
+    identity: tuple[int, int],
+) -> str:
+    """Classify a failed frozen start without exposing its captured output."""
+
+    status, raw = _read_bound_frozen_log(log_handle, log_path, identity)
+    if status != "ok" or raw is None:
+        return status
+    if not raw:
+        return "no-output"
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return "log-non-utf8"
+
+    if "ModuleNotFoundError: No module named" in text:
+        return "module-not-found"
+    if "ImportError: cannot import name" in text:
+        return "import-error"
+    if "AttributeError: module" in text and "has no attribute" in text:
+        return "attribute-error"
+    if "lcf-service: desktop transport setup failed" in text:
+        return "desktop-transport"
+    if "Traceback (most recent call last):" in text:
+        return "python-traceback"
+    return "unclassified"
+
+
+def _wait_for_socket(
+    socket_path: Path,
+    process: subprocess.Popen[Any],
+    log_handle: Any,
+    log_path: Path,
+    log_identity: tuple[int, int],
+) -> None:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise BuildError("Frozen sidecar exited before its UDS became ready")
+        return_code = process.poll()
+        if return_code is not None:
+            category = _frozen_start_failure_category(
+                log_handle,
+                log_path,
+                log_identity,
+            )
+            raise BuildError(
+                "Frozen sidecar exited before its UDS became ready "
+                f"(exit={return_code}; category={category})"
+            )
         try:
             info = socket_path.lstat()
         except FileNotFoundError:
@@ -2070,7 +2218,23 @@ def _wait_for_socket(socket_path: Path, process: subprocess.Popen[Any]) -> None:
             continue
         except OSError as exc:
             raise BuildError("Frozen sidecar socket cannot be inspected") from exc
-        if stat.S_ISSOCK(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600:
+        if (
+            stat.S_ISSOCK(info.st_mode)
+            and stat.S_IMODE(info.st_mode) == 0o600
+            and info.st_uid == os.geteuid()
+            and info.st_nlink == 1
+        ):
+            return_code = process.poll()
+            if return_code is not None:
+                category = _frozen_start_failure_category(
+                    log_handle,
+                    log_path,
+                    log_identity,
+                )
+                raise BuildError(
+                    "Frozen sidecar exited before its UDS became ready "
+                    f"(exit={return_code}; category={category})"
+                )
             return
         raise BuildError("Frozen sidecar created an unsafe socket")
     raise BuildError("Frozen sidecar UDS readiness timed out")
@@ -2287,43 +2451,51 @@ def run_frozen_smoke(
         writers: dict[int, int] = {}
         saved_descriptors: dict[int, SavedControlFd] = {}
         log_path = smoke_root / "sidecar.log"
+        log_handle: Any | None = None
+        log_identity: tuple[int, int] | None = None
         process: subprocess.Popen[Any] | None = None
         try:
             writers, saved_descriptors = _open_child_control_fds()
             broker_thread.start()
             broker_started = True
-            with log_path.open("wb") as log:
-                process = subprocess.Popen(
-                    (
-                        str(executable),
-                        "api",
-                        "--uds",
-                        str(socket_path),
-                        "--launch-id",
-                        launch_id,
-                        "--token-fd",
-                        "3",
-                        "--data-dir",
-                        str(data_directory),
-                        "--retrieval-broker-uds",
-                        str(broker_socket_path),
-                        "--retrieval-capability-fd",
-                        "4",
-                    ),
-                    cwd=executable.parent,
-                    env=environment,
-                    stdin=subprocess.DEVNULL,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    pass_fds=(3, 4),
-                    close_fds=True,
-                )
+            log_handle, log_identity = _open_frozen_log(log_path)
+            process = subprocess.Popen(
+                (
+                    str(executable),
+                    "api",
+                    "--uds",
+                    str(socket_path),
+                    "--launch-id",
+                    launch_id,
+                    "--token-fd",
+                    "3",
+                    "--data-dir",
+                    str(data_directory),
+                    "--retrieval-broker-uds",
+                    str(broker_socket_path),
+                    "--retrieval-capability-fd",
+                    "4",
+                ),
+                cwd=executable.parent,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                pass_fds=(3, 4),
+                close_fds=True,
+            )
             _restore_parent_control_fds(saved_descriptors)
             saved_descriptors = {}
             os.write(writers[3], token.encode("ascii") + b"\n")
             os.write(writers[4], capability.encode("ascii") + b"\n")
             os.close(writers.pop(4))
-            _wait_for_socket(socket_path, process)
+            _wait_for_socket(
+                socket_path,
+                process,
+                log_handle,
+                log_path,
+                log_identity,
+            )
             handshake = _http_json_over_uds(
                 socket_path,
                 "/api/desktop/handshake",
@@ -2528,6 +2700,22 @@ def run_frozen_smoke(
                 data_directory,
                 (token, capability, launch_id),
             )
+            log_status, frozen_log_bytes = _read_bound_frozen_log(
+                log_handle,
+                log_path,
+                log_identity,
+            )
+            if log_status != "ok" or frozen_log_bytes is None:
+                raise BuildError(
+                    "Frozen smoke log could not be audited "
+                    f"(category={log_status})"
+                )
+            try:
+                frozen_log = frozen_log_bytes.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise BuildError("Frozen smoke log is not UTF-8") from exc
+            if token in frozen_log or capability in frozen_log or launch_id in frozen_log:
+                raise BuildError("Frozen sidecar logged session secrets")
         finally:
             if saved_descriptors:
                 _restore_parent_control_fds(saved_descriptors)
@@ -2545,14 +2733,10 @@ def run_frozen_smoke(
             if broker_started:
                 broker_thread.join(timeout=2)
                 broker_shutdown_failed = broker_thread.is_alive()
+            if log_handle is not None:
+                log_handle.close()
         if broker_shutdown_failed:
             raise BuildError("Frozen smoke broker did not stop")
-        try:
-            frozen_log = log_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            raise BuildError("Frozen smoke log is unreadable") from exc
-        if token in frozen_log or capability in frozen_log or launch_id in frozen_log:
-            raise BuildError("Frozen sidecar logged session secrets")
         if trap_marker.exists() and trap_marker.stat().st_size:
             raise BuildError("Frozen sidecar invoked a forbidden PATH executable")
     return {

@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import platform
+import plistlib
 import re
 import stat
 import subprocess
@@ -26,6 +27,9 @@ from typing import Any
 MANIFEST_NAME = "build-manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
 EXPECTED_EXECUTABLE = "lcf-service"
+REVIEWED_PYTHON_FRAMEWORK_LEAF = PurePosixPath(
+    "_internal/Python.framework/Versions/3.13/Python"
+)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPOSITORY_ROOT / "backend"
 PACKAGING_ROOT = BACKEND_ROOT / "packaging"
@@ -295,22 +299,42 @@ def is_macho(path: Path) -> bool:
         raise AuditError("Unable to inspect a possible Mach-O file") from exc
 
 
-def _native_tool_label(arguments: Sequence[str]) -> str:
+def _native_tool_label(
+    arguments: Sequence[str],
+    *,
+    reviewed_framework_leaf: Path | None = None,
+) -> str:
     contracts = {
         ("/usr/bin/otool", "-l"): "otool-load-commands",
         ("/usr/bin/otool", "-L"): "otool-dependencies",
         ("/usr/bin/otool", "-D"): "otool-install-name",
         ("/usr/bin/lipo", "-archs"): "lipo-architectures",
-        ("/usr/bin/codesign", "--verify"): "codesign-verify",
     }
     if len(arguments) < 2:
         raise AuditError("Native inspection tool contract is invalid")
-    label = contracts.get((arguments[0], arguments[1]))
+    if (arguments[0], arguments[1]) == ("/usr/bin/codesign", "--verify"):
+        if len(arguments) == 4 and arguments[2] == "--strict":
+            label = "codesign-verify"
+        elif (
+            len(arguments) == 3
+            and reviewed_framework_leaf is not None
+            and Path(arguments[-1]) == reviewed_framework_leaf
+            and tuple(
+                Path(arguments[-1]).parts[
+                    -len(REVIEWED_PYTHON_FRAMEWORK_LEAF.parts) :
+                ]
+            )
+            == REVIEWED_PYTHON_FRAMEWORK_LEAF.parts
+        ):
+            label = "codesign-verify-leaf"
+        else:
+            label = None
+    else:
+        label = contracts.get((arguments[0], arguments[1]))
     expected_length = 4 if label == "codesign-verify" else 3
     if (
         label is None
         or len(arguments) != expected_length
-        or (label == "codesign-verify" and arguments[2] != "--strict")
         or not Path(arguments[-1]).is_absolute()
     ):
         raise AuditError("Native inspection tool contract is invalid")
@@ -343,7 +367,9 @@ def _native_failure_category(
     tool: str,
     stderr: Any,
 ) -> str:
-    if tool != "codesign-verify" or not isinstance(stderr, str):
+    if tool not in {"codesign-verify", "codesign-verify-leaf"} or not isinstance(
+        stderr, str
+    ):
         return "exit"
     normalized = stderr.lower()
     if "code object is not signed at all" in normalized:
@@ -369,10 +395,17 @@ def _native_failure_category(
     return "exit"
 
 
-def _run_native_tool(arguments: Sequence[str]) -> str:
+def _run_native_tool(
+    arguments: Sequence[str],
+    *,
+    reviewed_framework_leaf: Path | None = None,
+) -> str:
     if platform.system() != "Darwin":
         raise AuditError("Real Mach-O inspection requires Darwin")
-    label = _native_tool_label(arguments)
+    label = _native_tool_label(
+        arguments,
+        reviewed_framework_leaf=reviewed_framework_leaf,
+    )
     target = _native_target_label(arguments)
     try:
         completed = subprocess.run(
@@ -502,7 +535,276 @@ def _parse_otool_build_target(output: str) -> tuple[str, str]:
     return targets[0]
 
 
-def _verify_code_signature(path: Path) -> None:
+def _read_bound_framework_plist(path: Path) -> tuple[bytes, os.stat_result]:
+    """Read the fixed framework plist through a no-follow, identity-bound fd."""
+
+    descriptor: int | None = None
+    try:
+        path_before = path.lstat()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        fd_before = os.fstat(descriptor)
+        current_uid = os.geteuid()
+        fields = (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_uid",
+            "st_nlink",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        path_before_identity = tuple(
+            getattr(path_before, field) for field in fields
+        )
+        fd_before_identity = tuple(
+            getattr(fd_before, field) for field in fields
+        )
+        if (
+            not stat.S_ISREG(path_before.st_mode)
+            or stat.S_ISLNK(path_before.st_mode)
+            or path_before.st_uid != current_uid
+            or path_before.st_nlink != 1
+            or path_before.st_size <= 0
+            or path_before.st_size > 1024 * 1024
+            or stat.S_IMODE(path_before.st_mode) & 0o022
+            or not stat.S_ISREG(fd_before.st_mode)
+            or fd_before.st_uid != current_uid
+            or fd_before.st_nlink != 1
+            or fd_before.st_size <= 0
+            or fd_before.st_size > 1024 * 1024
+            or stat.S_IMODE(fd_before.st_mode) & 0o022
+            or path_before_identity != fd_before_identity
+        ):
+            raise AuditError("Reviewed Python framework Info.plist is unsafe")
+        chunks: list[bytes] = []
+        remaining = 1024 * 1024 + 1
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        fd_after = os.fstat(descriptor)
+        path_after = path.lstat()
+        if (
+            len(payload) != fd_before.st_size
+            or tuple(getattr(fd_after, field) for field in fields)
+            != fd_before_identity
+            or tuple(getattr(path_after, field) for field in fields)
+            != fd_before_identity
+        ):
+            raise AuditError("Reviewed Python framework Info.plist changed")
+        return payload, fd_before
+    except AuditError:
+        raise
+    except OSError as exc:
+        raise AuditError("Reviewed Python framework Info.plist is unreadable") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                raise AuditError(
+                    "Reviewed Python framework Info.plist could not be closed"
+                ) from exc
+
+
+def _validate_reviewed_python_framework(
+    root: Path,
+    path: Path,
+) -> tuple[tuple[Any, ...], ...] | None:
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise AuditError("Mach-O path escapes the sidecar") from exc
+    framework_parts = [
+        part for part in relative.parts if part.endswith(".framework")
+    ]
+    if not framework_parts:
+        return None
+    if relative != REVIEWED_PYTHON_FRAMEWORK_LEAF:
+        raise AuditError("Mach-O uses an unreviewed framework layout")
+
+    framework = root / "_internal" / "Python.framework"
+    versions = framework / "Versions"
+    version = versions / "3.13"
+    resources = version / "Resources"
+    current_uid = os.geteuid()
+    snapshot: list[tuple[Any, ...]] = []
+    for directory in (
+        root / "_internal",
+        framework,
+        versions,
+        version,
+        resources,
+    ):
+        try:
+            info = directory.lstat()
+            canonical = directory.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise AuditError("Reviewed Python framework layout is incomplete") from exc
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != current_uid
+            or stat.S_IMODE(info.st_mode) & 0o022
+            or canonical != directory
+        ):
+            raise AuditError("Reviewed Python framework layout is unsafe")
+        try:
+            entries = tuple(sorted(item.name for item in directory.iterdir()))
+        except OSError as exc:
+            raise AuditError("Reviewed Python framework layout is unreadable") from exc
+        snapshot.append(
+            (
+                directory.relative_to(root).as_posix(),
+                info.st_dev,
+                info.st_ino,
+                info.st_mode,
+                info.st_uid,
+                info.st_nlink,
+                info.st_size,
+                info.st_mtime_ns,
+                info.st_ctime_ns,
+                entries,
+            )
+        )
+
+    expected_entries = {
+        framework: ("Python", "Resources", "Versions"),
+        versions: ("3.13", "Current"),
+        version: ("Python", "Resources"),
+        resources: ("Info.plist",),
+    }
+    for directory, expected in expected_entries.items():
+        observed = next(
+            item[-1]
+            for item in snapshot
+            if item[0] == directory.relative_to(root).as_posix()
+        )
+        if observed != expected:
+            raise AuditError("Reviewed Python framework entries differ")
+
+    required_links = {
+        framework / "Python": "Versions/Current/Python",
+        framework / "Resources": "Versions/Current/Resources",
+        versions / "Current": "3.13",
+    }
+    for link, expected_target in required_links.items():
+        try:
+            info = link.lstat()
+            target = os.readlink(link)
+        except OSError as exc:
+            raise AuditError("Reviewed Python framework layout is incomplete") from exc
+        if (
+            not stat.S_ISLNK(info.st_mode)
+            or info.st_uid != current_uid
+            or target != expected_target
+        ):
+            raise AuditError("Reviewed Python framework symlink differs")
+        try:
+            canonical_target = link.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise AuditError("Reviewed Python framework symlink is unsafe") from exc
+        expected_canonical = {
+            framework / "Python": path,
+            framework / "Resources": resources,
+            versions / "Current": version,
+        }[link]
+        if canonical_target != expected_canonical:
+            raise AuditError("Reviewed Python framework symlink is unsafe")
+        snapshot.append(
+            (
+                link.relative_to(root).as_posix(),
+                info.st_dev,
+                info.st_ino,
+                info.st_mode,
+                info.st_uid,
+                info.st_nlink,
+                info.st_size,
+                info.st_mtime_ns,
+                info.st_ctime_ns,
+                target,
+            )
+        )
+
+    try:
+        leaf_info = path.lstat()
+        canonical_leaf = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise AuditError("Reviewed Python framework leaf is missing") from exc
+    if (
+        not stat.S_ISREG(leaf_info.st_mode)
+        or stat.S_ISLNK(leaf_info.st_mode)
+        or leaf_info.st_uid != current_uid
+        or leaf_info.st_nlink != 1
+        or stat.S_IMODE(leaf_info.st_mode) & 0o022
+        or canonical_leaf != path
+    ):
+        raise AuditError("Reviewed Python framework leaf is unsafe")
+    snapshot.append(
+        (
+            relative.as_posix(),
+            leaf_info.st_dev,
+            leaf_info.st_ino,
+            leaf_info.st_mode,
+            leaf_info.st_uid,
+            leaf_info.st_nlink,
+            leaf_info.st_size,
+            leaf_info.st_mtime_ns,
+            leaf_info.st_ctime_ns,
+            sha256_file(path),
+        )
+    )
+
+    info_plist = resources / "Info.plist"
+    try:
+        plist_bytes, info = _read_bound_framework_plist(info_plist)
+        plist = plistlib.loads(plist_bytes)
+    except AuditError:
+        raise
+    except (plistlib.InvalidFileException, ValueError, RecursionError) as exc:
+        raise AuditError("Reviewed Python framework Info.plist is unreadable") from exc
+    if (
+        not isinstance(plist, dict)
+        or plist.get("CFBundleExecutable") != "Python"
+        or plist.get("CFBundleName") != "Python"
+        or plist.get("CFBundleIdentifier") != "org.python.python"
+        or plist.get("CFBundlePackageType") != "FMWK"
+    ):
+        raise AuditError("Reviewed Python framework Info.plist differs")
+    snapshot.append(
+        (
+            info_plist.relative_to(root).as_posix(),
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_uid,
+            info.st_nlink,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+            hashlib.sha256(plist_bytes).hexdigest(),
+        )
+    )
+    return tuple(sorted(snapshot, key=lambda item: str(item[0])))
+
+
+def _verify_code_signature(root: Path, path: Path) -> None:
+    framework_snapshot = _validate_reviewed_python_framework(root, path)
+    if framework_snapshot is not None:
+        _run_native_tool(
+            ("/usr/bin/codesign", "--verify", str(path)),
+            reviewed_framework_leaf=path,
+        )
+        if _validate_reviewed_python_framework(root, path) != framework_snapshot:
+            raise AuditError("Reviewed Python framework changed during verification")
+        return
     _run_native_tool(("/usr/bin/codesign", "--verify", "--strict", str(path)))
 
 
@@ -521,7 +823,7 @@ def scan_macho_inventory(root: Path) -> list[dict[str, Any]]:
             continue
         load_commands = _run_native_tool(("/usr/bin/otool", "-l", str(path)))
         native_platform, minimum_macos = _parse_otool_build_target(load_commands)
-        _verify_code_signature(path)
+        _verify_code_signature(root, path)
         record: dict[str, Any] = {
             "path": _relative_name(root, path),
             "architectures": _parse_lipo_architectures(

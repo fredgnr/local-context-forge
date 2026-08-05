@@ -604,11 +604,52 @@ function validateToolchainLock(toolchain) {
       "version",
       "installRoot",
       "interpreterRelativePath",
+      "reviewedBrokenSymlinks",
       "distribution"
     ],
     [],
     "Toolchain Python"
   );
+  if (!Array.isArray(toolchain.python.reviewedBrokenSymlinks)) {
+    fail("Toolchain reviewed broken symlinks are malformed");
+  }
+  const reviewedBrokenPaths = [];
+  for (const rawEntry of toolchain.python.reviewedBrokenSymlinks) {
+    const entry = assertExactKeys(
+      rawEntry,
+      ["path", "target"],
+      [],
+      "Toolchain reviewed broken symlink"
+    );
+    const relative = safeRelativePath(
+      entry.path,
+      "Toolchain reviewed broken symlink"
+    );
+    const target = entry.target;
+    if (
+      relative.split("/").some((part) => part === "" || part === ".") ||
+      typeof target !== "string" ||
+      target.length === 0 ||
+      target.startsWith("/") ||
+      target.includes("\\") ||
+      target.includes("\0") ||
+      target
+        .split("/")
+        .some((part) => part === "" || part === "." || part === "..") ||
+      reviewedBrokenPaths.includes(relative)
+    ) {
+      fail("Toolchain reviewed broken symlink is unsafe");
+    }
+    reviewedBrokenPaths.push(relative);
+  }
+  if (
+    !sameJson(
+      reviewedBrokenPaths,
+      [...reviewedBrokenPaths].sort(compareCodePoints)
+    )
+  ) {
+    fail("Toolchain reviewed broken symlinks are not ordered");
+  }
   assertExactKeys(
     toolchain.python.distribution,
     [

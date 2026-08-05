@@ -576,6 +576,24 @@ describe("Python sidecar beforePack gate", () => {
     );
   });
 
+  it("rejects unsafe reviewed Python framework broken symlinks", async () => {
+    const fixture = await createFixture();
+    fixture.toolchain.python.reviewedBrokenSymlinks[0].target = "../outside";
+    await writeJson(
+      path.join(
+        fixture.root,
+        "backend",
+        "packaging",
+        "python-sidecar-toolchain.lock.json"
+      ),
+      fixture.toolchain
+    );
+
+    expect(() => auditFixture(fixture)).toThrow(
+      /reviewed broken symlink is unsafe/
+    );
+  });
+
   it("independently rejects an x86_64 Mach-O result", async () => {
     const fixture = await createFixture();
     expect(() => auditFixture(fixture, () => ["x86_64"])).toThrow(

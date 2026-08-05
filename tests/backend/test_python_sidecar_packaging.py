@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import plistlib
 import stat
 import subprocess
 import sys
@@ -1126,6 +1127,62 @@ def test_codesign_unsigned_failure_uses_only_fixed_categories(
     assert "/secret" not in str(failure.value)
 
 
+def test_codesign_framework_leaf_failure_uses_only_fixed_categories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+    target = (
+        "/secret/_internal/Python.framework/Versions/3.13/Python"
+    )
+
+    def failed_run(*_args: Any, **_kwargs: Any) -> Any:
+        raise subprocess.CalledProcessError(
+            1,
+            ("/usr/bin/codesign", "--verify", target),
+            stderr=f"{target}: code object is not signed at all; token-must-not-leak",
+        )
+
+    monkeypatch.setattr(audit.subprocess, "run", failed_run)
+
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            r"^Native inspection tool failed \(tool=codesign-verify-leaf; "
+            r"target=python-framework; category=unsigned; code=1\)$"
+        ),
+    ) as failure:
+        audit._run_native_tool(
+            ("/usr/bin/codesign", "--verify", target),
+            reviewed_framework_leaf=Path(target),
+        )
+
+    assert "must-not-leak" not in str(failure.value)
+    assert "/secret" not in str(failure.value)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/secret/path",
+        "/secret/_internal/Python.framework/Versions/3.12/Python",
+    ],
+)
+def test_codesign_leaf_contract_rejects_an_unreviewed_target(
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Native inspection tool contract is invalid$",
+    ):
+        audit._run_native_tool(
+            ("/usr/bin/codesign", "--verify", target),
+            reviewed_framework_leaf=Path(target),
+        )
+
+
 @pytest.mark.parametrize(
     ("framework", "expected_target"),
     [
@@ -1180,6 +1237,231 @@ def test_native_tool_rejects_an_unreviewed_command(
         match=r"^Native inspection tool contract is invalid$",
     ):
         audit._run_native_tool(("/usr/bin/file", "--brief", "/secret/path"))
+
+
+def _write_reviewed_python_framework(root: Path) -> Path:
+    framework = root / "_internal" / "Python.framework"
+    version = framework / "Versions" / "3.13"
+    resources = version / "Resources"
+    resources.mkdir(parents=True)
+    leaf = version / "Python"
+    leaf.write_bytes(b"synthetic signed Mach-O")
+    leaf.chmod(0o755)
+    (resources / "Info.plist").write_bytes(
+        plistlib.dumps(
+            {
+                "CFBundleExecutable": "Python",
+                "CFBundleName": "Python",
+                "CFBundleIdentifier": "org.python.python",
+                "CFBundlePackageType": "FMWK",
+            }
+        )
+    )
+    (framework / "Python").symlink_to("Versions/Current/Python")
+    (framework / "Resources").symlink_to("Versions/Current/Resources")
+    (framework / "Versions" / "Current").symlink_to("3.13")
+    return leaf
+
+
+def test_python_framework_leaf_uses_only_leaf_signature_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "sidecar"
+    leaf = _write_reviewed_python_framework(root)
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        audit,
+        "_run_native_tool",
+        lambda arguments, **_kwargs: calls.append(tuple(arguments)) or "",
+    )
+
+    audit._verify_code_signature(root, leaf)
+
+    assert calls == [
+        ("/usr/bin/codesign", "--verify", str(leaf)),
+    ]
+
+
+def test_nonframework_macho_keeps_strict_signature_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "sidecar"
+    root.mkdir()
+    leaf = root / "lcf-service"
+    leaf.write_bytes(b"synthetic signed Mach-O")
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        audit,
+        "_run_native_tool",
+        lambda arguments, **_kwargs: calls.append(tuple(arguments)) or "",
+    )
+
+    audit._verify_code_signature(root, leaf)
+
+    assert calls == [
+        ("/usr/bin/codesign", "--verify", "--strict", str(leaf)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "_internal/Widget.framework/Versions/A/Widget",
+        "_internal/Python.framework/Versions/3.12/Python",
+        "_internal/Python.framework/Versions/3.13/Other",
+    ],
+)
+def test_unreviewed_framework_macho_cannot_use_leaf_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    relative: str,
+) -> None:
+    root = tmp_path / "sidecar"
+    leaf = root.joinpath(*relative.split("/"))
+    leaf.parent.mkdir(parents=True)
+    leaf.write_bytes(b"synthetic signed Mach-O")
+    monkeypatch.setattr(
+        audit,
+        "_run_native_tool",
+        lambda _arguments, **_kwargs: pytest.fail("codesign must not run"),
+    )
+
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Mach-O uses an unreviewed framework layout$",
+    ):
+        audit._verify_code_signature(root, leaf)
+
+
+def test_case_changed_framework_name_keeps_strict_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "sidecar"
+    leaf = root / "_internal" / "Python.FRAMEWORK" / "Versions" / "3.13" / "Python"
+    leaf.parent.mkdir(parents=True)
+    leaf.write_bytes(b"synthetic signed Mach-O")
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        audit,
+        "_run_native_tool",
+        lambda arguments, **_kwargs: calls.append(tuple(arguments)) or "",
+    )
+
+    audit._verify_code_signature(root, leaf)
+
+    assert calls == [
+        ("/usr/bin/codesign", "--verify", "--strict", str(leaf)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "current-target",
+        "binary-link",
+        "resources-link",
+        "plist",
+        "extra-top",
+        "extra-version",
+        "leaf-symlink",
+        "leaf-hardlink",
+        "plist-symlink",
+        "plist-hardlink",
+        "plist-oversize",
+        "plist-malformed",
+    ],
+)
+def test_reviewed_python_framework_layout_mutations_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    root = tmp_path / "sidecar"
+    leaf = _write_reviewed_python_framework(root)
+    framework = root / "_internal" / "Python.framework"
+    if mutation == "current-target":
+        current = framework / "Versions" / "Current"
+        current.unlink()
+        current.symlink_to("3.12")
+    elif mutation == "binary-link":
+        binary_link = framework / "Python"
+        binary_link.unlink()
+        binary_link.write_bytes(b"not a symlink")
+    elif mutation == "resources-link":
+        resources_link = framework / "Resources"
+        resources_link.unlink()
+        resources_link.symlink_to("Versions/3.12/Resources")
+    elif mutation == "extra-top":
+        (framework / "CodeResources").write_bytes(b"unsealed content")
+    elif mutation == "extra-version":
+        (framework / "Versions" / "3.12").mkdir()
+    elif mutation == "leaf-symlink":
+        leaf.unlink()
+        outside = tmp_path / "outside-python"
+        outside.write_bytes(b"replacement")
+        leaf.symlink_to(outside)
+    elif mutation == "leaf-hardlink":
+        os.link(leaf, tmp_path / "linked-python")
+    else:
+        info_plist = (
+            framework / "Versions" / "3.13" / "Resources" / "Info.plist"
+        )
+        if mutation == "plist-symlink":
+            info_plist.unlink()
+            outside = tmp_path / "outside-plist"
+            outside.write_bytes(b"replacement")
+            info_plist.symlink_to(outside)
+        elif mutation == "plist-hardlink":
+            os.link(info_plist, tmp_path / "linked-plist")
+        elif mutation == "plist-oversize":
+            info_plist.write_bytes(b"x" * (1024 * 1024 + 1))
+        elif mutation == "plist-malformed":
+            info_plist.write_bytes(b"not a plist")
+        else:
+            info_plist.write_bytes(
+                plistlib.dumps(
+                    {
+                        "CFBundleExecutable": "Other",
+                        "CFBundleName": "Python",
+                        "CFBundleIdentifier": "org.python.python",
+                        "CFBundlePackageType": "FMWK",
+                    }
+                )
+            )
+    monkeypatch.setattr(
+        audit,
+        "_run_native_tool",
+        lambda _arguments, **_kwargs: pytest.fail("codesign must not run"),
+    )
+
+    with pytest.raises(audit.AuditError, match=r"Reviewed Python framework"):
+        audit._verify_code_signature(root, leaf)
+
+
+def test_python_framework_mutation_during_codesign_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "sidecar"
+    leaf = _write_reviewed_python_framework(root)
+
+    def mutate_after_verification(
+        _arguments: tuple[str, ...],
+        **_kwargs: Any,
+    ) -> str:
+        leaf.write_bytes(b"changed after codesign")
+        return ""
+
+    monkeypatch.setattr(audit, "_run_native_tool", mutate_after_verification)
+
+    with pytest.raises(
+        audit.AuditError,
+        match=r"^Reviewed Python framework changed during verification$",
+    ):
+        audit._verify_code_signature(root, leaf)
 
 
 def _install_fake_uds_socket(

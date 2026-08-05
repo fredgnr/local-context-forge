@@ -26,6 +26,7 @@ def documents() -> list[str]:
         CHECKER.read(CHECKER.R13),
         CHECKER.read(CHECKER.RELEASE_RUNBOOK),
         json.loads(CHECKER.read(CHECKER.W01_EVIDENCE)),
+        CHECKER.read(CHECKER.W02_ENTRY),
     ]
 
 
@@ -69,21 +70,21 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_task_status_drift_fails(self) -> None:
         docs = documents()
-        original = "| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` |"
+        original = "| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` |"
         self.assertIn(original, docs[1])
         docs[1] = replace_once(
             self,
             docs[1],
             original,
-            "| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` |",
+            "| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` |",
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("TODO-PACKAGED-SMOKE-001 status" in error for error in errors))
 
     def test_detailed_task_status_drift_fails(self) -> None:
         docs = documents()
-        current_status = "in-progress"
-        drifted_status = "done"
+        current_status = "done"
+        drifted_status = "in-progress"
         original = (
             "### TODO-GOV-EVIDENCE-001：统一可复现证据坐标\n\n"
             f"- 状态：`{current_status}`"
@@ -99,45 +100,42 @@ class Pre1WorkPlanTests(unittest.TestCase):
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("detail status" in error for error in errors))
 
-    def test_w01_evidence_state_must_match_documents(self) -> None:
+    def test_historical_w01_evidence_state_is_immutable(self) -> None:
         docs = documents()
         current = docs[9]["remediation"]["technical_source_result"]
-        self.assertIn(current, {"pending", "pass"})
-        docs[9]["remediation"]["technical_source_result"] = (
-            "pending" if current == "pass" else "pass"
-        )
+        self.assertEqual(current, "pass")
+        docs[9]["remediation"]["technical_source_result"] = "pending"
         errors = CHECKER.validate_documents(*docs)
-        self.assertTrue(any("lifecycle result missing" in error for error in errors))
-        self.assertIn("R13-07 checkbox must match remediation technical closeout only", errors)
+        self.assertIn("historical W01 remediation technical result must remain pass", errors)
 
-    def test_r13_cannot_complete_before_canonical_activation(self) -> None:
+    def test_r13_must_remain_completed_after_external_closeout(self) -> None:
         docs = documents()
         docs[7] = replace_once(
             self,
             docs[7],
-            "- 状态：`in-progress`",
             "- 状态：`completed`",
+            "- 状态：`in-progress`",
         )
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("R13 status must remain in-progress until canonical activation", errors)
+        self.assertIn("R13 status must be completed after external W01 closeout", errors)
 
     def test_repository_record_cannot_self_declare_independent_acceptance(self) -> None:
         docs = documents()
         docs[9]["remediation"]["independent_acceptance"] = "pass"
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("W01 independent acceptance must remain pending", errors)
+        self.assertIn("historical W01 independent acceptance must remain pending", errors)
 
     def test_repository_record_cannot_self_activate_canonical_state(self) -> None:
         docs = documents()
         docs[9]["remediation"]["canonical_activation"]["status"] = "pass"
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("W01 canonical activation must remain blocked", errors)
+        self.assertIn("historical W01 canonical activation must remain blocked", errors)
 
     def test_canonical_main_source_must_remain_not_run_before_merge(self) -> None:
         docs = documents()
         docs[9]["canonical_main_source"]["status"] = "pass"
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("W01 canonical-main source result must remain not-run", errors)
+        self.assertIn("historical W01 canonical-main source result must remain not-run", errors)
 
     def test_mixed_not_run_and_formal_pass_fails(self) -> None:
         docs = documents()
@@ -208,6 +206,89 @@ class Pre1WorkPlanTests(unittest.TestCase):
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("R13 missing required release-boundary phrase" in error for error in errors))
+
+    def test_w02_entry_exact_external_coordinates_are_required(self) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_ENTRY_AUTHORITY_MARKER.replace(
+            CHECKER.W01_ACCEPTED_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[10] = replace_once(
+            self, docs[10], CHECKER.W02_ENTRY_AUTHORITY_MARKER, drifted
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("W02 entry must contain the exact external authority marker once", errors)
+
+    def test_w02_entry_requires_all_resulting_main_jobs(self) -> None:
+        docs = documents()
+        docs[10] = replace_once(
+            self,
+            docs[10],
+            "W01 exact-head source coverage evidence | `success`",
+            "W01 exact-head source coverage evidence | `skipped`",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 entry missing required marker: W01 exact-head source coverage evidence | `success`",
+            errors,
+        )
+
+    def test_current_w01_gate_cannot_regress_to_historical_pending(self) -> None:
+        docs = documents()
+        docs[2] = replace_once(
+            self,
+            docs[2],
+            CHECKER.CURRENT_W01_TRACE_MARKER,
+            "修复候选 PR/source `pass`；independent acceptance `pending`",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertTrue(any("lifecycle result missing" in error for error in errors))
+
+    def test_w02_packaged_gate_cannot_be_claimed_pass(self) -> None:
+        docs = documents()
+        original = (
+            "| VAL-PACKAGED-SMOKE-001 | macOS arm64 engineering-smoke App；exact commit/digest/"
+            "inventory、launch、renderer/preload、Main→private UDS health/domain request、quit/no "
+            "orphan、无 public INET、exercised path 无系统 Python/Node/Git discovery、updater "
+            "unavailable/no-network | `not-run`；boundary/assembly source implementation 不替代 "
+            "packaged launch/runtime gate |"
+        )
+        self.assertIn(original, docs[2])
+        docs[2] = replace_once(self, docs[2], original, original.replace("`not-run`", "`pass`"))
+        errors = CHECKER.validate_documents(*docs)
+        self.assertTrue(any("VAL-PACKAGED-SMOKE-001 status words" in error for error in errors))
+
+    def test_w10_must_remain_locked_while_w02_gate_is_not_run(self) -> None:
+        docs = documents()
+        original = "| TODO-LEGACY-DECOUPLE-001 | Priority-0 | W10/P7 | `planned` |"
+        docs[1] = replace_once(
+            self,
+            docs[1],
+            original,
+            "| TODO-LEGACY-DECOUPLE-001 | Priority-0 | W10/P7 | `in-progress` |",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertTrue(any("TODO-LEGACY-DECOUPLE-001 status" in error for error in errors))
+
+    def test_w02_phase_cannot_create_a_new_stable_id(self) -> None:
+        docs = documents()
+        docs[3] += "\nTODO-W02A-001\n"
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("iteration must not create a W02A stable ID", errors)
+
+    def test_w02_launch_phase_must_remain_not_run(self) -> None:
+        docs = documents()
+        marker = "packaged App launch/runtime smoke：后续 Work，`not-run`"
+        docs[3] = replace_once(self, docs[3], marker, marker.replace("`not-run`", "`pass`"))
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
+
+    def test_w02_entry_cannot_claim_bundle_assembly(self) -> None:
+        docs = documents()
+        marker = "engineering-smoke `.app` assembly：`not-run`"
+        docs[10] = replace_once(self, docs[10], marker, marker.replace("`not-run`", "`pass`"))
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"W02 entry missing required marker: {marker}", errors)
 
 
 if __name__ == "__main__":

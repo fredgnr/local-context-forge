@@ -1,0 +1,50 @@
+appId: dev.localcontextforge.engineering-smoke
+productName: Local Context Forge Engineering Smoke
+asar: true
+npmRebuild: false
+electronVersion: 43.2.0
+beforePack: scripts/beforePackEngineeringSmoke.cjs
+afterPack: scripts/afterPackEngineeringSmoke.cjs
+directories:
+  output: release-smoke
+files:
+  - from: generated/engineering-smoke/app
+    to: .
+    filter:
+      - dist/main/index.js
+      - dist/preload/index.cjs
+      - package.json
+extraResources:
+  - from: resources/renderer
+    to: renderer
+    filter:
+      - "**/*"
+  - from: generated/sidecar
+    to: sidecar
+    filter:
+      - "**/*"
+  - from: generated/engineering-smoke/distribution.json
+    to: engineering-smoke/distribution.json
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dir
+      arch: arm64
+  identity: "-"
+  timestamp: none
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+  signIgnore:
+    - "/Contents/Resources/sidecar/"
+  extendInfo:
+    LCFDistributionClass: engineering-smoke
+    LCFDistributionMarker: UNOFFICIAL
+    LCFEngineeringOnly: true
+    LCFPublishable: false
+    LCFUpdaterMode: unavailable
+    LCFNetworkAllowed: false
+    LCFManualReleasePageAllowed: false
+    LCFPackagedAppLaunch: not-run
+    LCFPackagedSmokeValidation: not-run
+publish: null

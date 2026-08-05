@@ -157,6 +157,7 @@ export type UpdateState =
 
 export type UpdateUnavailableReason =
   | "source-build"
+  | "engineering-smoke"
   | "unsupported-platform"
   | "version-invalid"
   | "key-unprovisioned"
@@ -476,6 +477,7 @@ export function isUpdateStatus(value: unknown): value is UpdateStatus {
   ];
   const unavailableReasons: readonly UpdateUnavailableReason[] = [
     "source-build",
+    "engineering-smoke",
     "unsupported-platform",
     "version-invalid",
     "key-unprovisioned",

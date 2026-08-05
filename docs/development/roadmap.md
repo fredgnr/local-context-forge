@@ -45,7 +45,7 @@ continuity 和 cutover/absence 复验。
 | P4 路径、备份与模型 | `planned` | ITER-0003 | macOS 路径、Desktop backup/restore、模型供应链 | P2、P3 | G4 |
 | P5 DMG 发行基础 | `planned` / W14–W16 | ITER-0004 | arm64 DMG、自签名、受保护发布流程 | W13 | G5 |
 | P6 更新实机门禁 | `planned` | ITER-0005 | 真实单调 `N-1 → N` 实机报告、DMG fallback | P5 | G6 |
-| P7 Electron-only 退出 | `planned` | ITER-0008（ITER-0007 superseded） | W10/W11 slices、W13 final cutover/absence | W02；final gate 另依赖 W03–W12 | G7 |
+| P7 Electron-only 退出 | `in-progress` | ITER-0008（ITER-0007 superseded） | W02 assembly/runtime smoke、W10/W11 slices、W13 final cutover/absence | W01 complete；W10/W11 仍依赖 W02 full gate，final 另依赖 W03–W12 | G7 |
 
 表中状态表示阶段完整退出门禁，而不是“是否已有 source 实现”。P2/P3 依赖 P1 已冻结的
 source IPC contract，不要求先把 P1 packaged gate 标成完成。ITER-0001 的 source
@@ -194,9 +194,9 @@ public trust locks 仍为 `unprovisioned`，真实 GitHub settings、protected b
 promotion 与 Gatekeeper 均为 `not-run`。
 
 repository owner、contents writer/可改 workflow 的主体和 settings admin 仍是根信任；GitHub
-Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。即使这些 P5 source contract
-已经实现，也不能覆盖 PR #20 的 W01 remediation 门禁；当前总结为
-**PR merge blocked / release NO-GO**。
+Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能在公开后检测。PR #20 accepted remediation、
+canonical merge 与 resulting-main source 已闭环，只解锁 W02；当前总结为
+**W02 boundary-and-assembly in progress / release NO-GO**。
 
 ## P6：真实 `N-1 → N` 更新实机门禁
 

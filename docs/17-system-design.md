@@ -7,10 +7,10 @@
 
 ## 1. 范围、状态与术语
 
-当前治理基线为 `main@3eff97d97b2de4484d568bab5ac96d63830c79ee`，产品版本
+当前实施基线为 `main@1786255b55dd1a78659ed92235893876175a0722`，产品版本
 `0.3.0-alpha.1`。当前结论是：
 
-> **W01 remediation pending / PR merge blocked / public release NO-GO**
+> **W01 closed / W02 boundary-and-assembly in progress / public release NO-GO**
 
 本文使用四种状态，不能互换：
 
@@ -433,7 +433,7 @@ child 退出确认和 packaged lifecycle 做物理观察。
 | 安装 | 将来的 reviewed DMG | `./install.sh` / `install.command` |
 | Windows 4060 | 不支持远程 worker | Ollama helper；无替代、直接退出 |
 
-右栏当前仍存在于仓库，但已经 unsupported。W01 全部退出后由 W02 建立最小 packaged smoke；
+右栏当前仍存在于仓库，但已经 unsupported。W01 已全部退出，W02 正在建立最小 packaged smoke；
 随后每个 W10/W11 slice 只在 caller inventory、affected Electron replacement（或受限 pure-legacy
 unsupported disposition）、before/after package、absence 与 protected presence 通过后删除。
 未触及能力的完整物理门禁可继续 `not-run`；final

@@ -1,0 +1,138 @@
+name: Engineering smoke bundle assembly
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: engineering-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  assemble:
+    name: macOS arm64 engineering-smoke assembly (no App launch)
+    if: github.repository == 'fredgnr/local-context-forge'
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CI: "true"
+      LCF_ENGINEERING_SMOKE: "true"
+      LCF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      LCF_GITHUB_CONTEXT_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out exact source commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind exact source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          test "$(git rev-parse HEAD)" = "${LCF_SOURCE_SHA}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          source_epoch="$(git show -s --format=%ct "${LCF_SOURCE_SHA}")"
+          test "${source_epoch}" -ge 100000000
+          printf 'LCF_SOURCE_DATE_EPOCH=%s\n' "${source_epoch}" >> "${GITHUB_ENV}"
+
+      - name: Set up locked Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.23.2"
+
+      - name: Set up reviewed build Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Enforce engineering-smoke packaging policy
+        run: make packaged-smoke-policy-check
+
+      - name: Download locked Python runtime sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python_archive="${RUNNER_TEMP}/python-3.13.14-darwin-arm64.tar.gz"
+          python_hashes="${RUNNER_TEMP}/python-3.13.14-hashes.sha256"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${python_archive}" \
+            "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/python-3.13.14-darwin-arm64.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${python_hashes}" \
+            "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/hashes.sha256"
+          printf '%s  %s\n' \
+            "839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34" \
+            "${python_archive}" |
+            shasum -a 256 --check
+          printf '%s  %s\n' \
+            "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17" \
+            "${python_hashes}" |
+            shasum -a 256 --check
+          {
+            printf 'PYTHON_SIDECAR_ARCHIVE=%s\n' "${python_archive}"
+            printf 'PYTHON_SIDECAR_HASH_MANIFEST=%s\n' "${python_hashes}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Build and audit locked Python sidecar
+        run: make python-sidecar-build
+
+      - name: Build and stage audited renderer
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix web ci --ignore-scripts --no-audit --no-fund
+          npm --prefix web run build
+          make renderer-stage
+
+      - name: Build and test engineering-smoke Desktop profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix desktop ci --ignore-scripts --no-audit --no-fund
+          npm --prefix desktop run typecheck
+          npm --prefix desktop run test:engineering-smoke
+          npm --prefix desktop run build:engineering-smoke
+
+      - name: Assemble and statically audit app directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix desktop run prepare:engineering-smoke
+          npm --prefix desktop run pack:engineering-smoke
+          audit_json="${RUNNER_TEMP}/engineering-smoke-audit.json"
+          npm --prefix desktop --silent run audit:engineering-smoke > "${audit_json}"
+          node - "${audit_json}" <<'NODE'
+          const fs = require("node:fs");
+          const value = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const expected = {
+            assembly: "pass",
+            bundleAudit: "pass",
+            validationId: "VAL-PACKAGED-SMOKE-001",
+            packagedAppLaunch: "not-run",
+            packagedSmokeValidation: "not-run",
+            w10: "locked",
+            w11: "locked"
+          };
+          for (const [key, expectedValue] of Object.entries(expected)) {
+            if (value.validation?.[key] !== expectedValue) {
+              throw new Error(`Engineering-smoke audit marker ${key} is invalid`);
+            }
+          }
+          NODE
+          cat "${audit_json}"
+          {
+            printf '## Engineering-smoke assembly only\n\n'
+            printf -- '- source: `%s`\n' "${LCF_SOURCE_SHA}"
+            printf -- '- GitHub context SHA: `%s`\n' "${LCF_GITHUB_CONTEXT_SHA}"
+            printf -- '- packaged App launch: `not-run`\n'
+            printf -- '- `VAL-PACKAGED-SMOKE-001`: `not-run`\n'
+            printf -- '- W10/W11: `locked`\n'
+          } >> "${GITHUB_STEP_SUMMARY}"

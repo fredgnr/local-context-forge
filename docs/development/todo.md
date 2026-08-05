@@ -43,10 +43,10 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 
 | Task ID | 优先级 | Roadmap | 状态 | Owner component | 主要依赖 | 验收 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `in-progress` | Governance/Architecture | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
-| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `in-progress` | Governance/CI | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
-| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `in-progress` | CI/QMD/Sites | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
-| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` | Desktop/Packaging/QA | W01 全部退出门禁 | `VAL-PACKAGED-SMOKE-001` |
+| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `done` | Governance/Architecture | 无 | accepted head + independent acceptance + resulting-main source `pass` |
+| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `done` | Governance/CI | 无 | immutable history + external closeout evidence |
+| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `done` | CI/QMD/Sites | 无 | resulting-main run `30986208251` success |
+| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | `VAL-PACKAGED-SMOKE-001` remains `not-run` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
 | TODO-DATA-BACKUP-001 | Priority-1 | W04/P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
@@ -91,7 +91,7 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 
 ### TODO-PRE1-SEQUENCING-001：接受并机器化新的 Pre-1.0 顺序
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：Governance/Architecture
 - 关联：REQ-PRE1-SEQUENCING-001、ADR-0016、ITER-0002/R13
 - 依赖：无
@@ -101,16 +101,18 @@ skills/runbook，以及接入 `ci-python` 的 `tools/check_pre1_work_plan.py` �
 本任务不删除 legacy、不实现 package、不改 GitHub settings、不生成凭据、不创建 Release。
 
 验收分四层：修复候选 exact PR/source technical `pass`、该 exact final head 的 independent
-acceptance `pass`、被验收 candidate 合入后的 canonical-main source `pass`、随后 canonical
-activation 才可完成。当前旧 candidate 是 technical `pass` / independent `fail` /
-activation `not-eligible`；修复 candidate Checkpoint A 是 technical `pass` / independent
-`pending` / canonical-main `not-run` / activation `blocked`，绑定 commit `f4074a31…`、run
-`30980342634`、payload `8919891304` 与 provenance `8919891597`。所有 runtime、packaged、
-physical、settings 和 release gate 保持真实的 `not-run`。
+acceptance `pass`、被验收 candidate 合入后的 canonical-main source `pass`，随后 canonical
+activation 才可完成。四层已在 accepted final
+`36885e04df09c4789d8ec3c9dc5c5e78a381a634`、tree
+`1b9f3a34847fd3acc8b7f3a31ff19332d5328b64`、resulting `main`
+`1786255b55dd1a78659ed92235893876175a0722` 与 push run `30986208251` 闭环；见
+[W02 entry record](evidence/W02/2026-08-05-entry.md)。旧 candidate 的拒绝与 remediation
+Checkpoint A 当时的 `pending` / `blocked` 状态继续原样保存在历史 W01 JSON。所有 runtime、
+packaged、physical、settings 和 release gate 保持真实的 `not-run`。
 
 ### TODO-PACKAGED-SMOKE-001：最小非发行 packaged smoke harness
 
-- 状态：`planned`
+- 状态：`in-progress`
 - Owner：Desktop/Packaging/QA
 - 关联：REQ-PACKAGED-SMOKE-001、ADR-0016、ITER-0008/I01
 - 依赖：W01 三个 gate 的修复 candidate PR/source technical `pass`、该 exact final head 独立验收
@@ -118,10 +120,17 @@ physical、settings 和 release gate 保持真实的 `not-run`。
   `source-coverage` success
 <!-- pre1-w02-requires: VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001,independent-acceptance-exact-final-head,accepted-candidate-merged-to-main,resulting-main-source-coverage -->
 
-交付独立 engineering-smoke packaging mode：绑定 exact commit/digest/arch/inventory，启动
-packaged App，验证 renderer/preload handshake、Main → private UDS sidecar 的 health/一个领域
-请求、正常退出、无 orphan、无 public INET listener，并以 PATH trap 证明 exercised path 不发现
-系统 Python/Node/Git。
+W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建额外 task/VAL ID：
+
+1. engineering-smoke boundary/assembly：建立与 formal release 隔离的 macOS arm64 `.app`
+   assembly、严格 manifest/inventory/audit 与 non-upload CI。本 Work 只构建和审计，不启动 App；
+2. packaged App launch/runtime smoke：后续 Work 启动同类 bundle，验证 renderer/preload
+   handshake、Main → private UDS sidecar health/领域请求、正常退出、无 orphan、无 public INET
+   listener，并以 PATH trap 证明 exercised path 不发现系统 Python/Node/Git。
+
+当前第一阶段 source implementation 为 `in-progress`；`.app` assembly、packaged App launch 与
+`VAL-PACKAGED-SMOKE-001` 都仍是 `not-run`。W10/W11 保持 locked，直至第二阶段在 independently
+accepted exact head、合入后 resulting `main` 上取得完整 packaged smoke `pass`。
 
 必须显著 `UNOFFICIAL` / `engineering-only` / `publishable=false`，不读取 production secret，
 不要求 production trust pins，不生成 updater/release metadata，不由 tag 触发，不上传、不创建
@@ -145,7 +154,7 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 
 ### TODO-GOV-EVIDENCE-001：统一可复现证据坐标
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：Governance/CI
 - 目的：移除“当前工作树 pass”和混合历史 SHA，让每个 source 结论能追到公开 commit/Actions。
 - 依赖：无
@@ -172,9 +181,12 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 - source 与 packaged/physical 分类清楚；
 - `VAL-GOV-001` link check 通过。
 
+外部闭环坐标为 accepted final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`、resulting
+`main@1786255b55dd1a78659ed92235893876175a0722` 与 run `30986208251`；历史 W01 JSON 不回写。
+
 ### TODO-CI-COVERAGE-001：补齐并声明 source aggregate 覆盖
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：CI/QMD/Sites
 - 目的：补齐原先 `make ci-source` 遗漏的 QMD worker，并对 guide-site 未验证状态作机器声明。
 - 依赖：无
@@ -201,6 +213,10 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 - CI 在最终 PR head 成功；
 - PR/source technical `pass` 不自动变成 independent、canonical-main 或 canonical activation
   `pass`；在外部条件满足前后三者分别保持 `pending`、`not-run`、`blocked`。
+
+最终 accepted head 经独立验收并合入；resulting-main `Desktop source CI` run `30986208251`
+attempt 1 的五个 jobs 均为 `success`，因此本 source task 已完成。该结论不运行或提升
+`VAL-PACKAGED-SMOKE-001`。
 
 ### TODO-LEGACY-CONTROL-001：Legacy 实例控制与外置数据
 

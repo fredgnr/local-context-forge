@@ -678,6 +678,18 @@ def _git_output(*arguments: str) -> str:
     )
 
 
+def _selected_source_commit(environment: Mapping[str, str]) -> str:
+    """Return the reviewed checkout SHA without trusting a PR merge SHA."""
+
+    source_name = (
+        "LCF_SOURCE_SHA" if environment.get("LCF_SOURCE_SHA") else "GITHUB_SHA"
+    )
+    repository_commit = environment.get(source_name, "").lower()
+    if re.fullmatch(r"[0-9a-f]{40}", repository_commit) is None:
+        raise BuildError(f"{source_name} must be a full Git commit SHA")
+    return repository_commit
+
+
 def validate_release_environment(
     environment: Mapping[str, str],
     toolchain: Mapping[str, Any],
@@ -710,12 +722,11 @@ def validate_release_environment(
     ) not in {"0", ""}:
         raise BuildError("Python sidecar must not build under Rosetta")
 
-    repository_commit = environment["GITHUB_SHA"].lower()
-    if (
-        re.fullmatch(r"[0-9a-f]{40}", repository_commit) is None
-        or _git_output("rev-parse", "HEAD").lower() != repository_commit
-    ):
-        raise BuildError("GITHUB_SHA does not identify the checked-out source")
+    repository_commit = _selected_source_commit(environment)
+    if _git_output("rev-parse", "HEAD").lower() != repository_commit:
+        raise BuildError(
+            "Selected source SHA does not identify the checked-out source"
+        )
     if _git_output("status", "--porcelain", "--untracked-files=all"):
         raise BuildError("Source changes must be committed before packaging")
     try:
@@ -1858,6 +1869,25 @@ def _duplicate_high(descriptor: int) -> int:
     return int(fcntl.fcntl(descriptor, command, 10))
 
 
+def _desktop_retrieval_protocol(versions: Mapping[str, Any]) -> str:
+    protocol = _mapping(
+        versions.get("desktopRetrievalProtocol"),
+        "canonical desktop retrieval protocol",
+    )
+    major = protocol.get("major")
+    minor = protocol.get("minor")
+    if (
+        not isinstance(major, int)
+        or isinstance(major, bool)
+        or major < 0
+        or not isinstance(minor, int)
+        or isinstance(minor, bool)
+        or minor < 0
+    ):
+        raise BuildError("Canonical desktop retrieval protocol is malformed")
+    return f"{major}.{minor}"
+
+
 SavedControlFd = tuple[int | None, bool | None]
 
 
@@ -2018,16 +2048,7 @@ def run_frozen_smoke(
         ).rstrip(b"=").decode("ascii")
         if len(token) != 43 or len(capability) != 43 or capability == token:
             raise BuildError("Frozen smoke generated a noncanonical capability")
-        desktop_protocol = _mapping(
-            versions.get("desktopProtocol"),
-            "canonical desktop protocol",
-        )
-        protocol = (
-            f"{desktop_protocol.get('major')}."
-            f"{desktop_protocol.get('minor')}"
-        )
-        if re.fullmatch(r"[0-9]+\.[0-9]+", protocol) is None:
-            raise BuildError("Canonical desktop protocol is malformed")
+        protocol = _desktop_retrieval_protocol(versions)
         broker_stop = threading.Event()
         broker_requests: deque[dict[str, Any]] = deque()
         broker_failures: deque[str] = deque()

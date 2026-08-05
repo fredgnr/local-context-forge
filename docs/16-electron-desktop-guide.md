@@ -1120,7 +1120,7 @@ Release，不保护该 Draft 窗口。
 
 GitHub Actions 成功本身不能把最后四项标记为 `pass`。
 真实 GitHub settings、受保护签名/promotion 和物理 Mac 证据均尚未运行；PR #20 的 W01
-remediation 尚待 exact-head 独立验收，当前整体结论为 **PR merge blocked / release NO-GO**。
+closeout 已完成，但 W02 packaged smoke 仍为 `not-run`，当前整体结论为 **release NO-GO**。
 
 ## 19. 验收清单
 

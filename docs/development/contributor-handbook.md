@@ -12,8 +12,8 @@
 > public HTTP、Host Runner 和 legacy MCP 只用于静态 retirement inventory；不要运行它们建立
 > 新实例。实际删除受 ADR-0015/0016、[W01–W16 work plan](work-plan.md) 与严格路径矩阵约束：
 > W01 修复 candidate 的 PR/source、independent acceptance、accepted merge 与 canonical-main
-> source 全部完成后才可启动 W02；W02 packaged smoke 后才可按独立 slice 删除，final
-> cutover/absence 留到 W13。仓库内容不能自报 canonical activation。
+> source 已全部闭环；W02 当前只实施 engineering-smoke boundary/assembly，不启动 packaged App。
+> 只有 W02 完整 packaged smoke 通过后才可按独立 slice 删除，final cutover/absence 留到 W13。
 
 ## 1. Checkout 后先建立坐标
 
@@ -244,7 +244,7 @@ python3 tools/check_markdown_links.py
 python3 tools/check_version_sync.py
 python3 -B tools/check_ci_coverage.py
 python3 -B tools/check_w01_evidence.py
-git diff --check 3eff97d97b2de4484d568bab5ac96d63830c79ee HEAD
+git diff --check 1786255b55dd1a78659ed92235893876175a0722 HEAD
 ```
 
 W01 historical checker 只验证 versioned immutable coordinates 与 cross-field consistency，不读

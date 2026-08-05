@@ -25,6 +25,9 @@ const renderer = require("../scripts/auditRenderer.cjs") as {
   canonicalJson(value: unknown): string;
   inventory(root: string, options?: { excludeManifest?: boolean }): JsonObject[];
 };
+const rendererStage = require("../scripts/stageRenderer.cjs") as {
+  selectSourceCommit(environment: NodeJS.ProcessEnv): string;
+};
 
 const roots: string[] = [];
 const commit = "a".repeat(40);
@@ -178,5 +181,39 @@ describe("production renderer packaging audit", () => {
     expect(() =>
       renderer.auditRenderer(remote.root, auditOptions(remote.packageLock))
     ).toThrow(/development marker|remote origin/);
+  });
+});
+
+describe("renderer staging source provenance", () => {
+  it("prefers the exact source SHA over a synthetic GitHub SHA", () => {
+    expect(
+      rendererStage.selectSourceCommit({
+        LCF_SOURCE_SHA: "a".repeat(40),
+        GITHUB_SHA: "b".repeat(40)
+      })
+    ).toBe("a".repeat(40));
+  });
+
+  it("preserves formal-workflow fallback to GITHUB_SHA", () => {
+    expect(
+      rendererStage.selectSourceCommit({
+        GITHUB_SHA: "b".repeat(40)
+      })
+    ).toBe("b".repeat(40));
+    expect(
+      rendererStage.selectSourceCommit({
+        LCF_SOURCE_SHA: "",
+        GITHUB_SHA: "b".repeat(40)
+      })
+    ).toBe("b".repeat(40));
+  });
+
+  it("rejects an invalid explicit source SHA instead of falling back", () => {
+    expect(() =>
+      rendererStage.selectSourceCommit({
+        LCF_SOURCE_SHA: "not-a-commit",
+        GITHUB_SHA: "b".repeat(40)
+      })
+    ).toThrow(/LCF_SOURCE_SHA/);
   });
 });

@@ -953,7 +953,7 @@ class _BrokerListenerFixture:
         raise OSError("fixture complete")
 
 
-def _broker_request(*, capability: str) -> bytes:
+def _broker_request(*, capability: str, protocol: str = "1.1") -> bytes:
     payload = b'{"revision":4,"collections":[]}'
     deadline = int(time.time() * 1000) + 60_000
     return (
@@ -962,7 +962,7 @@ def _broker_request(*, capability: str) -> bytes:
         b"Content-Type: application/json\r\n"
         + f"Content-Length: {len(payload)}\r\n".encode("ascii")
         + f"Authorization: Bearer {capability}\r\n".encode("ascii")
-        + b"X-LCF-Protocol-Version: 1.0\r\n"
+        + f"X-LCF-Protocol-Version: {protocol}\r\n".encode("ascii")
         + b"X-LCF-Launch-Id: 663e210a-f7e0-4e15-826a-25c3ae657eeb\r\n"
         + b"X-LCF-Request-Id: 13d47b32-9ef7-4ab9-8097-5a4568d43e30\r\n"
         + f"X-LCF-Deadline-Ms: {deadline}\r\n".encode("ascii")
@@ -987,7 +987,7 @@ def test_frozen_smoke_broker_accepts_only_capability_scoped_reconcile() -> None:
         listener,  # type: ignore[arg-type]
         capability=capability,
         launch_id="663e210a-f7e0-4e15-826a-25c3ae657eeb",
-        protocol="1.0",
+        protocol="1.1",
         stop=stop,
         requests=requests,
         failures=failures,
@@ -1020,7 +1020,7 @@ def test_frozen_smoke_broker_rejects_wrong_capability() -> None:
         listener,  # type: ignore[arg-type]
         capability="a" * 43,
         launch_id="663e210a-f7e0-4e15-826a-25c3ae657eeb",
-        protocol="1.0",
+        protocol="1.1",
         stop=stop,
         requests=requests,
         failures=failures,
@@ -1032,3 +1032,74 @@ def test_frozen_smoke_broker_rejects_wrong_capability() -> None:
     assert connection.responses[0].startswith(
         b"HTTP/1.1 400 Bad Request\r\n"
     )
+
+
+def test_frozen_smoke_broker_rejects_general_desktop_protocol() -> None:
+    import threading
+
+    capability = "a" * 43
+    stop = threading.Event()
+    connection = _BrokerConnectionFixture(
+        _broker_request(capability=capability, protocol="1.0")
+    )
+    listener = _BrokerListenerFixture(connection, stop)
+    requests: deque[dict[str, Any]] = deque()
+    failures: deque[str] = deque()
+
+    build._serve_smoke_broker(
+        listener,  # type: ignore[arg-type]
+        capability=capability,
+        launch_id="663e210a-f7e0-4e15-826a-25c3ae657eeb",
+        protocol="1.1",
+        stop=stop,
+        requests=requests,
+        failures=failures,
+    )
+
+    assert list(failures) == ["request"]
+    assert not requests
+    assert connection.responses
+    assert connection.responses[0].startswith(
+        b"HTTP/1.1 400 Bad Request\r\n"
+    )
+
+
+def test_frozen_smoke_selects_distinct_retrieval_protocol() -> None:
+    versions = json.loads(build.VERSION_FILE.read_text(encoding="utf-8"))
+
+    assert versions["desktopProtocol"] == {"major": 1, "minor": 0}
+    assert versions["desktopRetrievalProtocol"] == {"major": 1, "minor": 1}
+    assert build._desktop_retrieval_protocol(versions) == "1.1"
+
+    without_retrieval = copy.deepcopy(versions)
+    del without_retrieval["desktopRetrievalProtocol"]
+    with pytest.raises(build.BuildError, match="desktop retrieval protocol"):
+        build._desktop_retrieval_protocol(without_retrieval)
+
+
+def test_selected_source_commit_prefers_exact_checkout_input() -> None:
+    exact_source = "a" * 40
+    synthetic_merge = "b" * 40
+
+    assert build._selected_source_commit(
+        {
+            "LCF_SOURCE_SHA": exact_source,
+            "GITHUB_SHA": synthetic_merge,
+        }
+    ) == exact_source
+    assert build._selected_source_commit(
+        {
+            "LCF_SOURCE_SHA": "",
+            "GITHUB_SHA": synthetic_merge,
+        }
+    ) == synthetic_merge
+
+
+def test_selected_source_commit_rejects_invalid_explicit_input() -> None:
+    with pytest.raises(build.BuildError, match="LCF_SOURCE_SHA"):
+        build._selected_source_commit(
+            {
+                "LCF_SOURCE_SHA": "not-a-commit",
+                "GITHUB_SHA": "b" * 40,
+            }
+        )

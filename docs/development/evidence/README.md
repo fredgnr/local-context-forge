@@ -11,12 +11,14 @@
 | `VAL-DOC-HANDOFF-001` | `625db7647d47fb6ff8f23c3136c4f45ded80384f` | `pass`（文档 source checkpoint） | [2026-07-31-625db76](VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) |
 | `VAL-LEGACY-SCOPE-001` | `64ec3c232d08f1e843d81dc7c4972dc5ebf96c9b` | `pass`（planning/documentation scope） | [2026-07-31-64ec3c2](VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) |
 | W01 旧 candidate | final `2b7629468c711d0db5107f7001aa90c0271079ae` / tree `ad1b76febd1adcaf1ada96ed7dd43fbe1e5a3adf` | technical `pass`；independent `fail`；activation `not-eligible` | [schema v2 history](W01/2026-08-04.json)；[Actions 30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329)；旧 artifact `8900365901` |
-| W01 remediation candidate | Checkpoint A `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree `f059ad8bd3cfc6accac707745d5d8727bfb532bd` | PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597`；[closed schema](W01/schema-v2.json) |
+| W01 remediation historical Checkpoint A | `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree `f059ad8bd3cfc6accac707745d5d8727bfb532bd` | 记录时刻 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [immutable schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597`；[closed schema](W01/schema-v2.json) |
+| W01 accepted remediation / W02 entry | final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`；resulting main `1786255b55dd1a78659ed92235893876175a0722`；same tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64` | PR/source、independent acceptance、merge、resulting-main source、W02 activation `pass`；packaged smoke `not-run` | [W02 entry closeout](W02/2026-08-05-entry.md)；[Actions 30986208251](https://github.com/fredgnr/local-context-forge/actions/runs/30986208251) |
 
-旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。修复记录
-必须与 exact final head 上的新 payload/provenance 一起读取；仓库记录不能自行声明 independent
-acceptance 或 canonical activation。以上记录均不代表 packaged、physical、GitHub settings、
-legacy absence 或 release gate 已通过。
+旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。W01 JSON
+冻结其记录时刻的 remediation lifecycle；后续 external acceptance/merge/main run 由新的 W02 entry
+追加，而不是回写历史 JSON。仓库 bytes 不能凭自身 technical result 自我提升 independent
+acceptance；closeout 记录必须绑定外部 accepted head、canonical main 与 Actions 坐标。以上记录均
+不代表 packaged、physical、GitHub settings、legacy absence 或 release gate 已通过。
 
 ## 1. 证据原则
 
@@ -179,7 +181,9 @@ closeout 中的 canonical record digest 用来捕获局部字段改写；权威�
 服务中已存在的 exact run、payload/provenance artifact ID 与两层完整 digest，以及独立验收所钉住
 的 exact PR head。若后续提交协调替换全部坐标并重算 record digest，那是一个新的 candidate，
 必须重新运行 exact-head CI 并重新接受独立验收，不能继承旧 candidate 的 technical 或 acceptance
-结论。仓库内容本身始终不能把 `independent_acceptance` 从 `pending` 提升为 `pass`。
+结论。历史 W01 JSON 本身始终不能把 `independent_acceptance` 从 `pending` 提升为 `pass`。
+外部独立验收完成后，应像 [W02 entry](W02/2026-08-05-entry.md) 一样追加 exact accepted
+head/main/run 坐标，不得改写旧 record。
 
 PR 与 non-main branch payload 使用 `pull-request-candidate` / `branch-candidate`，只输出 technical
 candidate results，canonical activation 必须为 `blocked`。只有 `push` to `refs/heads/main` 可输出
@@ -207,6 +211,10 @@ digest、architecture、有限 inventory、launch、renderer/preload、private U
 quit/no orphan、process/socket observation、exercised path 的 system Python/Node/Git PATH trap、
 updater unavailable/no-network。`tag`、`release_id`、
 credential generation 和 production pin 必须为 null/absent。
+
+[2026-08-05 entry record](W02/2026-08-05-entry.md) 只证明 W01 外部退出条件已满足。当前 W02
+boundary/assembly source implementation 不启动 packaged App；`.app` assembly 与上述 launch/runtime
+观察均为 `not-run`，因此 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。W10/W11 不得据此解锁。
 
 ### W10/W11 slice
 

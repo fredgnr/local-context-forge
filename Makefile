@@ -3,6 +3,7 @@ SHELL := /bin/sh
 .PHONY: help install doctor status uninstall bootstrap up down stop restart build ps logs smoke demo backup restore \
 	qmd-status qmd-embed qmd-embed-native dev-native dev-api dev-mcp dev-web test handbook \
 	ci-source ci-python-install ci-python ci-qmd-worker ci-ipc-source ci-web pre1-work-plan-check \
+	packaged-smoke-policy-check engineering-smoke-assemble \
 	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci \
 	python-sidecar-source-verify python-sidecar-install-python python-sidecar-toolchain \
 	python-sidecar-build python-sidecar-audit python-sidecar-packaging-test \
@@ -43,6 +44,8 @@ help:
 	  'make ci-python   Run frozen Python source tests and repository checks' \
 	  'make ci-qmd-worker  Install safely and run QMD source tests with network/model traps' \
 	  'make pre1-work-plan-check  Validate canonical W01-W16 governance mappings' \
+	  'make packaged-smoke-policy-check  Validate isolated W02 engineering-smoke assembly policy' \
+	  'make engineering-smoke-assemble  Assemble/audit macOS arm64 .app dir without launching it (staging required)' \
 	  'make ci-ipc-source  Run the source-mode Python desktop IPC contract' \
 	  'make ci-web      Install and run Web source tests, typecheck and build' \
 	  'make desktop-ci  Install and run desktop tests, typecheck and build' \
@@ -155,6 +158,7 @@ ci-python: ci-python-install
 	backend/.venv/bin/python -B tools/check_ci_coverage.py
 	backend/.venv/bin/python -B tools/check_w01_evidence.py
 	backend/.venv/bin/python -B tools/check_pre1_work_plan.py
+	backend/.venv/bin/python -B tools/check_packaged_smoke_policy.py
 	backend/.venv/bin/python -B -m unittest discover -s tools/tests -p 'test_*.py'
 
 ci-qmd-worker:
@@ -165,7 +169,21 @@ pre1-work-plan-check:
 	$(PYTHON) -B tools/check_ci_coverage.py
 	$(PYTHON) -B tools/check_w01_evidence.py
 	$(PYTHON) -B tools/check_pre1_work_plan.py
+	$(PYTHON) -B tools/check_packaged_smoke_policy.py
 	$(PYTHON) -B -m unittest discover -s tools/tests -p 'test_*.py'
+
+packaged-smoke-policy-check:
+	$(PYTHON) -B tools/check_packaged_smoke_policy.py
+	$(PYTHON) -B -m unittest tools.tests.test_check_packaged_smoke_policy
+
+engineering-smoke-assemble:
+	@test "$$(uname -s)" = Darwin || { printf '%s\n' 'Engineering-smoke assembly requires macOS'; exit 2; }
+	@test "$$(uname -m)" = arm64 || { printf '%s\n' 'Engineering-smoke assembly requires native arm64'; exit 2; }
+	cd desktop && $(NPM) run test:engineering-smoke
+	cd desktop && $(NPM) run build:engineering-smoke
+	cd desktop && $(NPM) run prepare:engineering-smoke
+	cd desktop && $(NPM) run pack:engineering-smoke
+	cd desktop && $(NPM) --silent run audit:engineering-smoke
 
 ci-ipc-source: ci-python-install
 	cd backend && .venv/bin/pytest ../tests/backend/test_desktop_transport.py

@@ -21,7 +21,9 @@ desktop/generated/sidecar/
 desktop/generated/python-sidecar-evidence/
 desktop/generated/companion/
 desktop/generated/qmd/
+desktop/generated/engineering-smoke/
 desktop/resources/renderer/
+desktop/release-smoke/
 runtime-archives/
 .vinext/
 data/

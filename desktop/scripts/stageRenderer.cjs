@@ -48,11 +48,21 @@ function git(arguments_) {
   }
 }
 
+function selectSourceCommit(environment = process.env) {
+  const sourceName = environment.LCF_SOURCE_SHA
+    ? "LCF_SOURCE_SHA"
+    : "GITHUB_SHA";
+  const commit = (environment[sourceName] || "").toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(commit)) {
+    fail(`${sourceName} must be a full Git commit SHA`);
+  }
+  return commit;
+}
+
 function validateProvenance(environment = process.env) {
-  const commit = (environment.GITHUB_SHA || "").toLowerCase();
+  const commit = selectSourceCommit(environment);
   const sourceDateEpoch = Number(environment.LCF_SOURCE_DATE_EPOCH);
   if (
-    !/^[0-9a-f]{40}$/.test(commit) ||
     !Number.isSafeInteger(sourceDateEpoch) ||
     sourceDateEpoch < 100_000_000 ||
     git(["rev-parse", "HEAD"]).toLowerCase() !== commit ||
@@ -187,4 +197,9 @@ if (require.main === module) {
   }
 }
 
-module.exports = { RendererStageError, stageRenderer, validateProvenance };
+module.exports = {
+  RendererStageError,
+  selectSourceCommit,
+  stageRenderer,
+  validateProvenance
+};

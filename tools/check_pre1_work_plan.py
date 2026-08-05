@@ -19,6 +19,7 @@ STATUS = ROOT / "docs/development/status.md"
 R13 = ROOT / "docs/development/iterations/0002-r13-pre1-incremental-retirement.md"
 RELEASE_RUNBOOK = ROOT / "docs/development/desktop-release.md"
 W01_EVIDENCE = ROOT / "docs/development/evidence/W01/2026-08-04.json"
+W02_ENTRY = ROOT / "docs/development/evidence/W02/2026-08-05-entry.md"
 
 EXPECTED_ORDER = [
     "W01",
@@ -173,9 +174,10 @@ EXPECTED_TASK_STATUS = {
 }
 EXPECTED_TASK_STATUS.update(
     {
-        "TODO-PRE1-SEQUENCING-001": "in-progress",
-        "TODO-GOV-EVIDENCE-001": "in-progress",
-        "TODO-CI-COVERAGE-001": "in-progress",
+        "TODO-PRE1-SEQUENCING-001": "done",
+        "TODO-GOV-EVIDENCE-001": "done",
+        "TODO-CI-COVERAGE-001": "done",
+        "TODO-PACKAGED-SMOKE-001": "in-progress",
         "TODO-REL-GOV-001": "blocked",
         "TODO-REL-KEYS-001": "blocked",
         "TODO-REL-DRAFT-001": "blocked",
@@ -225,12 +227,42 @@ OLD_REJECTED_TRACE_MARKER = (
     "canonical activation `not-eligible`"
 )
 
-
-def current_w01_trace_marker(technical_result: str) -> str:
-    return (
-        f"修复候选 PR/source `{technical_result}`；independent acceptance `pending`；"
-        "canonical-main source `not-run`；canonical activation `blocked`"
-    )
+W01_ACCEPTED_HEAD = "36885e04df09c4789d8ec3c9dc5c5e78a381a634"
+W01_RESULTING_MAIN = "1786255b55dd1a78659ed92235893876175a0722"
+W01_ACCEPTED_TREE = "1b9f3a34847fd3acc8b7f3a31ff19332d5328b64"
+W01_RESULTING_MAIN_RUN = "30986208251"
+W02_ENTRY_AUTHORITY_MARKER = (
+    "<!-- w02-entry-authority: "
+    "rejected=2b7629468c711d0db5107f7001aa90c0271079ae,"
+    f"accepted={W01_ACCEPTED_HEAD},main={W01_RESULTING_MAIN},"
+    f"tree={W01_ACCEPTED_TREE},source-run={W01_RESULTING_MAIN_RUN} -->"
+)
+CURRENT_W01_TRACE_MARKER = (
+    f"accepted final `{W01_ACCEPTED_HEAD}` / tree `{W01_ACCEPTED_TREE}`："
+    "PR/source、independent acceptance、canonical merge 与 resulting-main source 均 `pass`"
+)
+W02_PHASE_MARKERS = {
+    "engineering-smoke boundary/assembly：本 Work，source implementation `in-progress`",
+    "packaged App launch/runtime smoke：后续 Work，`not-run`",
+    "W10/W11 保持 locked",
+}
+W02_ENTRY_REQUIRED_MARKERS = {
+    "remediation final head 的 PR/source technical result：`pass`",
+    "同一 exact final head 的 independent acceptance：`pass`",
+    "accepted candidate 合入 canonical `main`：`pass`",
+    "resulting exact main 的 `source-coverage`：`pass`",
+    "W02 canonical activation：`pass`",
+    "engineering-smoke `.app` assembly：`not-run`",
+    "packaged App launch：`not-run`",
+    "`VAL-PACKAGED-SMOKE-001`：`not-run`",
+    "W10/W11 destructive slices：`not-run`",
+    "public release：`NO-GO`",
+    "Python source checks | `success`",
+    "Web source checks | `success`",
+    "Desktop source checks | `success`",
+    "macOS 15 arm64 source IPC | `success`",
+    "W01 exact-head source coverage evidence | `success`",
+}
 
 CONTINUITY_COMPONENTS = {
     "W13 checkpoint commit/package digest",
@@ -306,6 +338,7 @@ def validate_documents(
     r13: str,
     release_runbook: str,
     w01_evidence: dict[str, object],
+    w02_entry: str,
 ) -> list[str]:
     errors: list[str] = []
     expected_task_status = dict(EXPECTED_TASK_STATUS)
@@ -315,9 +348,8 @@ def validate_documents(
         if isinstance(remediation, dict)
         else None
     )
-    if remediation_technical not in {"pending", "pass"}:
-        errors.append("W01 remediation technical result must be pending or pass")
-        remediation_technical = "pending"
+    if remediation_technical != "pass":
+        errors.append("historical W01 remediation technical result must remain pass")
 
     marker = re.search(r"<!-- pre1-work-order: ([A-Z0-9,]+) -->", plan)
     actual_order = marker.group(1).split(",") if marker else []
@@ -459,7 +491,7 @@ def validate_documents(
             continue
         for marker in (
             OLD_REJECTED_TRACE_MARKER,
-            current_w01_trace_marker(remediation_technical),
+            CURRENT_W01_TRACE_MARKER,
         ):
             if marker not in row[2]:
                 errors.append(f"{gate} lifecycle result missing {marker!r}")
@@ -468,22 +500,45 @@ def validate_documents(
         errors.append("W01 evidence remediation lifecycle is missing")
     else:
         if remediation.get("independent_acceptance") != "pending":
-            errors.append("W01 independent acceptance must remain pending")
+            errors.append("historical W01 independent acceptance must remain pending")
         activation = remediation.get("canonical_activation")
         if not isinstance(activation, dict) or activation.get("status") != "blocked":
-            errors.append("W01 canonical activation must remain blocked")
+            errors.append("historical W01 canonical activation must remain blocked")
     canonical_main = w01_evidence.get("canonical_main_source")
     if not isinstance(canonical_main, dict) or canonical_main.get("status") != "not-run":
-        errors.append("W01 canonical-main source result must remain not-run")
+        errors.append("historical W01 canonical-main source result must remain not-run")
+
+    candidate_history = w01_evidence.get("candidate_history")
+    rejected = candidate_history[0] if isinstance(candidate_history, list) and candidate_history else None
+    if not isinstance(rejected, dict) or rejected.get("source_commit") != (
+        "2b7629468c711d0db5107f7001aa90c0271079ae"
+    ):
+        errors.append("historical W01 rejected final head drifted")
+    if not isinstance(rejected, dict) or rejected.get("independent_acceptance") != "fail":
+        errors.append("historical W01 rejected acceptance must remain fail")
+
+    if w02_entry.count(W02_ENTRY_AUTHORITY_MARKER) != 1:
+        errors.append("W02 entry must contain the exact external authority marker once")
+    for marker in sorted(W02_ENTRY_REQUIRED_MARKERS):
+        if marker not in w02_entry:
+            errors.append(f"W02 entry missing required marker: {marker}")
 
     r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)
-    if r13_status is None or r13_status.group(1) != "in-progress":
-        errors.append("R13 status must remain in-progress until canonical activation")
+    if r13_status is None or r13_status.group(1) != "completed":
+        errors.append("R13 status must be completed after external W01 closeout")
     if "- [x] R13-06" not in r13 or "旧候选" not in r13:
         errors.append("R13-06 must preserve the old technical execution as rejected history")
-    remediation_checked = "- [x] R13-07" in r13
-    if remediation_checked != (remediation_technical == "pass"):
-        errors.append("R13-07 checkbox must match remediation technical closeout only")
+    if "- [x] R13-07" not in r13:
+        errors.append("R13-07 must preserve remediation technical closeout")
+    if "- [x] R13-08" not in r13:
+        errors.append("R13-08 must record external W01 closeout")
+
+    iteration_status = re.search(r"^- 状态：`([^`]+)`", iteration, re.MULTILINE)
+    if iteration_status is None or iteration_status.group(1) != "in-progress":
+        errors.append("ITER-0008 status must be in-progress while W02 is active")
+    for marker in sorted(W02_PHASE_MARKERS):
+        if marker not in iteration:
+            errors.append(f"ITER-0008 missing W02 phase marker: {marker}")
 
     continuity_row = validation_by_id.get("VAL-RELEASE-CONTINUITY-001")
     if continuity_row is not None:
@@ -499,6 +554,18 @@ def validate_documents(
         for item in sorted(NEW_STABLE_IDS):
             if re.search(rf"(?<![A-Z0-9-]){re.escape(item)}(?![A-Z0-9-])", text) is None:
                 errors.append(f"{label} stable ID missing {item}")
+
+    for label, text in (
+        ("work plan", plan),
+        ("TODO", todo),
+        ("traceability", trace),
+        ("iteration", iteration),
+        ("R13", r13),
+        ("status", status),
+        ("W02 entry", w02_entry),
+    ):
+        if re.search(r"(?:REQ|TODO|VAL|ITER)-W02A\b|\bW02A\b", text):
+            errors.append(f"{label} must not create a W02A stable ID")
 
     authority_requirements = {
         "ADR-0016": (adr, {"VAL-RELEASE-CONTINUITY-001", "W13 checkpoint", "W16"}),
@@ -571,6 +638,7 @@ def main() -> int:
         read(R13),
         read(RELEASE_RUNBOOK),
         json.loads(read(W01_EVIDENCE)),
+        read(W02_ENTRY),
     )
     if errors:
         for error in errors:

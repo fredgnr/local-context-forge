@@ -1084,11 +1084,43 @@ def test_native_tool_failure_reports_only_a_fixed_label(
     with pytest.raises(
         audit.AuditError,
         match=(
-            rf"^Native inspection tool failed \(tool={label}; "
+            rf"^Native inspection tool failed \(tool={label}; target=other-macho; "
             r"category=exit; code=1\)$"
         ),
     ) as failure:
         audit._run_native_tool(arguments)
+
+    assert "must-not-leak" not in str(failure.value)
+    assert "/secret" not in str(failure.value)
+
+
+def test_codesign_unsigned_failure_uses_only_fixed_categories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+
+    def failed_run(*_args: Any, **_kwargs: Any) -> Any:
+        raise subprocess.CalledProcessError(
+            1,
+            ("/usr/bin/codesign", "--verify", "--strict", "/secret/lcf-service"),
+            stderr=(
+                "/secret/lcf-service: code object is not signed at all; "
+                "token-must-not-leak"
+            ),
+        )
+
+    monkeypatch.setattr(audit.subprocess, "run", failed_run)
+
+    with pytest.raises(
+        audit.AuditError,
+        match=(
+            r"^Native inspection tool failed \(tool=codesign-verify; "
+            r"target=entrypoint; category=unsigned; code=1\)$"
+        ),
+    ) as failure:
+        audit._run_native_tool(
+            ("/usr/bin/codesign", "--verify", "--strict", "/secret/lcf-service")
+        )
 
     assert "must-not-leak" not in str(failure.value)
     assert "/secret" not in str(failure.value)

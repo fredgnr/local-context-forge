@@ -317,10 +317,45 @@ def _native_tool_label(arguments: Sequence[str]) -> str:
     return label
 
 
+def _native_target_label(arguments: Sequence[str]) -> str:
+    target = Path(arguments[-1])
+    if target.name == EXPECTED_EXECUTABLE:
+        return "entrypoint"
+    if target.suffix == ".so":
+        return "extension-module"
+    if target.suffix == ".dylib":
+        return "dylib"
+    if any(part.endswith(".framework") for part in target.parts):
+        return "framework"
+    return "other-macho"
+
+
+def _native_failure_category(
+    tool: str,
+    stderr: Any,
+) -> str:
+    if tool != "codesign-verify" or not isinstance(stderr, str):
+        return "exit"
+    normalized = stderr.lower()
+    if "code object is not signed at all" in normalized:
+        return "unsigned"
+    if (
+        "invalid signature" in normalized
+        or "invalid or unsupported format" in normalized
+    ):
+        return "invalid-signature"
+    if "resource envelope" in normalized or "sealed resource" in normalized:
+        return "resource-seal"
+    if "bundle format" in normalized:
+        return "unsupported-format"
+    return "exit"
+
+
 def _run_native_tool(arguments: Sequence[str]) -> str:
     if platform.system() != "Darwin":
         raise AuditError("Real Mach-O inspection requires Darwin")
     label = _native_tool_label(arguments)
+    target = _native_target_label(arguments)
     try:
         completed = subprocess.run(
             list(arguments),
@@ -336,6 +371,7 @@ def _run_native_tool(arguments: Sequence[str]) -> str:
             },
         )
     except subprocess.CalledProcessError as exc:
+        category = _native_failure_category(label, exc.stderr)
         return_code = (
             exc.returncode
             if isinstance(exc.returncode, int) and -255 <= exc.returncode <= 255
@@ -343,15 +379,18 @@ def _run_native_tool(arguments: Sequence[str]) -> str:
         )
         raise AuditError(
             "Native inspection tool failed "
-            f"(tool={label}; category=exit; code={return_code})"
+            f"(tool={label}; target={target}; category={category}; "
+            f"code={return_code})"
         ) from exc
     except subprocess.TimeoutExpired as exc:
         raise AuditError(
-            f"Native inspection tool failed (tool={label}; category=timeout)"
+            "Native inspection tool failed "
+            f"(tool={label}; target={target}; category=timeout)"
         ) from exc
     except OSError as exc:
         raise AuditError(
-            f"Native inspection tool failed (tool={label}; category=launch)"
+            "Native inspection tool failed "
+            f"(tool={label}; target={target}; category=launch)"
         ) from exc
     return completed.stdout
 

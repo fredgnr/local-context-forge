@@ -2,9 +2,10 @@
 
 本记录追加在 [W02 static assembly checkpoint](2026-08-06-08137c7-assembly.md)
 之后，保存 Draft PR #21 对旧 exact head 的独立验收结论，并为同一 branch/PR 上的修复建立
-不可迁移的起点。旧 checkpoint 文档不回写；其中的 workflow `success` 和当时记录的技术输出
-仍是历史事实，但不能证明本记录识别的 Python build scratch lifecycle 安全属性，也不能作为
-remediation 后新 head 的通过证据。
+不可迁移的起点。本记录继续追加第一次 remediation 技术执行的失败事实；不把它覆盖成下一候选
+的 `not-run`。旧 checkpoint 文档不回写；其中的 workflow `success` 和当时记录的技术输出仍是
+历史事实，但不能证明本记录识别的 Python build scratch lifecycle 安全属性，也不能作为任一
+remediation head 的通过证据。
 
 ## 失败候选的权威坐标
 
@@ -55,7 +56,11 @@ steps，不是 Python build scratch exact cleanup 证据。old exact-head Python
 tests，以及 QMD `10` passed / `1` allowlisted skip；旧 PR body 的 `595 passed, 1 skipped` 聚合不能
 由该日志复算，remediation 更新不得保留这个数字。
 
-## remediation threat boundary
+## remediation candidate threat boundary
+
+以下是 remediation candidate 要证明的有限边界，不是 gate 已通过的声明。第一次技术执行在
+toolchain 安全检查和 source tests 处 fail closed，assembly 的后续 production-input consumers
+均跳过，因此不能从设计、cleanup-only 成功或未执行的步骤推导 implementation `pass`。
 
 exact-source bootstrap 的有限 TCB 是 server-reviewed workflow 与 system Git/runtime。sanitized
 system Git 将 exact source SHA checkout 到 random、euid-owned、`0700` private root 成功后，
@@ -90,6 +95,53 @@ Python 前先 `export PYTHONDONTWRITEBYTECODE=1`，并用显式 `python -B` 执�
 其后不再加载任何影响 production artifact 的 repo Python 或 Node。这样 test 安装、pytest cache
 或测试态 bytecode 不可能成为后来 production bootstrap/import 的未审计输入。
 
+## 第一次 remediation 技术执行：`fail` / `superseded`
+
+第一次 remediation exact candidate 的坐标和结果必须作为失败历史保留；Buildx action records
+不是产品或 engineering artifact，cleanup-only 成功也不改变 assembly job 的失败结论。
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `9f7d5d11225517ff5b1643d4bb71983346358ae0` |
+| exact tree | `ea8e62e9b76c3270d60135a8633f56db025ad921` |
+| committed-source snapshot SHA-256 | `6b44dc785f6f3cd957e35c3eff1857ef55ac07a6fb3a98dcab44601486d2c1e6` |
+| renderer lock SHA-256 | `ae4f9bdf4283763a980ee4b21f3fdd844d4de43a0b35fa7086406eddc2ab857f` |
+| engineering-smoke run / job | [run `31181911570`](https://github.com/fredgnr/local-context-forge/actions/runs/31181911570) / job `92876982671` |
+| exact-head source run | [run `31181911534`](https://github.com/fredgnr/local-context-forge/actions/runs/31181911534) |
+| container run | [run `31181911527`](https://github.com/fredgnr/local-context-forge/actions/runs/31181911527) |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第一次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-first-remediation-authority: source=9f7d5d11225517ff5b1643d4bb71983346358ae0,tree=ea8e62e9b76c3270d60135a8633f56db025ad921,assembly-run=31181911570,assembly-job=92876982671,source-run=31181911534,container-run=31181911527,result=fail -->
+
+assembly run `31181911570` / job `92876982671` 在 installed toolchain 校验处以固定错误
+`Installed toolchain symlink is unsafe` 失败。紧随其后的 cleanup-only gate 成功；success-only
+provenance validation、sidecar/renderer/Desktop/static assembly、bundle audit 与 focused Python
+lifecycle tests 均跳过，engineering artifacts 列表为 `[]`。因此没有 `.app` inventory/digest，
+也没有可迁移到后续 candidate 的 assembly `pass`。
+
+exact-head source run `31181911534` 同样为 `fail`：Python 为 `739` passed / `2` failed /
+`1` skipped，两个失败均是 unsafe ownership or mode；Desktop 为 `292` passed / `1` failed，失败
+原因是缺少 `web/node_modules/vite`；Web `51/51` success；macOS IPC `49` passed / `1` warning，
+job success。W01 aggregate 按合同 fail closed，不能用成功的 Web/macOS 子项抵消 Python/Desktop
+失败。
+
+container run `31181911527` 的三个 jobs 为 `3/3` success，但 PR 路径没有 publish：registry login
+和 platform verification 跳过，Buildx 的 `push=false`、`load=false`。Buildx records 只是 action
+records，不是本 Work 的 product/engineering artifacts，也不能提升 assembly、packaged smoke 或
+release gate。
+
+source run 的 W01 failure evidence payload artifact `8995148172` 的 ZIP / inner SHA-256 分别为
+`d0fa244c318fd64039eb70618be023103465ab580d9c192b643558d49b2c27aa` /
+`0d48fc0ca4b7edab977f31484f14c39cab5a7ecbc7b5299a2d1f2b1c22a86709`；provenance artifact
+`8995148811` 的 ZIP / inner SHA-256 分别为
+`a43697a8b83737ddda3b3e102a270b299adf6658a2f7d3017ffd93cad2af9c3a` /
+`bb5dc6ae465782e220b5bdde2dd309a5c8662255426d4c51a28fc871eced21a4`。两份证据绑定上述
+source/tree、run 与 Draft PR #21，明确记录 result `fail`、independent acceptance `pending`、
+canonical activation `blocked`；它们不能自我提升或覆写旧 independent `NO-GO`。
+
 ## 解除条件（同一 W02-A implementation stage）
 
 本轮不创建新的 W、Requirement、TODO 或 Validation ID。新的候选必须至少提供：
@@ -103,18 +155,23 @@ Python 前先 `export PYTHONDONTWRITEBYTECODE=1`，并用显式 `python -B` 执�
    drift 的 deterministic adversarial tests，以及 workflow/policy mutation closure；
 5. 新 exact head 的 fresh source/assembly Actions、空 engineering artifact 列表和独立验收。
 
-在新的 exact head 被独立接受前，旧 run、checkpoint、inventory 或本记录都不得迁移为新 head
+在新的 exact head 被独立接受前，旧 run、checkpoint、inventory、第一次 remediation 的失败
+payload/provenance 或本记录都不得迁移为新 head
 的 `pass`。当前状态固定为：
 
 | 项目 | 当前结论 |
 | --- | --- |
-| PR #21 remediation technical candidate | `not-run`（等待新 exact head 与 fresh Actions） |
-| independent acceptance | `NO-GO`（绑定上述旧 head/tree） |
+| PR #21 first remediation technical attempt | `fail` / `superseded`（绑定 `9f7d5d…` / `ea8e62…` 与 `311819*` runs） |
+| PR #21 next exact remediation technical candidate | `not-run`（等待 next exact head 与 fresh Actions） |
+| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…` head/tree；第一次 remediation 为 `pending`） |
 | W02 | `in-progress` |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` |
 | W10/W11 | `locked` |
 | packaged App / bundle sidecar launch | `not-run` |
 | public release | `NO-GO` |
 
-本 remediation 不启动 packaged `.app`，不从 bundle 启动 sidecar，不删除 legacy runtime，
-不修改 production settings/credentials/trust pins，不创建 tag、artifact、Draft 或 Release。
+第一次 remediation 未启动 packaged `.app`，未从 bundle 启动 sidecar；下一 exact remediation
+candidate 尚未运行。本 Work 不删除 legacy runtime，
+不修改 production settings/credentials/trust pins，不创建 tag、engineering product artifact、
+Draft Release 或 Release；上文记录的 W01 source-evidence artifacts 与 Buildx action records 不属于
+engineering product artifact。

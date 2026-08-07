@@ -7876,19 +7876,40 @@ def _test_framework_root() -> PurePosixPath:
     return PurePosixPath(base.parents[1].as_posix())
 
 
+def _create_real_venv_with_production_child(root: Path) -> None:
+    hostile_parent_umask = os.umask(0o002)
+    try:
+        with build._translate_cleanup_signals():
+            bootstrap._run_owned_process(
+                (
+                    sys.executable,
+                    "-m",
+                    "venv",
+                    "--without-pip",
+                    str(root),
+                ),
+                cwd=root.parent,
+                environment=dict(os.environ),
+                pass_fds=(),
+                timeout=60,
+                label="Real test venv creation",
+                build=build,
+            )
+    finally:
+        os.umask(hostile_parent_umask)
+
+
 def test_real_venv_seal_verify_execute_and_restore_for_exact_cleanup(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "real-venv"
-    subprocess.run(
-        [sys.executable, "-m", "venv", "--without-pip", str(root)],
-        check=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=60,
-    )
+    _create_real_venv_with_production_child(root)
     assert any(path.is_symlink() for path in root.rglob("*"))
+    assert all(
+        not stat.S_IMODE(path.lstat().st_mode) & 0o022
+        for path in (root, *root.rglob("*"))
+        if not path.is_symlink()
+    )
     descriptor = os.open(
         root,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -7934,14 +7955,7 @@ def test_installed_tree_seal_rejects_same_version_content_drift(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "venv"
-    subprocess.run(
-        [sys.executable, "-m", "venv", "--without-pip", str(root)],
-        check=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=60,
-    )
+    _create_real_venv_with_production_child(root)
     descriptor = os.open(
         root,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -7966,6 +7980,178 @@ def test_installed_tree_seal_rejects_same_version_content_drift(
                 reviewed_framework_root=_test_framework_root(),
             )
         bootstrap._make_installed_tree_cleanup_writable(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _stat_result_with(
+    info: os.stat_result,
+    *,
+    mode: int | None = None,
+    inode: int | None = None,
+    uid: int | None = None,
+    gid: int | None = None,
+) -> os.stat_result:
+    values, attributes = info.__reduce__()[1]
+    values = list(values)
+    if mode is not None:
+        values[stat.ST_MODE] = mode
+    if inode is not None:
+        values[stat.ST_INO] = inode
+    if uid is not None:
+        values[stat.ST_UID] = uid
+    if gid is not None:
+        values[stat.ST_GID] = gid
+    return os.stat_result(values, dict(attributes))
+
+
+@pytest.mark.parametrize("raw_mode", (0o700, 0o755, 0o777))
+def test_installed_tree_symlink_raw_metadata_is_portable_and_mode_is_normalized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw_mode: int,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    tool = root / "tool.py"
+    tool.write_text("reviewed\n", encoding="ascii")
+    tool.chmod(0o600)
+    link = root / "python"
+    link.symlink_to(tool.name)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    original_stat = os.stat
+    actual_link_info = link.lstat()
+    portable_link_info = _stat_result_with(
+        actual_link_info,
+        mode=stat.S_IFLNK | raw_mode,
+        uid=os.geteuid() + 100,
+        gid=os.getegid() + 100,
+    )
+    assert portable_link_info.st_mtime_ns == actual_link_info.st_mtime_ns
+    assert portable_link_info.st_ctime_ns == actual_link_info.st_ctime_ns
+    assert bootstrap._symlink_identity(portable_link_info) == (
+        bootstrap._symlink_identity(actual_link_info)
+    )
+
+    def portable_symlink_stat(
+        path: str | bytes | int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> os.stat_result:
+        observed = original_stat(path, *args, **kwargs)
+        if (
+            path == link.name
+            and kwargs.get("dir_fd") == descriptor
+            and kwargs.get("follow_symlinks") is False
+        ):
+            return _stat_result_with(
+                observed,
+                mode=stat.S_IFLNK | raw_mode,
+                uid=os.geteuid() + 100,
+                gid=os.getegid() + 100,
+            )
+        return observed
+
+    monkeypatch.setattr(bootstrap.os, "stat", portable_symlink_stat)
+    try:
+        seal = bootstrap.seal_installed_tree(root, descriptor)
+        link_entry = next(entry for entry in seal.entries if entry["path"] == link.name)
+        assert link_entry == {
+            "path": link.name,
+            "mode": "0777",
+            "type": "symlink",
+            "size": len(tool.name),
+            "target": tool.name,
+        }
+        assert bootstrap.verify_installed_tree(
+            root,
+            descriptor,
+            content_sha256=seal.content_sha256,
+            identity_sha256=seal.identity_sha256,
+        ) == seal
+        bootstrap._make_installed_tree_cleanup_writable(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_installed_tree_symlink_identity_drift_after_readlink_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    tool = root / "tool.py"
+    tool.write_text("reviewed\n", encoding="ascii")
+    tool.chmod(0o600)
+    link = root / "python"
+    link.symlink_to(tool.name)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    original_stat = os.stat
+    original_readlink = os.readlink
+    readlink_completed = False
+
+    def drifting_stat(
+        path: str | bytes | int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> os.stat_result:
+        observed = original_stat(path, *args, **kwargs)
+        if (
+            readlink_completed
+            and path == link.name
+            and kwargs.get("dir_fd") == descriptor
+            and kwargs.get("follow_symlinks") is False
+        ):
+            return _stat_result_with(observed, inode=observed.st_ino + 1)
+        return observed
+
+    def completing_readlink(
+        path: str | bytes,
+        *args: Any,
+        **kwargs: Any,
+    ) -> str | bytes:
+        nonlocal readlink_completed
+        target = original_readlink(path, *args, **kwargs)
+        if path == link.name and kwargs.get("dir_fd") == descriptor:
+            readlink_completed = True
+        return target
+
+    monkeypatch.setattr(bootstrap.os, "stat", drifting_stat)
+    monkeypatch.setattr(bootstrap.os, "readlink", completing_readlink)
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="Installed toolchain symlink changed",
+        ):
+            bootstrap.seal_installed_tree(root, descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_installed_tree_non_symlink_group_write_remains_rejected(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    tool = root / "tool.py"
+    tool.write_text("reviewed\n", encoding="ascii")
+    tool.chmod(0o620)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="Installed toolchain tree has unsafe ownership or mode",
+        ):
+            bootstrap.seal_installed_tree(root, descriptor)
     finally:
         os.close(descriptor)
 

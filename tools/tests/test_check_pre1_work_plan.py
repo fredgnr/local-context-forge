@@ -257,8 +257,9 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "unavailable/no-network | `not-run`；[old static assembly/audit]"
             "(evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging "
             "smoke 不替代 packaged launch/runtime gate；[current PR #21 record]"
-            "(evidence/W02/2026-08-07-pr21-remediation.md) binds independent `NO-GO` and "
-            "pending remediation technical execution |"
+            "(evidence/W02/2026-08-07-pr21-remediation.md) binds latest independent `NO-GO`、"
+            "first remediation technical failure / superseded state and next exact candidate "
+            "execution pending |"
         )
         self.assertIn(original, docs[2])
         docs[2] = replace_once(self, docs[2], original, original.replace("`not-run`", "`pass`"))
@@ -285,7 +286,10 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_w02_launch_phase_must_remain_not_run(self) -> None:
         docs = documents()
-        marker = "packaged App launch/runtime smoke：本 remediation 不执行，`not-run`"
+        marker = (
+            "packaged App launch/runtime smoke：第一次 remediation 未执行，下一 candidate 也尚未运行，\n"
+            "    当前 `not-run`"
+        )
         docs[3] = replace_once(self, docs[3], marker, marker.replace("`not-run`", "`pass`"))
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
@@ -299,8 +303,15 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_w02_static_assembly_phase_marker_is_required(self) -> None:
         docs = documents()
-        marker = "acceptance `NO-GO`；remediation `not-run`"
-        docs[3] = replace_once(self, docs[3], marker, "acceptance `pass`；remediation `pass`")
+        marker = (
+            "acceptance `NO-GO`；第一次 remediation technical attempt `fail` / `superseded`"
+        )
+        docs[3] = replace_once(
+            self,
+            docs[3],
+            marker,
+            "acceptance `pass`；第一次 remediation technical attempt `pass`",
+        )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
 
@@ -400,6 +411,26 @@ class Pre1WorkPlanTests(unittest.TestCase):
             errors,
         )
 
+    def test_w02_pr21_first_remediation_exact_authority_coordinates_are_required(
+        self,
+    ) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_PR21_FIRST_REMEDIATION_AUTHORITY_MARKER.replace(
+            CHECKER.W02_PR21_FIRST_REMEDIATION_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            CHECKER.W02_PR21_FIRST_REMEDIATION_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 PR #21 remediation must contain the exact first-attempt authority marker once",
+            errors,
+        )
+
     def test_w02_pr21_nogo_reviewed_document_is_immutable(self) -> None:
         docs = documents()
         docs[12] = replace_once(
@@ -413,21 +444,25 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_w02_pr21_independent_nogo_cannot_be_promoted(self) -> None:
         docs = documents()
-        marker = "| independent acceptance | `NO-GO`（绑定上述旧 head/tree） |"
+        required_marker = "| latest independent acceptance | `NO-GO`"
+        marker = (
+            "| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…` "
+            "head/tree；第一次 remediation 为 `pending`） |"
+        )
         docs[12] = replace_once(
             self,
             docs[12],
             marker,
-            "| independent acceptance | `pass` |",
+            "| latest independent acceptance | `pass` |",
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(
-            f"W02 PR #21 remediation missing required marker: {marker}",
+            f"W02 PR #21 remediation missing required marker: {required_marker}",
             errors,
         )
         self.assertIn(
             "W02 PR #21 remediation contains forbidden claim: "
-            "| independent acceptance | `pass`",
+            "| latest independent acceptance | `pass`",
             errors,
         )
 

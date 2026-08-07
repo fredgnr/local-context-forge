@@ -147,7 +147,9 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            web/package-lock.json
 
       - name: Run desktop source checks
         run: make desktop-ci

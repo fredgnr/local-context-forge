@@ -44,6 +44,13 @@ class SourceCoverageContractTests(unittest.TestCase):
     def test_current_contract_is_consistent(self) -> None:
         self.assertEqual(CHECKER.validate_contract(*inputs()), [])
 
+    def test_zero_dependency_install_targets_parse_as_empty(self) -> None:
+        makefile = CHECKER.read(CHECKER.MAKEFILE)
+        self.assertEqual(CHECKER.target_dependencies(makefile, "web-install"), [])
+        self.assertEqual(
+            CHECKER.target_dependencies(makefile, "desktop-install"), []
+        )
+
     def test_historical_checker_cannot_regain_git_ancestry_logic(self) -> None:
         current = inputs()
         current[12] = replace_once(
@@ -149,6 +156,106 @@ class SourceCoverageContractTests(unittest.TestCase):
             with self.subTest(label=label):
                 current = inputs()
                 current[1] = replace_once(self, current[1], old, new)
+                self.assertIn(expected, CHECKER.validate_contract(*current))
+
+    def test_web_install_setup_is_phony_locked_and_shared(self) -> None:
+        mutations = (
+            (
+                "ci-ipc-source web-install ci-web pre1-work-plan-check",
+                "ci-ipc-source ci-web pre1-work-plan-check",
+                "web-install must be declared exactly once as phony",
+            ),
+            (
+                "web-install:\n\tcd web && $(NPM) ci",
+                "web-install:\n\tcd web && $(NPM) install",
+                "web-install must run exactly the locked Web npm ci recipe",
+            ),
+            (
+                "ci-web: web-install",
+                "ci-web:",
+                "ci-web must depend exactly on web-install",
+            ),
+            (
+                "desktop-ci: web-install desktop-install",
+                "desktop-ci: desktop-install",
+                "desktop-ci must install Web before Desktop dependencies",
+            ),
+            (
+                "desktop-ci: web-install desktop-install",
+                "desktop-ci: desktop-install web-install",
+                "desktop-ci must install Web before Desktop dependencies",
+            ),
+        )
+        for old, new, expected in mutations:
+            with self.subTest(expected=expected, new=new):
+                current = inputs()
+                current[1] = replace_once(self, current[1], old, new)
+                self.assertIn(expected, CHECKER.validate_contract(*current))
+
+    def test_desktop_install_flags_and_gate_order_are_protected(self) -> None:
+        mutations = (
+            (
+                "ELECTRON_SKIP_BINARY_DOWNLOAD=1 $(NPM) ci --ignore-scripts",
+                "$(NPM) ci --ignore-scripts",
+                "desktop-install locked npm flags drifted",
+            ),
+            (
+                (
+                    "cd desktop && ELECTRON_SKIP_BINARY_DOWNLOAD=1 "
+                    "$(NPM) ci --ignore-scripts"
+                ),
+                "cd desktop && ELECTRON_SKIP_BINARY_DOWNLOAD=1 $(NPM) ci",
+                "desktop-install locked npm flags drifted",
+            ),
+            (
+                "+$(MAKE) desktop-test\n\t+$(MAKE) desktop-typecheck",
+                "+$(MAKE) desktop-typecheck\n\t+$(MAKE) desktop-test",
+                "desktop-ci test/typecheck/build order drifted",
+            ),
+        )
+        for old, new, expected in mutations:
+            with self.subTest(expected=expected, new=new):
+                current = inputs()
+                current[1] = replace_once(self, current[1], old, new)
+                self.assertIn(expected, CHECKER.validate_contract(*current))
+
+    def test_desktop_job_cache_and_setup_order_are_protected(self) -> None:
+        cache_block = (
+            '          node-version: "24"\n'
+            "          cache: npm\n"
+            "          cache-dependency-path: |\n"
+            "            desktop/package-lock.json\n"
+            "            web/package-lock.json\n"
+        )
+        mutations = (
+            (
+                cache_block,
+                cache_block.replace("            web/package-lock.json\n", ""),
+                "desktop job npm cache must bind exact Desktop and Web locks",
+            ),
+            (
+                cache_block,
+                cache_block.replace("          cache: npm", "          cache: false"),
+                "desktop job npm cache must bind exact Desktop and Web locks",
+            ),
+            (
+                "      - name: Set up Node\n"
+                "        uses: actions/setup-node@"
+                "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0\n"
+                "        with:\n"
+                + cache_block,
+                "      - name: Set up Node after source checks\n"
+                "        uses: actions/setup-node@"
+                "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0\n"
+                "        with:\n"
+                + cache_block,
+                "desktop job setup/run order drifted",
+            ),
+        )
+        for old, new, expected in mutations:
+            with self.subTest(expected=expected, new=new):
+                current = inputs()
+                current[2] = replace_once(self, current[2], old, new)
                 self.assertIn(expected, CHECKER.validate_contract(*current))
 
     def test_default_pr_merge_checkout_fails(self) -> None:

@@ -39,16 +39,16 @@ REMEDIATION_EVIDENCE = (
 )
 EXPECTED_REVIEWED_INPUT_SHA256 = {
     "workflow": "9755cdb77f61b936f6f11f2869444a911ab7947a47545792fc6a242cd888e126",
-    "makefile": "48f2dbbf50c027c15a5aed1eeca0416684f70e75e63a504fb1263dd60afad676",
+    "makefile": "3f6031722218b2d81094be3c488de17609abe07b34dd9f908bd7a2e1087b20ab",
     "build_script": "d026b147aa40b5a461d5516322d3ef43ea7081c6365d632b7830dba51e6f2e18",
     "audit_script": "7bd183332946a9497b11759e63ecd70c27125abe6cc7dcb6f736c7f40bba81ad",
-    "python_bootstrap": "6ef757dd080bc61f6c9ac5252463fa80b5e1252a045db7a31511848b53734d0b",
+    "python_bootstrap": "463290f643893107dbbe67150eef7e7aef6fcceb7cc269a80792059becb5508b",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "df5acdb263b50bcfc4b08b5e2aaf20f66c3de36294248ea98db047e22a0188a3",
+    "python_packaging_tests": "d0b1c8e1bc487899d092140d1cb3ded794cb0f08382877cd012c173eb151c812",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "d5c1cd059bf09193991c8a2d9809f9b81149bd8831fd5ce1c4fcad22ca4eb58b",
+    "remediation_evidence": "896383ff760842cfdc437bb953e7606554392a253d4b3e41d3d5addf29124fb5",
     "package": "8572d59212b1233e701338d40bb3a47525db052a41b80b27e1a797d6e07fc712",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
@@ -81,10 +81,10 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
     "formal_workflow": "43c1e6be118b6997653d305a21dc7b86ad521e9efa48633dfe2f8f055c408aac",
-    "status": "0ae1f6ffb1c505ec80fe1a9a9a7f1cd4666086460f8f7c46a7931b59eb45b09f",
-    "todo": "5374575f0b6845e864ad669443e3c67bb8a332b4ed30b09c0a4e2418263e0485",
-    "trace": "749cc37bd4d7751254a00a808fa947ff6cf7c029b222e31fa3229fe2cdd15473",
-    "iteration": "82dbc149b2fd634b5ac182edf930cdb3f5b0c7e51d64f37891ee7c560691f51b",
+    "status": "b89b00d8754055083ad3bab96282e2ec0502a53fa3e3b4cd9b2a31722f27decf",
+    "todo": "4c9a68c2af94ef90b933b27cd18d3b99b9d9c4c4f2b700d1a19057ce6e36169a",
+    "trace": "646a114f2d7b8e26d936122fc331860dae933cb207ad0054dae2dab54577d8df",
+    "iteration": "78b80368c5ca6b24b046eb294cd97e701e5789011ca25d5849fe6eee37df8d77",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -3048,6 +3048,21 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         for marker in markers:
             if marker not in document:
                 errors.append(f"{label} missing {marker!r}")
+    real_renderer_builder_markers = (
+        "const viteImplementation = await import(",
+        'path.join(repositoryRoot, "web", "node_modules", "vite", "dist", "node", "index.js")',
+        "const reactPluginModule = await import(",
+        '          "@vitejs",\n          "plugin-react",\n          "dist",\n          "index.js"',
+        "      viteImplementation,",
+        "      reactPluginFactory: reactPluginModule.default,",
+        'expect(outputText).toContain("reviewed-renderer-marker")',
+        'expect(outputText).not.toContain("transient-renderer-marker")',
+    )
+    for marker in real_renderer_builder_markers:
+        if renderer_packaging_tests.count(marker) != 1:
+            errors.append(
+                f"renderer packaging tests real Vite/ABA injection missing {marker!r}"
+            )
     if (
         before_pack_tests.count('git("config", "--local", "gc.auto", "0")')
         != 2

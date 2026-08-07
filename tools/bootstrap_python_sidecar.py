@@ -166,6 +166,19 @@ def _identity(info: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def _symlink_identity(info: os.stat_result) -> tuple[int, ...]:
+    """Return stable link identity without non-portable raw ownership or mode."""
+
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
 def _stable_directory_identity(info: os.stat_result) -> tuple[int, ...]:
     return (
         info.st_dev,
@@ -645,20 +658,18 @@ def _inventory_installed_tree(
                 raise ToolchainBootstrapError("Installed toolchain tree changed") from exc
             mode = stat.S_IMODE(before.st_mode)
             is_symlink = stat.S_ISLNK(before.st_mode)
-            if (
+            if not is_symlink and (
                 before.st_uid != os.geteuid()
                 or before.st_gid != os.getegid()
-                or (
-                    not is_symlink
-                    and (
-                        mode & 0o7000
-                        or mode & 0o022
-                        or (require_read_only and mode & 0o200)
-                    )
-                )
+                or mode & 0o7000
+                or mode & 0o022
+                or (require_read_only and mode & 0o200)
             ):
                 raise ToolchainBootstrapError("Installed toolchain tree has unsafe ownership or mode")
-            common = {"path": path, "mode": f"{mode:04o}"}
+            common = {
+                "path": path,
+                "mode": "0777" if is_symlink else f"{mode:04o}",
+            }
             if stat.S_ISREG(before.st_mode):
                 if (
                     before.st_nlink != 1
@@ -736,9 +747,19 @@ def _inventory_installed_tree(
                     raise ToolchainBootstrapError("Installed toolchain tree exceeds its entry bound")
                 continue
             elif stat.S_ISLNK(before.st_mode):
-                if before.st_nlink != 1 or mode != 0o777:
+                if before.st_nlink != 1:
                     raise ToolchainBootstrapError("Installed toolchain symlink is unsafe")
                 target = os.readlink(name, dir_fd=directory_descriptor)
+                after = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    not stat.S_ISLNK(after.st_mode)
+                    or _symlink_identity(after) != _symlink_identity(before)
+                ):
+                    raise ToolchainBootstrapError("Installed toolchain symlink changed")
                 target_bytes = target.encode("utf-8", errors="strict")
                 if not _safe_symlink_target(
                     path,
@@ -757,7 +778,12 @@ def _inventory_installed_tree(
                 )
             else:
                 raise ToolchainBootstrapError("Installed toolchain tree contains a special file")
-            identities.append((path, content[-1]["type"], *_identity(before)))
+            identity = (
+                _symlink_identity(before)
+                if is_symlink
+                else _identity(before)
+            )
+            identities.append((path, content[-1]["type"], *identity))
             if len(content) > MAX_TREE_ENTRIES or total_size > MAX_TREE_TOTAL_BYTES:
                 raise ToolchainBootstrapError("Installed toolchain tree exceeds its size bound")
 
@@ -810,9 +836,9 @@ def _chmod_installed_tree_read_only(descriptor: int, depth: int = 0) -> None:
         names = tuple(sorted(os.listdir(descriptor)))
         for name in names:
             before = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-            if before.st_uid != os.geteuid() or before.st_gid != os.getegid():
-                raise ToolchainBootstrapError("Installed toolchain ownership changed")
             if stat.S_ISREG(before.st_mode):
+                if before.st_uid != os.geteuid() or before.st_gid != os.getegid():
+                    raise ToolchainBootstrapError("Installed toolchain ownership changed")
                 if before.st_nlink != 1:
                     raise ToolchainBootstrapError("Installed toolchain hardlink is forbidden")
                 child = os.open(
@@ -827,6 +853,8 @@ def _chmod_installed_tree_read_only(descriptor: int, depth: int = 0) -> None:
                 finally:
                     os.close(child)
             elif stat.S_ISDIR(before.st_mode) and not stat.S_ISLNK(before.st_mode):
+                if before.st_uid != os.geteuid() or before.st_gid != os.getegid():
+                    raise ToolchainBootstrapError("Installed toolchain ownership changed")
                 child = os.open(
                     name,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -864,11 +892,11 @@ def _make_installed_tree_cleanup_writable(
                 dir_fd=descriptor,
                 follow_symlinks=False,
             )
-            if before.st_uid != os.geteuid():
-                raise ToolchainBootstrapError(
-                    "Installed toolchain cleanup ownership changed"
-                )
             if stat.S_ISDIR(before.st_mode) and not stat.S_ISLNK(before.st_mode):
+                if before.st_uid != os.geteuid():
+                    raise ToolchainBootstrapError(
+                        "Installed toolchain cleanup ownership changed"
+                    )
                 child = os.open(
                     name,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -883,9 +911,12 @@ def _make_installed_tree_cleanup_writable(
                     os.fchmod(child, 0o700)
                 finally:
                     os.close(child)
-            elif not (
-                stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode)
-            ):
+            elif stat.S_ISREG(before.st_mode):
+                if before.st_uid != os.geteuid():
+                    raise ToolchainBootstrapError(
+                        "Installed toolchain cleanup ownership changed"
+                    )
+            elif not stat.S_ISLNK(before.st_mode):
                 raise ToolchainBootstrapError(
                     "Installed toolchain cleanup tree contains a special file"
                 )
@@ -998,6 +1029,7 @@ def _run_owned_process(
                 text=True,
                 pass_fds=tuple(pass_fds),
                 start_new_session=True,
+                umask=0o077,
             )
         stdout, _stderr = process.communicate(timeout=timeout)
         with build._defer_publish_signals():

@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 .PHONY: help install doctor status uninstall bootstrap up down stop restart build ps logs smoke demo backup restore \
 	qmd-status qmd-embed qmd-embed-native dev-native dev-api dev-mcp dev-web test handbook \
-	ci-source ci-python-install ci-python ci-qmd-worker ci-ipc-source ci-web pre1-work-plan-check \
+	ci-source ci-python-install ci-python ci-qmd-worker ci-ipc-source web-install ci-web pre1-work-plan-check \
 	packaged-smoke-policy-check engineering-smoke-assemble \
 	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci \
 	python-sidecar-source-verify python-sidecar-install-python \
@@ -185,8 +185,10 @@ engineering-smoke-assemble:
 ci-ipc-source: ci-python-install
 	cd backend && .venv/bin/pytest ../tests/backend/test_desktop_transport.py
 
-ci-web:
+web-install:
 	cd web && $(NPM) ci
+
+ci-web: web-install
 	cd web && $(NPM) test
 	cd web && $(NPM) run typecheck
 	cd web && $(NPM) run build
@@ -203,7 +205,7 @@ desktop-typecheck:
 desktop-build:
 	cd desktop && $(NPM) run build
 
-desktop-ci: desktop-install
+desktop-ci: web-install desktop-install
 	+$(MAKE) desktop-test
 	+$(MAKE) desktop-typecheck
 	+$(MAKE) desktop-build

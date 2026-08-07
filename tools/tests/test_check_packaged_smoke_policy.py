@@ -970,6 +970,47 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                     errors = CHECKER.validate_policy(current)
                 self.assertTrue(any(expected in error for error in errors), errors)
 
+    def test_renderer_test_must_use_real_vite_and_plugin_injection(self) -> None:
+        mutations = (
+            (
+                "const viteImplementation = await import(",
+                "const viteImplementation = Promise.resolve(",
+            ),
+            (
+                'path.join(repositoryRoot, "web", "node_modules", "vite", "dist", "node", "index.js")',
+                'path.join(repositoryRoot, "desktop", "tests", "fake-vite.js")',
+            ),
+            (
+                "const reactPluginModule = await import(",
+                "const reactPluginModule = Promise.resolve(",
+            ),
+            (
+                "      viteImplementation,",
+                "      viteImplementation: { version: \"7.3.6\", build: vi.fn() },",
+            ),
+            (
+                "      reactPluginFactory: reactPluginModule.default,",
+                "      reactPluginFactory: () => ({ name: \"fake-react\" }),",
+            ),
+            (
+                'expect(outputText).not.toContain("transient-renderer-marker")',
+                'expect(outputText).toBeDefined()',
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "renderer_packaging_tests", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "renderer_packaging_tests",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(
+                    any("real Vite/ABA injection" in error for error in errors),
+                    errors,
+                )
+
     def test_renderer_producer_audit_manifest_and_bundle_chain_is_semantic(self) -> None:
         mutations = (
             (

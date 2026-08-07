@@ -43,8 +43,11 @@
   exact `08137c7…` 的 [static assembly/bundle audit](evidence/W02/2026-08-06-08137c7-assembly.md)
   是历史技术 `pass`；后来 reviewed `8c5fd232…` / tree `785f4656…` 因 scratch lifecycle、Git
   provenance 与 cleanup fail-closed blocker 被独立判定为 `NO-GO`，见
-  [append-only remediation record](evidence/W02/2026-08-07-pr21-remediation.md)。当前 remediation
-  technical candidate `not-run`，assembled App 未启动，packaged App launch/runtime 与
+  [append-only remediation record](evidence/W02/2026-08-07-pr21-remediation.md)。第一次 remediation
+  exact `9f7d5d…` / tree `ea8e62…` 的 assembly/source technical execution `fail`，container 仅
+  no-publish success；该 attempt 已 `superseded`、independent `pending`，没有改变旧 head 的 latest
+  independent `NO-GO`。下一 exact remediation technical candidate `not-run`，assembled App 未启动，
+  packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限
   pure-legacy unsupported disposition）、source regression、packaged smoke、absence 与

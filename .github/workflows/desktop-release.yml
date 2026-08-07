@@ -43,6 +43,7 @@ jobs:
     env:
       CI: "true"
       LCF_FORMAL_RELEASE: "true"
+      LCF_SOURCE_SHA: ${{ github.sha }}
 
     steps:
       - name: Check out exact release tag
@@ -67,22 +68,165 @@ jobs:
         run: |
           set -euo pipefail
           test "${GITHUB_REF}" = "refs/tags/${GITHUB_REF_NAME}"
-          test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "${GITHUB_SHA}"
-          git fetch --no-tags origin \
-            "+refs/heads/main:refs/remotes/origin/main"
-          git merge-base --is-ancestor \
-            "${GITHUB_SHA}" \
-            "refs/remotes/origin/main"
-          source_epoch="$(git show -s --format=%ct "${GITHUB_SHA}")"
-          build_python="$(python -c 'import os,sys; print(os.path.realpath(sys.executable))')"
-          test "${build_python#/}" != "${build_python}"
+          [[ "${LCF_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          test -n "${RUNNER_TEMP}"
+          [[ "${RUNNER_TEMP}" = /* ]]
+          test -d "${RUNNER_TEMP}"
+          test ! -L "${RUNNER_TEMP}"
+          readonly canonical_repository_url="https://github.com/fredgnr/local-context-forge.git"
+          readonly source_prefix="${RUNNER_TEMP}/lcf-reviewed-source."
+          reviewed_source="$(
+            /usr/bin/mktemp -d "${source_prefix}XXXXXXXXXX"
+          )"
+          readonly reviewed_source
+          chmod 0700 "${reviewed_source}"
+          bootstrap_python="$(
+            python -I -c 'import os,sys; print(os.path.realpath(sys.executable))'
+          )"
+          readonly bootstrap_python
+          test "${bootstrap_python#/}" != "${bootstrap_python}"
+          test -f "${bootstrap_python}"
+          test ! -L "${bootstrap_python}"
+          test -x "${bootstrap_python}"
+          test "$("${bootstrap_python}" -I -c 'import platform; print(platform.python_version())')" = \
+            "3.13.14"
+          "${bootstrap_python}" -I - "${reviewed_source}" <<'PY'
+          import os
+          import stat
+          import sys
+
+          root = sys.argv[1]
+          info = os.lstat(root)
+          if (
+              not os.path.isabs(root)
+              or os.path.realpath(root) != root
+              or not stat.S_ISDIR(info.st_mode)
+              or stat.S_ISLNK(info.st_mode)
+              or info.st_uid != os.geteuid()
+              or stat.S_IMODE(info.st_mode) != 0o700
+          ):
+              raise SystemExit("private reviewed source root is unsafe")
+          PY
+          git_bootstrap() {
+            /usr/bin/env -i \
+              PATH=/usr/bin:/bin \
+              HOME="${RUNNER_TEMP}" \
+              LANG=C \
+              LC_ALL=C \
+              GIT_CONFIG_NOSYSTEM=1 \
+              GIT_CONFIG_SYSTEM=/dev/null \
+              GIT_CONFIG_GLOBAL=/dev/null \
+              GIT_ATTR_NOSYSTEM=1 \
+              GIT_NO_REPLACE_OBJECTS=1 \
+              GIT_OPTIONAL_LOCKS=0 \
+              GIT_TERMINAL_PROMPT=0 \
+              GIT_PROTOCOL_FROM_USER=0 \
+              GIT_ALLOW_PROTOCOL=https \
+              /usr/bin/git \
+              -c core.fsmonitor=false \
+              -c core.untrackedCache=false \
+              -c core.excludesFile=/dev/null \
+              -c core.attributesFile=/dev/null \
+              -c core.hooksPath=/dev/null \
+              -c gc.auto=0 \
+              "$@"
+          }
+          git_bootstrap init --quiet "${reviewed_source}"
+          git_private() {
+            git_bootstrap \
+              --git-dir="${reviewed_source}/.git" \
+              --work-tree="${reviewed_source}" \
+              "$@"
+          }
+          readonly reviewed_source_ref="refs/lcf-reviewed/source"
+          git_private fetch --no-tags --force --no-write-fetch-head \
+            "${canonical_repository_url}" \
+            "+${LCF_SOURCE_SHA}:${reviewed_source_ref}"
+          git_private fetch --no-tags --force --no-write-fetch-head \
+            "${canonical_repository_url}" \
+            "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git_private checkout --quiet --detach "${reviewed_source_ref}"
+          test "$(git_private rev-parse HEAD)" = "${LCF_SOURCE_SHA}"
+          test "$(git_private rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")" = \
+            "${LCF_SOURCE_SHA}"
+          provenance_env="${RUNNER_TEMP}/lcf-reviewed-source-provenance.env"
+          test ! -e "${provenance_env}"
+          (
+            cd "${reviewed_source}"
+            "${bootstrap_python}" -I tools/check_exact_git_provenance.py \
+              --expected-tag "${GITHUB_REF_NAME}" \
+              --emit-github-env > "${provenance_env}"
+          )
+          test "$(wc -l < "${provenance_env}")" -eq 5
+          cat "${provenance_env}" >> "${GITHUB_ENV}"
+          printf 'LCF_REVIEWED_SOURCE_ROOT=%s\n' \
+            "${reviewed_source}" >> "${GITHUB_ENV}"
+          printf 'LCF_REVIEWED_BUILD_PYTHON=%s\n' \
+            "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13" \
+            >> "${GITHUB_ENV}"
+          readonly reviewed_main_ref="refs/lcf-reviewed/main"
+          readonly ancestry_prefix="${RUNNER_TEMP}/lcf-main-ancestry."
+          ancestry_repository="$(
+            /usr/bin/mktemp -d "${ancestry_prefix}XXXXXXXXXX"
+          )"
+          readonly ancestry_repository
+          cleanup_ancestry_repository() {
+            local exit_status=$?
+            trap - EXIT
+            if [[ "${ancestry_repository}" != "${ancestry_prefix}"* ]] ||
+              [[ ! -d "${ancestry_repository}" ]] ||
+              [[ -L "${ancestry_repository}" ]]; then
+              exit 97
+            fi
+            rm -rf -- "${ancestry_repository}"
+            if [[ -e "${ancestry_repository}" ]] ||
+              [[ -L "${ancestry_repository}" ]]; then
+              exit 97
+            fi
+            exit "${exit_status}"
+          }
+          trap cleanup_ancestry_repository EXIT
+          git_safe() {
+            /usr/bin/env -i \
+              PATH=/usr/bin:/bin \
+              LANG=C \
+              LC_ALL=C \
+              GIT_CONFIG_NOSYSTEM=1 \
+              GIT_CONFIG_SYSTEM=/dev/null \
+              GIT_CONFIG_GLOBAL=/dev/null \
+              GIT_ATTR_NOSYSTEM=1 \
+              GIT_NO_REPLACE_OBJECTS=1 \
+              GIT_OPTIONAL_LOCKS=0 \
+              GIT_TERMINAL_PROMPT=0 \
+              GIT_PROTOCOL_FROM_USER=0 \
+              GIT_ALLOW_PROTOCOL=https \
+              /usr/bin/git \
+              --git-dir="${ancestry_repository}" \
+              -c core.bare=true \
+              -c core.fsmonitor=false \
+              -c core.untrackedCache=false \
+              -c core.excludesFile=/dev/null \
+              -c core.attributesFile=/dev/null \
+              -c core.hooksPath=/dev/null \
+              -c core.fileMode=true \
+              -c core.symlinks=true \
+              "$@"
+          }
+          git_safe init --bare --quiet
+          git_safe fetch --no-tags --force --no-write-fetch-head \
+            "${canonical_repository_url}" \
+            "+refs/heads/main:${reviewed_main_ref}"
+          git_safe merge-base --is-ancestor \
+            "${LCF_SOURCE_SHA}" \
+            "${reviewed_main_ref}"
           {
-            printf 'LCF_SOURCE_DATE_EPOCH=%s\n' "${source_epoch}"
-            printf 'LCF_QMD_BUILD_PYTHON=%s\n' "${build_python}"
+            printf 'LCF_QMD_BUILD_PYTHON=%s\n' "${bootstrap_python}"
           } >> "${GITHUB_ENV}"
 
       - name: Fail-closed release preflight
         run: >-
+          cd "${LCF_REVIEWED_SOURCE_ROOT}" &&
           node desktop/scripts/prepareRelease.cjs preflight
           --tag "${GITHUB_REF_NAME}"
 
@@ -90,6 +234,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cd "${LCF_REVIEWED_SOURCE_ROOT}"
           python_archive="${RUNNER_TEMP}/python-3.13.14-darwin-arm64.tar.gz"
           python_hashes="${RUNNER_TEMP}/python-3.13.14-hashes.sha256"
           node_archive="${RUNNER_TEMP}/node-v22.23.2-darwin-arm64.tar.gz"
@@ -130,33 +275,228 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Build locked Python sidecar
-        run: make python-sidecar-build
+        run: cd "${LCF_REVIEWED_SOURCE_ROOT}" && make python-sidecar-build
+
+      - name: Validate Python scratch cleanup
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RUNNER_TEMP:-}"
+          [[ "${RUNNER_TEMP}" = /* ]]
+          test -d "${RUNNER_TEMP}"
+          test ! -L "${RUNNER_TEMP}"
+          runner_temp_real="$(cd "${RUNNER_TEMP}" && /bin/pwd -P)"
+          test "${runner_temp_real}" = "${RUNNER_TEMP}"
+          test "$(/usr/bin/stat -f '%u' "${RUNNER_TEMP}")" = "$(/usr/bin/id -u)"
+          runner_temp_mode="$(/usr/bin/stat -f '%Lp' "${RUNNER_TEMP}")"
+          (( (8#${runner_temp_mode} & 0022) == 0 ))
+          ! compgen -G "${RUNNER_TEMP}/python-sidecar-toolchain-*" > /dev/null
+          ! compgen -G "${RUNNER_TEMP}/lcf-python-installer.*" > /dev/null
+          cd "${LCF_REVIEWED_SOURCE_ROOT:?reviewed source root was not bound}"
+          test ! -e desktop/generated/python-sidecar-build
+          test ! -L desktop/generated/python-sidecar-build
+          ! compgen -G 'desktop/generated/python-sidecar-build-*' > /dev/null
+
+      - name: Validate Python sidecar provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${LCF_REVIEWED_SOURCE_ROOT}"
+          [[ "${LCF_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${LCF_SOURCE_TREE}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${LCF_SOURCE_SNAPSHOT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${LCF_SOURCE_DATE_EPOCH}" =~ ^[0-9]+$ ]]
+          [[ "${LCF_RENDERER_PACKAGE_LOCK_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test "${LCF_REVIEWED_BUILD_PYTHON}" = \
+            "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13"
+          test -f "${LCF_REVIEWED_BUILD_PYTHON}"
+          test ! -L "${LCF_REVIEWED_BUILD_PYTHON}"
+          test -x "${LCF_REVIEWED_BUILD_PYTHON}"
+          test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -c \
+            'import os,sys; print(os.path.realpath(sys.executable))')" = \
+            "${LCF_REVIEWED_BUILD_PYTHON}"
+          test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -c \
+            'import platform; print(platform.python_version())')" = "3.13.14"
 
       - name: Build locked QMD runtime
-        run: make qmd-runtime-build
+        run: cd "${LCF_REVIEWED_SOURCE_ROOT}" && make qmd-runtime-build
 
       - name: Build and stage production renderer
         shell: bash
         run: |
           set -euo pipefail
-          npm --prefix web ci --ignore-scripts
-          npm --prefix web test
-          npm --prefix web run typecheck
-          npm --prefix web run build
+          cd "${LCF_REVIEWED_SOURCE_ROOT}"
+          npm_command="$(command -v npm)"
+          node_directory="$(dirname "$(command -v node)")"
+          test -x "${npm_command}"
+          run_exact_npm_script() (
+            local package_root="$1"
+            local script_name="$2"
+            local npm_home
+            readonly npm_home_prefix="${RUNNER_TEMP}/lcf-npm-run-home."
+            npm_home="$(
+              /usr/bin/mktemp -d \
+                "${npm_home_prefix}XXXXXXXXXX"
+            )"
+            chmod 0700 "${npm_home}"
+            cleanup_exact_npm_home() {
+              local exit_status=$?
+              trap - EXIT
+              if [[ "${npm_home}" != "${npm_home_prefix}"* ]] ||
+                [[ ! -d "${npm_home}" ]] ||
+                [[ -L "${npm_home}" ]]; then
+                exit 97
+              fi
+              rm -rf -- "${npm_home}"
+              if [[ -e "${npm_home}" ]] || [[ -L "${npm_home}" ]]; then
+                exit 97
+              fi
+              exit "${exit_status}"
+            }
+            trap cleanup_exact_npm_home EXIT
+            ( umask 077; : > "${npm_home}/global.npmrc" )
+            ( umask 077; : > "${npm_home}/user.npmrc" )
+            /usr/bin/env -i \
+              PATH="${node_directory}:/usr/bin:/bin" \
+              HOME="${npm_home}" \
+              TMPDIR="${npm_home}" \
+              CI=true \
+              LCF_FORMAL_RELEASE=true \
+              LCF_SOURCE_SHA="${LCF_SOURCE_SHA}" \
+              LCF_SOURCE_TREE="${LCF_SOURCE_TREE}" \
+              LCF_SOURCE_SNAPSHOT_SHA256="${LCF_SOURCE_SNAPSHOT_SHA256}" \
+              LCF_SOURCE_DATE_EPOCH="${LCF_SOURCE_DATE_EPOCH}" \
+              LCF_RENDERER_PACKAGE_LOCK_SHA256="${LCF_RENDERER_PACKAGE_LOCK_SHA256}" \
+              LCF_REVIEWED_BUILD_PYTHON="${LCF_REVIEWED_BUILD_PYTHON}" \
+              LCF_REVIEWED_SOURCE_ROOT="${LCF_REVIEWED_SOURCE_ROOT}" \
+              LCF_WEB_NODE_INSTALL_SEAL="${LCF_WEB_NODE_INSTALL_SEAL:-}" \
+              NPM_CONFIG_AUDIT=false \
+              NPM_CONFIG_CACHE="${npm_home}/cache" \
+              NPM_CONFIG_FUND=false \
+              NPM_CONFIG_GLOBALCONFIG="${npm_home}/global.npmrc" \
+              NPM_CONFIG_IGNORE_SCRIPTS=true \
+              NPM_CONFIG_UPDATE_NOTIFIER=false \
+              NPM_CONFIG_USERCONFIG="${npm_home}/user.npmrc" \
+              "${npm_command}" --prefix "${package_root}" \
+              run "${script_name}"
+          )
+          web_test_seal="${RUNNER_TEMP}/lcf-web-node-test-seal.json"
+          web_final_seal="${RUNNER_TEMP}/lcf-web-node-final-seal.json"
+          test ! -e "${web_test_seal}"
+          test ! -e "${web_final_seal}"
+          node tools/exact_node_install.cjs install \
+            --package-root web \
+            --seal "${web_test_seal}" \
+            --npm "${npm_command}"
+          run_exact_npm_script web test
+          run_exact_npm_script web typecheck
+          node tools/exact_node_install.cjs discard-test \
+            --package-root web \
+            --seal "${web_test_seal}"
+          node tools/exact_node_install.cjs install \
+            --package-root web \
+            --seal "${web_final_seal}" \
+            --npm "${npm_command}"
+          export LCF_WEB_NODE_INSTALL_SEAL="${web_final_seal}"
+          run_exact_npm_script web build:packaging
+          node tools/exact_node_install.cjs verify \
+            --package-root web \
+            --seal "${LCF_WEB_NODE_INSTALL_SEAL}"
           make renderer-stage
+          node tools/exact_node_install.cjs verify \
+            --package-root web \
+            --seal "${LCF_WEB_NODE_INSTALL_SEAL}"
+          printf 'LCF_WEB_NODE_INSTALL_SEAL=%s\n' \
+            "${LCF_WEB_NODE_INSTALL_SEAL}" >> "${GITHUB_ENV}"
 
       - name: Build and audit desktop sources
         shell: bash
         run: |
           set -euo pipefail
-          npm --prefix desktop ci --ignore-scripts
-          npm --prefix desktop test
-          npm --prefix desktop run typecheck
-          npm --prefix desktop run build
-          npm --prefix desktop run audit:companion
-          npm --prefix desktop run audit:python-sidecar
+          cd "${LCF_REVIEWED_SOURCE_ROOT}"
+          npm_command="$(command -v npm)"
+          node_directory="$(dirname "$(command -v node)")"
+          test -x "${npm_command}"
+          run_exact_npm_script() (
+            local package_root="$1"
+            local script_name="$2"
+            local npm_home
+            readonly npm_home_prefix="${RUNNER_TEMP}/lcf-npm-run-home."
+            npm_home="$(
+              /usr/bin/mktemp -d \
+                "${npm_home_prefix}XXXXXXXXXX"
+            )"
+            chmod 0700 "${npm_home}"
+            cleanup_exact_npm_home() {
+              local exit_status=$?
+              trap - EXIT
+              if [[ "${npm_home}" != "${npm_home_prefix}"* ]] ||
+                [[ ! -d "${npm_home}" ]] ||
+                [[ -L "${npm_home}" ]]; then
+                exit 97
+              fi
+              rm -rf -- "${npm_home}"
+              if [[ -e "${npm_home}" ]] || [[ -L "${npm_home}" ]]; then
+                exit 97
+              fi
+              exit "${exit_status}"
+            }
+            trap cleanup_exact_npm_home EXIT
+            ( umask 077; : > "${npm_home}/global.npmrc" )
+            ( umask 077; : > "${npm_home}/user.npmrc" )
+            /usr/bin/env -i \
+              PATH="${node_directory}:/usr/bin:/bin" \
+              HOME="${npm_home}" \
+              TMPDIR="${npm_home}" \
+              CI=true \
+              LCF_FORMAL_RELEASE=true \
+              LCF_SOURCE_SHA="${LCF_SOURCE_SHA}" \
+              LCF_SOURCE_TREE="${LCF_SOURCE_TREE}" \
+              LCF_SOURCE_SNAPSHOT_SHA256="${LCF_SOURCE_SNAPSHOT_SHA256}" \
+              LCF_SOURCE_DATE_EPOCH="${LCF_SOURCE_DATE_EPOCH}" \
+              LCF_RENDERER_PACKAGE_LOCK_SHA256="${LCF_RENDERER_PACKAGE_LOCK_SHA256}" \
+              LCF_REVIEWED_BUILD_PYTHON="${LCF_REVIEWED_BUILD_PYTHON}" \
+              LCF_REVIEWED_SOURCE_ROOT="${LCF_REVIEWED_SOURCE_ROOT}" \
+              LCF_DESKTOP_NODE_INSTALL_SEAL="${LCF_DESKTOP_NODE_INSTALL_SEAL:-}" \
+              NPM_CONFIG_AUDIT=false \
+              NPM_CONFIG_CACHE="${npm_home}/cache" \
+              NPM_CONFIG_FUND=false \
+              NPM_CONFIG_GLOBALCONFIG="${npm_home}/global.npmrc" \
+              NPM_CONFIG_IGNORE_SCRIPTS=true \
+              NPM_CONFIG_UPDATE_NOTIFIER=false \
+              NPM_CONFIG_USERCONFIG="${npm_home}/user.npmrc" \
+              "${npm_command}" --prefix "${package_root}" \
+              run "${script_name}"
+          )
+          desktop_test_seal="${RUNNER_TEMP}/lcf-desktop-node-test-seal.json"
+          desktop_final_seal="${RUNNER_TEMP}/lcf-desktop-node-final-seal.json"
+          test ! -e "${desktop_test_seal}"
+          test ! -e "${desktop_final_seal}"
+          node tools/exact_node_install.cjs install \
+            --package-root desktop \
+            --seal "${desktop_test_seal}" \
+            --npm "${npm_command}"
+          run_exact_npm_script desktop test
+          run_exact_npm_script desktop typecheck
+          node tools/exact_node_install.cjs discard-test \
+            --package-root desktop \
+            --seal "${desktop_test_seal}"
+          node tools/exact_node_install.cjs install \
+            --package-root desktop \
+            --seal "${desktop_final_seal}" \
+            --npm "${npm_command}"
+          export LCF_DESKTOP_NODE_INSTALL_SEAL="${desktop_final_seal}"
+          run_exact_npm_script desktop build
+          run_exact_npm_script desktop audit:companion
+          run_exact_npm_script desktop audit:python-sidecar
           make qmd-runtime-audit
           make renderer-audit
+          node tools/exact_node_install.cjs verify \
+            --package-root desktop \
+            --seal "${LCF_DESKTOP_NODE_INSTALL_SEAL}"
+          printf 'LCF_DESKTOP_NODE_INSTALL_SEAL=%s\n' \
+            "${LCF_DESKTOP_NODE_INSTALL_SEAL}" >> "${GITHUB_ENV}"
 
       - name: Sign, package, and assemble formal assets
         shell: bash
@@ -165,6 +505,13 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          cd "${LCF_REVIEWED_SOURCE_ROOT}"
+          node tools/exact_node_install.cjs verify \
+            --package-root web \
+            --seal "${LCF_WEB_NODE_INSTALL_SEAL}"
+          node tools/exact_node_install.cjs verify \
+            --package-root desktop \
+            --seal "${LCF_DESKTOP_NODE_INSTALL_SEAL}"
           credential_bundle="${RUNNER_TEMP}/lcf-desktop-release-credentials.json"
           update_key="${RUNNER_TEMP}/lcf-update-metadata-ed25519-private.pem"
           certificate_bundle="${RUNNER_TEMP}/lcf-codesign.p12"
@@ -338,13 +685,28 @@ jobs:
           )
           node desktop/scripts/prepareRelease.cjs assemble \
             --tag "${GITHUB_REF_NAME}" \
-            --release-dir "${GITHUB_WORKSPACE}/desktop/release" \
+            --release-dir "${LCF_REVIEWED_SOURCE_ROOT}/desktop/release" \
             --output-dir "${release_assets}" \
             --private-key "${update_key}"
+          node tools/exact_node_install.cjs verify \
+            --package-root web \
+            --seal "${LCF_WEB_NODE_INSTALL_SEAL}"
+          node tools/exact_node_install.cjs verify \
+            --package-root desktop \
+            --seal "${LCF_DESKTOP_NODE_INSTALL_SEAL}"
+          [[ "${LCF_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${LCF_SOURCE_TREE}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${LCF_SOURCE_SNAPSHOT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${LCF_SOURCE_DATE_EPOCH}" =~ ^[0-9]+$ ]]
+          [[ "${LCF_RENDERER_PACKAGE_LOCK_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          "${LCF_REVIEWED_BUILD_PYTHON}" -I \
+            tools/check_exact_git_provenance.py \
+            --expected-tag "${GITHUB_REF_NAME}" > /dev/null
           printf 'LCF_RELEASE_ASSET_DIR=%s\n' "${release_assets}" >> "${GITHUB_ENV}"
 
       - name: Independently verify assembled assets
         run: >-
+          cd "${LCF_REVIEWED_SOURCE_ROOT}" &&
           node desktop/scripts/prepareRelease.cjs verify-assets
           --tag "${GITHUB_REF_NAME}"
           --asset-dir "${LCF_RELEASE_ASSET_DIR}"

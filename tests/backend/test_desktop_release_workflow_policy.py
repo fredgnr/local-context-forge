@@ -221,17 +221,63 @@ def test_release_builds_and_reaudits_every_packaged_runtime() -> None:
     for command in (
         "make python-sidecar-build",
         "make qmd-runtime-build",
-        "npm --prefix web run build",
+        "run_exact_npm_script web build:packaging",
         "make renderer-stage",
-        "npm --prefix desktop run build",
-        "npm --prefix desktop run audit:companion",
-        "npm --prefix desktop run audit:python-sidecar",
+        "run_exact_npm_script desktop build",
+        "run_exact_npm_script desktop audit:companion",
+        "run_exact_npm_script desktop audit:python-sidecar",
         "make qmd-runtime-audit",
         "make renderer-audit",
     ):
         assert command in build
         assert command not in create_draft
         assert command not in promote
+    for live_checkout_command in (
+        "npm --prefix web run build",
+        "npm --prefix desktop run build",
+        "npm --prefix desktop run audit:companion",
+        "npm --prefix desktop run audit:python-sidecar",
+    ):
+        assert live_checkout_command not in build
+    assert build.count("run_exact_npm_script() (") == 2
+    assert 'cd "${LCF_REVIEWED_SOURCE_ROOT}"' in build
+    assert (
+        'LCF_REVIEWED_SOURCE_ROOT="${LCF_REVIEWED_SOURCE_ROOT}" \\'
+        in build
+    )
+    assert (
+        'LCF_RENDERER_PACKAGE_LOCK_SHA256="${LCF_RENDERER_PACKAGE_LOCK_SHA256}" \\'
+        in build
+    )
+    assert "tools/check_exact_git_provenance.py" in build
+    assert "--emit-github-env" in build
+
+    web_package = json.loads(
+        (PROJECT_ROOT / "web" / "package.json").read_text(encoding="utf-8")
+    )
+    assert web_package["scripts"]["build:packaging"] == (
+        "node scripts/buildEngineeringRenderer.cjs"
+    )
+    renderer_builder = (
+        PROJECT_ROOT / "web" / "scripts" / "buildEngineeringRenderer.cjs"
+    ).read_text(encoding="utf-8")
+    for reviewed_builder_marker in (
+        'const PACKAGE_LOCK_PATH = "web/package-lock.json";',
+        "prepare.readReviewedGitBlob(repositoryRoot, record.objectId)",
+        "snapshot.rendererPackageLockSha256 !== rendererPackageLockSha256",
+        "packageLockSha256: rendererPackageLockSha256",
+    ):
+        assert reviewed_builder_marker in renderer_builder
+
+    exact_git_checker = (
+        PROJECT_ROOT / "tools" / "check_exact_git_provenance.py"
+    ).read_text(encoding="utf-8")
+    for committed_lock_marker in (
+        'if entry.path == "web/package-lock.json"',
+        '"cat-file", "blob", package_lock_entry.object_id',
+        '"LCF_RENDERER_PACKAGE_LOCK_SHA256="',
+    ):
+        assert committed_lock_marker in exact_git_checker
     verify_assets = re.findall(
         r"prepareRelease\.cjs\"?\s+verify-assets",
         workflow,
@@ -497,7 +543,15 @@ def test_manual_promotion_revalidates_remote_draft_and_published_state() -> None
         PROJECT_ROOT / "desktop" / "scripts" / "prepareRelease.cjs"
     ).read_text(encoding="utf-8")
     assert "release.immutable !== !expectedDraft" in release_policy
-    assert "packageLockPath: path.join(" in release_policy
+    assert "packageLockPath: path.join(" not in release_policy
+    assert (
+        "environment.LCF_RENDERER_PACKAGE_LOCK_SHA256 || \"\""
+        in release_policy
+    )
+    assert (
+        "expectedPackageLockSha256: rendererPackageLockSha256"
+        in release_policy
+    )
 
 
 def test_repository_tracks_no_private_key_material() -> None:

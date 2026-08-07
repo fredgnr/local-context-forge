@@ -785,15 +785,27 @@ function verifyCodeSigningPolicy(codeObject, release) {
   }
 }
 
-function packagedRendererAuditOptions(release) {
+function packagedRendererAuditOptions(release, environment = process.env) {
+  const tree = (environment.LCF_SOURCE_TREE || "").toLowerCase();
+  const sourceSnapshotSha256 = (
+    environment.LCF_SOURCE_SNAPSHOT_SHA256 || ""
+  ).toLowerCase();
+  const rendererPackageLockSha256 = (
+    environment.LCF_RENDERER_PACKAGE_LOCK_SHA256 || ""
+  ).toLowerCase();
+  if (
+    !/^[0-9a-f]{40}$/.test(tree) ||
+    !SHA256_PATTERN.test(sourceSnapshotSha256) ||
+    !SHA256_PATTERN.test(rendererPackageLockSha256)
+  ) {
+    fail("Packaged renderer exact source provenance is missing");
+  }
   return {
     expectedCommit: release.commit,
+    expectedTree: tree,
+    expectedSourceSnapshotSha256: sourceSnapshotSha256,
     expectedSourceDateEpoch: release.sourceDateEpoch,
-    packageLockPath: path.join(
-      REPOSITORY_ROOT,
-      "web",
-      "package-lock.json"
-    )
+    expectedPackageLockSha256: rendererPackageLockSha256
   };
 }
 

@@ -41,7 +41,10 @@
   `36885e04df09c4789d8ec3c9dc5c5e78a381a634`、resulting
   `main@1786255b55dd1a78659ed92235893876175a0722` 与 run `30986208251` 闭环。W02 Draft PR #21
   exact `08137c7…` 的 [static assembly/bundle audit](evidence/W02/2026-08-06-08137c7-assembly.md)
-  为 `pass`；assembled App 未启动，packaged App launch/runtime 与
+  是历史技术 `pass`；后来 reviewed `8c5fd232…` / tree `785f4656…` 因 scratch lifecycle、Git
+  provenance 与 cleanup fail-closed blocker 被独立判定为 `NO-GO`，见
+  [append-only remediation record](evidence/W02/2026-08-07-pr21-remediation.md)。当前 remediation
+  technical candidate `not-run`，assembled App 未启动，packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限
   pure-legacy unsupported disposition）、source regression、packaged smoke、absence 与

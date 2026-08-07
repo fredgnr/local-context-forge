@@ -14,6 +14,15 @@ const MANIFEST_RELATIVE_PATH =
   "Contents/Resources/engineering-smoke/distribution.json";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+const EXPECTED_PYTHON_BUILD_TOOLS = Object.freeze({
+  altgraphVersion: "0.17.4",
+  macholibVersion: "1.16.3",
+  packagingVersion: "26.2",
+  pyinstallerVersion: "6.21.0",
+  pyinstallerHooksContribVersion: "2026.6",
+  setuptoolsVersion: "83.0.0",
+  uvVersion: "0.11.29"
+});
 
 const MANIFEST_KEYS = Object.freeze([
   "$schema",
@@ -434,13 +443,20 @@ function validateEngineeringSmokeManifest(manifest, schema) {
 
   const source = assertExactKeys(
     manifest.source,
-    ["repository", "commit", "tree", "sourceDateEpoch"],
+    [
+      "repository",
+      "commit",
+      "tree",
+      "sourceSnapshotSha256",
+      "sourceDateEpoch"
+    ],
     "Engineering-smoke source"
   );
   if (
     source.repository !== REPOSITORY ||
     !COMMIT_PATTERN.test(source.commit || "") ||
-    !COMMIT_PATTERN.test(source.tree || "")
+    !COMMIT_PATTERN.test(source.tree || "") ||
+    !SHA256_PATTERN.test(source.sourceSnapshotSha256 || "")
   ) {
     fail("Engineering-smoke source provenance is invalid");
   }
@@ -478,7 +494,10 @@ function validateEngineeringSmokeManifest(manifest, schema) {
       "preloadBytes",
       "packagePath",
       "packageSha256",
-      "packageBytes"
+      "packageBytes",
+      "reviewedPackagePath",
+      "reviewedPackageSha256",
+      "entrypointBuild"
     ],
     "Engineering-smoke Desktop application component"
   );
@@ -489,7 +508,9 @@ function validateEngineeringSmokeManifest(manifest, schema) {
     desktopApp.preloadPath !== "dist/preload/index.cjs" ||
     !SHA256_PATTERN.test(desktopApp.preloadSha256 || "") ||
     desktopApp.packagePath !== "package.json" ||
-    !SHA256_PATTERN.test(desktopApp.packageSha256 || "")
+    !SHA256_PATTERN.test(desktopApp.packageSha256 || "") ||
+    desktopApp.reviewedPackagePath !== "desktop/package.json" ||
+    !SHA256_PATTERN.test(desktopApp.reviewedPackageSha256 || "")
   ) {
     fail("Engineering-smoke Desktop application component is invalid");
   }
@@ -500,6 +521,38 @@ function validateEngineeringSmokeManifest(manifest, schema) {
   ]) {
     assertPositiveInteger(value, label);
   }
+  const entrypointBuild = assertExactKeys(
+    desktopApp.entrypointBuild,
+    [
+      "builder",
+      "builderVersion",
+      "nodeVersion",
+      "npmVersion",
+      "packageLockSha256",
+      "installedContentSha256",
+      "inputs",
+      "inputsSha256"
+    ],
+    "Engineering-smoke exact entrypoint build"
+  );
+  if (
+    entrypointBuild.builder !== "esbuild" ||
+    entrypointBuild.builderVersion !== "0.28.1" ||
+    entrypointBuild.nodeVersion !== "v22.23.2" ||
+    entrypointBuild.npmVersion !== "10.9.8" ||
+    !SHA256_PATTERN.test(entrypointBuild.packageLockSha256 || "") ||
+    !SHA256_PATTERN.test(entrypointBuild.installedContentSha256 || "") ||
+    !SHA256_PATTERN.test(entrypointBuild.inputsSha256 || "")
+  ) {
+    fail("Engineering-smoke exact entrypoint build is invalid");
+  }
+  assertPositiveInteger(
+    entrypointBuild.inputs,
+    "Engineering-smoke exact entrypoint input count"
+  );
+  if (entrypointBuild.inputs < 3) {
+    fail("Engineering-smoke exact entrypoint input closure is incomplete");
+  }
 
   const renderer = assertExactKeys(
     components.renderer,
@@ -508,6 +561,9 @@ function validateEngineeringSmokeManifest(manifest, schema) {
       "manifestPath",
       "manifestSha256",
       "repositoryCommit",
+      "repositoryTree",
+      "sourceSnapshotSha256",
+      "inputSnapshotSha256",
       "files",
       "bytes"
     ],
@@ -518,7 +574,10 @@ function validateEngineeringSmokeManifest(manifest, schema) {
     renderer.manifestPath !==
       "Contents/Resources/renderer/renderer-build-manifest.json" ||
     !SHA256_PATTERN.test(renderer.manifestSha256 || "") ||
-    renderer.repositoryCommit !== source.commit
+    renderer.repositoryCommit !== source.commit ||
+    renderer.repositoryTree !== source.tree ||
+    renderer.sourceSnapshotSha256 !== source.sourceSnapshotSha256 ||
+    !SHA256_PATTERN.test(renderer.inputSnapshotSha256 || "")
   ) {
     fail("Engineering-smoke renderer component is invalid");
   }
@@ -533,6 +592,10 @@ function validateEngineeringSmokeManifest(manifest, schema) {
       "manifestSha256",
       "normalizedInventorySha256",
       "repositoryCommit",
+      "repositoryTree",
+      "sourceSnapshotSha256",
+      "pythonBuildToolchainPath",
+      "pythonToolchain",
       "files",
       "nativeFiles",
       "components"
@@ -544,9 +607,42 @@ function validateEngineeringSmokeManifest(manifest, schema) {
     python.manifestPath !== "Contents/Resources/sidecar/build-manifest.json" ||
     !SHA256_PATTERN.test(python.manifestSha256 || "") ||
     !SHA256_PATTERN.test(python.normalizedInventorySha256 || "") ||
-    python.repositoryCommit !== source.commit
+    python.repositoryCommit !== source.commit ||
+    python.repositoryTree !== source.tree ||
+    python.sourceSnapshotSha256 !== source.sourceSnapshotSha256 ||
+    python.pythonBuildToolchainPath !==
+      "Contents/Resources/sidecar/python-build-toolchain.json"
   ) {
     fail("Engineering-smoke Python component is invalid");
+  }
+  const pythonToolchain = assertExactKeys(
+    python.pythonToolchain,
+    [
+      "buildRequirementsLockSha256",
+      "runtimeLockSha256",
+      "runtimeRequirementsSha256",
+      "installedTreeContentSha256",
+      "buildTools"
+    ],
+    "Engineering-smoke Python toolchain summary"
+  );
+  if (
+    [
+      "buildRequirementsLockSha256",
+      "runtimeLockSha256",
+      "runtimeRequirementsSha256",
+      "installedTreeContentSha256"
+    ].some((key) => !SHA256_PATTERN.test(pythonToolchain[key] || "")) ||
+    !sameJson(
+      assertExactKeys(
+        pythonToolchain.buildTools,
+        Object.keys(EXPECTED_PYTHON_BUILD_TOOLS),
+        "Engineering-smoke Python build tools"
+      ),
+      EXPECTED_PYTHON_BUILD_TOOLS
+    )
+  ) {
+    fail("Engineering-smoke Python toolchain summary is invalid");
   }
   for (const [label, value] of [
     ["Python file count", python.files],

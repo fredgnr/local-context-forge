@@ -17,13 +17,19 @@ ITERATION = ROOT / "docs/development/iterations/0008-incremental-retirement-engi
 LEGACY_MANIFEST = ROOT / "docs/development/legacy-retirement.md"
 ADR = ROOT / "docs/adr/0016-pre1-incremental-retirement-engineering-package.md"
 STATUS = ROOT / "docs/development/status.md"
+PARENT_ITERATION = ROOT / "docs/development/iterations/0002-bundled-runtimes.md"
 R13 = ROOT / "docs/development/iterations/0002-r13-pre1-incremental-retirement.md"
 RELEASE_RUNBOOK = ROOT / "docs/development/desktop-release.md"
+EVIDENCE_INDEX = ROOT / "docs/development/evidence/README.md"
 W01_EVIDENCE = ROOT / "docs/development/evidence/W01/2026-08-04.json"
 W02_ENTRY = ROOT / "docs/development/evidence/W02/2026-08-05-entry.md"
 W02_ASSEMBLY = (
     ROOT
     / "docs/development/evidence/W02/2026-08-06-08137c7-assembly.md"
+)
+W02_REMEDIATION = (
+    ROOT
+    / "docs/development/evidence/W02/2026-08-07-pr21-remediation.md"
 )
 
 EXPECTED_ORDER = [
@@ -247,8 +253,9 @@ CURRENT_W01_TRACE_MARKER = (
     "PR/source、independent acceptance、canonical merge 与 resulting-main source 均 `pass`"
 )
 W02_PHASE_MARKERS = {
-    "engineering-smoke boundary/assembly：本 Work，static assembly/bundle audit substage `pass`",
-    "packaged App launch/runtime smoke：后续 Work，`not-run`",
+    "engineering-smoke boundary/assembly：旧 static technical run 保留；PR #21 independent",
+    "acceptance `NO-GO`；remediation `not-run`",
+    "packaged App launch/runtime smoke：本 remediation 不执行，`not-run`",
     "W10/W11 保持 locked",
 }
 W02_ENTRY_REQUIRED_MARKERS = {
@@ -316,6 +323,119 @@ W02_ASSEMBLY_FORBIDDEN_CLAIMS = {
     "public release：`GO`",
     "public release: GO",
     "normalized inventory SHA-256 is the package digest",
+}
+
+W02_PR21_CONTEXT = "CTX-PR21-NOGO-CURRENT"
+W02_PR21_BASE = "1786255b55dd1a78659ed92235893876175a0722"
+W02_PR21_REVIEWED_HEAD = "8c5fd23206b671b768fd21d253bf292642f93a51"
+W02_PR21_REVIEWED_TREE = "785f4656de8a7233b6dd632fe4815976d33468fb"
+W02_PR21_BRANCH = "agent/w02a-engineering-smoke-boundary"
+W02_PR21_ASSEMBLY_RUN = "31026905444"
+W02_PR21_ASSEMBLY_JOB = "92377586784"
+W02_PR21_SOURCE_RUN = "31026907916"
+W02_PR21_CONTAINER_RUN = "31026906777"
+W02_PR21_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-nogo-authority: "
+    f"context={W02_PR21_CONTEXT},base={W02_PR21_BASE},"
+    f"merge-base={W02_PR21_BASE},reviewed-head={W02_PR21_REVIEWED_HEAD},"
+    f"reviewed-tree={W02_PR21_REVIEWED_TREE},branch={W02_PR21_BRANCH},"
+    "commits=26,files=54,additions=11527,deletions=392,"
+    f"assembly-run={W02_PR21_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_ASSEMBLY_JOB},source-run={W02_PR21_SOURCE_RUN},"
+    f"container-run={W02_PR21_CONTAINER_RUN},decision=NO-GO -->"
+)
+W02_PR21_REMEDIATION_DOCUMENT_SHA256 = (
+    "d5c1cd059bf09193991c8a2d9809f9b81149bd8831fd5ce1c4fcad22ca4eb58b"
+)
+W02_PR21_REMEDIATION_REQUIRED_MARKERS = {
+    "PR #21 independent NO-GO 与 remediation 交接",
+    f"| context | `{W02_PR21_CONTEXT}` |",
+    f"| base / merge-base | `{W02_PR21_BASE}` |",
+    f"| branch | `{W02_PR21_BRANCH}` |",
+    f"| independently reviewed head | `{W02_PR21_REVIEWED_HEAD}` |",
+    f"| independently reviewed tree | `{W02_PR21_REVIEWED_TREE}` |",
+    "| reviewed topology | `26` commits；`54` changed files；`11527` additions / `392` deletions |",
+    f"run `{W02_PR21_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_SOURCE_RUN}`",
+    f"run `{W02_PR21_CONTAINER_RUN}`",
+    "| independent decision | **`NO-GO`** |",
+    "`H1 build scratch lifecycle / held dirfd / inode binding / publish / cleanup`",
+    "`LCF_GITHUB_CONTEXT_SHA` 设为 PR context",
+    "`fb3079b851362e2cdb8a6db21c2e071b9b07a842`",
+    "job 末尾三条 `Post job cleanup` 属于 setup-python、setup-node 与 checkout action 的 post",
+    "backend pytest `450` passed、Host Runner `8` tests、demo SDK `3` passed、tools unittest `152`",
+    "QMD `10` passed / `1` allowlisted skip",
+    "旧 PR body 的 `595 passed, 1 skipped` 聚合不能",
+    "不得迁移为新 head\n的 `pass`",
+    "| PR #21 remediation technical candidate | `not-run`（等待新 exact head 与 fresh Actions） |",
+    "| independent acceptance | `NO-GO`（绑定上述旧 head/tree） |",
+    "| W02 | `in-progress` |",
+    "| `VAL-PACKAGED-SMOKE-001` | `not-run` |",
+    "| W10/W11 | `locked` |",
+    "| packaged App / bundle sidecar launch | `not-run` |",
+    "| public release | `NO-GO` |",
+}
+W02_PR21_REMEDIATION_FORBIDDEN_CLAIMS = {
+    "decision=GO",
+    "| independent acceptance | `pass`",
+    "| W02 | `completed`",
+    "| `VAL-PACKAGED-SMOKE-001` | `pass`",
+    "| W10/W11 | `unlocked`",
+    "| packaged App / bundle sidecar launch | `pass`",
+    "| public release | `GO`",
+}
+
+W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
+    "work plan": {
+        "evidence/W02/2026-08-07-pr21-remediation.md",
+        "reviewed `8c5fd232…` / tree `785f4656…`",
+        "独立判定为 `NO-GO`",
+        "remediation\n  technical candidate `not-run`",
+        "`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`",
+    },
+    "TODO": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "独立判定为 `NO-GO`",
+        "remediation technical candidate `not-run`",
+        "W10/W11 保持 locked",
+    },
+    "traceability": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "independent `NO-GO`",
+        "remediation technical candidate `not-run`",
+        "W10/W11 locked",
+    },
+    "iteration": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "acceptance `NO-GO`",
+        "remediation `not-run`",
+        "W10/W11 保持 locked",
+    },
+    "status": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "independent `NO-GO`",
+        "remediation `not-run`",
+        "W10/W11 locked",
+        "public release NO-GO",
+    },
+    "evidence index": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "independent `NO-GO`",
+        "remediation technical candidate `not-run`",
+        "W10/W11 locked",
+    },
+    "parent iteration": {
+        "reviewed `8c5fd232…` / tree `785f4656…`",
+        "independent `NO-GO`",
+        "remediation `not-run`",
+        "W10/W11 locked",
+    },
 }
 
 CONTINUITY_COMPONENTS = {
@@ -394,6 +514,9 @@ def validate_documents(
     w01_evidence: dict[str, object],
     w02_entry: str,
     w02_assembly: str,
+    w02_remediation: str,
+    evidence_index: str,
+    parent_iteration: str,
 ) -> list[str]:
     errors: list[str] = []
     expected_task_status = dict(EXPECTED_TASK_STATUS)
@@ -592,6 +715,35 @@ def validate_documents(
         if forbidden in w02_assembly:
             errors.append(f"W02 assembly contains forbidden claim: {forbidden}")
 
+    if w02_remediation.count(W02_PR21_AUTHORITY_MARKER) != 1:
+        errors.append("W02 PR #21 remediation must contain the exact NO-GO authority marker once")
+    if (
+        hashlib.sha256(w02_remediation.encode("utf-8")).hexdigest()
+        != W02_PR21_REMEDIATION_DOCUMENT_SHA256
+    ):
+        errors.append("W02 PR #21 remediation reviewed document drifted")
+    for marker in sorted(W02_PR21_REMEDIATION_REQUIRED_MARKERS):
+        if marker not in w02_remediation:
+            errors.append(f"W02 PR #21 remediation missing required marker: {marker}")
+    for forbidden in sorted(W02_PR21_REMEDIATION_FORBIDDEN_CLAIMS):
+        if forbidden in w02_remediation:
+            errors.append(f"W02 PR #21 remediation contains forbidden claim: {forbidden}")
+
+    current_governance_documents = {
+        "work plan": plan,
+        "TODO": todo,
+        "traceability": trace,
+        "iteration": iteration,
+        "status": status,
+        "evidence index": evidence_index,
+        "parent iteration": parent_iteration,
+    }
+    for label, required in W02_CURRENT_GOVERNANCE_REQUIREMENTS.items():
+        text = current_governance_documents[label]
+        for marker in sorted(required):
+            if marker not in text:
+                errors.append(f"{label} missing current PR #21 NO-GO marker: {marker}")
+
     r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)
     if r13_status is None or r13_status.group(1) != "completed":
         errors.append("R13 status must be completed after external W01 closeout")
@@ -633,6 +785,9 @@ def validate_documents(
         ("status", status),
         ("W02 entry", w02_entry),
         ("W02 assembly", w02_assembly),
+        ("W02 remediation", w02_remediation),
+        ("evidence index", evidence_index),
+        ("parent iteration", parent_iteration),
     ):
         if re.search(r"(?:REQ|TODO|VAL|ITER)-W02A\b|\bW02A\b", text):
             errors.append(f"{label} must not create a W02A stable ID")
@@ -710,6 +865,9 @@ def main() -> int:
         json.loads(read(W01_EVIDENCE)),
         read(W02_ENTRY),
         read(W02_ASSEMBLY),
+        read(W02_REMEDIATION),
+        read(EVIDENCE_INDEX),
+        read(PARENT_ITERATION),
     )
     if errors:
         for error in errors:
@@ -717,8 +875,8 @@ def main() -> int:
         return 1
 
     print(
-        "pre-1.0 work plan OK: exact ranks, mappings, W02 static assembly evidence, "
-        "packaged gate status, and release boundary"
+        "pre-1.0 work plan OK: exact ranks, mappings, immutable W02 historical assembly "
+        "and PR #21 NO-GO/remediation evidence, packaged gate status, and release boundary"
     )
     return 0
 

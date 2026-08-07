@@ -15,11 +15,9 @@ node_modules/
 dist/
 release/
 packaging/stage/
-.python-sidecar-build/
-.python-sidecar-build-venv/
 desktop/generated/sidecar/
 desktop/generated/python-sidecar-evidence/
-desktop/generated/python-sidecar-build/
+desktop/generated/python-sidecar-build-*/
 desktop/generated/companion/
 desktop/generated/qmd/
 desktop/generated/engineering-smoke/

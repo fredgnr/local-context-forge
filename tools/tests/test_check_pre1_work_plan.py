@@ -28,6 +28,9 @@ def documents() -> list[str]:
         json.loads(CHECKER.read(CHECKER.W01_EVIDENCE)),
         CHECKER.read(CHECKER.W02_ENTRY),
         CHECKER.read(CHECKER.W02_ASSEMBLY),
+        CHECKER.read(CHECKER.W02_REMEDIATION),
+        CHECKER.read(CHECKER.EVIDENCE_INDEX),
+        CHECKER.read(CHECKER.PARENT_ITERATION),
     ]
 
 
@@ -251,9 +254,11 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "| VAL-PACKAGED-SMOKE-001 | macOS arm64 engineering-smoke App；exact commit/digest/"
             "inventory、launch、renderer/preload、Main→private UDS health/domain request、quit/no "
             "orphan、无 public INET、exercised path 无系统 Python/Node/Git discovery、updater "
-            "unavailable/no-network | `not-run`；[static assembly/audit record]"
+            "unavailable/no-network | `not-run`；[old static assembly/audit]"
             "(evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging "
-            "smoke 不替代 packaged launch/runtime gate |"
+            "smoke 不替代 packaged launch/runtime gate；[current PR #21 record]"
+            "(evidence/W02/2026-08-07-pr21-remediation.md) binds independent `NO-GO` and "
+            "pending remediation technical execution |"
         )
         self.assertIn(original, docs[2])
         docs[2] = replace_once(self, docs[2], original, original.replace("`not-run`", "`pass`"))
@@ -280,7 +285,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_w02_launch_phase_must_remain_not_run(self) -> None:
         docs = documents()
-        marker = "packaged App launch/runtime smoke：后续 Work，`not-run`"
+        marker = "packaged App launch/runtime smoke：本 remediation 不执行，`not-run`"
         docs[3] = replace_once(self, docs[3], marker, marker.replace("`not-run`", "`pass`"))
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
@@ -294,11 +299,8 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_w02_static_assembly_phase_marker_is_required(self) -> None:
         docs = documents()
-        marker = (
-            "engineering-smoke boundary/assembly：本 Work，"
-            "static assembly/bundle audit substage `pass`"
-        )
-        docs[3] = replace_once(self, docs[3], marker, marker.replace("`pass`", "`not-run`"))
+        marker = "acceptance `NO-GO`；remediation `not-run`"
+        docs[3] = replace_once(self, docs[3], marker, "acceptance `pass`；remediation `pass`")
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
 
@@ -379,6 +381,100 @@ class Pre1WorkPlanTests(unittest.TestCase):
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"W02 assembly missing required marker: {marker}", errors)
+
+    def test_w02_pr21_nogo_exact_authority_coordinates_are_required(self) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_PR21_AUTHORITY_MARKER.replace(
+            CHECKER.W02_PR21_REVIEWED_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            CHECKER.W02_PR21_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 PR #21 remediation must contain the exact NO-GO authority marker once",
+            errors,
+        )
+
+    def test_w02_pr21_nogo_reviewed_document_is_immutable(self) -> None:
+        docs = documents()
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            "H1 build scratch lifecycle",
+            "H1 renamed lifecycle",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("W02 PR #21 remediation reviewed document drifted", errors)
+
+    def test_w02_pr21_independent_nogo_cannot_be_promoted(self) -> None:
+        docs = documents()
+        marker = "| independent acceptance | `NO-GO`（绑定上述旧 head/tree） |"
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            "| independent acceptance | `pass` |",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "| independent acceptance | `pass`",
+            errors,
+        )
+
+    def test_w02_pr21_remediation_cannot_advance_w02_or_unlock_slices(self) -> None:
+        mutations = (
+            ("| W02 | `in-progress` |", "| W02 | `completed` |"),
+            ("| W10/W11 | `locked` |", "| W10/W11 | `unlocked` |"),
+            (
+                "| `VAL-PACKAGED-SMOKE-001` | `not-run` |",
+                "| `VAL-PACKAGED-SMOKE-001` | `pass` |",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(new=new):
+                docs = documents()
+                docs[12] = replace_once(self, docs[12], old, new)
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn(
+                    f"W02 PR #21 remediation contains forbidden claim: {new[:-2]}",
+                    errors,
+                )
+
+    def test_current_status_cannot_drop_pr21_nogo_binding(self) -> None:
+        docs = documents()
+        self.assertIn(CHECKER.W02_PR21_REVIEWED_TREE, docs[6])
+        docs[6] = docs[6].replace(
+            CHECKER.W02_PR21_REVIEWED_TREE,
+            "0000000000000000000000000000000000000000",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "status missing current PR #21 NO-GO marker: "
+            f"{CHECKER.W02_PR21_REVIEWED_TREE}",
+            errors,
+        )
+
+    def test_evidence_index_and_parent_iteration_must_link_current_nogo(self) -> None:
+        for index, label in ((13, "evidence index"), (14, "parent iteration")):
+            with self.subTest(label=label):
+                docs = documents()
+                marker = "independent `NO-GO`"
+                docs[index] = replace_once(self, docs[index], marker, "independent `pending`")
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn(
+                    f"{label} missing current PR #21 NO-GO marker: {marker}",
+                    errors,
+                )
 
 
 if __name__ == "__main__":

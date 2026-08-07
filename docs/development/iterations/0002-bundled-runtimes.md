@@ -59,7 +59,7 @@ packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
 | Codex MCP onboarding 与签名 CLI discovery | [ADR-0013](../../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | R08 source discovery/onboarding 已实现；真实 OpenAI 签名 gate 待运行 |
 | 候选 Draft 与公开 promotion 分离 | [ADR-0014](../../adr/0014-two-stage-desktop-release-promotion.md) | R09 的 tag-only signing、trusted-main promotion（无配置 release secret/长期签名凭据，使用短期 `GITHUB_TOKEN`）、ruleset/immutable source policy 已实现并复验；真实 settings/promotion 待运行 |
 | Electron-only 与 legacy retirement | [ADR-0015](../../adr/0015-electron-only-legacy-retirement.md) | R12 已冻结 remove/retain/split；cutover/removal/absence gate 均 `not-run` |
-| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13/W01 external closeout `pass`；ITER-0008/W02 static assembly/bundle audit `pass`，packaged launch/runtime `not-run`；W02 仍 `in-progress`，slice/final/release gate 均 `not-run` |
+| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13/W01 external closeout `pass`；ITER-0008/W02 旧 static assembly/bundle audit 是历史技术 `pass`，PR #21 reviewed head 独立验收 `NO-GO`、remediation `not-run`；packaged launch/runtime `not-run`；W02 仍 `in-progress`，slice/final/release gate 均 `not-run` |
 
 ## 任务
 
@@ -134,6 +134,7 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 | W01 remediation historical Checkpoint A | 记录时刻 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | `f4074a31…` / tree `f059ad8b…` | [Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597` | immutable history；后续 closeout 见下一行，不回写本记录 |
 | W01 external closeout | PR/source、independent、merge、resulting-main source、activation `pass` | final `36885e04…`；main `1786255b…`；tree `1b9f3a34…` | [W02 entry](../evidence/W02/2026-08-05-entry.md)；[Actions 30986208251](https://github.com/fredgnr/local-context-forge/actions/runs/30986208251) | 历史 W01 JSON 不回写；W02 解锁，但 packaged gate 未运行 |
 | W02 static assembly substage | `pass` | 2026-08-06；`08137c7…` / tree `d7814ac9…` | [assembly run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806)；[source run `31024794734`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794734) | [evidence](../evidence/W02/2026-08-06-08137c7-assembly.md)；inventory `879` / native `78` / SHA-256 `7fcdb699…`；pre-pack sidecar staging smoke 成功，assembled App 未启动；full gate `not-run` |
+| W02 PR #21 independent review / remediation | independent `NO-GO`；remediation `not-run` | 2026-08-07；reviewed `8c5fd232…` / tree `785f4656…` | old assembly `31026905444` / job `92377586784`；source `31026907916`；container `31026906777` | [append-only record](../evidence/W02/2026-08-07-pr21-remediation.md)；old successes cannot prove held-dirfd/inode lifecycle, exact tree/source provenance or fail-closed cleanup；W02 remains `in-progress`；W10/W11 locked |
 | VAL-P1-SOURCE-001 | `pass` | 2026-07-30；`7e4524f` | 继承 ITER-0001 Actions 证据 | 仅证明恢复基线 |
 | Backend source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Python source job success；历史本地计数 322 pass / 1 AF_UNIX skip |
 | Desktop source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Desktop source job success；历史本地计数 30 files / 245 pass / 7 skip |
@@ -206,6 +207,7 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 生成 staging、release assets、缓存、模型、索引、用户数据、credential bundle 和私有 evidence
 不入库。
 
-本轮最新 release source contract 与 W02 static assembly evidence 不提升生产门禁：packaged
+本轮最新 release source contract 与 W02 历史 static assembly evidence 不提升生产门禁；PR #21
+reviewed head 的独立结论是 `NO-GO`，remediation technical candidate 仍为 `not-run`。packaged
 launch/runtime、真实 GitHub settings 与物理 Mac 证据继续 `not-run`，整体状态为
 **W02 in-progress / release NO-GO**。

@@ -6,8 +6,18 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 
-SPEC_DIR = Path(SPECPATH).resolve()
-BACKEND_DIR = SPEC_DIR.parent
+SPEC_DIR = Path(SPECPATH)
+if (
+    not SPEC_DIR.is_absolute()
+    or len(SPEC_DIR.parts) < 6
+    or SPEC_DIR.parts[:3] != ("/", "dev", "fd")
+    or not SPEC_DIR.parts[3].isdigit()
+):
+    raise RuntimeError("PyInstaller spec source is not fd-capability-backed")
+SOURCE_ROOT = Path("/dev/fd") / SPEC_DIR.parts[3]
+if SPEC_DIR != SOURCE_ROOT / "backend" / "packaging":
+    raise RuntimeError("PyInstaller spec source layout is unexpected")
+BACKEND_DIR = SOURCE_ROOT / "backend"
 ENTRYPOINT = SPEC_DIR / "frozen_entrypoint.py"
 
 datas = []

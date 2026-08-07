@@ -256,7 +256,15 @@ function resealPackagedRuntimes(context, environment = process.env) {
     typeof environment.CSC_KEYCHAIN !== "string" ||
     !path.isAbsolute(environment.CSC_KEYCHAIN) ||
     typeof environment.LCF_QMD_BUILD_PYTHON !== "string" ||
-    !path.isAbsolute(environment.LCF_QMD_BUILD_PYTHON)
+    !path.isAbsolute(environment.LCF_QMD_BUILD_PYTHON) ||
+    !/^[0-9a-f]{40}$/.test(environment.LCF_SOURCE_SHA || "") ||
+    !/^[0-9a-f]{40}$/.test(environment.LCF_SOURCE_TREE || "") ||
+    !/^[0-9a-f]{64}$/.test(
+      environment.LCF_SOURCE_SNAPSHOT_SHA256 || ""
+    ) ||
+    !/^[0-9a-f]{64}$/.test(
+      environment.LCF_RENDERER_PACKAGE_LOCK_SHA256 || ""
+    )
   ) {
     fail("Formal runtime reseal signing inputs are missing");
   }
@@ -314,8 +322,13 @@ function resealPackagedRuntimes(context, environment = process.env) {
     stagingRoot: path.join(resources, "companion")
   });
   const renderer = auditRenderer(path.join(resources, "renderer"), {
-    expectedCommit: environment.GITHUB_SHA,
-    expectedSourceDateEpoch: sourceDateEpoch
+    expectedCommit: environment.LCF_SOURCE_SHA,
+    expectedTree: environment.LCF_SOURCE_TREE,
+    expectedSourceSnapshotSha256:
+      environment.LCF_SOURCE_SNAPSHOT_SHA256,
+    expectedSourceDateEpoch: sourceDateEpoch,
+    expectedPackageLockSha256:
+      environment.LCF_RENDERER_PACKAGE_LOCK_SHA256
   });
   return {
     formalRelease: true,

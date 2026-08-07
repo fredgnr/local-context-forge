@@ -20,6 +20,8 @@ const {
 const MANIFEST_NAME = "build-manifest.json";
 const MANIFEST_SCHEMA_NAME = "python-sidecar-build-manifest.schema.json";
 const MANIFEST_SCHEMA_VERSION = 1;
+const TOOLCHAIN_EVIDENCE_NAME = "python-build-toolchain.json";
+const TOOLCHAIN_EVIDENCE_SCHEMA = "python-sidecar-toolchain-evidence.json";
 const EXPECTED_KIND = "local-context-forge-python-sidecar";
 const EXPECTED_EXECUTABLE = "lcf-service";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -51,6 +53,15 @@ const REQUIRED_BUILD_TOOLS = new Set([
   "pyinstaller-hooks-contrib",
   "uv"
 ]);
+const EXPECTED_PYTHON_BUILD_TOOLS = Object.freeze({
+  altgraphVersion: "0.17.4",
+  macholibVersion: "1.16.3",
+  packagingVersion: "26.2",
+  pyinstallerVersion: "6.21.0",
+  pyinstallerHooksContribVersion: "2026.6",
+  setuptoolsVersion: "83.0.0",
+  uvVersion: "0.11.29"
+});
 const EXPECTED_FROZEN_CHECKS = Object.freeze([
   "version",
   "doctor",
@@ -87,6 +98,7 @@ const FIXED_CRITICAL_INPUTS = Object.freeze([
   "runtime/python-sidecar-build-manifest.schema.json",
   "runtime/version.json",
   "tools/audit_python_sidecar.py",
+  "tools/bootstrap_python_sidecar.py",
   "tools/build_python_sidecar.py"
 ]);
 
@@ -200,6 +212,67 @@ function loadJson(filePath, label) {
     fail(`${label} must be an object`);
   }
   return value;
+}
+
+function loadCanonicalJsonAttestation(filePath, label) {
+  let descriptor;
+  let bytes;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+    );
+    const before = fs.fstatSync(descriptor);
+    bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    if (
+      !before.isFile() ||
+      before.uid !== process.geteuid() ||
+      before.nlink !== 1 ||
+      before.size <= 0 ||
+      before.size > 64 * 1024 * 1024 ||
+      (before.mode & 0o7022) !== 0 ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.mode !== after.mode ||
+      before.nlink !== after.nlink ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    ) {
+      fail(`${label} must be a stable bounded regular file`);
+    }
+  } catch (error) {
+    if (error instanceof BeforePackAuditError) {
+      throw error;
+    }
+    fail(`${label} is unreadable`);
+  } finally {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+  }
+  let value;
+  let text;
+  try {
+    text = bytes.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(bytes)) {
+      fail(`${label} is not valid UTF-8`);
+    }
+    value = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof BeforePackAuditError) {
+      throw error;
+    }
+    fail(`${label} is not valid JSON`);
+  }
+  if (!isObject(value) || text !== `${canonicalJson(value)}\n`) {
+    fail(`${label} is not a canonical object`);
+  }
+  return {
+    value,
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex")
+  };
 }
 
 function assertObject(value, label) {
@@ -679,7 +752,8 @@ function validateToolchainLock(toolchain) {
     "Toolchain build tools"
   );
   const mandatoryInputs = [
-    "GITHUB_SHA",
+    "LCF_SOURCE_SHA",
+    "LCF_SOURCE_TREE",
     "LCF_SOURCE_DATE_EPOCH",
     "ImageVersion",
     "LCF_PYTHON_DISTRIBUTION_ARCHIVE",
@@ -778,6 +852,10 @@ function validateSchemaContract(schema, toolchain) {
     fail("Python sidecar manifest schema is not the reviewed contract");
   }
   const buildProperties = schema.properties.build?.properties;
+  const buildRequired = schema.properties.build?.required;
+  const artifactsSchema = schema.properties.artifacts;
+  const pythonToolchainSchema = schema.$defs.pythonToolchain;
+  const buildToolsSchema = schema.$defs.buildTools;
   const targetProperties = schema.properties.target?.properties;
   const pythonProperties = schema.$defs.pythonProvenance?.properties;
   const nativeProperties = schema.$defs.nativeInventoryEntry?.properties;
@@ -786,6 +864,48 @@ function validateSchemaContract(schema, toolchain) {
   const expectedPython = expectedPythonProvenance(toolchain);
   if (
     !isObject(buildProperties) ||
+    !sameJson(buildRequired, [
+      "repositoryCommit",
+      "repositoryTree",
+      "sourceSnapshotSha256",
+      "sourceDateEpoch",
+      "runnerImage",
+      "runnerImageVersion",
+      "macosDeploymentTarget",
+      "xcodeVersion",
+      "sdkVersion",
+      "uvVersion",
+      "pyinstallerVersion",
+      "pyinstallerHooksContribVersion",
+      "python",
+      "pythonToolchain",
+      "inputDigests"
+    ]) ||
+    !isObject(artifactsSchema) ||
+    artifactsSchema.additionalProperties !== false ||
+    !sameJson(artifactsSchema.required, [
+      "spdxSbom",
+      "thirdPartyNotices",
+      "licensesDirectory",
+      "pythonBuildToolchain"
+    ]) ||
+    artifactsSchema.properties?.pythonBuildToolchain?.$ref !==
+      "#/$defs/safePath" ||
+    !isObject(pythonToolchainSchema) ||
+    pythonToolchainSchema.additionalProperties !== false ||
+    !sameJson(pythonToolchainSchema.required, [
+      "buildRequirementsLockSha256",
+      "runtimeLockSha256",
+      "runtimeRequirementsSha256",
+      "installedTreeContentSha256",
+      "buildTools"
+    ]) ||
+    !isObject(buildToolsSchema) ||
+    buildToolsSchema.additionalProperties !== false ||
+    !sameJson(buildToolsSchema.required, Object.keys(EXPECTED_PYTHON_BUILD_TOOLS)) ||
+    Object.entries(EXPECTED_PYTHON_BUILD_TOOLS).some(
+      ([key, version]) => buildToolsSchema.properties?.[key]?.const !== version
+    ) ||
     !isObject(targetProperties) ||
     !isObject(pythonProperties) ||
     !isObject(nativeProperties) ||
@@ -903,40 +1023,23 @@ function inspectSourceFiles(environment) {
   };
 }
 
-function inspectRepositoryProvenance(repositoryRoot) {
-  function git(commandArguments) {
-    try {
-      return childProcess
-        .execFileSync(
-          "/usr/bin/git",
-          ["-C", repositoryRoot, ...commandArguments],
-          {
-            encoding: "utf8",
-            env: {
-              PATH: "/usr/bin:/bin",
-              LANG: "C",
-              LC_ALL: "C"
-            },
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 30_000,
-            maxBuffer: 1024 * 1024
-          }
-        )
-        .trim();
-    } catch (error) {
-      fail("Repository provenance inspection failed");
-    }
+function inspectRepositoryProvenance(
+  repositoryRoot,
+  environment = process.env
+) {
+  let snapshot;
+  try {
+    snapshot = require("./prepareEngineeringSmoke.cjs")
+      .inspectRepositorySourceSnapshot(repositoryRoot, environment);
+  } catch {
+    fail("Repository provenance inspection failed");
   }
-  const commit = git(["rev-parse", "HEAD"]).toLowerCase();
-  const sourceDateEpoch = Number(git(["show", "-s", "--format=%ct", "HEAD"]));
-  if (
-    !COMMIT_PATTERN.test(commit) ||
-    !Number.isSafeInteger(sourceDateEpoch) ||
-    git(["status", "--porcelain", "--untracked-files=all"]) !== ""
-  ) {
-    fail("Repository is not a clean reviewed commit");
-  }
-  return { commit, sourceDateEpoch };
+  return {
+    commit: snapshot.commit,
+    tree: snapshot.tree,
+    sourceDateEpoch: snapshot.sourceDateEpoch,
+    sourceSnapshotSha256: snapshot.sourceSnapshotSha256
+  };
 }
 
 function validateEnvironment(
@@ -959,11 +1062,17 @@ function validateEnvironment(
   ) {
     fail("Required packaging runner inputs are missing");
   }
-  if (!COMMIT_PATTERN.test(environment.GITHUB_SHA || "")) {
-    fail("Current GITHUB_SHA is invalid");
+  if (!COMMIT_PATTERN.test(environment.LCF_SOURCE_SHA || "")) {
+    fail("Current LCF_SOURCE_SHA is invalid");
   }
-  if (build.repositoryCommit !== environment.GITHUB_SHA) {
-    fail("Manifest commit differs from the current GITHUB_SHA");
+  if (!COMMIT_PATTERN.test(environment.LCF_SOURCE_TREE || "")) {
+    fail("Current LCF_SOURCE_TREE is invalid");
+  }
+  if (build.repositoryCommit !== environment.LCF_SOURCE_SHA) {
+    fail("Manifest commit differs from the explicit source commit");
+  }
+  if (build.repositoryTree !== environment.LCF_SOURCE_TREE) {
+    fail("Manifest tree differs from the explicit source tree");
   }
   if (!/^[0-9]+$/.test(environment.LCF_SOURCE_DATE_EPOCH || "")) {
     fail("Current source date epoch is invalid");
@@ -1003,17 +1112,69 @@ function validateEnvironment(
     fail("Current Python source bytes differ from the reviewed lock");
   }
   const repository = assertExactKeys(
-    inspectRepository(repositoryRoot),
-    ["commit", "sourceDateEpoch"],
+    inspectRepository(repositoryRoot, environment),
+    ["commit", "tree", "sourceDateEpoch", "sourceSnapshotSha256"],
     [],
     "Observed repository provenance"
   );
   if (
     repository.commit !== build.repositoryCommit ||
-    repository.sourceDateEpoch !== build.sourceDateEpoch
+    repository.tree !== build.repositoryTree ||
+    repository.sourceDateEpoch !== build.sourceDateEpoch ||
+    repository.sourceSnapshotSha256 !== build.sourceSnapshotSha256
   ) {
     fail("Manifest repository provenance differs from the checkout");
   }
+}
+
+function validatePythonToolchainSummary(value, repositoryRoot) {
+  const summary = assertExactKeys(
+    value,
+    [
+      "buildRequirementsLockSha256",
+      "runtimeLockSha256",
+      "runtimeRequirementsSha256",
+      "installedTreeContentSha256",
+      "buildTools"
+    ],
+    [],
+    "Manifest Python toolchain evidence"
+  );
+  for (const key of [
+    "buildRequirementsLockSha256",
+    "runtimeLockSha256",
+    "runtimeRequirementsSha256",
+    "installedTreeContentSha256"
+  ]) {
+    if (!SHA256_PATTERN.test(summary[key] || "")) {
+      fail("Manifest Python toolchain digest is malformed");
+    }
+  }
+  const buildTools = assertExactKeys(
+    summary.buildTools,
+    Object.keys(EXPECTED_PYTHON_BUILD_TOOLS),
+    [],
+    "Manifest Python build tools"
+  );
+  if (!sameJson(buildTools, EXPECTED_PYTHON_BUILD_TOOLS)) {
+    fail("Manifest Python build tool versions differ from reviewed pins");
+  }
+  if (
+    summary.buildRequirementsLockSha256 !==
+      sha256File(
+        path.join(
+          repositoryRoot,
+          "backend",
+          "packaging",
+          "build-requirements.lock"
+        )
+      ) ||
+    summary.runtimeLockSha256 !==
+      sha256File(path.join(repositoryRoot, "backend", "uv.lock"))
+  ) {
+    fail("Manifest Python toolchain differs from reviewed source locks");
+  }
+  return summary;
 }
 
 function validateBuild(
@@ -1028,6 +1189,8 @@ function validateBuild(
     manifest.build,
     [
       "repositoryCommit",
+      "repositoryTree",
+      "sourceSnapshotSha256",
       "sourceDateEpoch",
       "runnerImage",
       "runnerImageVersion",
@@ -1038,6 +1201,7 @@ function validateBuild(
       "pyinstallerVersion",
       "pyinstallerHooksContribVersion",
       "python",
+      "pythonToolchain",
       "inputDigests"
     ],
     [],
@@ -1045,6 +1209,8 @@ function validateBuild(
   );
   if (
     !COMMIT_PATTERN.test(build.repositoryCommit) ||
+    !COMMIT_PATTERN.test(build.repositoryTree) ||
+    !SHA256_PATTERN.test(build.sourceSnapshotSha256) ||
     !Number.isSafeInteger(build.sourceDateEpoch) ||
     build.sourceDateEpoch < 100_000_000 ||
     !RUNNER_IMAGE_VERSION_PATTERN.test(build.runnerImageVersion) ||
@@ -1100,6 +1266,11 @@ function validateBuild(
   if (!SHA256_PATTERN.test(python.installRootFingerprintSha256)) {
     fail("Manifest installed Python fingerprint is invalid");
   }
+
+  validatePythonToolchainSummary(
+    build.pythonToolchain,
+    repositoryRoot
+  );
 
   const actualInputs = criticalInputDigests(repositoryRoot);
   if (!sameJson(build.inputDigests, actualInputs)) {
@@ -1195,10 +1366,186 @@ function validateComponents(root, manifest, toolchain) {
   }
 }
 
-function validateArtifacts(root, manifest) {
+function safeToolchainSymlinkTarget(relative, target, reviewedFrameworkRoot) {
+  if (
+    typeof target !== "string" ||
+    target.length === 0 ||
+    target.includes("\0") ||
+    target.includes("\\")
+  ) {
+    return false;
+  }
+  if (target.startsWith("/")) {
+    const parts = target.split("/");
+    if (
+      parts[0] !== "" ||
+      parts.slice(1).some((part) => ["", ".", ".."].includes(part))
+    ) {
+      return false;
+    }
+    return (
+      target !== reviewedFrameworkRoot &&
+      target.startsWith(`${reviewedFrameworkRoot}/`)
+    );
+  }
+  const parts = path.posix.dirname(relative).split("/").filter(Boolean);
+  for (const part of target.split("/")) {
+    if (part === "" || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      if (parts.length === 0) {
+        return false;
+      }
+      parts.pop();
+    } else {
+      parts.push(part);
+    }
+  }
+  return parts.length > 0;
+}
+
+function validateInstalledToolchainInventory(
+  value,
+  reviewedFrameworkRoot
+) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100_000) {
+    fail("Installed Python toolchain inventory is invalid");
+  }
+  const paths = [];
+  let totalSize = 0;
+  for (const rawEntry of value) {
+    const entry = assertObject(rawEntry, "Installed Python toolchain entry");
+    const entryType = entry.type;
+    const required = {
+      directory: ["path", "type", "mode", "size"],
+      file: ["path", "type", "mode", "size", "sha256"],
+      symlink: ["path", "type", "mode", "size", "target"]
+    }[entryType];
+    if (!required) {
+      fail("Installed Python toolchain entry type is invalid");
+    }
+    assertExactKeys(entry, required, [], "Installed Python toolchain entry");
+    const relative = entry.path;
+    if (
+      typeof relative !== "string" ||
+      relative.length === 0 ||
+      (relative !== "." &&
+        (safeRelativePath(relative, "Installed Python toolchain entry") !==
+          relative ||
+          path.posix.normalize(relative) !== relative)) ||
+      !/^0[0-7]{3}$/.test(entry.mode || "") ||
+      !Number.isSafeInteger(entry.size) ||
+      entry.size < 0 ||
+      entry.size > 256 * 1024 * 1024
+    ) {
+      fail("Installed Python toolchain entry is malformed");
+    }
+    const mode = Number.parseInt(entry.mode, 8);
+    if (
+      (entryType === "directory" &&
+        (entry.size !== 0 || ![0o500, 0o555].includes(mode))) ||
+      (entryType === "file" &&
+        (![0o400, 0o444, 0o500, 0o555].includes(mode) ||
+          !SHA256_PATTERN.test(entry.sha256 || ""))) ||
+      (entryType === "symlink" &&
+        (mode !== 0o777 ||
+          typeof entry.target !== "string" ||
+          Buffer.byteLength(entry.target || "", "utf8") !== entry.size ||
+          !safeToolchainSymlinkTarget(
+            relative,
+            entry.target,
+            reviewedFrameworkRoot
+          )))
+    ) {
+      fail("Installed Python toolchain entry is malformed");
+    }
+    paths.push(relative);
+    totalSize += entry.size;
+    if (totalSize > 1024 * 1024 * 1024) {
+      fail("Installed Python toolchain inventory exceeds its size bound");
+    }
+  }
+  const sortedPaths = [...paths].sort(compareCodePoints);
+  if (
+    paths[0] !== "." ||
+    new Set(paths).size !== paths.length ||
+    !sameJson(paths, sortedPaths)
+  ) {
+    fail("Installed Python toolchain inventory paths are noncanonical");
+  }
+  return sha256Bytes(
+    Buffer.from(
+      canonicalJson({ schemaVersion: 1, entries: value }),
+      "utf8"
+    )
+  );
+}
+
+function validatePythonToolchainArtifact(root, manifest, repositoryRoot) {
+  const summary = validatePythonToolchainSummary(
+    manifest.build.pythonToolchain,
+    repositoryRoot
+  );
+  if (manifest.artifacts.pythonBuildToolchain !== TOOLCHAIN_EVIDENCE_NAME) {
+    fail("Python build toolchain evidence path is unexpected");
+  }
+  const evidenceAttestation = loadCanonicalJsonAttestation(
+    resolveArtifact(
+      root,
+      manifest.artifacts.pythonBuildToolchain,
+      "Python build toolchain evidence"
+    ),
+    "Python build toolchain evidence"
+  );
+  const evidence = assertExactKeys(
+    evidenceAttestation.value,
+    [
+      "$schema",
+      "schemaVersion",
+      "buildRequirementsLockSha256",
+      "runtimeLockSha256",
+      "runtimeRequirementsSha256",
+      "installedTreeContentSha256",
+      "buildTools",
+      "files"
+    ],
+    [],
+    "Python build toolchain evidence"
+  );
+  if (
+    evidence.$schema !== TOOLCHAIN_EVIDENCE_SCHEMA ||
+    evidence.schemaVersion !== 1 ||
+    !sameJson(
+      Object.fromEntries(
+        [
+          "buildRequirementsLockSha256",
+          "runtimeLockSha256",
+          "runtimeRequirementsSha256",
+          "installedTreeContentSha256",
+          "buildTools"
+        ].map((key) => [key, evidence[key]])
+      ),
+      summary
+    ) ||
+    validateInstalledToolchainInventory(
+      evidence.files,
+      manifest.build.python.installRoot
+    ) !== evidence.installedTreeContentSha256
+  ) {
+    fail("Python build toolchain artifact differs from the manifest");
+  }
+}
+
+function validateArtifacts(root, manifest, repositoryRoot) {
   const artifacts = assertExactKeys(
     manifest.artifacts,
-    ["spdxSbom", "thirdPartyNotices", "licensesDirectory"],
+    [
+      "spdxSbom",
+      "thirdPartyNotices",
+      "licensesDirectory",
+      "pythonBuildToolchain"
+    ],
     [],
     "Manifest artifacts"
   );
@@ -1243,6 +1590,7 @@ function validateArtifacts(root, manifest) {
       fail("SPDX SBOM does not cover every manifest component");
     }
   }
+  validatePythonToolchainArtifact(root, manifest, repositoryRoot);
 }
 
 function validateManifestShape(manifest, versions, toolchain, schema) {
@@ -1361,10 +1709,11 @@ function auditPythonSidecar(options = {}) {
   const versions = loadJson(versionPath, "Canonical runtime versions");
   const toolchain = loadJson(toolchainPath, "Python toolchain lock");
   const schema = loadJson(schemaPath, "Python sidecar manifest schema");
-  const manifest = loadJson(
+  const manifestAttestation = loadCanonicalJsonAttestation(
     path.join(stagingRoot, MANIFEST_NAME),
     "Python sidecar build manifest"
   );
+  const manifest = manifestAttestation.value;
 
   validateManifestShape(manifest, versions, toolchain, schema);
   validateBuild(
@@ -1403,11 +1752,17 @@ function auditPythonSidecar(options = {}) {
   }
 
   validateComponents(stagingRoot, manifest, toolchain);
-  validateArtifacts(stagingRoot, manifest);
+  validateArtifacts(stagingRoot, manifest, repositoryRoot);
   return {
     files: actualFiles.length,
     nativeFiles: manifest.native.length,
-    components: manifest.components.length
+    components: manifest.components.length,
+    repositoryCommit: manifest.build.repositoryCommit,
+    repositoryTree: manifest.build.repositoryTree,
+    sourceSnapshotSha256: manifest.build.sourceSnapshotSha256,
+    normalizedInventorySha256: manifest.audit.normalizedInventorySha256,
+    manifest: JSON.parse(JSON.stringify(manifest)),
+    manifestSha256: manifestAttestation.sha256
   };
 }
 
@@ -1426,6 +1781,9 @@ function createBeforePackHook(dependencies = {}) {
     const repositoryRoot =
       dependencies.repositoryRoot ||
       path.resolve(__dirname, "..", "..");
+    const repository = (
+      dependencies.inspectRepository || inspectRepositoryProvenance
+    )(repositoryRoot, dependencies.environment || process.env);
     const python = (
       dependencies.auditPythonSidecar || auditPythonSidecar
     )({
@@ -1470,10 +1828,15 @@ function createBeforePackHook(dependencies = {}) {
         path.resolve(__dirname, "..", "resources", "renderer"),
       {
         expectedCommit:
-          (dependencies.environment || process.env).GITHUB_SHA,
+          (dependencies.environment || process.env).LCF_SOURCE_SHA,
+        expectedTree: repository.tree,
+        expectedSourceSnapshotSha256: repository.sourceSnapshotSha256,
         expectedSourceDateEpoch: Number(
           (dependencies.environment || process.env).LCF_SOURCE_DATE_EPOCH
-        )
+        ),
+        expectedPackageLockSha256:
+          (dependencies.environment || process.env)
+            .LCF_RENDERER_PACKAGE_LOCK_SHA256
       }
     );
     const updateTrust = (

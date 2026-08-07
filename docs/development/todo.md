@@ -46,7 +46,7 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 | TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `done` | Governance/Architecture | 无 | accepted head + independent acceptance + resulting-main source `pass` |
 | TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `done` | Governance/CI | 无 | immutable history + external closeout evidence |
 | TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `done` | CI/QMD/Sites | 无 | resulting-main run `30986208251` success |
-| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | static assembly/audit `pass`；`VAL-PACKAGED-SMOKE-001` remains `not-run` |
+| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 independent `NO-GO`；remediation `not-run`；`VAL-PACKAGED-SMOKE-001` remains `not-run` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
 | TODO-DATA-BACKUP-001 | Priority-1 | W04/P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
@@ -122,23 +122,32 @@ packaged、physical、settings 和 release gate 保持真实的 `not-run`。
 
 W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建额外 task/VAL ID：
 
-1. engineering-smoke boundary/assembly：建立与 formal release 隔离的 macOS arm64 `.app`
-   assembly、严格 manifest/inventory/audit 与 non-upload CI。Draft PR #21 exact head
+1. engineering-smoke boundary/assembly：建立在 distribution/publish semantics 上与 formal release
+   隔离的 macOS arm64 `.app` assembly、严格 manifest/inventory/audit 与 non-upload CI；shared
+   Python/renderer exact provenance 同步加固 formal build job，但不触发 Draft/promotion/publish。
+   历史 Draft PR #21 exact head
    `08137c7bce5469350b861cef7960e4a0530151bf` 已由
    [run `31024794972`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972)
-   完成 static assembly/bundle audit；不启动 assembled App；
-2. packaged App launch/runtime smoke：后续 Work 启动同类 bundle，验证 renderer/preload
+   完成 static assembly/bundle audit；不启动 assembled App。后来的 reviewed head
+   `8c5fd23206b671b768fd21d253bf292642f93a51` / tree
+   `785f4656de8a7233b6dd632fe4815976d33468fb` 因 build scratch lifecycle、Git provenance 与
+   cleanup fail-closed 缺口被独立判定为 `NO-GO`；本 remediation 只在同一 branch/PR 修复这些
+   blocker；
+2. packaged App launch/runtime smoke：本 remediation 不启动 bundle，保持 `not-run`；未来验证 renderer/preload
    handshake、Main → private UDS sidecar health/领域请求、正常退出、无 orphan、无 public INET
    listener，并以 PATH trap 证明 exercised path 不发现系统 Python/Node/Git。
 
-当前第一阶段 static assembly/bundle audit substage 为 `pass`，inventory 为 `879` entries /
+旧第一阶段 static assembly/bundle audit technical substage 为 `pass`，inventory 为 `879` entries /
 `78` native files，SHA-256 为
 `7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c`；见
 [canonical assembly evidence](evidence/W02/2026-08-06-08137c7-assembly.md)。pre-pack frozen
 sidecar staging smoke 已成功，但 assembled `.app` 未启动、sidecar 未从 bundle 启动，且 remote
-artifacts empty。packaged App launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。
-W10/W11 保持 locked，直至第二阶段在 independently accepted exact head、合入后 resulting
-`main` 上取得完整 packaged smoke `pass`。
+artifacts empty；这些旧结果不能证明 current remediation。当前权威结论见
+[append-only PR #21 remediation record](evidence/W02/2026-08-07-pr21-remediation.md)：independent
+acceptance `NO-GO`，remediation technical candidate `not-run`，W02 `in-progress`。packaged App
+launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。W10/W11 保持 locked，直至未来
+packaged 阶段在 independently accepted exact head、合入后 resulting `main` 上取得完整 smoke
+`pass`。
 
 必须显著 `UNOFFICIAL` / `engineering-only` / `publishable=false`，不读取 production secret，
 不要求 production trust pins，不生成 updater/release metadata，不由 tag 触发，不上传、不创建

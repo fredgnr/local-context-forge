@@ -606,7 +606,12 @@ function createAuditEngineeringSmokeBundle(dependencies = {}) {
     if (
       manifest.source.commit !== source.commit ||
       manifest.source.tree !== source.tree ||
-      manifest.source.sourceDateEpoch !== source.sourceDateEpoch
+      manifest.source.sourceSnapshotSha256 !== source.sourceSnapshotSha256 ||
+      manifest.source.sourceDateEpoch !== source.sourceDateEpoch ||
+      manifest.components.desktopApp.reviewedPackagePath !==
+        "desktop/package.json" ||
+      manifest.components.desktopApp.reviewedPackageSha256 !==
+        source.desktopPackageSha256
     ) {
       fail("Bundled engineering-smoke provenance differs from the checkout");
     }
@@ -621,7 +626,10 @@ function createAuditEngineeringSmokeBundle(dependencies = {}) {
       rendererRoot,
       {
         expectedCommit: source.commit,
-        expectedSourceDateEpoch: source.sourceDateEpoch
+        expectedTree: source.tree,
+        expectedSourceSnapshotSha256: source.sourceSnapshotSha256,
+        expectedSourceDateEpoch: source.sourceDateEpoch,
+        expectedPackageLockSha256: source.rendererPackageLockSha256
       }
     );
     const python = (
@@ -629,23 +637,39 @@ function createAuditEngineeringSmokeBundle(dependencies = {}) {
     )({
       repositoryRoot: REPOSITORY_ROOT,
       stagingRoot: sidecarRoot,
-      environment: { ...environment, GITHUB_SHA: source.commit },
+      environment,
       platform: platformName,
       architecture
     });
-    const pythonManifest = loadJson(
-      path.join(sidecarRoot, "build-manifest.json"),
-      "Bundled Python build manifest"
-    );
+    const pythonManifest = python.manifest;
+    if (
+      !pythonManifest ||
+      typeof pythonManifest !== "object" ||
+      Array.isArray(pythonManifest)
+    ) {
+      fail("Bundled Python audit omitted its manifest attestation");
+    }
     if (
       manifest.components.renderer.manifestSha256 !==
         sha256File(path.join(rendererRoot, "renderer-build-manifest.json")) ||
       manifest.components.renderer.files !== renderer.files ||
       manifest.components.renderer.bytes !== renderer.bytes ||
+      manifest.components.renderer.repositoryTree !== renderer.repositoryTree ||
+      manifest.components.renderer.sourceSnapshotSha256 !==
+        renderer.sourceSnapshotSha256 ||
+      manifest.components.renderer.inputSnapshotSha256 !==
+        renderer.inputSnapshotSha256 ||
       manifest.components.pythonSidecar.manifestSha256 !==
-        sha256File(path.join(sidecarRoot, "build-manifest.json")) ||
+        python.manifestSha256 ||
       manifest.components.pythonSidecar.normalizedInventorySha256 !==
         pythonManifest.audit.normalizedInventorySha256 ||
+      manifest.components.pythonSidecar.repositoryTree !== source.tree ||
+      manifest.components.pythonSidecar.sourceSnapshotSha256 !==
+        source.sourceSnapshotSha256 ||
+      manifest.components.pythonSidecar.pythonBuildToolchainPath !==
+        "Contents/Resources/sidecar/python-build-toolchain.json" ||
+      canonicalJson(manifest.components.pythonSidecar.pythonToolchain) !==
+        canonicalJson(pythonManifest.build.pythonToolchain) ||
       manifest.components.pythonSidecar.files !== python.files ||
       manifest.components.pythonSidecar.nativeFiles !== python.nativeFiles ||
       manifest.components.pythonSidecar.components !== python.components

@@ -1,15 +1,19 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { renameSync, writeFileSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { pathToFileURL } from "node:url";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 type JsonObject = Record<string, any>;
 
@@ -18,8 +22,10 @@ const renderer = require("../scripts/auditRenderer.cjs") as {
     root: string,
     options: {
       expectedCommit: string;
+      expectedTree: string;
+      expectedSourceSnapshotSha256: string;
       expectedSourceDateEpoch: number;
-      packageLockPath: string;
+      expectedPackageLockSha256: string;
     }
   ): JsonObject;
   canonicalJson(value: unknown): string;
@@ -32,12 +38,54 @@ const rendererStage = require("../scripts/stageRenderer.cjs") as {
     dependencies?: {
       gitCommand(arguments_: string[]): string;
     }
-  ): { commit: string; sourceDateEpoch: number };
+  ): JsonObject;
+  stageRendererTransaction(
+    options: {
+      source: string;
+      destination: string;
+      release: JsonObject;
+      environment: NodeJS.ProcessEnv;
+      afterSourceValidation?: () => void;
+    },
+    dependencies?: {
+      validateSourceAttestation?: () => JsonObject;
+      auditRenderer?: () => JsonObject;
+      rename?: (source: string, destination: string) => void;
+    }
+  ): JsonObject;
+};
+const prepare = require("../scripts/prepareEngineeringSmoke.cjs") as {
+  inspectRepositorySourceSnapshot(
+    repositoryRoot: string,
+    environment: NodeJS.ProcessEnv
+  ): JsonObject;
+};
+const rendererBuilder = require(
+  "../../web/scripts/buildEngineeringRenderer.cjs"
+) as {
+  buildRendererFromSnapshot(options: JsonObject): Promise<JsonObject>;
+  selectReviewedRendererInputs(
+    snapshot: JsonObject,
+    repositoryRoot: string
+  ): { byPath: Map<string, JsonObject>; bytesByPath: Map<string, Buffer> };
 };
 
 const roots: string[] = [];
+const repositoryRoot = path.resolve(__dirname, "..", "..");
 const commit = "a".repeat(40);
+const tree = "b".repeat(40);
+const sourceSnapshotSha256 = "c".repeat(64);
+const inputSnapshotSha256 = "d".repeat(64);
+const rendererPackageLockSha256 = "e".repeat(64);
 const sourceDateEpoch = 1_700_000_000;
+const sealedRendererBuilder = {
+  name: "vite",
+  version: "7.3.6",
+  reactPluginVersion: "4.7.0",
+  nodeVersion: "v22.23.2",
+  npmVersion: "10.9.8",
+  installedContentSha256: "f".repeat(64)
+};
 
 afterEach(async () => {
   await Promise.all(
@@ -50,6 +98,7 @@ afterEach(async () => {
 async function fixture(): Promise<{
   root: string;
   packageLock: string;
+  packageLockSha256: string;
   manifestPath: string;
 }> {
   const workspace = await mkdtemp(path.join(os.tmpdir(), "lcf-renderer-"));
@@ -80,9 +129,14 @@ async function fixture(): Promise<{
     kind: "local-context-forge-renderer-build",
     source: {
       repositoryCommit: commit,
+      repositoryTree: tree,
+      sourceSnapshotSha256,
       sourceDateEpoch,
-      packageLockSha256
+      packageLockSha256,
+      inputSnapshotSha256,
+      inputFiles: 12
     },
+    builder: sealedRendererBuilder,
     files
   };
   const manifestPath = path.join(root, "renderer-build-manifest.json");
@@ -90,14 +144,16 @@ async function fixture(): Promise<{
     manifestPath,
     `${renderer.canonicalJson(manifest)}\n`
   );
-  return { root, packageLock, manifestPath };
+  return { root, packageLock, packageLockSha256, manifestPath };
 }
 
-function auditOptions(packageLockPath: string) {
+function auditOptions(packageLockSha256: string) {
   return {
     expectedCommit: commit,
+    expectedTree: tree,
+    expectedSourceSnapshotSha256: sourceSnapshotSha256,
     expectedSourceDateEpoch: sourceDateEpoch,
-    packageLockPath
+    expectedPackageLockSha256: packageLockSha256
   };
 }
 
@@ -149,12 +205,312 @@ function provenanceGit(
   };
 }
 
+describe("reviewed renderer build provenance", () => {
+  it("selects committed Git object bytes before the reviewed renderer build", async () => {
+    const canonicalTemporaryParent = await realpath(os.tmpdir());
+    const workspace = await mkdtemp(
+      path.join(canonicalTemporaryParent, "lcf-renderer-build-")
+    );
+    roots.push(workspace);
+    const repository = path.join(workspace, "repository");
+    const webRoot = path.join(repository, "web");
+    const sourceRoot = path.join(webRoot, "src");
+    await mkdir(sourceRoot, { recursive: true });
+    await mkdir(path.join(repository, "desktop"), { recursive: true });
+    const markerPath = path.join(sourceRoot, "marker.ts");
+    const reviewedMarker = 'export const marker = "reviewed-renderer-marker";\n';
+    await Promise.all([
+      writeFile(
+        path.join(webRoot, "index.html"),
+        '<!doctype html>\n<div id="root"></div>\n<script type="module" src="/src/main.tsx"></script>\n'
+      ),
+      writeFile(
+        path.join(webRoot, "package.json"),
+        '{"name":"renderer-fixture","private":true,"type":"module"}\n'
+      ),
+      writeFile(
+        path.join(repository, "desktop", "package.json"),
+        '{"name":"desktop-fixture","version":"0.0.0"}\n'
+      ),
+      writeFile(
+        path.join(webRoot, "package-lock.json"),
+        `${JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/vite": { version: "7.3.6" },
+            "node_modules/@vitejs/plugin-react": { version: "4.7.0" }
+          }
+        })}\n`
+      ),
+      writeFile(
+        path.join(webRoot, "tsconfig.app.json"),
+        '{"compilerOptions":{"target":"ES2022","jsx":"react-jsx"}}\n'
+      ),
+      writeFile(
+        path.join(sourceRoot, "main.tsx"),
+        'import { marker } from "./marker";\ndocument.body.dataset.marker = marker;\n'
+      ),
+      writeFile(markerPath, reviewedMarker)
+    ]);
+    const gitEnvironment = {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_TERMINAL_PROMPT: "0"
+    };
+    const git = (...arguments_: string[]): string =>
+      execFileSync("/usr/bin/git", ["-C", repository, ...arguments_], {
+        encoding: "utf8",
+        env: gitEnvironment
+      }).trim();
+    git("init", "--quiet");
+    git("add", "--all");
+    git(
+      "-c",
+      "user.name=LCF Test",
+      "-c",
+      "user.email=lcf-test@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture"
+    );
+    const sourceCommit = git("rev-parse", "HEAD");
+    const sourceTree = git("rev-parse", "HEAD^{tree}");
+    const sourceEpoch = git("show", "-s", "--format=%ct", "HEAD");
+    const environment = {
+      LCF_SOURCE_SHA: sourceCommit,
+      LCF_SOURCE_TREE: sourceTree,
+      LCF_SOURCE_DATE_EPOCH: sourceEpoch,
+      LCF_SOURCE_SNAPSHOT_SHA256: createHash("sha256")
+        .update(
+          Buffer.from(
+            renderer.canonicalJson(
+              git("ls-tree", "-r", "--full-tree", "HEAD")
+                .split("\n")
+                .filter(Boolean)
+                .map((line) => {
+                  const match = /^(\d+) (\w+) ([0-9a-f]{40})\t(.+)$/.exec(line);
+                  if (!match) {
+                    throw new Error("invalid Git fixture inventory");
+                  }
+                  return {
+                    mode: match[1],
+                    type: match[2],
+                    objectId: match[3],
+                    path: match[4]!
+                  };
+                })
+                .sort((left, right) =>
+                  left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+                )
+            ),
+            "utf8"
+          )
+        )
+        .digest("hex"),
+      LCF_RENDERER_PACKAGE_LOCK_SHA256: createHash("sha256")
+        .update(await readFile(path.join(webRoot, "package-lock.json")))
+        .digest("hex")
+    };
+    const snapshot = prepare.inspectRepositorySourceSnapshot(
+      repository,
+      environment
+    );
+    const viteImplementation = await import(
+      pathToFileURL(
+        path.join(repositoryRoot, "web", "node_modules", "vite", "dist", "node", "index.js")
+      ).href
+    );
+    const reactPluginModule = await import(
+      pathToFileURL(
+        path.join(
+          repositoryRoot,
+          "web",
+          "node_modules",
+          "@vitejs",
+          "plugin-react",
+          "dist",
+          "index.js"
+        )
+      ).href
+    );
+    const distRoot = path.join(workspace, "renderer-output");
+    const attestation = await rendererBuilder.buildRendererFromSnapshot({
+      snapshot,
+      repositoryRoot: repository,
+      webRoot,
+      distRoot,
+      environment,
+      viteImplementation,
+      reactPluginFactory: reactPluginModule.default,
+      installSummary: {
+        installedContentSha256: "f".repeat(64),
+        lockSha256: environment.LCF_RENDERER_PACKAGE_LOCK_SHA256,
+        nodeVersion: "v22.23.2",
+        npmVersion: "10.9.8"
+      }
+    });
+    const outputText = (
+      await Promise.all(
+        renderer
+          .inventory(distRoot)
+          .filter((record) => /\.(?:html|js|css)$/.test(record.path))
+          .map((record) => readFile(path.join(distRoot, record.path), "utf8"))
+      )
+    ).join("\n");
+    expect(outputText).toContain("reviewed-renderer-marker");
+    expect(outputText).not.toContain("transient-renderer-marker");
+    expect(attestation).toMatchObject({
+      kind: "reviewed-renderer-build",
+      source: { repositoryCommit: sourceCommit, repositoryTree: sourceTree },
+      builder: { name: "vite", version: "7.3.6" }
+    });
+    await writeFile(
+      markerPath,
+      'export const marker = "transient-renderer-marker";\n'
+    );
+    const selectedInputs = rendererBuilder.selectReviewedRendererInputs(
+      snapshot,
+      repository
+    );
+    expect(selectedInputs.bytesByPath.get("web/src/marker.ts")).toEqual(
+      Buffer.from(reviewedMarker, "utf8")
+    );
+    await writeFile(markerPath, reviewedMarker);
+  });
+
+  it("refuses source drift after attestation without replacing staged output", async () => {
+    const workspace = await mkdtemp(
+      path.join(await realpath(os.tmpdir()), "lcf-renderer-stage-race-")
+    );
+    roots.push(workspace);
+    const source = path.join(workspace, "source");
+    const destination = path.join(workspace, "destination");
+    await mkdir(path.join(source, "assets"), { recursive: true });
+    await mkdir(destination, { recursive: true });
+    const sourceFile = path.join(source, "assets", "app.js");
+    const oldFile = path.join(destination, "old.js");
+    await writeFile(sourceFile, "reviewed-renderer-output\n");
+    await writeFile(oldFile, "existing-staged-output\n");
+    const expectedOutputs = renderer.inventory(source);
+    const audit = vi.fn(() => {
+      throw new Error("publish audit must not run after source drift");
+    });
+
+    expect(() =>
+      rendererStage.stageRendererTransaction(
+        {
+          source,
+          destination,
+          release: {
+            commit,
+            tree,
+            sourceSnapshotSha256,
+            sourceDateEpoch,
+            rendererPackageLockSha256
+          },
+          environment: {},
+          afterSourceValidation: () => {
+            writeFileSync(sourceFile, "transient-unreviewed-renderer-output\n");
+          }
+        },
+        {
+          validateSourceAttestation: () => ({
+            inputs: 5,
+            inputsSha256: inputSnapshotSha256,
+            packageLockSha256: rendererPackageLockSha256,
+            builder: sealedRendererBuilder,
+            outputs: expectedOutputs
+          }),
+          auditRenderer: audit
+        }
+      )
+    ).toThrow(/source output/);
+    expect(await readFile(oldFile, "utf8")).toBe("existing-staged-output\n");
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("restores the old staging directory when atomic publish fails", async () => {
+    const workspace = await mkdtemp(
+      path.join(await realpath(os.tmpdir()), "lcf-renderer-publish-race-")
+    );
+    roots.push(workspace);
+    const source = path.join(workspace, "source");
+    const destination = path.join(workspace, "destination");
+    await mkdir(path.join(source, "assets"), { recursive: true });
+    await mkdir(destination, { recursive: true });
+    await writeFile(path.join(source, "assets", "app.js"), "reviewed\n");
+    const oldFile = path.join(destination, "old.js");
+    await writeFile(oldFile, "existing-staged-output\n");
+    const outputs = renderer.inventory(source);
+    let renameCount = 0;
+
+    expect(() =>
+      rendererStage.stageRendererTransaction(
+        {
+          source,
+          destination,
+          release: {
+            commit,
+            tree,
+            sourceSnapshotSha256,
+            sourceDateEpoch,
+            rendererPackageLockSha256
+          },
+          environment: {}
+        },
+        {
+          validateSourceAttestation: () => ({
+            inputs: 5,
+            inputsSha256: inputSnapshotSha256,
+            packageLockSha256: rendererPackageLockSha256,
+            builder: sealedRendererBuilder,
+            outputs
+          }),
+          auditRenderer: () => ({ files: outputs.length }),
+          rename: (from, to) => {
+            renameCount += 1;
+            if (renameCount === 2) {
+              throw new Error("injected renderer publish failure");
+            }
+            renameSync(from, to);
+          }
+        }
+      )
+    ).toThrow(/injected renderer publish failure/);
+    expect(renameCount).toBe(3);
+    expect(await readFile(oldFile, "utf8")).toBe("existing-staged-output\n");
+  });
+});
+
 describe("production renderer packaging audit", () => {
   it("accepts a canonical manifest binding every production file", async () => {
     const value = await fixture();
     expect(
-      renderer.auditRenderer(value.root, auditOptions(value.packageLock))
+      renderer.auditRenderer(value.root, auditOptions(value.packageLockSha256))
     ).toMatchObject({ files: 3 });
+  });
+
+  it("uses the reviewed lock digest instead of a mutable live lock path", async () => {
+    const value = await fixture();
+    await writeFile(value.packageLock, '{"lockfileVersion":999}\n');
+    expect(
+      renderer.auditRenderer(
+        value.root,
+        auditOptions(value.packageLockSha256)
+      )
+    ).toMatchObject({
+      packageLockSha256: value.packageLockSha256
+    });
+    expect(() =>
+      renderer.auditRenderer(
+        value.root,
+        auditOptions("f".repeat(64))
+      )
+    ).toThrow(/reviewed source object/);
   });
 
   it("rejects byte tamper, manifest extras, and placeholder README files", async () => {
@@ -166,7 +522,7 @@ describe("production renderer packaging audit", () => {
     expect(() =>
       renderer.auditRenderer(
         tampered.root,
-        auditOptions(tampered.packageLock)
+        auditOptions(tampered.packageLockSha256)
       )
     ).toThrow(/inventory/);
 
@@ -180,8 +536,25 @@ describe("production renderer packaging audit", () => {
       `${renderer.canonicalJson(manifest)}\n`
     );
     expect(() =>
-      renderer.auditRenderer(extra.root, auditOptions(extra.packageLock))
+      renderer.auditRenderer(extra.root, auditOptions(extra.packageLockSha256))
     ).toThrow(/invalid shape/);
+
+    const versionDrift = await fixture();
+    const versionManifest = JSON.parse(
+      await readFile(versionDrift.manifestPath, "utf8")
+    ) as JsonObject;
+    versionManifest.builder.nodeVersion = "v22.23.3";
+    versionManifest.builder.npmVersion = "10.9.9";
+    await writeFile(
+      versionDrift.manifestPath,
+      `${renderer.canonicalJson(versionManifest)}\n`
+    );
+    expect(() =>
+      renderer.auditRenderer(
+        versionDrift.root,
+        auditOptions(versionDrift.packageLockSha256)
+      )
+    ).toThrow(/invalid shape|builder is invalid/);
 
     const readme = await fixture();
     await writeFile(path.join(readme.root, "README.html"), "placeholder\n");
@@ -198,7 +571,7 @@ describe("production renderer packaging audit", () => {
     expect(() =>
       renderer.auditRenderer(
         readme.root,
-        auditOptions(readme.packageLock)
+        auditOptions(readme.packageLockSha256)
       )
     ).toThrow(/placeholder README/);
   });
@@ -210,7 +583,7 @@ describe("production renderer packaging audit", () => {
       path.join(linked.root, "assets", "linked.js")
     );
     expect(() =>
-      renderer.auditRenderer(linked.root, auditOptions(linked.packageLock))
+      renderer.auditRenderer(linked.root, auditOptions(linked.packageLockSha256))
     ).toThrow(/symlinks/);
 
     const remote = await fixture();
@@ -233,7 +606,7 @@ describe("production renderer packaging audit", () => {
       `${renderer.canonicalJson(remoteManifest)}\n`
     );
     expect(() =>
-      renderer.auditRenderer(remote.root, auditOptions(remote.packageLock))
+      renderer.auditRenderer(remote.root, auditOptions(remote.packageLockSha256))
     ).toThrow(/development marker|remote origin/);
   });
 });
@@ -246,11 +619,20 @@ describe("renderer staging source provenance", () => {
       rendererStage.validateProvenance(
         {
           LCF_SOURCE_SHA: commit,
-          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+          LCF_SOURCE_TREE: tree,
+          LCF_SOURCE_SNAPSHOT_SHA256: sourceSnapshotSha256,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch),
+          LCF_RENDERER_PACKAGE_LOCK_SHA256: rendererPackageLockSha256
         },
         { gitCommand: fake.gitCommand }
       )
-    ).toEqual({ commit, sourceDateEpoch });
+    ).toEqual({
+      commit,
+      tree,
+      sourceSnapshotSha256,
+      sourceDateEpoch,
+      rendererPackageLockSha256
+    });
     expect(fake.calls).toEqual([
       ["rev-parse", "HEAD"],
       ["show", "-s", "--format=%ct", "HEAD"],
@@ -279,7 +661,10 @@ describe("renderer staging source provenance", () => {
       rendererStage.validateProvenance(
         {
           LCF_SOURCE_SHA: commit,
-          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+          LCF_SOURCE_TREE: tree,
+          LCF_SOURCE_SNAPSHOT_SHA256: sourceSnapshotSha256,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch),
+          LCF_RENDERER_PACKAGE_LOCK_SHA256: rendererPackageLockSha256
         },
         { gitCommand: fake.gitCommand }
       )
@@ -305,7 +690,10 @@ describe("renderer staging source provenance", () => {
       rendererStage.validateProvenance(
         {
           LCF_SOURCE_SHA: commit,
-          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+          LCF_SOURCE_TREE: tree,
+          LCF_SOURCE_SNAPSHOT_SHA256: sourceSnapshotSha256,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch),
+          LCF_RENDERER_PACKAGE_LOCK_SHA256: rendererPackageLockSha256
         },
         { gitCommand: fake.gitCommand }
       )
@@ -332,7 +720,10 @@ describe("renderer staging source provenance", () => {
       rendererStage.validateProvenance(
         {
           LCF_SOURCE_SHA: commit,
-          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+          LCF_SOURCE_TREE: tree,
+          LCF_SOURCE_SNAPSHOT_SHA256: sourceSnapshotSha256,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch),
+          LCF_RENDERER_PACKAGE_LOCK_SHA256: rendererPackageLockSha256
         },
         { gitCommand: fake.gitCommand }
       )
@@ -362,7 +753,10 @@ describe("renderer staging source provenance", () => {
       rendererStage.validateProvenance(
         {
           LCF_SOURCE_SHA: commit,
-          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch)
+          LCF_SOURCE_TREE: tree,
+          LCF_SOURCE_SNAPSHOT_SHA256: sourceSnapshotSha256,
+          LCF_SOURCE_DATE_EPOCH: String(sourceDateEpoch),
+          LCF_RENDERER_PACKAGE_LOCK_SHA256: rendererPackageLockSha256
         },
         { gitCommand: fake.gitCommand }
       )
@@ -380,18 +774,18 @@ describe("renderer staging source provenance", () => {
     ).toBe("a".repeat(40));
   });
 
-  it("preserves formal-workflow fallback to GITHUB_SHA", () => {
-    expect(
+  it("rejects synthetic-context fallback when exact source SHA is absent", () => {
+    expect(() =>
       rendererStage.selectSourceCommit({
         GITHUB_SHA: "b".repeat(40)
       })
-    ).toBe("b".repeat(40));
-    expect(
+    ).toThrow(/LCF_SOURCE_SHA/);
+    expect(() =>
       rendererStage.selectSourceCommit({
         LCF_SOURCE_SHA: "",
         GITHUB_SHA: "b".repeat(40)
       })
-    ).toBe("b".repeat(40));
+    ).toThrow(/LCF_SOURCE_SHA/);
   });
 
   it("rejects an invalid explicit source SHA instead of falling back", () => {

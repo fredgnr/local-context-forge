@@ -332,7 +332,7 @@ describe("desktop release portable policy", () => {
     ).toEqual([]);
   });
 
-  it("keeps the trusted verifier while reading the selected tag worktree lock", async () => {
+  it("keeps the trusted verifier while binding the reviewed renderer lock", async () => {
     const sourceRoot = await temporaryRoot("lcf-release-source-");
     const lockPath = path.join(sourceRoot, "web", "package-lock.json");
     await mkdir(path.dirname(lockPath), { recursive: true });
@@ -347,14 +347,19 @@ describe("desktop release portable policy", () => {
       [
         "-e",
         [
-          "const fs=require('node:fs');",
           "const policy=require(process.argv[1]);",
           "policy.configureRepositoryRoot(process.argv[2]);",
           "const options=policy.packagedRendererAuditOptions({",
-          "commit:'b'.repeat(40),sourceDateEpoch:1700000000});",
+          "commit:'b'.repeat(40),sourceDateEpoch:1700000000},{",
+          "LCF_SOURCE_TREE:'c'.repeat(40),",
+          "LCF_SOURCE_SNAPSHOT_SHA256:'d'.repeat(64),",
+          "LCF_RENDERER_PACKAGE_LOCK_SHA256:'e'.repeat(64)});",
           "process.stdout.write(JSON.stringify({",
-          "path:options.packageLockPath,",
-          "contents:fs.readFileSync(options.packageLockPath,'utf8')",
+          "commit:options.expectedCommit,",
+          "tree:options.expectedTree,",
+          "snapshot:options.expectedSourceSnapshotSha256,",
+          "packageLock:options.expectedPackageLockSha256,",
+          "epoch:options.expectedSourceDateEpoch",
           "}));"
         ].join(""),
         script,
@@ -363,8 +368,11 @@ describe("desktop release portable policy", () => {
       { encoding: "utf8" }
     );
     expect(JSON.parse(output)).toEqual({
-      path: lockPath,
-      contents: "tag-specific-lock\n"
+      commit: "b".repeat(40),
+      tree: "c".repeat(40),
+      snapshot: "d".repeat(64),
+      packageLock: "e".repeat(64),
+      epoch: 1_700_000_000
     });
   });
 

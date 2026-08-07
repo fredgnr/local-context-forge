@@ -5,10 +5,14 @@
 - 实施基线：`main@1786255b55dd1a78659ed92235893876175a0722` / tree
   `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64`
 - 当前分支：`agent/w02a-engineering-smoke-boundary`
-- 当前静态 assembly checkpoint：Draft PR #21 exact source
+- 历史静态 assembly checkpoint：Draft PR #21 exact source
   `08137c7bce5469350b861cef7960e4a0530151bf` / tree
   `d7814ac96136cea33fb7069d9538a4aad8dffa38`；Desktop source CI `31024794734`
   success；engineering-smoke assembly run `31024794972` / job `92370351806` success
+- 当前 independent review：PR #21 reviewed source
+  `8c5fd23206b671b768fd21d253bf292642f93a51` / tree
+  `785f4656de8a7233b6dd632fe4815976d33468fb`，结论 `NO-GO`；同一 branch/PR 的
+  remediation technical candidate `not-run`
 - 依赖：ADR-0016；W01 的 `VAL-PRE1-SEQUENCE-001`、`VAL-GOV-001`、
   `VAL-CI-COVERAGE-001=pass` 已闭环；W10/W11 随后仍依赖 W02 的
   `VAL-PACKAGED-SMOKE-001=pass`
@@ -44,11 +48,30 @@
 
 - [ ] I01（W02）实现独立 non-release packaging mode 和最小 packaged smoke；不创建新的稳定
   task/VAL ID。内部执行阶段为：
-  - [x] engineering-smoke boundary/assembly：本 Work，static assembly/bundle audit substage `pass`；
-    exact Draft head 上只构建和审计 macOS arm64 `.app`，不启动 assembled App；pre-pack frozen
-    sidecar staging smoke 已成功，但没有从 bundle 启动 sidecar，不把 assembly/staging 当成
-    packaged runtime smoke；见 [assembly evidence](../evidence/W02/2026-08-06-08137c7-assembly.md)；
-  - [ ] packaged App launch/runtime smoke：后续 Work，`not-run`；验证 renderer/preload、private
+  - [ ] engineering-smoke boundary/assembly：旧 static technical run 保留；PR #21 independent
+    acceptance `NO-GO`；remediation `not-run`。旧 exact Draft head 只构建和审计 macOS arm64
+    `.app`，未启动 assembled App；其 pre-pack frozen sidecar staging success 不能证明 held-dirfd/
+    inode scratch lifecycle、exact Git tree/source provenance 或 fail-closed cleanup。当前 Work 只在
+    同一 branch/PR 修复这些 blocker；见 [旧 assembly evidence](../evidence/W02/2026-08-06-08137c7-assembly.md)
+    与 [append-only remediation record](../evidence/W02/2026-08-07-pr21-remediation.md)；
+  - [ ] exact-source bootstrap 的有限 TCB 是 server-reviewed workflow 与 system Git/runtime；
+    sanitized system Git 把 exact SHA checkout 到 random、euid-owned、`0700` private root 成功后，
+    才开始排除主动 same-UID namespace/content writer，并从该 root 运行 repo-owned helper、tests、
+    builders 与 consumers。exact Git checker 的 full raw post-check 是 defense-in-depth，不是对自身
+    首次加载的追溯证明；npm seal 只声明 repo-derived inputs 与 installed-content digest，既有
+    electron-builder/base runtime trust boundary 不在该声明内；
+  - [ ] Python scratch/capability 保证限定在一次 process-level build CLI lifecycle；取消或固定
+    失败后进程退出且不复用作 same-process retry。已持有 scratch 上瞬时 fd syscall→object store
+    的窄窗口依赖退出时关闭 fd；namespace identity、transactional publish/rollback 与 exact
+    cleanup 的 fail-closed 保证保持不变；
+  - [ ] validated `RUNNER_TEMP` 下固定 `python-sidecar-toolchain-*` 与
+    `lcf-python-installer.*` transient roots；bootstrap descriptor-relative cleanup 后，workflow 的
+    首个 post-build cleanup-only `always()` gate 先断言两类前缀不存在且不依赖 framework/provenance，
+    后续 success-only provenance validation 单独运行；
+  - [ ] focused Python lifecycle tests 移到 static assembly/provenance 之后并作为 final repo-code
+    step；运行前设置 `PYTHONDONTWRITEBYTECODE=1` 并使用显式 `python -B`；其后不再有 production repo Python load
+    或 Node load，使 test 安装、pytest cache 或测试态 bytecode 不会成为后续 production input；
+  - [ ] packaged App launch/runtime smoke：本 remediation 不执行，`not-run`；验证 renderer/preload、private
     UDS health/domain request、quit/no orphan、无 public INET，以及 exercised path 不发现系统
     Python/Node/Git；
   - updater unavailable/no-network，禁止 production trust、tag、upload、Draft/Release；
@@ -74,9 +97,11 @@
 | 验证/阶段 | 结果 | 坐标 | 说明 |
 | --- | --- | --- | --- |
 | W01 entry prerequisites | `pass` | accepted final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`；resulting `main@1786255b55dd1a78659ed92235893876175a0722`；run `30986208251` | [W02 entry record](../evidence/W02/2026-08-05-entry.md)；历史 W01 JSON 保持原样 |
-| W02 boundary/assembly source | `pass`（Draft exact-head substage） | `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38`；source run `31024794734` | 独立 config、manifest、staging/audit、policy/workflow 与 source tests 成功；PR #21 仍是 Draft |
-| engineering-smoke `.app` static assembly / bundle audit | `pass` | [run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806) | inventory `879` / native `78` / SHA-256 `7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c`；remote artifacts empty；[evidence](../evidence/W02/2026-08-06-08137c7-assembly.md) |
-| pre-pack frozen sidecar staging smoke | `pass` | assembly job build step | 只证明 sidecar build/staging；assembled `.app` 未启动，sidecar 未从 bundle 启动 |
+| W02 historical boundary/assembly source | technical `pass`（historical Draft exact-head substage） | `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38`；source run `31024794734` | config、manifest、staging/audit、policy/workflow 与 source tests 当时成功；不能迁移到后来 reviewed head 或 remediation |
+| historical engineering-smoke `.app` static assembly / bundle audit | technical `pass` | [run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806) | inventory `879` / native `78` / SHA-256 `7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c`；remote artifacts empty；[immutable evidence](../evidence/W02/2026-08-06-08137c7-assembly.md) |
+| PR #21 reviewed candidate independent acceptance | `NO-GO` | `8c5fd23206b671b768fd21d253bf292642f93a51` / tree `785f4656de8a7233b6dd632fe4815976d33468fb` | H1 scratch lifecycle/Git provenance/cleanup blocker；[append-only record](../evidence/W02/2026-08-07-pr21-remediation.md) |
+| PR #21 remediation technical candidate | `not-run` | new exact head and fresh Actions required | same branch/PR only；old runs cannot be reused |
+| historical pre-pack frozen sidecar staging smoke | technical `pass` | old assembly job build step | 只证明旧 sidecar build/staging；assembled `.app` 未启动，sidecar 未从 bundle 启动；不能证明 remediation |
 | packaged App launch/runtime smoke | `not-run` | assembled macOS arm64 App required | renderer/preload、bundle-owned sidecar/UDS、quit/no-orphan、listener 与 packaged PATH trap 未运行 |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` | packaged App launch/runtime | 本 Work 明确不启动 packaged App |
 | W10/W11 six slice gates | `not-run` | exact before/after packages | W10/W11 locked；本 Work 不删除 legacy runtime |
@@ -87,13 +112,22 @@
 - engineering-smoke assembly：`.github/workflows/packaged-smoke.yml`、
   `desktop/electron-builder.smoke.yml`、`desktop/scripts/{packagingAuditCommon,prepareEngineeringSmoke,beforePackEngineeringSmoke,afterPackEngineeringSmoke,auditEngineeringSmokeBundle}.cjs`、
   `runtime/engineering-smoke-manifest.schema.json`、对应 Desktop tests；
+- shared exact provenance/build boundary：`.github/workflows/desktop-release.yml` 的 formal build job、
+  `tools/{check_exact_git_provenance.py,exact_node_install.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}`、
+  `desktop/scripts/buildEngineeringSmokeEntrypoints.cjs`、
+  `web/scripts/buildEngineeringRenderer.cjs`、
+  `desktop/scripts/{stageRenderer,auditRenderer,beforePack,prepareRelease,resealPackagedRuntimes}.cjs`、
+  `runtime/{engineering-smoke,renderer-build,python-sidecar-build-manifest}.schema.json`、对应真实
+  Python/Desktop/renderer tests；formal Draft/promotion 与 production distribution/publish 仍不在本
+  Work 的执行范围；
 - engineering-only runtime disposition：`desktop/src/{contracts,main/distribution,main/index,main/updateClient}.ts`
   与 `web/src/desktopBridge.ts`；formal/default distribution 保持原有 fail-closed 语义；
 - fail-closed policy：`tools/check_packaged_smoke_policy.py` 与对应 tests；
-- source staging 修复：`runtime/version.json`、`tools/{build_python_sidecar,check_version_sync}.py`、
+- source staging 修复：`runtime/version.json`、`tools/check_version_sync.py`、
   `desktop/scripts/stageRenderer.cjs` 与对应 tests；
 - governance/evidence：`docs/development/{todo,status,traceability,work-plan}.md`、本迭代、R13、
-  iteration/evidence indexes、`docs/development/evidence/W02/**`、
+  iteration/evidence indexes、`docs/development/evidence/W02/**`（包括 append-only PR #21 NO-GO
+  remediation record）、
   `tools/check_pre1_work_plan.py` 与对应 tests。
 - build entry/ignore：`Makefile`、`desktop/package.json`、`.gitignore`。
 

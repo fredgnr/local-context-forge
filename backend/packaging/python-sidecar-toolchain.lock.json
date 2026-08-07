@@ -61,7 +61,8 @@
     "pyinstallerHooksContrib": "2026.6"
   },
   "requiredCiInputs": [
-    "GITHUB_SHA",
+    "LCF_SOURCE_SHA",
+    "LCF_SOURCE_TREE",
     "LCF_SOURCE_DATE_EPOCH",
     "ImageVersion",
     "LCF_PYTHON_DISTRIBUTION_ARCHIVE",

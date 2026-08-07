@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import platform
@@ -33,6 +34,9 @@ REVIEWED_PYTHON_FRAMEWORK_LEAF = PurePosixPath(
     "_internal/Python.framework/Versions/3.13/Python"
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+TOOLS_ROOT = REPOSITORY_ROOT / "tools"
+if str(TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_ROOT))
 BACKEND_ROOT = REPOSITORY_ROOT / "backend"
 PACKAGING_ROOT = BACKEND_ROOT / "packaging"
 RUNTIME_ROOT = REPOSITORY_ROOT / "runtime"
@@ -72,6 +76,17 @@ REQUIRED_BUILD_TOOLS = {
     "pyinstaller-hooks-contrib",
     "uv",
 }
+BUILD_TOOL_EVIDENCE_KEYS = {
+    "altgraph": "altgraphVersion",
+    "macholib": "macholibVersion",
+    "packaging": "packagingVersion",
+    "pyinstaller": "pyinstallerVersion",
+    "pyinstaller-hooks-contrib": "pyinstallerHooksContribVersion",
+    "setuptools": "setuptoolsVersion",
+    "uv": "uvVersion",
+}
+TOOLCHAIN_EVIDENCE_SCHEMA = "python-sidecar-toolchain-evidence.json"
+TOOLCHAIN_EVIDENCE_ARTIFACT = "python-build-toolchain.json"
 EXPECTED_FROZEN_SMOKE = {
     "status": "pass",
     "pathTrap": True,
@@ -171,49 +186,57 @@ def normalized_inventory_sha256(
     ).hexdigest()
 
 
-def critical_input_paths() -> list[Path]:
+def critical_input_paths(
+    repository_root: Path = REPOSITORY_ROOT,
+) -> list[Path]:
     """Return the exact repository inputs that invalidate an audited staging."""
 
+    backend_root = repository_root / "backend"
+    packaging_root = backend_root / "packaging"
+    runtime_root = repository_root / "runtime"
     paths = [
-        REPOSITORY_ROOT / "Makefile",
-        BACKEND_ROOT / "pyproject.toml",
-        BACKEND_ROOT / "uv.lock",
-        PACKAGING_ROOT / "build-requirements.lock",
-        PACKAGING_ROOT / "frozen_entrypoint.py",
-        PACKAGING_ROOT / "lcf_sidecar.spec",
-        PACKAGING_ROOT / "license-policy.json",
-        PACKAGING_ROOT / "missing-imports-allowlist.json",
-        PACKAGING_ROOT / "python-sidecar-toolchain.lock.json",
-        *sorted((PACKAGING_ROOT / "notices").glob("*.txt")),
-        REPOSITORY_ROOT / "desktop" / "electron-builder.yml",
-        REPOSITORY_ROOT / "desktop" / "electron-builder.release.yml",
-        REPOSITORY_ROOT / "desktop" / "package-lock.json",
-        REPOSITORY_ROOT / "desktop" / "package.json",
-        REPOSITORY_ROOT / "desktop" / "scripts" / "afterPack.cjs",
-        REPOSITORY_ROOT / "desktop" / "scripts" / "beforePack.cjs",
-        REPOSITORY_ROOT
+        repository_root / "Makefile",
+        backend_root / "pyproject.toml",
+        backend_root / "uv.lock",
+        packaging_root / "build-requirements.lock",
+        packaging_root / "frozen_entrypoint.py",
+        packaging_root / "lcf_sidecar.spec",
+        packaging_root / "license-policy.json",
+        packaging_root / "missing-imports-allowlist.json",
+        packaging_root / "python-sidecar-toolchain.lock.json",
+        *sorted((packaging_root / "notices").glob("*.txt")),
+        repository_root / "desktop" / "electron-builder.yml",
+        repository_root / "desktop" / "electron-builder.release.yml",
+        repository_root / "desktop" / "package-lock.json",
+        repository_root / "desktop" / "package.json",
+        repository_root / "desktop" / "scripts" / "afterPack.cjs",
+        repository_root / "desktop" / "scripts" / "beforePack.cjs",
+        repository_root
         / "desktop"
         / "scripts"
         / "resealPackagedRuntimes.cjs",
-        REPOSITORY_ROOT / ".github" / "workflows" / "desktop-release.yml",
-        MANIFEST_SCHEMA,
-        VERSION_FILE,
-        REPOSITORY_ROOT / "tools" / "audit_python_sidecar.py",
-        REPOSITORY_ROOT / "tools" / "build_python_sidecar.py",
+        repository_root / ".github" / "workflows" / "desktop-release.yml",
+        runtime_root / "python-sidecar-build-manifest.schema.json",
+        runtime_root / "version.json",
+        repository_root / "tools" / "audit_python_sidecar.py",
+        repository_root / "tools" / "bootstrap_python_sidecar.py",
+        repository_root / "tools" / "build_python_sidecar.py",
     ]
     return sorted(set(paths), key=lambda path: path.as_posix())
 
 
-def critical_input_digests() -> dict[str, str]:
+def critical_input_digests(
+    repository_root: Path = REPOSITORY_ROOT,
+) -> dict[str, str]:
     result: dict[str, str] = {}
-    for path in critical_input_paths():
+    for path in critical_input_paths(repository_root):
         try:
             info = path.lstat()
         except OSError as exc:
             raise AuditError("A critical build input is missing") from exc
         if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
             raise AuditError("A critical build input is not a regular file")
-        result[path.relative_to(REPOSITORY_ROOT).as_posix()] = sha256_file(path)
+        result[path.relative_to(repository_root).as_posix()] = sha256_file(path)
     return dict(sorted(result.items()))
 
 
@@ -244,6 +267,116 @@ def _contained(root: Path, candidate: Path) -> bool:
     return True
 
 
+def _fd_capability_root(path: Path) -> tuple[Path, int] | None:
+    """Return and authenticate a leading ``/dev/fd/N`` directory root."""
+
+    parts = path.parts
+    if len(parts) < 4 or parts[:3] != ("/", "dev", "fd") or not parts[3].isdigit():
+        return None
+    descriptor = int(parts[3])
+    root = Path("/dev/fd") / parts[3]
+    probe: int | None = None
+    try:
+        held = os.fstat(descriptor)
+        observed = os.stat(root)
+        probe = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        opened = os.fstat(probe)
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or (held.st_dev, held.st_ino) != (observed.st_dev, observed.st_ino)
+            or (held.st_dev, held.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise AuditError("Sidecar fd capability is unavailable")
+        return root, descriptor
+    except AuditError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise AuditError("Sidecar fd capability is unavailable") from exc
+    finally:
+        if probe is not None:
+            try:
+                os.close(probe)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise AuditError("Sidecar fd capability is unavailable") from exc
+
+
+def _resolve_path(path: Path, *, strict: bool = False) -> Path:
+    """Resolve without converting an authenticated fd root back to a name.
+
+    Relative symlinks below the capability are expanded component-by-component
+    while retaining the ``/dev/fd/N`` prefix.  Absolute or escaping targets are
+    rejected instead of being followed outside the held bundle.
+    """
+
+    capability = _fd_capability_root(path)
+    if capability is None:
+        return path.resolve(strict=strict)
+    root, _descriptor = capability
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:  # pragma: no cover - prefix parser proves this
+        raise AuditError("Sidecar fd capability path is unsafe") from exc
+    pending = list(relative.parts)
+    resolved: list[str] = []
+    links = 0
+    while pending:
+        part = pending.pop(0)
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if not resolved:
+                raise AuditError("Sidecar path escapes its fd capability")
+            resolved.pop()
+            continue
+        candidate = root.joinpath(*resolved, part)
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            if strict:
+                raise
+            resolved.append(part)
+            while pending:
+                tail = pending.pop(0)
+                if tail in {"", "."}:
+                    continue
+                if tail == "..":
+                    if not resolved:
+                        raise AuditError("Sidecar path escapes its fd capability")
+                    resolved.pop()
+                else:
+                    resolved.append(tail)
+            break
+        if stat.S_ISLNK(info.st_mode):
+            links += 1
+            if links > 64:
+                raise AuditError("Sidecar contains a cyclic symlink")
+            target = os.readlink(candidate)
+            target_path = PurePosixPath(target)
+            if not target or target_path.is_absolute() or "\x00" in target:
+                raise AuditError("Sidecar contains an unsafe symlink")
+            pending = [*target_path.parts, *pending]
+            continue
+        resolved.append(part)
+    result = root.joinpath(*resolved)
+    if strict:
+        result.lstat()
+    return result
+
+
+def _bundle_root_info(root: Path) -> os.stat_result:
+    """Inspect an ordinary root without following links, or a verified fd root."""
+
+    try:
+        if _fd_capability_root(root) is not None:
+            return os.stat(root)
+        return root.lstat()
+    except AuditError:
+        raise
+    except OSError as exc:
+        raise AuditError("Sidecar root must be a real directory") from exc
+
+
 def _validate_symlink(root: Path, path: Path) -> str:
     try:
         target = os.readlink(path)
@@ -252,7 +385,7 @@ def _validate_symlink(root: Path, path: Path) -> str:
     if not target or "\x00" in target or os.path.isabs(target):
         raise AuditError("Sidecar contains an absolute or empty symlink")
     try:
-        resolved = (path.parent / target).resolve(strict=True)
+        resolved = _resolve_path(path.parent / target, strict=True)
     except (OSError, RuntimeError) as exc:
         raise AuditError("Sidecar contains a broken or cyclic symlink") from exc
     if not _contained(root, resolved):
@@ -263,13 +396,10 @@ def _validate_symlink(root: Path, path: Path) -> str:
 def build_file_inventory(root: Path) -> list[dict[str, Any]]:
     """Build an exact, sorted inventory excluding the self-referential manifest."""
 
-    try:
-        root_info = root.lstat()
-    except OSError as exc:
-        raise AuditError("Sidecar root must be a real directory") from exc
-    if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode):
+    root_info = _bundle_root_info(root)
+    if not stat.S_ISDIR(root_info.st_mode):
         raise AuditError("Sidecar root must be a real directory")
-    root = root.resolve()
+    root = _resolve_path(root, strict=True)
     inventory: list[dict[str, Any]] = []
 
     def walk(directory: Path) -> None:
@@ -487,6 +617,22 @@ def _run_native_tool(
         arguments,
         isolated_framework_leaf=isolated_framework_leaf,
     )
+    inherited: dict[int, tuple[int, int]] = {}
+    for argument in arguments:
+        try:
+            candidate = Path(argument)
+        except TypeError:
+            continue
+        capability = _fd_capability_root(candidate)
+        if capability is None:
+            continue
+        root, descriptor = capability
+        info = os.fstat(descriptor)
+        root_info = os.stat(root)
+        identity = (info.st_dev, info.st_ino)
+        if identity != (root_info.st_dev, root_info.st_ino):
+            raise AuditError("Native inspection fd capability is unavailable")
+        inherited[descriptor] = identity
     try:
         completed = subprocess.run(
             list(arguments),
@@ -500,6 +646,7 @@ def _run_native_tool(
                 "LANG": "C",
                 "LC_ALL": "C",
             },
+            pass_fds=tuple(sorted(inherited)),
         )
     except subprocess.CalledProcessError as exc:
         category = _native_failure_category(label, exc.stderr)
@@ -523,6 +670,24 @@ def _run_native_tool(
             "Native inspection tool failed "
             f"(tool={label}; target={target}; category=launch)"
         ) from exc
+    finally:
+        active_error = sys.exception()
+        for descriptor, identity in inherited.items():
+            try:
+                held = os.fstat(descriptor)
+                observed = os.stat(Path("/dev/fd") / str(descriptor))
+                if (
+                    (held.st_dev, held.st_ino) != identity
+                    or (observed.st_dev, observed.st_ino) != identity
+                ):
+                    raise AuditError(
+                        "Native inspection fd capability changed"
+                    )
+            except (OSError, RuntimeError, ValueError) as exc:
+                if active_error is None:
+                    raise AuditError(
+                        "Native inspection fd capability changed"
+                    ) from exc
     return completed.stdout
 
 
@@ -746,7 +911,7 @@ def _validate_reviewed_python_framework(
     ):
         try:
             info = directory.lstat()
-            canonical = directory.resolve(strict=True)
+            canonical = _resolve_path(directory, strict=True)
         except (OSError, RuntimeError) as exc:
             raise AuditError("Reviewed Python framework layout is incomplete") from exc
         if (
@@ -809,7 +974,7 @@ def _validate_reviewed_python_framework(
         ):
             raise AuditError("Reviewed Python framework symlink differs")
         try:
-            canonical_target = link.resolve(strict=True)
+            canonical_target = _resolve_path(link, strict=True)
         except (OSError, RuntimeError) as exc:
             raise AuditError("Reviewed Python framework symlink is unsafe") from exc
         expected_canonical = {
@@ -836,7 +1001,7 @@ def _validate_reviewed_python_framework(
 
     try:
         leaf_info = path.lstat()
-        canonical_leaf = path.resolve(strict=True)
+        canonical_leaf = _resolve_path(path, strict=True)
     except (OSError, RuntimeError) as exc:
         raise AuditError("Reviewed Python framework leaf is missing") from exc
     if (
@@ -923,7 +1088,7 @@ def _bound_directory_snapshot(
     """Bind a real canonical directory path to its held descriptor."""
 
     try:
-        canonical = path.resolve(strict=True)
+        canonical = _resolve_path(path, strict=True)
         path_before = path.lstat()
         fd_before = os.fstat(descriptor)
         identity = (
@@ -990,7 +1155,7 @@ def _bound_open_regular_file_snapshot(
     """Hash a held regular-file fd and prove its no-follow path identity."""
 
     try:
-        canonical = path.resolve(strict=True)
+        canonical = _resolve_path(path, strict=True)
         path_before = path.lstat()
         fd_before = os.fstat(descriptor)
         relative_before = (
@@ -1582,7 +1747,7 @@ def scan_macho_inventory(root: Path) -> list[dict[str, Any]]:
 
     if platform.system() != "Darwin":
         raise AuditError("Real Mach-O inspection requires Darwin")
-    root = root.resolve()
+    root = _resolve_path(root, strict=True)
     records: list[dict[str, Any]] = []
     for path in sorted(
         (candidate for candidate in root.rglob("*") if candidate.is_file()),
@@ -1645,7 +1810,7 @@ def _expanded_rpath(root: Path, owner: Path, rpath: str) -> Path:
         candidate = root / rpath[len("@executable_path/") :]
     else:
         raise AuditError("Mach-O contains an absolute or unsupported RPATH")
-    resolved = candidate.resolve(strict=False)
+    resolved = _resolve_path(candidate, strict=False)
     if not _contained(root, resolved):
         raise AuditError("Mach-O RPATH escapes the sidecar")
     return resolved
@@ -1681,7 +1846,7 @@ def _resolve_dependency(
 
     for candidate in candidates:
         try:
-            resolved = candidate.resolve(strict=True)
+            resolved = _resolve_path(candidate, strict=True)
         except (OSError, RuntimeError):
             continue
         if _contained(root, resolved):
@@ -1694,7 +1859,7 @@ def validate_native_inventory(
 ) -> None:
     """Validate arm64 architecture, RPATHs, install names and dylib closure."""
 
-    root = root.resolve()
+    root = _resolve_path(root, strict=True)
     if not records:
         raise AuditError("Sidecar contains no audited Mach-O files")
     native_paths: set[str] = set()
@@ -1713,7 +1878,7 @@ def validate_native_inventory(
         if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
             raise AuditError("Native inventory references a non-regular file")
         try:
-            canonical_paths[value] = path.resolve(strict=True).relative_to(root).as_posix()
+            canonical_paths[value] = _resolve_path(path, strict=True).relative_to(root).as_posix()
         except (OSError, RuntimeError, ValueError) as exc:
             raise AuditError("Native inventory path escapes the sidecar") from exc
         if record.get("architectures") != ["arm64"]:
@@ -1869,15 +2034,399 @@ def _validate_python_provenance(
         raise AuditError("Manifest installed Python fingerprint is invalid")
 
 
-def _validate_input_digests(value: Any) -> None:
+def _reviewed_build_boundary() -> Any:
+    try:
+        build = importlib.import_module("build_python_sidecar")
+        expected_module = TOOLS_ROOT / "build_python_sidecar.py"
+        if Path(build.__file__).resolve(strict=True) != expected_module:
+            raise AuditError("Manifest Git provenance cannot be verified")
+        return build
+    except AuditError:
+        raise
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise AuditError("Manifest Git provenance cannot be verified") from exc
+
+
+def _git_provenance_output(
+    repository_root: Path,
+    *arguments: str,
+    binary: bool = False,
+) -> str | bytes:
+    """Run one Git query only through the reviewed build-side boundary."""
+
+    try:
+        build = _reviewed_build_boundary()
+        build._validate_local_git_configuration(repository_root=repository_root)
+        build._validate_git_info_overrides(repository_root=repository_root)
+        if binary:
+            return build._git_bytes(*arguments, repository_root=repository_root)
+        return build._git_output(*arguments, repository_root=repository_root)
+    except AuditError:
+        raise
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        raise AuditError("Manifest Git provenance cannot be verified") from exc
+
+
+def _git_tree_inventory_sha256(
+    repository_root: Path,
+    repository_commit: str,
+) -> str:
+    try:
+        build = _reviewed_build_boundary()
+        _git_provenance_output(repository_root, "rev-parse", repository_commit)
+        inventory = build._repository_tree_inventory(
+            repository_commit,
+            repository_root=repository_root,
+        )
+        return build._source_snapshot_sha256(inventory)
+    except AuditError:
+        raise
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        raise AuditError("Manifest Git provenance cannot be verified") from exc
+
+
+def _validate_repository_provenance(
+    build: Mapping[str, Any],
+    repository_root: Path,
+) -> None:
+    commit = build.get("repositoryCommit")
+    tree = build.get("repositoryTree")
+    snapshot_digest = build.get("sourceSnapshotSha256")
+    if (
+        not isinstance(commit, str)
+        or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+        or not isinstance(tree, str)
+        or re.fullmatch(r"[0-9a-f]{40}", tree) is None
+        or not isinstance(snapshot_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", snapshot_digest) is None
+    ):
+        raise AuditError("Manifest repository provenance is invalid")
+    try:
+        verified = _reviewed_build_boundary()._validate_repository_state(
+            {"LCF_SOURCE_SHA": commit, "LCF_SOURCE_TREE": tree},
+            repository_root=repository_root,
+        )
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        raise AuditError("Manifest repository provenance differs from the checkout") from exc
+    if verified.get("sourceSnapshotSha256") != snapshot_digest:
+        raise AuditError("Manifest repository provenance differs from the checkout")
+
+
+def _validate_input_digests(
+    value: Any,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> None:
     if not isinstance(value, Mapping):
         raise AuditError("Manifest build input digests are missing")
-    expected = critical_input_digests()
+    expected = critical_input_digests(repository_root)
     if dict(value) != expected:
         raise AuditError("Manifest critical input digests are stale or incomplete")
 
 
-def _validate_manifest_shape(manifest: Mapping[str, Any]) -> None:
+def _expected_build_tool_evidence(
+    repository_root: Path,
+) -> dict[str, str]:
+    try:
+        import build_python_sidecar as build_sidecar
+    except ImportError as exc:
+        raise AuditError("Build lock parser cannot be imported") from exc
+    try:
+        parser_path = Path(build_sidecar.__file__).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError) as exc:
+        raise AuditError("Build lock parser path is unavailable") from exc
+    if parser_path != REPOSITORY_ROOT / "tools" / "build_python_sidecar.py":
+        raise AuditError("Build lock parser path is unexpected")
+    try:
+        versions = build_sidecar.parse_build_requirements(
+            repository_root
+            / "backend"
+            / "packaging"
+            / "build-requirements.lock"
+        )
+    except build_sidecar.BuildError as exc:
+        raise AuditError("Build requirements lock is invalid") from exc
+    if set(versions) != set(BUILD_TOOL_EVIDENCE_KEYS):
+        raise AuditError("Build requirements lock has an unexpected closure")
+    return {
+        BUILD_TOOL_EVIDENCE_KEYS[name]: version
+        for name, version in sorted(versions.items())
+    }
+
+
+def _validate_manifest_toolchain_evidence(
+    build: Mapping[str, Any],
+    repository_root: Path,
+) -> Mapping[str, Any]:
+    evidence = cast_mapping(
+        build.get("pythonToolchain"),
+        "manifest Python toolchain evidence",
+    )
+    required = {
+        "buildRequirementsLockSha256",
+        "runtimeLockSha256",
+        "runtimeRequirementsSha256",
+        "installedTreeContentSha256",
+        "buildTools",
+    }
+    if set(evidence) != required:
+        raise AuditError("Manifest Python toolchain evidence shape is not closed")
+    if any(
+        re.fullmatch(r"[0-9a-f]{64}", str(evidence.get(name, ""))) is None
+        for name in required - {"buildTools"}
+    ):
+        raise AuditError("Manifest Python toolchain digest is malformed")
+    if (
+        evidence.get("buildRequirementsLockSha256")
+        != sha256_file(
+            repository_root
+            / "backend"
+            / "packaging"
+            / "build-requirements.lock"
+        )
+        or evidence.get("runtimeLockSha256")
+        != sha256_file(repository_root / "backend" / "uv.lock")
+        or evidence.get("buildTools")
+        != _expected_build_tool_evidence(repository_root)
+    ):
+        raise AuditError("Manifest Python toolchain evidence differs from source locks")
+    return evidence
+
+
+def _safe_toolchain_symlink_target(
+    relative: str,
+    target: str,
+    reviewed_framework_root: PurePosixPath,
+) -> bool:
+    if not target or "\x00" in target or "\\" in target:
+        return False
+    target_path = PurePosixPath(target)
+    if target_path.is_absolute():
+        raw_parts = target.split("/")
+        if raw_parts[0] != "" or any(
+            part in {"", ".", ".."} for part in raw_parts[1:]
+        ):
+            return False
+        try:
+            target_path.relative_to(reviewed_framework_root)
+        except ValueError:
+            return False
+        return target_path != reviewed_framework_root
+    parts = list(PurePosixPath(relative).parent.parts)
+    for part in target_path.parts:
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if not parts:
+                return False
+            parts.pop()
+        else:
+            parts.append(part)
+    return bool(parts)
+
+
+def _validate_installed_tree_inventory(
+    value: Any,
+    *,
+    reviewed_framework_root: PurePosixPath,
+) -> str:
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= 100_000
+    ):
+        raise AuditError("Installed Python toolchain inventory is invalid")
+    paths: list[str] = []
+    entry_types: dict[str, str] = {}
+    total_size = 0
+    for entry in value:
+        if not isinstance(entry, Mapping):
+            raise AuditError("Installed Python toolchain entry is malformed")
+        path = entry.get("path")
+        entry_type = entry.get("type")
+        mode = entry.get("mode")
+        size = entry.get("size")
+        common = {"path", "type", "mode", "size"}
+        expected_keys = {
+            "directory": common,
+            "file": common | {"sha256"},
+            "symlink": common | {"target"},
+        }.get(entry_type)
+        parsed_mode = int(mode, 8) if isinstance(mode, str) and re.fullmatch(
+            r"0[0-7]{3}", mode
+        ) else None
+        if (
+            expected_keys is None
+            or set(entry) != expected_keys
+            or not isinstance(path, str)
+            or not path
+            or (
+                path != "."
+                and _safe_manifest_path(
+                    path,
+                    "toolchain entry",
+                ).as_posix()
+                != path
+            )
+            or parsed_mode is None
+            or (
+                entry_type in {"file", "directory"}
+                and bool(parsed_mode & 0o7222)
+            )
+            or (entry_type == "symlink" and parsed_mode != 0o777)
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or size > 256 * 1024 * 1024
+        ):
+            raise AuditError("Installed Python toolchain entry is malformed")
+        if entry_type == "directory" and size != 0:
+            raise AuditError("Installed Python toolchain directory size is invalid")
+        if entry_type == "directory" and parsed_mode not in {0o500, 0o555}:
+            raise AuditError("Installed Python toolchain directory mode is invalid")
+        if entry_type == "file" and parsed_mode not in {
+            0o400,
+            0o444,
+            0o500,
+            0o555,
+        }:
+            raise AuditError("Installed Python toolchain file mode is invalid")
+        if entry_type == "file" and re.fullmatch(
+            r"[0-9a-f]{64}", str(entry.get("sha256", ""))
+        ) is None:
+            raise AuditError("Installed Python toolchain file digest is malformed")
+        if entry_type == "symlink":
+            target = entry.get("target")
+            if (
+                not isinstance(target, str)
+                or not target
+                or "\x00" in target
+                or "\\" in target
+                or len(target.encode("utf-8")) != size
+                or not _safe_toolchain_symlink_target(
+                    path,
+                    target,
+                    reviewed_framework_root,
+                )
+            ):
+                raise AuditError("Installed Python toolchain symlink is malformed")
+        if path == ".":
+            if entry_type != "directory":
+                raise AuditError("Installed Python toolchain root is malformed")
+        else:
+            pure_path = PurePosixPath(path)
+            parent = pure_path.parent.as_posix()
+            if parent == ".":
+                parent = "."
+            if entry_types.get(parent) != "directory":
+                raise AuditError(
+                    "Installed Python toolchain inventory hierarchy is malformed"
+                )
+        paths.append(path)
+        entry_types[path] = entry_type
+        total_size += size
+        if total_size > 1024 * 1024 * 1024:
+            raise AuditError("Installed Python toolchain inventory exceeds its bound")
+    if paths != sorted(paths) or len(paths) != len(set(paths)) or paths[0] != ".":
+        raise AuditError("Installed Python toolchain inventory paths are noncanonical")
+    return hashlib.sha256(
+        canonical_json_bytes({"schemaVersion": 1, "entries": value})
+    ).hexdigest()
+
+
+def _validate_toolchain_evidence_artifact(
+    root: Path,
+    manifest: Mapping[str, Any],
+    *,
+    repository_root: Path,
+) -> None:
+    artifacts = cast_mapping(manifest.get("artifacts"), "manifest artifacts")
+    if set(artifacts) != {
+        "spdxSbom",
+        "thirdPartyNotices",
+        "licensesDirectory",
+        "pythonBuildToolchain",
+    }:
+        raise AuditError("Manifest artifact set is not closed")
+    artifact = _require_relative_artifact(
+        root,
+        artifacts.get("pythonBuildToolchain"),
+        "Python build toolchain evidence",
+    )
+    if artifact.relative_to(root).as_posix() != TOOLCHAIN_EVIDENCE_ARTIFACT:
+        raise AuditError("Python build toolchain evidence path is unexpected")
+    try:
+        payload = artifact.read_bytes()
+        evidence = json.loads(payload.decode("utf-8", errors="strict"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AuditError("Python build toolchain evidence is unreadable") from exc
+    required = {
+        "$schema",
+        "schemaVersion",
+        "buildRequirementsLockSha256",
+        "runtimeLockSha256",
+        "runtimeRequirementsSha256",
+        "installedTreeContentSha256",
+        "buildTools",
+        "files",
+    }
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence) != required
+        or evidence.get("$schema") != TOOLCHAIN_EVIDENCE_SCHEMA
+        or evidence.get("schemaVersion") != 1
+        or payload != canonical_json_bytes(evidence) + b"\n"
+    ):
+        raise AuditError("Python build toolchain evidence shape is invalid")
+    manifest_evidence = _validate_manifest_toolchain_evidence(
+        cast_mapping(manifest.get("build"), "manifest build provenance"),
+        repository_root,
+    )
+    artifact_summary = {
+        name: evidence[name]
+        for name in (
+            "buildRequirementsLockSha256",
+            "runtimeLockSha256",
+            "runtimeRequirementsSha256",
+            "installedTreeContentSha256",
+            "buildTools",
+        )
+    }
+    if artifact_summary != dict(manifest_evidence):
+        raise AuditError("Python toolchain artifact differs from the manifest")
+    toolchain_lock = _load_json(
+        repository_root
+        / "backend"
+        / "packaging"
+        / "python-sidecar-toolchain.lock.json",
+        "Python toolchain lock",
+    )
+    python_lock = cast_mapping(
+        toolchain_lock.get("python"),
+        "Python toolchain entry",
+    )
+    reviewed_framework_root = PurePosixPath(
+        str(python_lock.get("installRoot", ""))
+    )
+    if (
+        not reviewed_framework_root.is_absolute()
+        or ".." in reviewed_framework_root.parts
+    ):
+        raise AuditError("Reviewed Python framework root is malformed")
+    if (
+        _validate_installed_tree_inventory(
+            evidence.get("files"),
+            reviewed_framework_root=reviewed_framework_root,
+        )
+        != evidence.get("installedTreeContentSha256")
+    ):
+        raise AuditError("Installed Python toolchain content digest is invalid")
+
+
+def _validate_manifest_shape(
+    manifest: Mapping[str, Any],
+    *,
+    repository_root: Path = REPOSITORY_ROOT,
+    verify_git_provenance: bool = True,
+) -> None:
     if manifest.get("$schema") != "python-sidecar-build-manifest.schema.json":
         raise AuditError("Unexpected Python sidecar manifest schema identifier")
     if manifest.get("schemaVersion") != MANIFEST_SCHEMA_VERSION:
@@ -1887,7 +2436,10 @@ def _validate_manifest_shape(manifest: Mapping[str, Any]) -> None:
     if manifest.get("entrypoint") != EXPECTED_EXECUTABLE:
         raise AuditError("Manifest entrypoint is not the reviewed executable")
 
-    versions = _load_json(VERSION_FILE, "Canonical runtime versions")
+    versions = _load_json(
+        repository_root / "runtime" / "version.json",
+        "Canonical runtime versions",
+    )
     expected_product = {
         "appVersion": versions.get("productVersion"),
         "pythonDistributionVersion": versions.get("pythonDistributionVersion"),
@@ -1897,7 +2449,13 @@ def _validate_manifest_shape(manifest: Mapping[str, Any]) -> None:
     if manifest.get("product") != expected_product:
         raise AuditError("Manifest product/protocol/schema versions are not canonical")
 
-    toolchain = _load_json(TOOLCHAIN_LOCK, "Python toolchain lock")
+    toolchain = _load_json(
+        repository_root
+        / "backend"
+        / "packaging"
+        / "python-sidecar-toolchain.lock.json",
+        "Python toolchain lock",
+    )
     target = cast_mapping(toolchain.get("target"), "toolchain target")
     if manifest.get("target") != {
         "os": target.get("os"),
@@ -1909,6 +2467,16 @@ def _validate_manifest_shape(manifest: Mapping[str, Any]) -> None:
     commit = build.get("repositoryCommit")
     if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
         raise AuditError("Manifest repository commit is invalid")
+    if verify_git_provenance:
+        _validate_repository_provenance(build, repository_root)
+    elif (
+        not isinstance(build.get("repositoryTree"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", build["repositoryTree"]) is None
+        or not isinstance(build.get("sourceSnapshotSha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", build["sourceSnapshotSha256"])
+        is None
+    ):
+        raise AuditError("Manifest repository provenance is invalid")
     epoch = build.get("sourceDateEpoch")
     if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 100_000_000:
         raise AuditError("Manifest source date epoch is invalid")
@@ -1940,7 +2508,8 @@ def _validate_manifest_shape(manifest: Mapping[str, Any]) -> None:
         cast_mapping(build.get("python"), "manifest Python provenance"),
         toolchain,
     )
-    _validate_input_digests(build.get("inputDigests"))
+    _validate_manifest_toolchain_evidence(build, repository_root)
+    _validate_input_digests(build.get("inputDigests"), repository_root)
 
 
 def _validate_components(root: Path, manifest: Mapping[str, Any]) -> None:
@@ -2046,16 +2615,15 @@ def audit_bundle(
     root: Path,
     *,
     native_scanner: NativeScanner | None = None,
+    repository_root: Path = REPOSITORY_ROOT,
+    verify_git_provenance: bool = True,
 ) -> dict[str, int]:
     """Validate a staged bundle and return only non-sensitive summary counts."""
 
-    try:
-        root_info = root.lstat()
-    except OSError as exc:
-        raise AuditError("Sidecar root must be a real directory") from exc
-    if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode):
+    root_info = _bundle_root_info(root)
+    if not stat.S_ISDIR(root_info.st_mode):
         raise AuditError("Sidecar root must be a real directory")
-    root = root.resolve()
+    root = _resolve_path(root, strict=True)
 
     executable = root / EXPECTED_EXECUTABLE
     try:
@@ -2079,7 +2647,11 @@ def audit_bundle(
     ):
         raise AuditError("Python sidecar build manifest is not a regular file")
     manifest = load_manifest(manifest_path)
-    _validate_manifest_shape(manifest)
+    _validate_manifest_shape(
+        manifest,
+        repository_root=repository_root,
+        verify_git_provenance=verify_git_provenance,
+    )
 
     recorded_files = manifest.get("files")
     if not isinstance(recorded_files, list):
@@ -2116,6 +2688,11 @@ def audit_bundle(
         raise AuditError("Manifest normalized inventory digest does not match")
 
     _validate_components(root, manifest)
+    _validate_toolchain_evidence_artifact(
+        root,
+        manifest,
+        repository_root=repository_root,
+    )
     _validate_sbom(root, manifest)
     return {
         "files": len(actual_files),
@@ -2124,19 +2701,25 @@ def audit_bundle(
     }
 
 
-def reseal_manifest(root: Path) -> dict[str, int]:
+def reseal_manifest(
+    root: Path,
+    *,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> dict[str, int]:
     """Refresh inventory evidence after reviewed outer certificate signing."""
 
-    try:
-        root_info = root.lstat()
-    except OSError as exc:
-        raise AuditError("Sidecar root must be a real directory") from exc
-    if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode):
+    root_info = _bundle_root_info(root)
+    if not stat.S_ISDIR(root_info.st_mode):
         raise AuditError("Sidecar root must be a real directory")
-    root = root.resolve()
+    root = _resolve_path(root, strict=True)
     manifest_path = root / MANIFEST_NAME
     manifest = load_manifest(manifest_path)
-    _validate_manifest_shape(manifest)
+    _validate_manifest_shape(manifest, repository_root=repository_root)
+    _validate_toolchain_evidence_artifact(
+        root,
+        manifest,
+        repository_root=repository_root,
+    )
     files = build_file_inventory(root)
     native = scan_macho_inventory(root)
     validate_native_inventory(root, native)

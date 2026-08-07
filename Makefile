@@ -5,7 +5,7 @@ SHELL := /bin/sh
 	ci-source ci-python-install ci-python ci-qmd-worker ci-ipc-source ci-web pre1-work-plan-check \
 	packaged-smoke-policy-check engineering-smoke-assemble \
 	desktop-install desktop-test desktop-typecheck desktop-build desktop-ci \
-	python-sidecar-source-verify python-sidecar-install-python python-sidecar-toolchain \
+	python-sidecar-source-verify python-sidecar-install-python \
 	python-sidecar-build python-sidecar-audit python-sidecar-packaging-test \
 	qmd-runtime-source-verify qmd-runtime-build qmd-runtime-audit \
 	renderer-stage renderer-audit
@@ -17,9 +17,6 @@ PYTHON_SIDECAR_ARCHIVE ?=
 PYTHON_SIDECAR_HASH_MANIFEST ?=
 PYTHON_SIDECAR_INSTALL_ROOT ?= /Library/Frameworks/Python.framework/Versions/3.13
 PYTHON_SIDECAR_FRAMEWORK_PYTHON ?= $(PYTHON_SIDECAR_INSTALL_ROOT)/bin/python3.13
-PYTHON_SIDECAR_BUILD_VENV ?= $(CURDIR)/.python-sidecar-build-venv
-PYTHON_SIDECAR_BUILD_ROOT ?= $(CURDIR)/.python-sidecar-build
-PYTHON_SIDECAR_INSTALLER ?= $(PYTHON_SIDECAR_BUILD_ROOT)/python-3.13.14-macos11.pkg
 NODE ?= node
 QMD_NODE_ARCHIVE ?=
 QMD_NODE_HASH_MANIFEST ?=
@@ -51,7 +48,6 @@ help:
 	  'make desktop-ci  Install and run desktop tests, typecheck and build' \
 	  'make python-sidecar-source-verify  Verify pinned Python archive/pkg bytes' \
 	  'make python-sidecar-install-python  Verify and install the locked Python.org pkg' \
-	  'make python-sidecar-toolchain  Create the hash-locked macOS build venv' \
 	  'make python-sidecar-build  Build, smoke, audit and atomically stage sidecar' \
 	  'make python-sidecar-audit  Re-audit the current Python sidecar staging' \
 	  'make python-sidecar-packaging-test  Run portable packaging policy tests' \
@@ -175,6 +171,7 @@ pre1-work-plan-check:
 packaged-smoke-policy-check:
 	$(PYTHON) -B tools/check_packaged_smoke_policy.py
 	$(PYTHON) -B -m unittest tools.tests.test_check_packaged_smoke_policy
+	$(PYTHON) -B -m unittest tools.tests.test_check_exact_git_provenance
 
 engineering-smoke-assemble:
 	@test "$$(uname -s)" = Darwin || { printf '%s\n' 'Engineering-smoke assembly requires macOS'; exit 2; }
@@ -212,47 +209,37 @@ desktop-ci: desktop-install
 	+$(MAKE) desktop-build
 
 python-sidecar-source-verify:
+	@test -n "$(LCF_REVIEWED_SOURCE_ROOT)" || { printf '%s\n' 'LCF_REVIEWED_SOURCE_ROOT is required'; exit 2; }
 	@test -n "$(PYTHON_SIDECAR_ARCHIVE)" || { printf '%s\n' 'PYTHON_SIDECAR_ARCHIVE is required'; exit 2; }
 	@test -n "$(PYTHON_SIDECAR_HASH_MANIFEST)" || { printf '%s\n' 'PYTHON_SIDECAR_HASH_MANIFEST is required'; exit 2; }
-	$(PYTHON) tools/build_python_sidecar.py --verify-source-only \
+	$(PYTHON) -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/build_python_sidecar.py" --verify-source-only \
 		--archive "$(PYTHON_SIDECAR_ARCHIVE)" \
 		--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)"
 
 python-sidecar-install-python: python-sidecar-source-verify
-	$(PYTHON) tools/build_python_sidecar.py --extract-installer-package \
+	$(PYTHON) -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py" \
+		--install-reviewed-python \
 		--archive "$(PYTHON_SIDECAR_ARCHIVE)" \
-		--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)" \
-		--installer-output "$(PYTHON_SIDECAR_INSTALLER)"
-	/usr/sbin/pkgutil --check-signature "$(PYTHON_SIDECAR_INSTALLER)"
-	/usr/sbin/spctl --assess --type install --verbose=4 "$(PYTHON_SIDECAR_INSTALLER)"
-	/usr/bin/sudo /usr/sbin/installer -pkg "$(PYTHON_SIDECAR_INSTALLER)" -target /
-	@test -x "$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" || { printf '%s\n' 'Pinned framework Python install failed'; exit 2; }
+		--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)"
 
-python-sidecar-toolchain: python-sidecar-install-python
-	@test "$$(uname -s)" = Darwin || { printf '%s\n' 'Python sidecar toolchain requires macOS'; exit 2; }
-	@test "$$(uname -m)" = arm64 || { printf '%s\n' 'Python sidecar toolchain requires native arm64'; exit 2; }
-	@test -x "$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" || { printf '%s\n' 'Pinned framework Python is missing'; exit 2; }
-	"$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" -m venv --clear "$(PYTHON_SIDECAR_BUILD_VENV)"
-	"$(PYTHON_SIDECAR_BUILD_VENV)/bin/python" -I -m pip install \
-		--disable-pip-version-check --no-deps --only-binary=:all: \
-		--require-hashes -r backend/packaging/build-requirements.lock
-	mkdir -p "$(PYTHON_SIDECAR_BUILD_ROOT)"
-	cd backend && "$(PYTHON_SIDECAR_BUILD_VENV)/bin/uv" export \
-		--frozen --no-dev --no-emit-project --format requirements-txt \
-		--output-file "$(PYTHON_SIDECAR_BUILD_ROOT)/runtime-requirements.lock"
-	"$(PYTHON_SIDECAR_BUILD_VENV)/bin/uv" pip install \
-		--python "$(PYTHON_SIDECAR_BUILD_VENV)/bin/python" \
-		--no-deps --only-binary=:all: --require-hashes \
-		-r "$(PYTHON_SIDECAR_BUILD_ROOT)/runtime-requirements.lock"
-
-python-sidecar-build: python-sidecar-toolchain
+python-sidecar-build: python-sidecar-install-python
+	@test -n "$(LCF_REVIEWED_SOURCE_ROOT)" || { printf '%s\n' 'LCF_REVIEWED_SOURCE_ROOT is required'; exit 2; }
+	@test -n "$(LCF_REVIEWED_BUILD_PYTHON)" || { printf '%s\n' 'LCF_REVIEWED_BUILD_PYTHON is required'; exit 2; }
+	@test "$(LCF_REVIEWED_BUILD_PYTHON)" = "$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" || { printf '%s\n' 'Reviewed build Python differs from the locked framework'; exit 2; }
 	LCF_PYTHON_DISTRIBUTION_ARCHIVE="$(PYTHON_SIDECAR_ARCHIVE)" \
 	LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST="$(PYTHON_SIDECAR_HASH_MANIFEST)" \
 	LCF_PYTHON_INSTALL_ROOT="$(PYTHON_SIDECAR_INSTALL_ROOT)" \
-	"$(PYTHON_SIDECAR_BUILD_VENV)/bin/python" -I tools/build_python_sidecar.py
+	LCF_REVIEWED_BUILD_PYTHON="$(LCF_REVIEWED_BUILD_PYTHON)" \
+	LCF_REVIEWED_SOURCE_ROOT="$(LCF_REVIEWED_SOURCE_ROOT)" \
+	LCF_SOURCE_SHA="$(LCF_SOURCE_SHA)" \
+	LCF_SOURCE_TREE="$(LCF_SOURCE_TREE)" \
+	"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"
 
 python-sidecar-audit:
-	$(PYTHON) tools/audit_python_sidecar.py --bundle desktop/generated/sidecar
+	@test -n "$(LCF_REVIEWED_SOURCE_ROOT)" || { printf '%s\n' 'LCF_REVIEWED_SOURCE_ROOT is required'; exit 2; }
+	@test -n "$(LCF_REVIEWED_BUILD_PYTHON)" || { printf '%s\n' 'LCF_REVIEWED_BUILD_PYTHON is required'; exit 2; }
+	"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/audit_python_sidecar.py" \
+		--bundle "$(LCF_REVIEWED_SOURCE_ROOT)/desktop/generated/sidecar"
 
 python-sidecar-packaging-test:
 	cd backend && .venv/bin/pytest ../tests/backend/test_python_sidecar_packaging.py

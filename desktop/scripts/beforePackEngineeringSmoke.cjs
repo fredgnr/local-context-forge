@@ -98,17 +98,28 @@ function comparePreparedManifest(
     desktopApp.preloadBytes !== preloadInfo.size ||
     desktopApp.packageSha256 !== sha256File(stagedPackage) ||
     desktopApp.packageBytes !== packageInfo.size ||
+    desktopApp.reviewedPackagePath !== "desktop/package.json" ||
+    desktopApp.reviewedPackageSha256 !== source.desktopPackageSha256 ||
     manifest.source.commit !== source.commit ||
     manifest.source.tree !== source.tree ||
+    manifest.source.sourceSnapshotSha256 !== source.sourceSnapshotSha256 ||
     manifest.source.sourceDateEpoch !== source.sourceDateEpoch ||
     manifest.components.renderer.manifestSha256 !==
       sha256File(rendererManifestPath) ||
     manifest.components.renderer.files !== renderer.files ||
     manifest.components.renderer.bytes !== renderer.bytes ||
+    manifest.components.renderer.repositoryTree !== renderer.repositoryTree ||
+    manifest.components.renderer.sourceSnapshotSha256 !==
+      renderer.sourceSnapshotSha256 ||
+    manifest.components.renderer.inputSnapshotSha256 !==
+      renderer.inputSnapshotSha256 ||
     manifest.components.pythonSidecar.manifestSha256 !==
       sha256File(pythonManifestPath) ||
     manifest.components.pythonSidecar.normalizedInventorySha256 !==
       pythonManifest.audit.normalizedInventorySha256 ||
+    manifest.components.pythonSidecar.repositoryTree !== source.tree ||
+    manifest.components.pythonSidecar.sourceSnapshotSha256 !==
+      source.sourceSnapshotSha256 ||
     manifest.components.pythonSidecar.files !== python.files ||
     manifest.components.pythonSidecar.nativeFiles !== python.nativeFiles ||
     manifest.components.pythonSidecar.components !== python.components
@@ -144,12 +155,14 @@ function createBeforePackEngineeringSmoke(dependencies = {}) {
     const source = (
       dependencies.inspectRepository || inspectRepositoryProvenance
     )(REPOSITORY_ROOT, environment);
-    const auditEnvironment = { ...environment, GITHUB_SHA: source.commit };
     const renderer = (dependencies.auditRenderer || auditRenderer)(
       RENDERER_ROOT,
       {
         expectedCommit: source.commit,
-        expectedSourceDateEpoch: source.sourceDateEpoch
+        expectedTree: source.tree,
+        expectedSourceSnapshotSha256: source.sourceSnapshotSha256,
+        expectedSourceDateEpoch: source.sourceDateEpoch,
+        expectedPackageLockSha256: source.rendererPackageLockSha256
       }
     );
     const python = (
@@ -157,7 +170,7 @@ function createBeforePackEngineeringSmoke(dependencies = {}) {
     )({
       repositoryRoot: REPOSITORY_ROOT,
       stagingRoot: SIDECAR_ROOT,
-      environment: auditEnvironment,
+      environment,
       platform: platformName,
       architecture
     });

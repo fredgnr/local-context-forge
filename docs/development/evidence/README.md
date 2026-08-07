@@ -14,12 +14,18 @@
 | W01 remediation historical Checkpoint A | `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree `f059ad8bd3cfc6accac707745d5d8727bfb532bd` | 记录时刻 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [immutable schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597`；[closed schema](W01/schema-v2.json) |
 | W01 accepted remediation / W02 entry | final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`；resulting main `1786255b55dd1a78659ed92235893876175a0722`；same tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64` | PR/source、independent acceptance、merge、resulting-main source、W02 activation `pass`；packaged smoke `not-run` | [W02 entry closeout](W02/2026-08-05-entry.md)；[Actions 30986208251](https://github.com/fredgnr/local-context-forge/actions/runs/30986208251) |
 | W02 static assembly substage | `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38` | `.app` directory assembly / bundle audit `pass`；packaged launch/runtime 与 `VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [assembly record](W02/2026-08-06-08137c7-assembly.md)；[run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806)；source run `31024794734` success |
+| W02 PR #21 independent NO-GO / remediation entry | reviewed `8c5fd23206b671b768fd21d253bf292642f93a51` / tree `785f4656de8a7233b6dd632fe4815976d33468fb` | old exact-head runs are historical technical results；independent `NO-GO`；remediation technical candidate `not-run`；W02 `in-progress`；`VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [append-only remediation record](W02/2026-08-07-pr21-remediation.md)；old assembly run `31026905444` / job `92377586784`；source run `31026907916`；container run `31026906777` |
 
 旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。W01 JSON
 冻结其记录时刻的 remediation lifecycle；后续 external acceptance/merge/main run 由新的 W02 entry
 追加，而不是回写历史 JSON。仓库 bytes 不能凭自身 technical result 自我提升 independent
 acceptance；closeout 记录必须绑定外部 accepted head、canonical main 与 Actions 坐标。以上记录均
 不代表 packaged、physical、GitHub settings、legacy absence 或 release gate 已通过。
+
+当前 W02 权威结论由 `CTX-PR21-NOGO-CURRENT` 的 append-only remediation 记录补充：旧
+checkpoint 与旧 workflow `success` 不回写，但也不能证明 build scratch lifecycle、Git tree/source
+provenance 或 capability-bound cleanup。只有修复后的新 exact PR head、fresh Actions 与新的独立
+验收可以取代该 `NO-GO`；仓库内记录不能自我宣告接受。
 
 ## 1. 证据原则
 
@@ -221,6 +227,12 @@ credential generation 和 production pin 必须为 null/absent。
 empty，没有 retained App/package digest。pre-pack frozen sidecar staging smoke 已成功；assembled
 App 未启动、sidecar 未从 bundle 启动，上述 launch/runtime 观察均为 `not-run`。因此
 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W10/W11 不得据此解锁。
+
+[2026-08-07 PR #21 remediation record](W02/2026-08-07-pr21-remediation.md) 进一步保存最终独立
+验收对 reviewed head `8c5fd232…` / tree `785f4656…` 的 `NO-GO`。该候选的旧 exact-head runs
+只能作为失败候选的历史技术证据；在新的 exact head 被 fresh Actions 和独立验收接受前，W02
+保持 `in-progress`、remediation technical candidate 保持 `not-run`，packaged launch/runtime 与
+`VAL-PACKAGED-SMOKE-001` 保持 `not-run`，W10/W11 保持 locked。
 
 ### W10/W11 slice
 

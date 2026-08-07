@@ -66,7 +66,13 @@
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "commit", "tree", "sourceDateEpoch"],
+      "required": [
+        "repository",
+        "commit",
+        "tree",
+        "sourceSnapshotSha256",
+        "sourceDateEpoch"
+      ],
       "properties": {
         "repository": { "const": "fredgnr/local-context-forge" },
         "commit": {
@@ -76,6 +82,10 @@
         "tree": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
+        },
+        "sourceSnapshotSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         },
         "sourceDateEpoch": {
           "type": "integer",
@@ -121,7 +131,10 @@
             "preloadBytes",
             "packagePath",
             "packageSha256",
-            "packageBytes"
+            "packageBytes",
+            "reviewedPackagePath",
+            "reviewedPackageSha256",
+            "entrypointBuild"
           ],
           "properties": {
             "asarPath": { "const": "Contents/Resources/app.asar" },
@@ -142,7 +155,45 @@
               "type": "string",
               "pattern": "^[0-9a-f]{64}$"
             },
-            "packageBytes": { "type": "integer", "minimum": 1 }
+            "packageBytes": { "type": "integer", "minimum": 1 },
+            "reviewedPackagePath": { "const": "desktop/package.json" },
+            "reviewedPackageSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "entrypointBuild": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "builder",
+                "builderVersion",
+                "nodeVersion",
+                "npmVersion",
+                "packageLockSha256",
+                "installedContentSha256",
+                "inputs",
+                "inputsSha256"
+              ],
+              "properties": {
+                "builder": { "const": "esbuild" },
+                "builderVersion": { "const": "0.28.1" },
+                "nodeVersion": { "const": "v22.23.2" },
+                "npmVersion": { "const": "10.9.8" },
+                "packageLockSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "installedContentSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "inputs": { "type": "integer", "minimum": 3 },
+                "inputsSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
           }
         },
         "renderer": {
@@ -153,6 +204,9 @@
             "manifestPath",
             "manifestSha256",
             "repositoryCommit",
+            "repositoryTree",
+            "sourceSnapshotSha256",
+            "inputSnapshotSha256",
             "files",
             "bytes"
           ],
@@ -169,6 +223,18 @@
               "type": "string",
               "pattern": "^[0-9a-f]{40}$"
             },
+            "repositoryTree": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "sourceSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "inputSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
             "files": { "type": "integer", "minimum": 1 },
             "bytes": { "type": "integer", "minimum": 1 }
           }
@@ -182,6 +248,10 @@
             "manifestSha256",
             "normalizedInventorySha256",
             "repositoryCommit",
+            "repositoryTree",
+            "sourceSnapshotSha256",
+            "pythonBuildToolchainPath",
+            "pythonToolchain",
             "files",
             "nativeFiles",
             "components"
@@ -202,6 +272,68 @@
             "repositoryCommit": {
               "type": "string",
               "pattern": "^[0-9a-f]{40}$"
+            },
+            "repositoryTree": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "sourceSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "pythonBuildToolchainPath": {
+              "const": "Contents/Resources/sidecar/python-build-toolchain.json"
+            },
+            "pythonToolchain": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "buildRequirementsLockSha256",
+                "runtimeLockSha256",
+                "runtimeRequirementsSha256",
+                "installedTreeContentSha256",
+                "buildTools"
+              ],
+              "properties": {
+                "buildRequirementsLockSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "runtimeLockSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "runtimeRequirementsSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "installedTreeContentSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "buildTools": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "altgraphVersion",
+                    "macholibVersion",
+                    "packagingVersion",
+                    "pyinstallerVersion",
+                    "pyinstallerHooksContribVersion",
+                    "setuptoolsVersion",
+                    "uvVersion"
+                  ],
+                  "properties": {
+                    "altgraphVersion": { "const": "0.17.4" },
+                    "macholibVersion": { "const": "1.16.3" },
+                    "packagingVersion": { "const": "26.2" },
+                    "pyinstallerVersion": { "const": "6.21.0" },
+                    "pyinstallerHooksContribVersion": { "const": "2026.6" },
+                    "setuptoolsVersion": { "const": "83.0.0" },
+                    "uvVersion": { "const": "0.11.29" }
+                  }
+                }
+              }
             },
             "files": { "type": "integer", "minimum": 1 },
             "nativeFiles": { "type": "integer", "minimum": 1 },

@@ -8,6 +8,7 @@
     "schemaVersion",
     "kind",
     "source",
+    "builder",
     "files"
   ],
   "properties": {
@@ -22,19 +23,62 @@
       "additionalProperties": false,
       "required": [
         "repositoryCommit",
+        "repositoryTree",
+        "sourceSnapshotSha256",
         "sourceDateEpoch",
-        "packageLockSha256"
+        "packageLockSha256",
+        "inputSnapshotSha256",
+        "inputFiles"
       ],
       "properties": {
         "repositoryCommit": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
         },
+        "repositoryTree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "sourceSnapshotSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "sourceDateEpoch": {
           "type": "integer",
           "minimum": 100000000
         },
         "packageLockSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "inputSnapshotSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "inputFiles": {
+          "type": "integer",
+          "minimum": 5
+        }
+      }
+    },
+    "builder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "reactPluginVersion",
+        "nodeVersion",
+        "npmVersion",
+        "installedContentSha256"
+      ],
+      "properties": {
+        "name": { "const": "vite" },
+        "version": { "const": "7.3.6" },
+        "reactPluginVersion": { "const": "4.7.0" },
+        "nodeVersion": { "const": "v22.23.2" },
+        "npmVersion": { "const": "10.9.8" },
+        "installedContentSha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         }

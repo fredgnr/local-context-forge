@@ -42,13 +42,13 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "makefile": "3f6031722218b2d81094be3c488de17609abe07b34dd9f908bd7a2e1087b20ab",
     "build_script": "d026b147aa40b5a461d5516322d3ef43ea7081c6365d632b7830dba51e6f2e18",
     "audit_script": "7bd183332946a9497b11759e63ecd70c27125abe6cc7dcb6f736c7f40bba81ad",
-    "python_bootstrap": "463290f643893107dbbe67150eef7e7aef6fcceb7cc269a80792059becb5508b",
+    "python_bootstrap": "ea3a40e29793ddc7a9326138d79584c74b87684048620e8e028b507734097a46",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "d0b1c8e1bc487899d092140d1cb3ded794cb0f08382877cd012c173eb151c812",
+    "python_packaging_tests": "ce88f31c13dd3da3f062c1b814a38b2d9478372e09bc6d6450944d77bc28b836",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "896383ff760842cfdc437bb953e7606554392a253d4b3e41d3d5addf29124fb5",
+    "remediation_evidence": "8ebbec2983f18a65b3d1c98a69d6f51d01bbe30c9e349ab299a7eca130d4fb6e",
     "package": "8572d59212b1233e701338d40bb3a47525db052a41b80b27e1a797d6e07fc712",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
@@ -81,10 +81,10 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
     "formal_workflow": "43c1e6be118b6997653d305a21dc7b86ad521e9efa48633dfe2f8f055c408aac",
-    "status": "b89b00d8754055083ad3bab96282e2ec0502a53fa3e3b4cd9b2a31722f27decf",
-    "todo": "4c9a68c2af94ef90b933b27cd18d3b99b9d9c4c4f2b700d1a19057ce6e36169a",
-    "trace": "646a114f2d7b8e26d936122fc331860dae933cb207ad0054dae2dab54577d8df",
-    "iteration": "78b80368c5ca6b24b046eb294cd97e701e5789011ca25d5849fe6eee37df8d77",
+    "status": "e3367dead9ef1d1397088456dadbfbb2d12be547d2494d46599ed20ba125869f",
+    "todo": "9cbc0fe83072dc76538ac2f3c6243ce8979e59e6a346fcae95b6b3ebceaff258",
+    "trace": "61a9ee7b9371cbccb65bf26313e9cdaac0e8232f03badc7657f3f7ccf3f09c92",
+    "iteration": "f56e92edd8213dd417206a7340c4b48bfd4f404ac69c16e2d386f1598438a904",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -798,6 +798,555 @@ def _python_emitted_environment_keys(source: str) -> tuple[str, ...]:
             keys.append(match.group(1))
         return tuple(keys)
     return ()
+
+
+def _python_attribute_path(node: ast.expr) -> tuple[str, ...]:
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, ast.Attribute):
+        return (*_python_attribute_path(node.value), node.attr)
+    return ()
+
+
+def _python_name_arguments(call: ast.Call) -> tuple[str, ...]:
+    if call.keywords or any(not isinstance(argument, ast.Name) for argument in call.args):
+        return ()
+    return tuple(argument.id for argument in call.args if isinstance(argument, ast.Name))
+
+
+def _python_function(tree: ast.Module, name: str) -> ast.FunctionDef | None:
+    matches = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _python_nested_function(
+    function: ast.FunctionDef,
+    name: str,
+) -> ast.FunctionDef | None:
+    matches = [
+        node
+        for node in function.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _python_exact_single_assignment(
+    function: ast.FunctionDef,
+    target: str,
+    expression: str,
+) -> bool:
+    stores = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name)
+        and node.id == target
+        and isinstance(node.ctx, ast.Store)
+    ]
+    assignments = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == target
+    ]
+    expected = ast.parse(expression, mode="eval").body
+    return (
+        len(stores) == 1
+        and len(assignments) == 1
+        and ast.dump(assignments[0].value, include_attributes=False)
+        == ast.dump(expected, include_attributes=False)
+    )
+
+
+def _python_rebinds_listing_primitives(function: ast.FunctionDef) -> bool:
+    """Reject local or module-attribute rebinding of the exact tree listing."""
+
+    protected_names = {"os", "sorted", "tuple"}
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Name)
+            and node.id in protected_names
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            return True
+        if isinstance(node, ast.arg) and node.arg in protected_names:
+            return True
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node is not function
+            and node.name in protected_names
+        ):
+            return True
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound_name = alias.asname or alias.name.split(".", 1)[0]
+                if bound_name in protected_names:
+                    return True
+        if (
+            isinstance(node, ast.Attribute)
+            and _python_attribute_path(node) == ("os", "listdir")
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            return True
+    return False
+
+
+def _python_direct_calls(
+    function: ast.FunctionDef,
+    path: tuple[str, ...],
+) -> list[tuple[ast.Expr, ast.Call]]:
+    return [
+        (node, node.value)
+        for node in ast.walk(function)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and _python_attribute_path(node.value.func) == path
+    ]
+
+
+def _python_compare_attribute_to_one(
+    node: ast.expr,
+    attribute: str,
+) -> bool:
+    return (
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Attribute)
+        and isinstance(node.left.value, ast.Name)
+        and node.left.value.id == "before"
+        and node.left.attr == attribute
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.NotEq)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == 1
+    )
+
+
+def _python_stat_mode_predicate(node: ast.expr, name: str) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and _python_attribute_path(node.func) == ("stat", name)
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Attribute)
+        and isinstance(node.args[0].value, ast.Name)
+        and node.args[0].value.id == "before"
+        and node.args[0].attr == "st_mode"
+    )
+
+
+def _python_for_names(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "name"
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "names"
+        and not node.orelse
+    )
+
+
+def _python_raise_message(statement: ast.stmt, message: str) -> bool:
+    return (
+        isinstance(statement, ast.Raise)
+        and isinstance(statement.exc, ast.Call)
+        and _python_attribute_path(statement.exc.func) == ("ToolchainBootstrapError",)
+        and len(statement.exc.args) == 1
+        and not statement.exc.keywords
+        and isinstance(statement.exc.args[0], ast.Constant)
+        and statement.exc.args[0].value == message
+    )
+
+
+def _python_literal_false(node: ast.expr) -> bool:
+    try:
+        return not bool(ast.literal_eval(node))
+    except (ValueError, TypeError):
+        return False
+
+
+def _python_has_constant_false_ancestor(
+    node: ast.AST,
+    parents: Mapping[ast.AST, ast.AST],
+) -> bool:
+    child = node
+    while child in parents:
+        parent = parents[child]
+        if (
+            isinstance(parent, (ast.If, ast.While))
+            and child in parent.body
+            and _python_literal_false(parent.test)
+        ):
+            return True
+        child = parent
+    return False
+
+
+def _python_producer_privatization_is_semantic(source: str) -> bool:
+    """Validate executable AST structure beyond reviewed text/hash markers."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    parents: dict[ast.AST, ast.AST] = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    build_toolchain = _python_function(tree, "build_with_exact_toolchain")
+    materializer = _python_function(tree, "_materialize_private_regular_file")
+    privatizer = _python_function(tree, "_privatize_installed_tree")
+    inventory = _python_function(tree, "_inventory_installed_tree")
+    chmod_tree = _python_function(tree, "_chmod_installed_tree_read_only")
+    if any(
+        function is None
+        for function in (
+            build_toolchain,
+            materializer,
+            privatizer,
+            inventory,
+            chmod_tree,
+        )
+    ):
+        return False
+    assert build_toolchain is not None
+    assert materializer is not None
+    assert privatizer is not None
+    assert inventory is not None
+    assert chmod_tree is not None
+    protected_callables = {
+        "_privatize_installed_tree",
+        "seal_installed_tree",
+        "_run_owned_process",
+    }
+    if any(
+        isinstance(node, ast.Name)
+        and node.id in protected_callables
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(build_toolchain)
+    ):
+        return False
+    privatizer_visit = _python_nested_function(privatizer, "visit")
+    inventory_visit_function = _python_nested_function(inventory, "visit")
+    if (
+        privatizer_visit is None
+        or inventory_visit_function is None
+        or _python_rebinds_listing_primitives(privatizer)
+        or _python_rebinds_listing_primitives(inventory)
+        or _python_rebinds_listing_primitives(chmod_tree)
+        or not _python_exact_single_assignment(
+            privatizer_visit,
+            "names",
+            "tuple(sorted(os.listdir(directory_descriptor)))",
+        )
+        or not _python_exact_single_assignment(
+            inventory_visit_function,
+            "names",
+            "tuple(sorted(os.listdir(directory_descriptor)))",
+        )
+        or not _python_exact_single_assignment(
+            chmod_tree,
+            "names",
+            "tuple(sorted(os.listdir(descriptor)))",
+        )
+    ):
+        return False
+
+    production_calls = _python_direct_calls(
+        build_toolchain,
+        ("_privatize_installed_tree",),
+    )
+    if (
+        len(production_calls) != 2
+        or {
+            _python_name_arguments(call)
+            for statement, call in production_calls
+            if not _python_has_constant_false_ancestor(statement, parents)
+        }
+        != {
+            ("bootstrap_root", "bootstrap_fd", "build"),
+            ("build_root", "build_fd", "build"),
+        }
+    ):
+        return False
+    for statement, _call in production_calls:
+        held_root_with = parents.get(statement)
+        translated_cleanup_with = parents.get(held_root_with)
+        enclosing_try = parents.get(translated_cleanup_with)
+        if (
+            not isinstance(held_root_with, ast.With)
+            or len(held_root_with.items) != 1
+            or not isinstance(held_root_with.items[0].context_expr, ast.Call)
+            or _python_attribute_path(held_root_with.items[0].context_expr.func)
+            != ("_held_toolchain_root",)
+            or _python_name_arguments(held_root_with.items[0].context_expr)
+            != ("runner_temp", "build")
+            or not isinstance(translated_cleanup_with, ast.With)
+            or len(translated_cleanup_with.items) != 1
+            or not isinstance(
+                translated_cleanup_with.items[0].context_expr,
+                ast.Call,
+            )
+            or _python_attribute_path(
+                translated_cleanup_with.items[0].context_expr.func
+            )
+            != ("build", "_translate_cleanup_signals")
+            or translated_cleanup_with.items[0].context_expr.args
+            or translated_cleanup_with.items[0].context_expr.keywords
+            or not isinstance(enclosing_try, ast.Try)
+            or parents.get(enclosing_try) is not build_toolchain
+        ):
+            return False
+    held_root_bodies = {parents[statement] for statement, _call in production_calls}
+    if len(held_root_bodies) != 1:
+        return False
+    held_root_body = next(iter(held_root_bodies))
+    assert isinstance(held_root_body, ast.With)
+    if (
+        not held_root_body.body
+        or not isinstance(held_root_body.body[-1], ast.Return)
+        or any(
+            not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Expr))
+            for statement in held_root_body.body[:-1]
+        )
+    ):
+        return False
+    for statement, call in production_calls:
+        offset = held_root_body.body.index(statement)
+        if (
+            offset == 0
+            or not isinstance(held_root_body.body[offset - 1], ast.Expr)
+            or not isinstance(held_root_body.body[offset - 1].value, ast.Call)
+            or _python_attribute_path(held_root_body.body[offset - 1].value.func)
+            != ("_run_owned_process",)
+        ):
+            return False
+        expected_seal_offset = (
+            offset + 2
+            if _python_name_arguments(call)
+            == ("bootstrap_root", "bootstrap_fd", "build")
+            else offset + 1
+        )
+        if expected_seal_offset >= len(held_root_body.body):
+            return False
+        seal_statement = held_root_body.body[expected_seal_offset]
+        if (
+            not isinstance(seal_statement, ast.Assign)
+            or not isinstance(seal_statement.value, ast.Call)
+            or _python_attribute_path(seal_statement.value.func)
+            != ("seal_installed_tree",)
+        ):
+            return False
+
+    exchange_calls = _python_direct_calls(
+        materializer,
+        ("build", "_exchange_at"),
+    )
+    if (
+        len(exchange_calls) != 1
+        or _python_name_arguments(exchange_calls[0][1])
+        != (
+            "directory_descriptor",
+            "name",
+            "directory_descriptor",
+            "private_name",
+        )
+        or _python_has_constant_false_ancestor(exchange_calls[0][0], parents)
+    ):
+        return False
+    exchange_parent = parents.get(exchange_calls[0][0])
+    if (
+        not isinstance(exchange_parent, ast.With)
+        or len(exchange_parent.items) != 1
+        or not isinstance(exchange_parent.items[0].context_expr, ast.Call)
+        or _python_attribute_path(exchange_parent.items[0].context_expr.func)
+        != ("build", "_defer_publish_signals")
+        or exchange_parent.items[0].context_expr.args
+        or exchange_parent.items[0].context_expr.keywords
+        or not isinstance(parents.get(exchange_parent), ast.Try)
+        or parents.get(parents.get(exchange_parent)) is not materializer
+    ):
+        return False
+
+    hardlink_branches = [
+        node
+        for node in ast.walk(privatizer)
+        if isinstance(node, ast.If)
+        and _python_compare_attribute_to_one(node.test, "st_nlink")
+    ]
+    if len(hardlink_branches) != 1:
+        return False
+    hardlink_branch = hardlink_branches[0]
+    writable_guards = [
+        statement
+        for statement in hardlink_branch.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.BinOp)
+        and isinstance(statement.test.left, ast.Name)
+        and statement.test.left.id == "mode"
+        and isinstance(statement.test.op, ast.BitAnd)
+        and isinstance(statement.test.right, ast.Constant)
+        and statement.test.right.value == 0o022
+    ]
+    hardlink_materializations = [
+        statement.value
+        for statement in hardlink_branch.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and _python_attribute_path(statement.value.func)
+        == ("_materialize_private_regular_file",)
+    ]
+    if (
+        len(writable_guards) != 1
+        or len(writable_guards[0].body) != 1
+        or not _python_raise_message(
+            writable_guards[0].body[0],
+            "Installed toolchain producer hardlink is writable",
+        )
+        or len(hardlink_materializations) != 1
+        or _python_name_arguments(hardlink_materializations[0])
+        != (
+            "directory_descriptor",
+            "name",
+            "before",
+            "desired_mode",
+            "build",
+        )
+    ):
+        return False
+
+    inventory_regular_guards = [
+        node
+        for node in ast.walk(inventory)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.BoolOp)
+        and isinstance(node.test.op, ast.Or)
+        and any(
+            _python_compare_attribute_to_one(value, "st_nlink")
+            for value in node.test.values
+        )
+        and len(node.body) == 1
+        and _python_raise_message(
+            node.body[0],
+            "Installed toolchain file is unsafe",
+        )
+    ]
+    inventory_symlink_guards = [
+        node
+        for node in ast.walk(inventory)
+        if isinstance(node, ast.If)
+        and _python_compare_attribute_to_one(node.test, "st_nlink")
+        and len(node.body) == 1
+        and _python_raise_message(
+            node.body[0],
+            "Installed toolchain symlink is unsafe",
+        )
+    ]
+    chmod_hardlink_guards = [
+        node
+        for node in ast.walk(chmod_tree)
+        if isinstance(node, ast.If)
+        and _python_compare_attribute_to_one(node.test, "st_nlink")
+        and len(node.body) == 1
+        and _python_raise_message(
+            node.body[0],
+            "Installed toolchain hardlink is forbidden",
+        )
+    ]
+    if (
+        len(inventory_regular_guards) != 1
+        or len(inventory_symlink_guards) != 1
+        or len(chmod_hardlink_guards) != 1
+    ):
+        return False
+
+    inventory_regular_branch = parents.get(inventory_regular_guards[0])
+    inventory_regular_loop = parents.get(inventory_regular_branch)
+    inventory_visit = parents.get(inventory_regular_loop)
+    if (
+        not isinstance(inventory_regular_branch, ast.If)
+        or not _python_stat_mode_predicate(
+            inventory_regular_branch.test,
+            "S_ISREG",
+        )
+        or not _python_for_names(inventory_regular_loop)
+        or not isinstance(inventory_visit, ast.FunctionDef)
+        or inventory_visit.name != "visit"
+        or inventory_visit is not inventory_visit_function
+        or parents.get(inventory_visit) is not inventory
+        or len(inventory_regular_loop.body) != 11
+        or inventory_regular_loop.body[7] is not inventory_regular_branch
+        or not inventory_regular_branch.body
+        or inventory_regular_branch.body[0] is not inventory_regular_guards[0]
+    ):
+        return False
+
+    inventory_symlink_branch = parents.get(inventory_symlink_guards[0])
+    inventory_directory_branch = parents.get(inventory_symlink_branch)
+    inventory_regular_parent = parents.get(inventory_directory_branch)
+    inventory_symlink_loop = parents.get(inventory_regular_parent)
+    if (
+        not isinstance(inventory_symlink_branch, ast.If)
+        or not _python_stat_mode_predicate(
+            inventory_symlink_branch.test,
+            "S_ISLNK",
+        )
+        or not isinstance(inventory_directory_branch, ast.If)
+        or not isinstance(inventory_directory_branch.test, ast.BoolOp)
+        or not isinstance(inventory_directory_branch.test.op, ast.And)
+        or len(inventory_directory_branch.test.values) != 2
+        or not _python_stat_mode_predicate(
+            inventory_directory_branch.test.values[0],
+            "S_ISDIR",
+        )
+        or not isinstance(
+            inventory_directory_branch.test.values[1],
+            ast.UnaryOp,
+        )
+        or not isinstance(
+            inventory_directory_branch.test.values[1].op,
+            ast.Not,
+        )
+        or not _python_stat_mode_predicate(
+            inventory_directory_branch.test.values[1].operand,
+            "S_ISLNK",
+        )
+        or inventory_regular_parent is not inventory_regular_branch
+        or inventory_regular_branch.orelse != [inventory_directory_branch]
+        or inventory_directory_branch.orelse != [inventory_symlink_branch]
+        or not inventory_symlink_branch.body
+        or inventory_symlink_branch.body[0] is not inventory_symlink_guards[0]
+        or not _python_for_names(inventory_symlink_loop)
+        or parents.get(inventory_symlink_loop) is not inventory_visit
+    ):
+        return False
+
+    chmod_regular_branch = parents.get(chmod_hardlink_guards[0])
+    chmod_loop = parents.get(chmod_regular_branch)
+    chmod_try = parents.get(chmod_loop)
+    if (
+        not isinstance(chmod_regular_branch, ast.If)
+        or not _python_stat_mode_predicate(
+            chmod_regular_branch.test,
+            "S_ISREG",
+        )
+        or not _python_for_names(chmod_loop)
+        or len(chmod_loop.body) != 2
+        or chmod_loop.body[1] is not chmod_regular_branch
+        or len(chmod_regular_branch.body) < 2
+        or chmod_regular_branch.body[1] is not chmod_hardlink_guards[0]
+        or not isinstance(chmod_try, ast.Try)
+        or parents.get(chmod_try) is not chmod_tree
+    ):
+        return False
+    return True
 
 
 def load_inputs() -> dict[str, Any]:
@@ -1909,6 +2458,11 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "build._rollback_bound_directory(",
         '"Python toolchain capability cleanup left a residue"',
         '"Python toolchain failed and exact cleanup failed"',
+        "def _materialize_private_regular_file(",
+        "def _privatize_installed_tree(",
+        "build._exchange_at(",
+        "os.O_EXCL",
+        '"Installed toolchain producer hardlink is writable"',
         "def seal_installed_tree(",
         "_chmod_installed_tree_read_only(descriptor)",
         "def verify_installed_tree(",
@@ -1956,6 +2510,21 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "def build_with_exact_toolchain(",
         "\ndef _parser()",
     )
+    producer_materializer = _source_block(
+        python_bootstrap,
+        "def _materialize_private_regular_file(",
+        "\ndef _privatize_installed_tree(",
+    )
+    producer_privatizer = _source_block(
+        python_bootstrap,
+        "def _privatize_installed_tree(",
+        "\ndef _inventory_installed_tree(",
+    )
+    strict_installed_inventory = _source_block(
+        python_bootstrap,
+        "def _inventory_installed_tree(",
+        "\ndef _chmod_installed_tree_read_only(",
+    )
     reviewed_python_install = _source_block(
         python_bootstrap,
         "def install_reviewed_python(",
@@ -1992,6 +2561,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         or python_bootstrap.count('"LCF_PYTHON_BUILD_VENV_FD"') != 2
         or exact_toolchain_build.count("installed_seal = seal_installed_tree(") != 1
         or exact_toolchain_build.count("bootstrap_seal = seal_installed_tree(") != 1
+        or exact_toolchain_build.count("_privatize_installed_tree(") != 2
         or exact_toolchain_build.count("verify_installed_tree(") != 4
         or exact_toolchain_build.count("_revalidate_source_seal(") < 6
         or exact_toolchain_build.count("pass_fds=child_fds") != 1
@@ -2009,9 +2579,70 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     ):
         errors.append("exact Python toolchain bootstrap/seal closure drifted")
 
+    producer_privatization_markers = (
+        "os.O_RDWR",
+        "os.O_CREAT",
+        "os.O_EXCL",
+        "os.O_NOFOLLOW",
+        "os.fsync(private_descriptor)",
+        "with build._defer_publish_signals():",
+        "build._exchange_at(",
+        "private_cleanup_binding",
+        "_node_binding(displaced)",
+        "_node_binding(os.fstat(source_descriptor))",
+        "os.unlink(private_name, dir_fd=directory_descriptor)",
+        "os.fsync(directory_descriptor)",
+        "if before.st_nlink != 1:",
+        "if mode & 0o022:",
+        "desired_mode = 0o700 if mode & 0o100 else 0o600",
+        "os.fchmod(child, desired_mode)",
+        "_materialize_private_regular_file(",
+        "_symlink_identity(after) != _symlink_identity(before)",
+        "tuple(sorted(os.listdir(directory_descriptor))) != names",
+    )
+    if (
+        any(
+            marker not in producer_materializer + producer_privatizer
+            for marker in producer_privatization_markers
+        )
+        or producer_materializer.count("build._exchange_at(") != 1
+        or "os.replace(" in producer_materializer
+        or strict_installed_inventory.count("before.st_nlink != 1") != 2
+        or "mode & 0o022" not in strict_installed_inventory
+    ):
+        errors.append("exact Python toolchain producer privatization drifted")
+    if not _python_producer_privatization_is_semantic(python_bootstrap):
+        errors.append(
+            "exact Python toolchain producer privatization AST closure drifted"
+        )
+    producer_order = (
+        'label="Hash-locked Python bootstrap install"',
+        "_privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+        "bootstrap_seal = seal_installed_tree(",
+        'label="Complete hash-locked Python build install"',
+        "_privatize_installed_tree(build_root, build_fd, build)",
+        "installed_seal = seal_installed_tree(",
+    )
+    search_offset = 0
+    producer_offsets: list[int] = []
+    for marker in producer_order:
+        offset = exact_toolchain_build.find(marker, search_offset)
+        producer_offsets.append(offset)
+        if offset >= 0:
+            search_offset = offset + len(marker)
+    if any(offset < 0 for offset in producer_offsets):
+        errors.append("exact Python toolchain producer privatization order drifted")
+
     for marker in (
         "test_real_venv_seal_verify_execute_and_restore_for_exact_cleanup",
         "test_installed_tree_seal_rejects_same_version_content_drift",
+        "test_installed_tree_privatization_normalizes_modes_and_breaks_hardlinks",
+        "test_installed_tree_privatization_canonicalizes_producer_file_modes",
+        "test_installed_tree_privatization_breaks_two_internal_hardlinks",
+        "test_installed_tree_privatization_rejects_writable_external_hardlink",
+        "test_installed_tree_privatization_exchange_failure_removes_private_copy",
+        "test_installed_tree_privatization_post_exchange_failure_removes_old_alias",
+        "test_installed_tree_seal_rejects_regular_hardlink_without_privatization",
         "test_installed_tree_seal_rejects_root_replacement",
         "test_held_toolchain_root_restores_seal_and_has_no_residue",
         "test_held_toolchain_root_replacement_is_preserved_and_cleanup_fails_closed",
@@ -3116,6 +3747,18 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "PYTHONDONTWRITEBYTECODE=1",
         "`python -B`",
         "其后不再加载任何影响 production",
+        "producer output privatization",
+        "`O_NOFOLLOW`",
+        "`0600`",
+        "`0700`",
+        "`nlink > 1`",
+        "`O_EXCL`",
+        "atomic exchange",
+        "`RENAME_SWAP`",
+        "`RENAME_EXCHANGE`",
+        "`nlink == 1`",
+        "group/world-writable hardlink",
+        "technical result 在 fresh exact-head source/assembly 完成前仍是 `not-run`",
     ):
         if marker not in remediation_evidence:
             errors.append(f"PR #21 remediation evidence missing {marker!r}")

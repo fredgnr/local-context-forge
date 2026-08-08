@@ -46,7 +46,10 @@
   [append-only remediation record](evidence/W02/2026-08-07-pr21-remediation.md)。第一次 remediation
   exact `9f7d5d…` / tree `ea8e62…` 的 assembly/source technical execution `fail`，container 仅
   no-publish success；该 attempt 已 `superseded`、independent `pending`，没有改变旧 head 的 latest
-  independent `NO-GO`。下一 exact remediation technical candidate `not-run`，assembled App 未启动，
+  independent `NO-GO`。第二次 exact `9ecf0e…` / tree `ee8271…` 的 assembly/source 也 technical
+  `fail`（installed-toolchain file 与 Python real-venv mode/ownership），container 仍仅 no-publish
+  success；该 attempt 同样已 `superseded`、independent `pending`。下一 exact remediation technical
+  candidate `not-run`，assembled App 未启动，
   packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限

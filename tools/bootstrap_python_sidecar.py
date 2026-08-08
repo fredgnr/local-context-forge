@@ -629,6 +629,461 @@ def _safe_symlink_target(
     return bool(parts)
 
 
+def _node_binding(info: os.stat_result) -> tuple[int, ...]:
+    """Return the pathname binding fields that intentional chmod may not change."""
+
+    return (
+        info.st_dev,
+        info.st_ino,
+        stat.S_IFMT(info.st_mode),
+        info.st_uid,
+        info.st_gid,
+    )
+
+
+def _chmod_stable_identity(info: os.stat_result) -> tuple[int, ...]:
+    """Return content identity while excluding mode and chmod-updated ctime."""
+
+    return (
+        *_node_binding(info),
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+    )
+
+
+def _materialize_private_regular_file(
+    directory_descriptor: int,
+    name: str,
+    before: os.stat_result,
+    desired_mode: int,
+    build: Any,
+) -> None:
+    """Break one producer-created hardlink into the held private tree."""
+
+    source_descriptor: int | None = None
+    private_descriptor: int | None = None
+    private_created = False
+    private_cleanup_binding: tuple[int, ...] | None = None
+    private_name = f".lcf-private-{secrets.token_hex(16)}"
+    try:
+        source_descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory_descriptor,
+        )
+        if _identity(os.fstat(source_descriptor)) != _identity(before):
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer output changed"
+            )
+        payload = _read_regular_descriptor(
+            source_descriptor,
+            expected_size=before.st_size,
+            maximum_size=MAX_TREE_FILE_BYTES,
+            error_message="Installed toolchain producer output changed",
+        )
+        if (
+            _identity(os.fstat(source_descriptor)) != _identity(before)
+            or _identity(
+                os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+            )
+            != _identity(before)
+        ):
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer output changed"
+            )
+        private_descriptor = os.open(
+            private_name,
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_NOFOLLOW
+            | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory_descriptor,
+        )
+        private_created = True
+        private_before = os.fstat(private_descriptor)
+        if (
+            not stat.S_ISREG(private_before.st_mode)
+            or private_before.st_uid != os.geteuid()
+            or private_before.st_gid != os.getegid()
+            or private_before.st_nlink != 1
+        ):
+            raise ToolchainBootstrapError(
+                "Installed toolchain private copy is unsafe"
+            )
+        private_cleanup_binding = _node_binding(private_before)
+        offset = 0
+        payload_view = memoryview(payload)
+        while offset < len(payload):
+            written = os.write(private_descriptor, payload_view[offset:])
+            if written <= 0:
+                raise ToolchainBootstrapError(
+                    "Installed toolchain private copy failed"
+                )
+            offset += written
+        os.fchmod(private_descriptor, desired_mode)
+        os.fsync(private_descriptor)
+        private_after = os.fstat(private_descriptor)
+        if (
+            not stat.S_ISREG(private_after.st_mode)
+            or private_after.st_uid != os.geteuid()
+            or private_after.st_gid != os.getegid()
+            or private_after.st_nlink != 1
+            or private_after.st_size != len(payload)
+            or stat.S_IMODE(private_after.st_mode) != desired_mode
+            or _read_regular_descriptor(
+                private_descriptor,
+                expected_size=len(payload),
+                maximum_size=MAX_TREE_FILE_BYTES,
+                error_message="Installed toolchain private copy changed",
+            )
+            != payload
+        ):
+            raise ToolchainBootstrapError(
+                "Installed toolchain private copy changed"
+            )
+        if (
+            _identity(os.fstat(source_descriptor)) != _identity(before)
+            or _identity(
+                os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+            )
+            != _identity(before)
+        ):
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer output changed"
+            )
+        with build._defer_publish_signals():
+            build._exchange_at(
+                directory_descriptor,
+                name,
+                directory_descriptor,
+                private_name,
+            )
+            private_cleanup_binding = _node_binding(before)
+        installed = os.stat(
+            name,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+        held = os.fstat(private_descriptor)
+        displaced = os.stat(
+            private_name,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            _node_binding(installed) != _node_binding(held)
+            or _node_binding(displaced)
+            != _node_binding(os.fstat(source_descriptor))
+            or not stat.S_ISREG(installed.st_mode)
+            or installed.st_nlink != 1
+            or installed.st_size != len(payload)
+            or stat.S_IMODE(installed.st_mode) != desired_mode
+            or _read_regular_descriptor(
+                private_descriptor,
+                expected_size=len(payload),
+                maximum_size=MAX_TREE_FILE_BYTES,
+                error_message="Installed toolchain private copy changed",
+            )
+            != payload
+        ):
+            raise ToolchainBootstrapError(
+                "Installed toolchain private copy changed"
+            )
+        os.unlink(private_name, dir_fd=directory_descriptor)
+        private_created = False
+        os.fsync(directory_descriptor)
+    except ToolchainBootstrapError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ToolchainBootstrapError(
+            "Installed toolchain private copy failed"
+        ) from exc
+    finally:
+        for descriptor in (private_descriptor, source_descriptor):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        if private_created:
+            try:
+                cleanup_info = os.stat(
+                    private_name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    _node_binding(cleanup_info)
+                    in {
+                        private_cleanup_binding,
+                        _node_binding(before),
+                    }
+                ):
+                    os.unlink(private_name, dir_fd=directory_descriptor)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+
+def _privatize_installed_tree(
+    root: Path,
+    descriptor: int,
+    build: Any,
+) -> None:
+    """Canonicalize trusted producer output before the strict immutable seal.
+
+    The held random parent and child roots are already private capabilities.
+    Producer-created regular hardlinks are copied to independent inodes, and
+    all non-symlink modes become owner-only before any installed tool is used.
+    """
+
+    entry_count = 0
+    total_size = 0
+
+    def visit(directory_descriptor: int, depth: int) -> None:
+        nonlocal entry_count, total_size
+        if depth > 128:
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer output exceeds its depth bound"
+            )
+        try:
+            names = tuple(sorted(os.listdir(directory_descriptor)))
+        except OSError as exc:
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer output cannot be privatized"
+            ) from exc
+        for name in names:
+            if not name or "/" in name or "\x00" in name:
+                raise ToolchainBootstrapError(
+                    "Installed toolchain producer output contains an unsafe name"
+                )
+            try:
+                before = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                mode = stat.S_IMODE(before.st_mode)
+                if stat.S_ISLNK(before.st_mode):
+                    entry_count += 1
+                    after = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if _symlink_identity(after) != _symlink_identity(before):
+                        raise ToolchainBootstrapError(
+                            "Installed toolchain producer symlink changed"
+                        )
+                    if entry_count > MAX_TREE_ENTRIES:
+                        raise ToolchainBootstrapError(
+                            "Installed toolchain producer output exceeds its size bound"
+                        )
+                    continue
+                if (
+                    before.st_uid != os.geteuid()
+                    or before.st_gid != os.getegid()
+                    or mode & 0o7000
+                ):
+                    raise ToolchainBootstrapError(
+                        "Installed toolchain producer output has unsafe ownership or mode"
+                    )
+                if stat.S_ISREG(before.st_mode):
+                    if (
+                        not mode & 0o400
+                        or before.st_nlink < 1
+                        or before.st_size > MAX_TREE_FILE_BYTES
+                    ):
+                        raise ToolchainBootstrapError(
+                            "Installed toolchain producer file is unsafe"
+                        )
+                    desired_mode = 0o700 if mode & 0o100 else 0o600
+                    if before.st_nlink != 1:
+                        if mode & 0o022:
+                            raise ToolchainBootstrapError(
+                                "Installed toolchain producer hardlink is writable"
+                            )
+                        _materialize_private_regular_file(
+                            directory_descriptor,
+                            name,
+                            before,
+                            desired_mode,
+                            build,
+                        )
+                    else:
+                        child = os.open(
+                            name,
+                            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=directory_descriptor,
+                        )
+                        try:
+                            opened = os.fstat(child)
+                            if _identity(opened) != _identity(before):
+                                raise ToolchainBootstrapError(
+                                    "Installed toolchain producer output changed"
+                                )
+                            os.fchmod(child, desired_mode)
+                            after = os.fstat(child)
+                            relative_after = os.stat(
+                                name,
+                                dir_fd=directory_descriptor,
+                                follow_symlinks=False,
+                            )
+                            if (
+                                _chmod_stable_identity(after)
+                                != _chmod_stable_identity(before)
+                                or _node_binding(relative_after)
+                                != _node_binding(after)
+                                or stat.S_IMODE(after.st_mode) != desired_mode
+                            ):
+                                raise ToolchainBootstrapError(
+                                    "Installed toolchain producer output changed"
+                                )
+                        finally:
+                            os.close(child)
+                    total_size += before.st_size
+                elif stat.S_ISDIR(before.st_mode):
+                    if mode & 0o500 != 0o500:
+                        raise ToolchainBootstrapError(
+                            "Installed toolchain producer directory is unsafe"
+                        )
+                    child = os.open(
+                        name,
+                        os.O_RDONLY
+                        | os.O_DIRECTORY
+                        | os.O_NOFOLLOW
+                        | os.O_CLOEXEC,
+                        dir_fd=directory_descriptor,
+                    )
+                    try:
+                        opened = os.fstat(child)
+                        if _identity(opened) != _identity(before):
+                            raise ToolchainBootstrapError(
+                                "Installed toolchain producer output changed"
+                            )
+                        os.fchmod(child, 0o700)
+                        private_directory = os.fstat(child)
+                        relative_private_directory = os.stat(
+                            name,
+                            dir_fd=directory_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (
+                            _node_binding(private_directory)
+                            != _node_binding(before)
+                            or _node_binding(relative_private_directory)
+                            != _node_binding(private_directory)
+                            or stat.S_IMODE(private_directory.st_mode) != 0o700
+                        ):
+                            raise ToolchainBootstrapError(
+                                "Installed toolchain producer output changed"
+                            )
+                        visit(child, depth + 1)
+                        after_children = os.fstat(child)
+                        relative_after = os.stat(
+                            name,
+                            dir_fd=directory_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (
+                            _node_binding(after_children) != _node_binding(before)
+                            or _node_binding(relative_after)
+                            != _node_binding(after_children)
+                            or stat.S_IMODE(after_children.st_mode) != 0o700
+                        ):
+                            raise ToolchainBootstrapError(
+                                "Installed toolchain producer output changed"
+                            )
+                    finally:
+                        os.close(child)
+                else:
+                    raise ToolchainBootstrapError(
+                        "Installed toolchain producer output contains a special file"
+                    )
+                entry_count += 1
+                if (
+                    entry_count > MAX_TREE_ENTRIES
+                    or total_size > MAX_TREE_TOTAL_BYTES
+                ):
+                    raise ToolchainBootstrapError(
+                        "Installed toolchain producer output exceeds its size bound"
+                    )
+            except ToolchainBootstrapError:
+                raise
+            except OSError as exc:
+                raise ToolchainBootstrapError(
+                    "Installed toolchain producer output cannot be privatized"
+                ) from exc
+        try:
+            if tuple(sorted(os.listdir(directory_descriptor))) != names:
+                raise ToolchainBootstrapError(
+                    "Installed toolchain producer output changed"
+                )
+        except ToolchainBootstrapError:
+            raise
+        except OSError as exc:
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer output cannot be privatized"
+            ) from exc
+
+    try:
+        root_before = os.fstat(descriptor)
+        root_path_before = root.lstat()
+        root_mode = stat.S_IMODE(root_before.st_mode)
+        if (
+            not stat.S_ISDIR(root_before.st_mode)
+            or stat.S_ISLNK(root_path_before.st_mode)
+            or _identity(root_before) != _identity(root_path_before)
+            or root_before.st_uid != os.geteuid()
+            or root_before.st_gid != os.getegid()
+            or root_mode & 0o7000
+            or root_mode & 0o500 != 0o500
+        ):
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer root is unsafe"
+            )
+        os.fchmod(descriptor, 0o700)
+        private_root = os.fstat(descriptor)
+        private_root_path = root.lstat()
+        if (
+            _node_binding(private_root) != _node_binding(root_before)
+            or _node_binding(private_root_path) != _node_binding(private_root)
+            or stat.S_IMODE(private_root.st_mode) != 0o700
+        ):
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer root changed"
+            )
+        visit(descriptor, 0)
+        root_after = os.fstat(descriptor)
+        root_path_after = root.lstat()
+        if (
+            _node_binding(root_after) != _node_binding(root_before)
+            or _node_binding(root_path_after) != _node_binding(root_after)
+            or stat.S_IMODE(root_after.st_mode) != 0o700
+        ):
+            raise ToolchainBootstrapError(
+                "Installed toolchain producer root changed"
+            )
+    except ToolchainBootstrapError:
+        raise
+    except OSError as exc:
+        raise ToolchainBootstrapError(
+            "Installed toolchain producer output cannot be privatized"
+        ) from exc
+
+
 def _inventory_installed_tree(
     root: Path,
     descriptor: int,
@@ -1712,6 +2167,7 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     label="Hash-locked Python bootstrap install",
                     build=build,
                 )
+                _privatize_installed_tree(bootstrap_root, bootstrap_fd, build)
                 reviewed_framework_root = PurePosixPath(
                     install_root.as_posix()
                 )
@@ -1809,6 +2265,7 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     label="Complete hash-locked Python build install",
                     build=build,
                 )
+                _privatize_installed_tree(build_root, build_fd, build)
                 installed_seal = seal_installed_tree(
                     build_root,
                     build_fd,

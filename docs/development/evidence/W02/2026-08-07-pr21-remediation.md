@@ -2,8 +2,8 @@
 
 本记录追加在 [W02 static assembly checkpoint](2026-08-06-08137c7-assembly.md)
 之后，保存 Draft PR #21 对旧 exact head 的独立验收结论，并为同一 branch/PR 上的修复建立
-不可迁移的起点。本记录继续追加第一次 remediation 技术执行的失败事实；不把它覆盖成下一候选
-的 `not-run`。旧 checkpoint 文档不回写；其中的 workflow `success` 和当时记录的技术输出仍是
+不可迁移的起点。本记录按顺序保留第一次与第二次 remediation 技术执行的失败事实；不把任一次
+覆盖成下一候选的 `not-run`。旧 checkpoint 文档不回写；其中的 workflow `success` 和当时记录的技术输出仍是
 历史事实，但不能证明本记录识别的 Python build scratch lifecycle 安全属性，也不能作为任一
 remediation head 的通过证据。
 
@@ -58,7 +58,7 @@ tests，以及 QMD `10` passed / `1` allowlisted skip；旧 PR body 的 `595 pas
 
 ## remediation candidate threat boundary
 
-以下是 remediation candidate 要证明的有限边界，不是 gate 已通过的声明。第一次技术执行在
+以下是 remediation candidate 要证明的有限边界，不是 gate 已通过的声明。前两次技术执行均在
 toolchain 安全检查和 source tests 处 fail closed，assembly 的后续 production-input consumers
 均跳过，因此不能从设计、cleanup-only 成功或未执行的步骤推导 implementation `pass`。
 
@@ -142,6 +142,79 @@ source run 的 W01 failure evidence payload artifact `8995148172` 的 ZIP / inne
 source/tree、run 与 Draft PR #21，明确记录 result `fail`、independent acceptance `pending`、
 canonical activation `blocked`；它们不能自我提升或覆写旧 independent `NO-GO`。
 
+## 第二次 remediation 技术执行：`fail` / `superseded`
+
+第二次 remediation exact candidate 修复了第一次 source run 的 Desktop Web-lock/Vite 安装缺口，
+但 Python real-venv mode/ownership 合同和 engineering assembly 的 installed-toolchain file 校验仍
+fail closed。因此它同样只能追加为失败历史，不能替代旧 independent `NO-GO`，也不能解锁下一阶段。
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `9ecf0effaa48a8b010ff46ffb42afc57e0f3d948` |
+| exact tree | `ee82712c7874155eba038d1ce05d374416ed34e5` |
+| synthetic PR context SHA | `6b1f30254f9627995756ecb75f51d4231849ced9` |
+| committed-source snapshot SHA-256 | `9080dd15fe407ab7947b28a58bedec60f8a7422a9245b551a7b065117514d50c` |
+| renderer lock SHA-256 | `ae4f9bdf4283763a980ee4b21f3fdd844d4de43a0b35fa7086406eddc2ab857f` |
+| engineering-smoke run / job | [run `31184441362`](https://github.com/fredgnr/local-context-forge/actions/runs/31184441362) / job `92885372402` |
+| exact-head source run | [run `31184441306`](https://github.com/fredgnr/local-context-forge/actions/runs/31184441306) |
+| container run | [run `31184441281`](https://github.com/fredgnr/local-context-forge/actions/runs/31184441281) |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第二次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-second-remediation-authority: source=9ecf0effaa48a8b010ff46ffb42afc57e0f3d948,tree=ee82712c7874155eba038d1ce05d374416ed34e5,assembly-run=31184441362,assembly-job=92885372402,source-run=31184441306,container-run=31184441281,result=fail -->
+
+engineering-smoke run `31184441362` / job `92885372402` 在 `Build and audit locked Python
+sidecar` 以固定错误 `Installed toolchain file is unsafe` 失败。紧随其后的 cleanup-only gate
+成功；success-only provenance、renderer、Desktop profile、static assembly/bundle audit 与 focused
+Python lifecycle tests 均跳过，engineering product artifacts 为 `[]`。因此本轮仍没有 `.app`
+inventory/digest，也没有 packaged launch/runtime evidence。
+
+exact-head source run `31184441306` 为 `fail`。Desktop `293/293`、Web `51/51`、macOS arm64 IPC
+`49` passed / `1` warning 三个 jobs success；Python 为 `744` passed / `2` failed / `1` skipped /
+`2` warnings，失败分别是 real-venv exact-cleanup assertion 和 installed-tree
+`unsafe ownership or mode`。Python 失败后 QMD setup/source check/version steps 全部 skipped，
+`qmd_source` 为空；W01 evidence job 仍按 `always()` 运行并 fail closed。因此成功的 Desktop/Web/
+macOS 子项不能把 source aggregate 提升为 `pass`。
+
+source run 的 W01 failure payload artifact `8996169850` 的 ZIP / inner SHA-256 分别为
+`29e7f5c0f16edac4afcc3651888bad8994c23afbab9cf5945eb6ed3148c5434a` /
+`d8d76efe31b4a6fa0fec233b13bc4e72522af61e27159b29ff365c94966d02f7`；provenance artifact
+`8996170497` 的 ZIP / inner SHA-256 分别为
+`643f143c27ca019e29660aa28d022e1411433f2a550dedac4b17e3d2c720d879` /
+`9e464c4a8dee2743c0e3b9ff5e22f8adf603c56e62a4240a16c51d9b146b8105`。重算值与 Actions
+metadata/provenance 互相匹配，并绑定 exact source/tree、synthetic PR context、run 与 Draft PR #21。
+payload 明确记录 result `fail`、technical candidate gates `fail`、independent acceptance `pending`、
+canonical activation `blocked`，全部 downstream gates 为 `not-run`。
+
+container run `31184441281` 的 api/web/mcp 三个 jobs 为 `3/3` success，但 PR merge-context checkout
+不构成 exact-head source evidence。registry login 与 published-platform verification skipped，三个
+Buildx jobs 均为 `push=false` / `load=false`，所以没有镜像 publication；自动生成的 `.dockerbuild`
+action records 不是 product/engineering artifacts，也不能提升 W02、packaged smoke 或 release gate。
+
+## 第三次 remediation candidate 的 producer 私有化边界：`not-run`
+
+第二次执行证明 subprocess `umask=077` 不是完整的 installed-tree mode 合同：real venv 可以显式复制
+或保留来源文件模式，因而仍可能产生 `0640`、`0660` 或 `0775`；`umask` 不会改写显式 `chmod`，也
+不能把 regular-file hardlink 变成独立 inode。原 strict seal 对 group/world write、非规范只读 mode
+和 `nlink != 1` 的拒绝保持不变，不能为兼容 hosted runner 而放宽。
+
+下一 candidate 在每个 hash-locked producer 退出后、任何 installed tool 被消费前增加
+**producer output privatization**。它只在已持有的 random `0700` capability 内按 dirfd、`O_NOFOLLOW`
+遍历：普通文件与目录先验证 type/euid/egid/special bits/bounds/identity，再把非 executable file
+规范为 `0600`、executable file 与目录规范为 `0700`；symlink 不按 raw mode/uid/gid 修改，仍由紧随
+其后的 portable target 与 identity inventory 验证。bootstrap venv 与 final build venv 都必须先完成
+该步骤，再进入既有 inventory → read-only chmod → inventory/seal。
+
+对 `nlink > 1` 的 regular file，privatization 不在原 inode 上 `chmod`。只有 alias 本身没有
+group/world write 时，才把 bounded bytes 复制到同目录 `O_EXCL` private inode，复核原/新两端
+identity、mode、size 与完整 bytes，用 Darwin `RENAME_SWAP` / Linux `RENAME_EXCHANGE` 的
+**atomic exchange** 换入，再验证正式路径 `nlink == 1`、删除被换出的旧 alias 并 fsync parent。
+group/world-writable hardlink、atomic exchange 不可用、任何 drift 或 special file 都继续 fail closed；
+树外 alias 后续变化不能修改已经 materialized 的 sealed inode。第三候选的实现与本地测试不等于
+Actions `pass`，其 technical result 在 fresh exact-head source/assembly 完成前仍是 `not-run`。
+
 ## 解除条件（同一 W02-A implementation stage）
 
 本轮不创建新的 W、Requirement、TODO 或 Validation ID。新的候选必须至少提供：
@@ -155,22 +228,23 @@ canonical activation `blocked`；它们不能自我提升或覆写旧 independen
    drift 的 deterministic adversarial tests，以及 workflow/policy mutation closure；
 5. 新 exact head 的 fresh source/assembly Actions、空 engineering artifact 列表和独立验收。
 
-在新的 exact head 被独立接受前，旧 run、checkpoint、inventory、第一次 remediation 的失败
+在新的 exact head 被独立接受前，旧 run、checkpoint、inventory、两次 remediation 的失败
 payload/provenance 或本记录都不得迁移为新 head
 的 `pass`。当前状态固定为：
 
 | 项目 | 当前结论 |
 | --- | --- |
 | PR #21 first remediation technical attempt | `fail` / `superseded`（绑定 `9f7d5d…` / `ea8e62…` 与 `311819*` runs） |
-| PR #21 next exact remediation technical candidate | `not-run`（等待 next exact head 与 fresh Actions） |
-| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…` head/tree；第一次 remediation 为 `pending`） |
+| PR #21 second remediation technical attempt | `fail` / `superseded`（绑定 `9ecf0e…` / `ee8271…` 与 `311844*` runs） |
+| PR #21 next exact remediation technical candidate | `not-run`（等待 third exact head 与 fresh Actions） |
+| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…` head/tree；两次 remediation 均为 `pending`） |
 | W02 | `in-progress` |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` |
 | W10/W11 | `locked` |
 | packaged App / bundle sidecar launch | `not-run` |
 | public release | `NO-GO` |
 
-第一次 remediation 未启动 packaged `.app`，未从 bundle 启动 sidecar；下一 exact remediation
+两次 remediation 均未启动 packaged `.app`，未从 bundle 启动 sidecar；下一 exact remediation
 candidate 尚未运行。本 Work 不删除 legacy runtime，
 不修改 production settings/credentials/trust pins，不创建 tag、engineering product artifact、
 Draft Release 或 Release；上文记录的 W01 source-evidence artifacts 与 Buildx action records 不属于

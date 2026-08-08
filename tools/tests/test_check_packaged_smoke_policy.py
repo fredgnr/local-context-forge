@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import textwrap
 import unittest
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -148,6 +149,27 @@ def replace_make_target(
     if following < 0:
         raise AssertionError(f"Make target terminator missing: {target}")
     current["makefile"] = makefile[:start] + replacement + makefile[following:]
+
+
+def wrap_python_statement_block(
+    current: dict[str, object],
+    start_marker: str,
+    end_marker: str,
+    wrapper: str,
+) -> None:
+    source = str(current["python_bootstrap"])
+    marker_offset = source.index(start_marker)
+    block_start = source.rfind("\n", 0, marker_offset) + 1
+    end_offset = source.index(end_marker, marker_offset)
+    block_end = source.rfind("\n", 0, end_offset) + 1
+    indentation = source[block_start:marker_offset]
+    block = source[block_start:block_end]
+    current["python_bootstrap"] = (
+        source[:block_start]
+        + f"{indentation}{wrapper}\n"
+        + textwrap.indent(block, "    ")
+        + source[block_end:]
+    )
 
 
 class PackagedSmokePolicyTests(unittest.TestCase):
@@ -734,9 +756,39 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "exact Python toolchain bootstrap",
             ),
             (
+                "python_bootstrap",
+                "build._exchange_at(",
+                "os.replace(",
+                "producer privatization",
+            ),
+            (
+                "python_bootstrap",
+                "if mode & 0o022:",
+                "if False:",
+                "producer privatization",
+            ),
+            (
+                "python_bootstrap",
+                "before.st_nlink != 1\n                    or before.st_size > MAX_TREE_FILE_BYTES",
+                "False\n                    or before.st_size > MAX_TREE_FILE_BYTES",
+                "producer privatization",
+            ),
+            (
+                "python_bootstrap",
+                "_privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+                "pass",
+                "producer privatization",
+            ),
+            (
                 "python_packaging_tests",
                 "test_reviewed_python_installer_signal_cleans_exact_root",
                 "removed_installer_signal_cleanup_fixture",
+                "exact Python toolchain tests",
+            ),
+            (
+                "python_packaging_tests",
+                "test_installed_tree_privatization_exchange_failure_removes_private_copy",
+                "removed_privatization_exchange_failure_fixture",
                 "exact Python toolchain tests",
             ),
             (
@@ -776,6 +828,191 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             errors = CHECKER.validate_policy(current)
         self.assertTrue(
             any("Python sidecar manifest schema" in error for error in errors),
+            errors,
+        )
+
+    def test_python_producer_privatization_ast_rejects_dead_code(self) -> None:
+        mutations = (
+            (
+                "_privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+                "(_privatize_installed_tree(bootstrap_root, bootstrap_fd, build) if False else None)",
+            ),
+            (
+                "_privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+                "if 1 == 0:\n"
+                "                    _privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+            ),
+            (
+                "_privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+                "for _unused in ():\n"
+                "                    _privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+            ),
+            (
+                "        with build._defer_publish_signals():\n"
+                "            build._exchange_at(",
+                "        with build._defer_publish_signals():\n"
+                "            if False:\n"
+                "                build._exchange_at(",
+            ),
+            (
+                "raise ToolchainBootstrapError(\n"
+                '                                "Installed toolchain producer hardlink is writable"',
+                "_ignored = ToolchainBootstrapError(\n"
+                '                                "Installed toolchain producer hardlink is writable"',
+            ),
+            (
+                "before.st_nlink != 1\n"
+                "                    or before.st_size > MAX_TREE_FILE_BYTES",
+                "(before.st_nlink != 1 and False)\n"
+                "                    or before.st_size > MAX_TREE_FILE_BYTES",
+            ),
+            (
+                "if before.st_nlink != 1:\n"
+                '                    raise ToolchainBootstrapError("Installed toolchain hardlink is forbidden")',
+                "if before.st_nlink != 1 and False:\n"
+                '                    raise ToolchainBootstrapError("Installed toolchain hardlink is forbidden")',
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact Python toolchain producer privatization AST closure drifted",
+                    errors,
+                )
+
+        current = inputs()
+        changed(
+            current,
+            "python_bootstrap",
+            "_privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+            "return None\n"
+            "                _privatize_installed_tree(bootstrap_root, bootstrap_fd, build)",
+        )
+        with synchronized_input_document_summaries(current, "python_bootstrap"):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact Python toolchain producer privatization AST closure drifted",
+            errors,
+        )
+
+    def test_python_strict_seal_ast_rejects_unreachable_guards(self) -> None:
+        mutations = (
+            (
+                "if (\n                    before.st_nlink != 1\n"
+                "                    or before.st_size > MAX_TREE_FILE_BYTES",
+                "file_descriptor: int | None = None",
+                "if 1 == 0:",
+            ),
+            (
+                "if before.st_nlink != 1:\n"
+                '                    raise ToolchainBootstrapError("Installed toolchain hardlink is forbidden")',
+                "child = os.open(",
+                "if 1 == 0:",
+            ),
+            (
+                "if before.st_nlink != 1:\n"
+                '                    raise ToolchainBootstrapError("Installed toolchain symlink is unsafe")',
+                "target = os.readlink(",
+                "for _unused in ():",
+            ),
+        )
+        for start, end, wrapper in mutations:
+            with self.subTest(start=start, wrapper=wrapper):
+                current = inputs()
+                wrap_python_statement_block(current, start, end, wrapper)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact Python toolchain producer privatization AST closure drifted",
+                    errors,
+                )
+
+    def test_python_privatization_ast_rejects_shadow_and_empty_inventory(self) -> None:
+        current = inputs()
+        changed(
+            current,
+            "python_bootstrap",
+            "                bootstrap_root, bootstrap_fd, _bootstrap_snapshot = _create_private_child(",
+            "                _privatize_installed_tree = lambda *_args: None\n"
+            "                bootstrap_root, bootstrap_fd, _bootstrap_snapshot = _create_private_child(",
+        )
+        with synchronized_input_document_summaries(current, "python_bootstrap"):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact Python toolchain producer privatization AST closure drifted",
+            errors,
+        )
+
+        names_assignment = (
+            "names = tuple(sorted(os.listdir(directory_descriptor)))"
+        )
+        for replace_last in (False, True):
+            with self.subTest(inventory=replace_last):
+                current = inputs()
+                mutation = (
+                    "names = () if True else "
+                    "tuple(sorted(os.listdir(directory_descriptor)))"
+                )
+                if replace_last:
+                    changed_last(
+                        current,
+                        "python_bootstrap",
+                        names_assignment,
+                        mutation,
+                    )
+                else:
+                    changed(
+                        current,
+                        "python_bootstrap",
+                        names_assignment,
+                        mutation,
+                    )
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact Python toolchain producer privatization AST closure drifted",
+                    errors,
+                )
+
+        current = inputs()
+        changed(
+            current,
+            "python_bootstrap",
+            "names = tuple(sorted(os.listdir(descriptor)))",
+            "names = () if True else tuple(sorted(os.listdir(descriptor)))",
+        )
+        with synchronized_input_document_summaries(current, "python_bootstrap"):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact Python toolchain producer privatization AST closure drifted",
+            errors,
+        )
+
+        current = inputs()
+        changed(
+            current,
+            "python_bootstrap",
+            "        nonlocal total_size\n",
+            "        nonlocal total_size\n"
+            "        os.listdir = lambda _descriptor: ()\n",
+        )
+        with synchronized_input_document_summaries(current, "python_bootstrap"):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact Python toolchain producer privatization AST closure drifted",
             errors,
         )
 

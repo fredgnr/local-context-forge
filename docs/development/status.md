@@ -20,7 +20,8 @@
 | W02 historical static assembly checkpoint | Draft PR #21 `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38`；assembly run `31024794972` / job `92370351806`；technical history only |
 | W02 latest independent review | Draft PR #21 `8c5fd23206b671b768fd21d253bf292642f93a51` / tree `785f4656de8a7233b6dd632fe4815976d33468fb`；independent `NO-GO`（append-only） |
 | W02 first remediation attempt | exact `9f7d5d11225517ff5b1643d4bb71983346358ae0` / tree `ea8e62e9b76c3270d60135a8633f56db025ad921`；technical `fail` / `superseded`；independent `pending`；activation `blocked` |
-| 当前结论 | **W02 in-progress：latest independent `NO-GO`；first remediation attempt `fail` / `superseded`；next exact candidate `not-run`；packaged launch/runtime `not-run`；W10/W11 locked；public release NO-GO** |
+| W02 second remediation attempt | exact `9ecf0effaa48a8b010ff46ffb42afc57e0f3d948` / tree `ee82712c7874155eba038d1ce05d374416ed34e5`；technical `fail` / `superseded`；independent `pending`；activation `blocked` |
+| 当前结论 | **W02 in-progress：latest independent `NO-GO`；first and second remediation attempts `fail` / `superseded`；next exact candidate `not-run`；packaged launch/runtime `not-run`；W10/W11 locked；public release NO-GO** |
 
 PR #20 的旧 final candidate 已被独立验收拒绝；remediation exact final
 `36885e04df09c4789d8ec3c9dc5c5e78a381a634` 已通过 PR/source 与独立验收并合入 canonical
@@ -115,7 +116,26 @@ W01 failure evidence payload artifact `8995148172` 的 ZIP / inner SHA-256 为
 `8995148811` 为 `a43697a8b83737ddda3b3e102a270b299adf6658a2f7d3017ffd93cad2af9c3a` /
 `bb5dc6ae465782e220b5bdde2dd309a5c8662255426d4c51a28fc871eced21a4`。它们绑定上述
 source/tree/run/PR #21，result `fail`、independent `pending`、activation `blocked`。第一次 attempt
-已 `superseded`；下一 exact remediation technical candidate 尚未执行，不能从任一旧 run 迁移
+已 `superseded`。
+
+第二次 remediation exact `9ecf0effaa48a8b010ff46ffb42afc57e0f3d948` / tree
+`ee82712c7874155eba038d1ce05d374416ed34e5` 的 source snapshot 为
+`9080dd15fe407ab7947b28a58bedec60f8a7422a9245b551a7b065117514d50c`。engineering run
+`31184441362` / job `92885372402` 因 `Installed toolchain file is unsafe` 失败，cleanup-only
+success，后续 assembly/audit/tests skipped，engineering product artifacts 为 `[]`。source run
+`31184441306` 也是 `fail`：Desktop `293/293`、Web `51/51`、macOS IPC `49` pass / `1` warning
+success；Python `744` pass / `2` fail / `1` skip / `2` warnings，QMD skipped，W01 aggregate
+fail closed。container run `31184441281` 为 `3/3` success/no publication，registry login/platform
+verification skipped 且 `push=false` / `load=false`。
+
+第二轮 W01 payload/provenance artifacts `8996169850` / `8996170497` 的 ZIP SHA-256 分别为
+`29e7f5c0f16edac4afcc3651888bad8994c23afbab9cf5945eb6ed3148c5434a` /
+`643f143c27ca019e29660aa28d022e1411433f2a550dedac4b17e3d2c720d879`，inner SHA-256 分别为
+`d8d76efe31b4a6fa0fec233b13bc4e72522af61e27159b29ff365c94966d02f7` /
+`9e464c4a8dee2743c0e3b9ff5e22f8adf603c56e62a4240a16c51d9b146b8105`；重算值匹配，且绑定
+source/tree、synthetic `6b1f30254f9627995756ecb75f51d4231849ced9`、run/PR #21、result `fail`、
+independent `pending`、activation `blocked` 和 downstream `not-run`。第二次 attempt 同样已
+`superseded`；下一 exact remediation technical candidate 尚未执行，不能从任一旧 run 迁移
 `pass`，latest independent conclusion 仍是旧 head 的 `NO-GO`。
 更早 PR #17 证据包括：
 
@@ -133,7 +153,7 @@ packaged/physical gate。
 | 路径 | 当前可用性 | 适用对象 | 主要限制 |
 | --- | --- | --- | --- |
 | Electron 源码模式 | 可用于开发和 source 验证 | 开发者 | 借用开发机 Python/Node；不是正式包 |
-| 最小 packaged smoke | old static assembly technical `pass`；latest independent `NO-GO`；first remediation `fail` / `superseded`；next exact candidate `not-run`；packaged launch/runtime `not-run` | W02 removal feedback | old/failed exact Draft runs cannot prove a later candidate；没有启动 assembled App，不完成 `VAL-PACKAGED-SMOKE-001` |
+| 最小 packaged smoke | old static assembly technical `pass`；latest independent `NO-GO`；first and second remediation attempts `fail` / `superseded`；next exact candidate `not-run`；packaged launch/runtime `not-run` | W02 removal feedback | old/failed exact Draft runs cannot prove a later candidate；没有启动 assembled App，不完成 `VAL-PACKAGED-SMOKE-001` |
 | 完整 engineering test package | `planned` / `not-run` | W04–W12 工程物理验证 | 只能从 W10/W11 cleaned tree 构建；UNOFFICIAL、无 production trust/tag/upload |
 | Electron 正式 DMG | `not-run` / 不推荐 | 将来的普通用户 | trust pins、签名、真机和 promotion 未完成 |
 | Legacy Docker/Web | 已弃用、unsupported、待删除 | 仅用于解释当前仓库残留 | 不承诺修复、迁移、兼容窗口或继续可用 |
@@ -155,7 +175,7 @@ ITER-0008 的 W10/W11 slices 移除。此状态变化不自动停止现有容器
 | P4 Desktop 数据、模型 | `planned` | 标准路径部分落地 | Desktop backup/restore、完整模型供应链、unknown layout fail-closed |
 | P5 DMG 与发布 | `planned` / 后置 W14–W16 | 两阶段 workflow/source policy | W13、GitHub settings、trust pins、签名 Draft、clean-user |
 | P6 更新实机门禁 | `planned` | signed check/download/open-DMG source client | 真实 `N-1 → N`、失败注入；automatic apply 尚未设计 |
-| P7 Electron-only 退出 | `in-progress` | W01 已闭环；W02 old static assembly/audit 是历史技术结果，PR #21 latest independent verdict `NO-GO`，first remediation technical attempt `fail` / `superseded`；ADR-0015/0016、W01–W16 与严格删除计划 | PR #21 next exact remediation candidate、W02 packaged runtime smoke、W10/W11 slices、W03 engineering package、W13 final gates |
+| P7 Electron-only 退出 | `in-progress` | W01 已闭环；W02 old static assembly/audit 是历史技术结果，PR #21 latest independent verdict `NO-GO`，first and second remediation technical attempts `fail` / `superseded`；ADR-0015/0016、W01–W16 与严格删除计划 | PR #21 next exact remediation candidate、W02 packaged runtime smoke、W10/W11 slices、W03 engineering package、W13 final gates |
 
 P2/P3 的实现依赖 P1 已冻结的 source IPC contract，而不是 P1 的完整 packaged gate。
 P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物理退出门禁。
@@ -193,7 +213,7 @@ settings、signing、Release gate。
 | `VAL-UPDATE-CLIENT-001` | `pass` | manifest、cache、IPC、verified DMG source 合同 |
 | `VAL-LOCAL-SOURCE-001/002` | `pass` | grant/path 与 Backend 双层 source policy |
 
-W02 historical static assembly、first remediation failure 与 next candidate（均不等于 packaged runtime gate）：
+W02 historical static assembly、two remediation failures 与 next candidate（均不等于 packaged runtime gate）：
 
 | Substage | 结果 | 证据与限制 |
 | --- | --- | --- |
@@ -201,7 +221,8 @@ W02 historical static assembly、first remediation failure 与 next candidate（
 | historical pre-pack frozen sidecar staging smoke | technical `pass` | old assembly job build step；仅为 staging history，sidecar 未从 assembled bundle 启动；不能证明 held lifecycle |
 | reviewed PR #21 candidate independent acceptance | `NO-GO` | exact `8c5fd232…` / tree `785f4656…`；H1 scratch capability/Git provenance/fail-closed cleanup blocker；[record](evidence/W02/2026-08-07-pr21-remediation.md) |
 | first remediation exact candidate | `fail` / `superseded` | exact `9f7d5d…` / tree `ea8e62…`；assembly `31181911570` fail、source `31181911534` fail、container `31181911527` no-publish success；engineering product artifacts `[]`；independent pending / activation blocked；[record](evidence/W02/2026-08-07-pr21-remediation.md) |
-| next exact remediation technical candidate | `not-run` | next exact head and fresh Actions required；old `310269*` and failed `311819*` runs cannot be reused |
+| second remediation exact candidate | `fail` / `superseded` | exact `9ecf0e…` / tree `ee8271…`；assembly `31184441362` fail `Installed toolchain file is unsafe` / cleanup success、source `31184441306` fail（Desktop/Web/macOS success；Python `744/2/1`；QMD skipped；W01 fail closed）、container `31184441281` no-publish success；engineering product artifacts `[]`；independent pending / activation blocked；[record](evidence/W02/2026-08-07-pr21-remediation.md) |
+| next exact remediation technical candidate | `not-run` | third exact head and fresh Actions required；old `310269*` and failed `311819*` / `311844*` runs cannot be reused |
 | packaged App launch/runtime | `not-run` | `VAL-PACKAGED-SMOKE-001` 仍未运行，W10/W11 locked |
 
 ### 必须保持 `not-run`
@@ -234,9 +255,12 @@ W02 historical static assembly、first remediation failure 与 next candidate（
 
 1. Draft PR #21 reviewed `8c5fd232…` / tree `785f4656…` 的 latest independent conclusion 是
    `NO-GO`。第一次 remediation `9f7d5d…` / tree `ea8e62…` 已 technical `fail` / `superseded`：
-   assembly/source 失败，container 仅 no-publish success，independent 仍 `pending`。必须在同一
-   branch/PR 为下一 exact candidate 取得 fresh source/assembly Actions；旧 `310269*` 与失败的
-   `311819*` runs 都不能迁移为 remediation `pass`。
+   assembly/source 失败，container 仅 no-publish success。第二次 remediation `9ecf0e…` / tree
+   `ee8271…` 也已 technical `fail` / `superseded`：assembly 的 installed-toolchain file 校验和
+   source 的两个 Python real-venv tests 失败，container 仍仅 no-publish success；两次 independent
+   acceptance 均为 `pending`。必须在同一 branch/PR 为下一 exact candidate 取得 fresh source/
+   assembly Actions；旧 `310269*` 与失败的 `311819*` / `311844*` runs 都不能迁移为 remediation
+   `pass`。
 2. packaged App launch/runtime harness 仍未实现或运行，assembled App 未启动、sidecar 未从
    bundle 启动，`VAL-PACKAGED-SMOKE-001=not-run`；因此 W10/W11 destructive slices 继续 locked。
 3. W10/W11 的 decouple/deploy/transport/provider/release/docs slice 均未执行，container/GHCR
@@ -262,8 +286,9 @@ W02 historical static assembly、first remediation failure 与 next candidate（
 
 ### Ready now：无需外部管理员或物理候选
 
-1. 在 Draft PR #21 现有 branch 上形成下一 exact remediation candidate，修复第一次 attempt 暴露的
-   installed-toolchain symlink、unsafe ownership/mode 与缺失 renderer Vite 依赖失败，同时保持 H1
+1. 在 Draft PR #21 现有 branch 上形成下一 exact remediation candidate，修复第二次 attempt 暴露的
+   installed-toolchain file 与 real-venv ownership/mode 失败，同时保持已修复的 renderer Vite 真实
+   build、H1
    deterministic rename/recreate/ABA、provenance drift、publish/rollback/evidence/cleanup failure tests；
    对下一 exact head 运行 fresh source 与 assembly Actions，再交付独立验收。保持 remote artifact、
    production trust、tag/Draft/Release 边界不变，不启动 packaged App；

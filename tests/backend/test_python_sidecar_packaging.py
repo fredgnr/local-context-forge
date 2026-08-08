@@ -7905,16 +7905,19 @@ def test_real_venv_seal_verify_execute_and_restore_for_exact_cleanup(
     root = tmp_path / "real-venv"
     _create_real_venv_with_production_child(root)
     assert any(path.is_symlink() for path in root.rglob("*"))
-    assert all(
-        not stat.S_IMODE(path.lstat().st_mode) & 0o022
-        for path in (root, *root.rglob("*"))
-        if not path.is_symlink()
-    )
     descriptor = os.open(
         root,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
     )
     try:
+        activation = root / "bin" / "activate"
+        activation.chmod(0o664)
+        bootstrap._privatize_installed_tree(root, descriptor, build)
+        assert all(
+            not stat.S_IMODE(path.lstat().st_mode) & 0o077
+            for path in (root, *root.rglob("*"))
+            if not path.is_symlink()
+        )
         seal = bootstrap.seal_installed_tree(
             root,
             descriptor,
@@ -7961,6 +7964,7 @@ def test_installed_tree_seal_rejects_same_version_content_drift(
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
     )
     try:
+        bootstrap._privatize_installed_tree(root, descriptor, build)
         seal = bootstrap.seal_installed_tree(
             root,
             descriptor,
@@ -7980,6 +7984,251 @@ def test_installed_tree_seal_rejects_same_version_content_drift(
                 reviewed_framework_root=_test_framework_root(),
             )
         bootstrap._make_installed_tree_cleanup_writable(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_installed_tree_privatization_normalizes_modes_and_breaks_hardlinks(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    nested = root / "bin"
+    nested.mkdir(mode=0o700)
+    nested.chmod(0o775)
+    external = tmp_path / "external-tool"
+    external.write_bytes(b"reviewed tool\n")
+    external.chmod(0o755)
+    installed = nested / "tool"
+    installed.hardlink_to(external)
+    executable = nested / "runner"
+    executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+    executable.chmod(0o775)
+    link = nested / "python"
+    link.symlink_to("runner")
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        bootstrap._privatize_installed_tree(root, descriptor, build)
+        assert stat.S_IMODE(root.lstat().st_mode) == 0o700
+        assert stat.S_IMODE(nested.lstat().st_mode) == 0o700
+        assert stat.S_IMODE(installed.lstat().st_mode) == 0o700
+        assert stat.S_IMODE(executable.lstat().st_mode) == 0o700
+        assert installed.stat().st_nlink == 1
+        assert external.stat().st_nlink == 1
+        assert stat.S_IMODE(external.stat().st_mode) == 0o755
+        external.write_bytes(b"external drift\n")
+        assert installed.read_bytes() == b"reviewed tool\n"
+        assert link.is_symlink()
+        seal = bootstrap.seal_installed_tree(root, descriptor)
+        modes = {entry["path"]: entry["mode"] for entry in seal.entries}
+        assert modes["bin/tool"] == "0500"
+        assert modes["bin/runner"] == "0500"
+        assert modes["bin/python"] == "0777"
+        bootstrap._make_installed_tree_cleanup_writable(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize(
+    ("initial_mode", "private_mode", "sealed_mode"),
+    (
+        (0o640, 0o600, "0400"),
+        (0o644, 0o600, "0400"),
+        (0o660, 0o600, "0400"),
+        (0o700, 0o700, "0500"),
+        (0o711, 0o700, "0500"),
+        (0o755, 0o700, "0500"),
+        (0o775, 0o700, "0500"),
+    ),
+)
+def test_installed_tree_privatization_canonicalizes_producer_file_modes(
+    tmp_path: Path,
+    initial_mode: int,
+    private_mode: int,
+    sealed_mode: str,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    tool = root / "tool"
+    tool.write_bytes(b"reviewed\n")
+    tool.chmod(initial_mode)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        bootstrap._privatize_installed_tree(root, descriptor, build)
+        assert stat.S_IMODE(tool.lstat().st_mode) == private_mode
+        seal = bootstrap.seal_installed_tree(root, descriptor)
+        entry = next(item for item in seal.entries if item["path"] == "tool")
+        assert entry["mode"] == sealed_mode
+        bootstrap._make_installed_tree_cleanup_writable(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_installed_tree_privatization_breaks_two_internal_hardlinks(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    first = root / "first"
+    first.write_bytes(b"same reviewed bytes\n")
+    first.chmod(0o640)
+    second = root / "second"
+    second.hardlink_to(first)
+    original_inode = first.stat().st_ino
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        bootstrap._privatize_installed_tree(root, descriptor, build)
+        assert first.read_bytes() == second.read_bytes() == b"same reviewed bytes\n"
+        assert first.stat().st_nlink == second.stat().st_nlink == 1
+        assert first.stat().st_ino != second.stat().st_ino
+        assert original_inode in {first.stat().st_ino, second.stat().st_ino}
+        seal = bootstrap.seal_installed_tree(root, descriptor)
+        assert len([item for item in seal.entries if item["type"] == "file"]) == 2
+        bootstrap._make_installed_tree_cleanup_writable(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize("unsafe_mode", (0o660, 0o775))
+def test_installed_tree_privatization_rejects_writable_external_hardlink(
+    tmp_path: Path,
+    unsafe_mode: int,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    external = tmp_path / "external"
+    external.write_bytes(b"untrusted alias\n")
+    external.chmod(unsafe_mode)
+    installed = root / "tool"
+    installed.hardlink_to(external)
+    original = external.lstat()
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="producer hardlink is writable",
+        ):
+            bootstrap._privatize_installed_tree(root, descriptor, build)
+        assert installed.stat().st_ino == external.stat().st_ino == original.st_ino
+        assert stat.S_IMODE(external.stat().st_mode) == unsafe_mode
+        assert external.read_bytes() == b"untrusted alias\n"
+        assert not list(root.glob(".lcf-private-*"))
+    finally:
+        os.close(descriptor)
+
+
+def test_installed_tree_privatization_exchange_failure_removes_private_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    external = tmp_path / "external"
+    external.write_bytes(b"reviewed alias\n")
+    external.chmod(0o640)
+    installed = root / "tool"
+    installed.hardlink_to(external)
+    original = external.lstat()
+
+    def fail_exchange(*_args: Any) -> None:
+        raise build.BuildError("synthetic exchange failure")
+
+    monkeypatch.setattr(build, "_exchange_at", fail_exchange)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="private copy failed",
+        ):
+            bootstrap._privatize_installed_tree(
+                root,
+                descriptor,
+                build,
+            )
+        assert installed.stat().st_ino == external.stat().st_ino == original.st_ino
+        assert stat.S_IMODE(external.stat().st_mode) == 0o640
+        assert external.read_bytes() == b"reviewed alias\n"
+        assert not list(root.glob(".lcf-private-*"))
+    finally:
+        os.close(descriptor)
+
+
+def test_installed_tree_privatization_post_exchange_failure_removes_old_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    external = tmp_path / "external"
+    external.write_bytes(b"reviewed alias\n")
+    external.chmod(0o640)
+    installed = root / "tool"
+    installed.hardlink_to(external)
+    original_exchange = build._exchange_at
+
+    def exchange_then_fail(*args: Any) -> None:
+        original_exchange(*args)
+        raise build.BuildError("synthetic post-exchange failure")
+
+    monkeypatch.setattr(build, "_exchange_at", exchange_then_fail)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="private copy failed",
+        ):
+            bootstrap._privatize_installed_tree(root, descriptor, build)
+        assert installed.read_bytes() == b"reviewed alias\n"
+        assert installed.stat().st_nlink == 1
+        assert external.read_bytes() == b"reviewed alias\n"
+        assert external.stat().st_nlink == 1
+        assert installed.stat().st_ino != external.stat().st_ino
+        assert not list(root.glob(".lcf-private-*"))
+    finally:
+        os.close(descriptor)
+
+
+def test_installed_tree_seal_rejects_regular_hardlink_without_privatization(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "installed"
+    root.mkdir(mode=0o700)
+    first = root / "first"
+    first.write_bytes(b"shared inode\n")
+    first.chmod(0o600)
+    second = root / "second"
+    second.hardlink_to(first)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="Installed toolchain file is unsafe",
+        ):
+            bootstrap.seal_installed_tree(root, descriptor)
+        assert first.stat().st_ino == second.stat().st_ino
+        assert first.stat().st_nlink == second.stat().st_nlink == 2
+        assert stat.S_IMODE(first.stat().st_mode) == 0o600
     finally:
         os.close(descriptor)
 

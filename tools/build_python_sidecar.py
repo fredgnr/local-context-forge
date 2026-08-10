@@ -124,16 +124,13 @@ BUILD_TOOL_EVIDENCE_KEYS = {
     "uv": "uvVersion",
 }
 
-# PyInstaller 6.21.0's ModuleGraph calls ``realpath`` on the entry script
-# immediately before opening it.  ``realpath('/dev/fd/N/...')`` discards the
-# held-directory authority and returns a mutable namespace path.  The locked
-# runner keeps realpath's normal behavior everywhere except below the one
-# inherited source fd.  The wrapper is intentionally self-contained because
-# isolated mode ignores PYTHONPATH and sitecustomize.
+# The locked runner receives canonical paths only after the outer owner has
+# bound each private path to a held descriptor.  Darwin fdesc child traversal
+# is deliberately not part of the contract.  The wrapper is self-contained
+# because isolated mode ignores PYTHONPATH and sitecustomize.
 PYINSTALLER_CAPABILITY_RUNNER = r"""
 import os
 import stat
-import subprocess
 import sys
 
 source_descriptor = int(sys.argv.pop(1))
@@ -142,12 +139,12 @@ dist_descriptor = int(sys.argv.pop(1))
 work_descriptor = int(sys.argv.pop(1))
 config_descriptor = int(sys.argv.pop(1))
 temp_descriptor = int(sys.argv.pop(1))
-source_root = "/dev/fd/" + str(source_descriptor)
-bundle_root = "/dev/fd/" + str(bundle_descriptor)
-dist_root = "/dev/fd/" + str(dist_descriptor)
-work_root = "/dev/fd/" + str(work_descriptor)
-config_root = "/dev/fd/" + str(config_descriptor)
-temp_root = "/dev/fd/" + str(temp_descriptor)
+source_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+bundle_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+dist_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+work_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+config_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+temp_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
 capability_roots = (
     source_root,
     bundle_root,
@@ -171,12 +168,23 @@ for capability_descriptor, capability_root in zip(
     strict=True,
 ):
     held = os.fstat(capability_descriptor)
-    observed = os.stat(capability_root)
-    if (
-        not stat.S_ISDIR(held.st_mode)
-        or (held.st_dev, held.st_ino) != (observed.st_dev, observed.st_ino)
-    ):
-        raise RuntimeError("PyInstaller directory capability is unavailable")
+    observed = os.lstat(capability_root)
+    probe = os.open(
+        capability_root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        opened = os.fstat(probe)
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or stat.S_ISLNK(observed.st_mode)
+            or (held.st_dev, held.st_ino) != (observed.st_dev, observed.st_ino)
+            or (held.st_dev, held.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise RuntimeError("PyInstaller directory capability is unavailable")
+    finally:
+        os.close(probe)
+    os.set_inheritable(capability_descriptor, False)
 
 held_bundle = os.fstat(bundle_descriptor)
 observed_bundle = os.stat(bundle_root)
@@ -218,28 +226,8 @@ if os.environ.get("PYINSTALLER_CONFIG_DIR") != config_root:
     raise RuntimeError("PyInstaller config capability is unexpected")
 if os.environ.get("TMPDIR") != temp_root:
     raise RuntimeError("PyInstaller temporary capability is unexpected")
-
-# PyInstaller's Darwin helpers invoke native tools while COLLECT is operating
-# below the fd-backed output root.  Every descendant process that may receive
-# one of those paths must inherit the authenticated roots as well; otherwise a
-# default close_fds=True Popen silently revokes the path authority.
-original_popen = subprocess.Popen
-for capability_descriptor in capability_descriptors:
-    os.set_inheritable(capability_descriptor, True)
-
-def capability_popen(*args, **kwargs):
-    # PyInstaller's isolation worker deliberately uses close_fds=False so its
-    # freshly-created pipe endpoints survive.  Preserve that reviewed contract;
-    # the capability fds above are explicitly inheritable in the same child.
-    if kwargs.get("close_fds") is False and not kwargs.get("pass_fds"):
-        return original_popen(*args, **kwargs)
-    inherited = set(kwargs.get("pass_fds", ()))
-    inherited.update(capability_descriptors)
-    kwargs["pass_fds"] = tuple(sorted(inherited))
-    kwargs["close_fds"] = True
-    return original_popen(*args, **kwargs)
-
-subprocess.Popen = capability_popen
+os.environ["LCF_PYINSTALLER_SOURCE_FD"] = str(source_descriptor)
+os.environ["LCF_PYINSTALLER_SOURCE_ROOT"] = source_root
 
 from PyInstaller.lib.modulegraph import modulegraph
 
@@ -2908,20 +2896,8 @@ def verify_uv_lock(
     active_python = Path(sys.executable)
     if not active_python.is_absolute():
         raise BuildError("Build venv Python path must be absolute")
-    if source_descriptor is not None:
-        source_root = Path("/dev/fd") / str(source_descriptor)
-        try:
-            relative_backend = backend_root.relative_to(source_root)
-            if (
-                relative_backend != Path("backend")
-                or _stable_directory_identity(os.stat(source_root))
-                != _stable_directory_identity(os.fstat(source_descriptor))
-            ):
-                raise BuildError("uv source capability is unavailable")
-        except BuildError:
-            raise
-        except (OSError, RuntimeError, ValueError) as exc:
-            raise BuildError("uv source capability is unavailable") from exc
+    backend_descriptor: int | None = None
+    backend_identity: tuple[int, ...] | None = None
     try:
         uv_path_info = uv_executable.lstat()
         resolved = uv_executable.resolve(strict=True)
@@ -2956,6 +2932,46 @@ def verify_uv_lock(
     active_cache_descriptor = cache_descriptor
     owns_cache_descriptor = False
     try:
+        if source_descriptor is not None:
+            try:
+                held_source = os.fstat(source_descriptor)
+                source_path = backend_root.parent
+                path_source = source_path.lstat()
+                if (
+                    not source_path.is_absolute()
+                    or backend_root != source_path / "backend"
+                    or stat.S_ISLNK(path_source.st_mode)
+                    or _stat_metadata(held_source) != _stat_metadata(path_source)
+                ):
+                    raise BuildError("uv source capability is unavailable")
+                backend_descriptor = os.open(
+                    "backend",
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    dir_fd=source_descriptor,
+                )
+                held_backend = os.fstat(backend_descriptor)
+                relative_backend = os.stat(
+                    "backend",
+                    dir_fd=source_descriptor,
+                    follow_symlinks=False,
+                )
+                path_backend = backend_root.lstat()
+                backend_identity = _stat_metadata(held_backend)
+                if (
+                    not stat.S_ISDIR(held_backend.st_mode)
+                    or backend_identity != _stat_metadata(relative_backend)
+                    or backend_identity != _stat_metadata(path_backend)
+                    or held_backend.st_uid != os.geteuid()
+                    or stat.S_IMODE(held_backend.st_mode) & 0o022
+                ):
+                    raise BuildError("uv source capability is unavailable")
+            except BuildError:
+                raise
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise BuildError("uv source capability is unavailable") from exc
         if active_cache_descriptor is None:
             active_cache_descriptor = os.open(
                 cache_directory,
@@ -2978,24 +2994,21 @@ def verify_uv_lock(
             exact_entries=(),
             error_message="uv cache capability is unsafe",
         )
+        command = (
+            str(resolved),
+            "lock",
+            "--check",
+            "--python",
+            str(resolved_python),
+        )
         completed = subprocess.run(
-            [
-                str(resolved),
-                "lock",
-                "--check",
-                "--python",
-                str(resolved_python),
-            ],
+            list(command),
             cwd=backend_root,
             env={
                 "PATH": "/usr/bin:/bin",
                 "LANG": "C",
                 "LC_ALL": "C",
-                "UV_CACHE_DIR": str(
-                    Path("/dev/fd") / str(active_cache_descriptor)
-                    if cache_descriptor is not None
-                    else cache_directory
-                ),
+                "UV_CACHE_DIR": str(cache_directory),
                 "UV_NO_CONFIG": "1",
                 "UV_NO_PROGRESS": "1",
                 "UV_OFFLINE": "1",
@@ -3006,12 +3019,15 @@ def verify_uv_lock(
             stderr=subprocess.PIPE,
             text=True,
             timeout=180,
-            pass_fds=tuple(
-                descriptor
-                for descriptor in (source_descriptor, cache_descriptor)
-                if descriptor is not None
-            ),
+            pass_fds=(),
+            close_fds=True,
         )
+        if backend_descriptor is not None:
+            if (
+                backend_identity != _stat_metadata(os.fstat(backend_descriptor))
+                or backend_identity != _stat_metadata(backend_root.lstat())
+            ):
+                raise BuildError("uv source capability changed during lock verification")
         _capture_bound_directory(
             active_cache_descriptor,
             cache_directory,
@@ -3033,6 +3049,12 @@ def verify_uv_lock(
     except OSError as exc:
         raise BuildError("uv lock check could not start") from exc
     finally:
+        if backend_descriptor is not None:
+            try:
+                os.close(backend_descriptor)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise BuildError("uv source capability cleanup failed") from exc
         if owns_cache_descriptor and active_cache_descriptor is not None:
             try:
                 os.close(active_cache_descriptor)
@@ -3968,6 +3990,55 @@ def _verify_held_bundle_tree(
         raise _CleanupBlockedError(error_message) from exc
 
 
+def _verify_held_bundle_candidate(
+    bundle: _BundleCapability,
+    candidate: Path,
+    *,
+    error_message: str,
+) -> Path:
+    """Bind the current publish name to the held, sealed bundle tree."""
+
+    descriptor: int | None = None
+    try:
+        _verify_held_bundle_tree(bundle, error_message=error_message)
+        if not candidate.is_absolute() or ".." in candidate.parts:
+            raise _CapabilityDriftError(error_message)
+        named = candidate.lstat()
+        descriptor = os.open(
+            candidate,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        opened = os.fstat(descriptor)
+        held = os.fstat(bundle.descriptor)
+        expected_identity = _stable_directory_identity(bundle.snapshot)
+        if (
+            stat.S_ISLNK(named.st_mode)
+            or not stat.S_ISDIR(named.st_mode)
+            or not stat.S_ISDIR(opened.st_mode)
+            or _stable_directory_identity(held) != expected_identity
+            or _stable_directory_identity(named) != expected_identity
+            or _stable_directory_identity(opened) != expected_identity
+            or _tree_metadata_snapshot(
+                descriptor,
+                error_message=error_message,
+            )
+            != bundle.tree_snapshot
+        ):
+            raise _CapabilityDriftError(error_message)
+        return candidate
+    except _CleanupBlockedError:
+        raise
+    except BaseException as exc:
+        raise _CleanupBlockedError(error_message) from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise _CleanupBlockedError(error_message) from exc
+
+
 def _close_published_bundle_capability(scratch: _ScratchCapability) -> None:
     bundle = scratch.bundle
     if bundle is None or bundle.closed:
@@ -4011,7 +4082,7 @@ def _run_pyinstaller_command(
     error_message = "PyInstaller directory capability is unavailable"
     roots = (
         (source_descriptor, source_root),
-        (bundle_descriptor, Path("/dev/fd") / str(bundle_descriptor)),
+        (bundle_descriptor, dist_root / "lcf-service"),
         (dist_descriptor, dist_root),
         (work_descriptor, work_root),
         (config_descriptor, config_root),
@@ -4019,12 +4090,27 @@ def _run_pyinstaller_command(
     )
     try:
         for descriptor, root in roots:
-            if (
-                root != Path("/dev/fd") / str(descriptor)
-                or _stable_directory_identity(os.stat(root))
-                != _stable_directory_identity(os.fstat(descriptor))
-            ):
-                raise BuildError(error_message)
+            observed = root.lstat()
+            probe = os.open(
+                root,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC,
+            )
+            try:
+                opened = os.fstat(probe)
+                held = os.fstat(descriptor)
+                if (
+                    stat.S_ISLNK(observed.st_mode)
+                    or _stable_directory_identity(observed)
+                    != _stable_directory_identity(held)
+                    or _stable_directory_identity(opened)
+                    != _stable_directory_identity(held)
+                ):
+                    raise BuildError(error_message)
+            finally:
+                os.close(probe)
         if (
             environment.get("PYINSTALLER_CONFIG_DIR") != str(config_root)
             or environment.get("TMPDIR") != str(temp_root)
@@ -4045,6 +4131,12 @@ def _run_pyinstaller_command(
         str(work_descriptor),
         str(config_descriptor),
         str(temp_descriptor),
+        str(source_root),
+        str(dist_root / "lcf-service"),
+        str(dist_root),
+        str(work_root),
+        str(config_root),
+        str(temp_root),
         "--noconfirm",
         "--clean",
         "--distpath",
@@ -4078,6 +4170,25 @@ def _run_pyinstaller_command(
                 start_new_session=True,
             )
         stdout, _stderr = process.communicate(timeout=1800)
+        for descriptor, root in roots:
+            observed = root.lstat()
+            probe = os.open(
+                root,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC,
+            )
+            try:
+                if (
+                    _stable_directory_identity(observed)
+                    != _stable_directory_identity(os.fstat(descriptor))
+                    or _stable_directory_identity(os.fstat(probe))
+                    != _stable_directory_identity(os.fstat(descriptor))
+                ):
+                    raise BuildError(error_message)
+            finally:
+                os.close(probe)
         descendants = False
         # Stabilize the communicate -> process-group absence decision.  A
         # signal observed at this handoff is caught below and still runs the
@@ -4369,7 +4480,7 @@ def _prepare_pyinstaller_capabilities(
                 )
                 directory_descriptors[name] = descriptor
                 directory_snapshots[name] = snapshot
-                directory_paths[name] = Path("/dev/fd") / str(descriptor)
+                directory_paths[name] = build_root / name
                 attempted_name = None
             attempted_name = "lcf-service"
             pending_bundle_descriptor, pending_bundle_snapshot = (
@@ -4526,12 +4637,23 @@ def _revalidate_pyinstaller_producer_capabilities(
                 )
             ):
                 raise _CapabilityDriftError(error_message)
-            expected_capability_path = Path("/dev/fd") / str(
-                capability.descriptor
-            )
+            expected_capability_path = capability.path
+            probe: int | None = None
+            try:
+                probe = os.open(
+                    expected_capability_path,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                )
+                probed = os.fstat(probe)
+            finally:
+                if probe is not None:
+                    os.close(probe)
             if (
                 capability.capability_path != expected_capability_path
-                or _stable_directory_identity(os.stat(expected_capability_path))
+                or _stable_directory_identity(probed)
                 != _stable_directory_identity(current)
             ):
                 raise _CapabilityDriftError(error_message)
@@ -4579,9 +4701,11 @@ def run_pyinstaller(
     source_descriptor = scratch.source_snapshot_descriptor
     if (
         source_descriptor is None
-        or source_root != _held_source_capability_path(scratch)
+        or scratch.source_snapshot is None
+        or source_root != scratch.source_snapshot
     ):
         raise BuildError("PyInstaller source capability is unavailable")
+    _validate_source_snapshot(scratch)
     active_python = Path(sys.executable)
     try:
         executable_info = active_python.lstat()
@@ -4613,7 +4737,7 @@ def run_pyinstaller(
             bundle_capability, producer_capabilities = (
                 _prepare_pyinstaller_capabilities(scratch)
             )
-        dist_root = Path("/dev/fd") / str(bundle_capability.parent_descriptor)
+        dist_root = bundle_capability.parent_path
         work_root = producer_capabilities.directories["work"].capability_path
         config_root = producer_capabilities.directories[
             "pyinstaller-config"
@@ -4721,7 +4845,8 @@ def run_pyinstaller(
             raise BuildError("PyInstaller evidence capability is unavailable")
         if completed is None or completed.returncode != 0:
             raise BuildError("PyInstaller build failed; sanitized evidence was retained")
-        bundle = _bundle_capability_path(bundle_capability)
+        _bundle_capability_path(bundle_capability)
+        bundle = bundle_capability.path
         evidence_files = _consume_failure_evidence(
             scratch,
             evidence_capability,
@@ -9903,7 +10028,11 @@ def _build_python_sidecar_impl(
         with _defer_publish_signals():
             scratch = _create_private_build_root(output_parent)
         repository_state = _validate_repository_state(environment)
-        source_root = _materialize_source_snapshot(scratch, repository_state)
+        _materialize_source_snapshot(scratch, repository_state)
+        _validate_source_snapshot(scratch)
+        source_root = scratch.source_snapshot
+        if source_root is None:  # pragma: no cover - validated immediately above
+            raise BuildError("Exact Git source capability path is unavailable")
         toolchain = _load_json(
             source_root
             / "backend"
@@ -9999,9 +10128,10 @@ def _build_python_sidecar_impl(
         verify_exact_toolchain()
         _validate_source_snapshot(scratch)
         verify_repository_provenance(release)
-        bundle = _validate_bundle_capability(scratch)
+        _validate_bundle_capability(scratch)
+        canonical_bundle = bundle_capability.path
         frozen_smoke = run_frozen_smoke(
-            bundle,
+            canonical_bundle,
             versions,
             source_date_epoch=int(release["sourceDateEpoch"]),
             bundle_descriptor=bundle_capability.descriptor,
@@ -10010,18 +10140,20 @@ def _build_python_sidecar_impl(
             scratch,
             error_message="Python sidecar bundle changed during frozen smoke",
         )
-        bundle = _validate_bundle_capability(scratch)
+        _validate_bundle_capability(scratch)
+        bundle = bundle_capability.path
         components = build_components(
             bundle=bundle,
             runtime_versions=runtime_versions,
             build_versions=build_versions,
             source_root=source_root,
         )
-        bundle = _validate_bundle_capability(
+        _validate_bundle_capability(
             scratch,
             accept_tree_changes=True,
             error_message="Python sidecar bundle changed during component assembly",
         )
+        bundle = bundle_capability.path
         artifacts = write_compliance_artifacts(
             bundle=bundle,
             components=components,
@@ -10032,11 +10164,12 @@ def _build_python_sidecar_impl(
             bundle,
             toolchain_evidence_payload,
         )
-        bundle = _validate_bundle_capability(
+        _validate_bundle_capability(
             scratch,
             accept_tree_changes=True,
             error_message="Python sidecar bundle changed during compliance assembly",
         )
+        bundle = bundle_capability.path
         python_lock = _mapping(toolchain.get("python"), "Python toolchain entry")
         if (
             fingerprint_install_root(
@@ -10048,15 +10181,18 @@ def _build_python_sidecar_impl(
             raise BuildError("Pinned Python framework changed during the build")
         verify_repository_provenance(release)
         _validate_source_snapshot(scratch)
-        bundle = _validate_bundle_capability(scratch)
+        _validate_bundle_capability(scratch)
+        bundle = bundle_capability.path
         normalize_tree(bundle, int(release["sourceDateEpoch"]))
-        bundle = _validate_bundle_capability(
+        _validate_bundle_capability(
             scratch,
             accept_tree_changes=True,
             error_message="Python sidecar bundle changed during normalization",
         )
+        bundle = bundle_capability.path
+        canonical_bundle = bundle_capability.path
         manifest = _build_manifest(
-            bundle=bundle,
+            bundle=canonical_bundle,
             versions=versions,
             toolchain=toolchain,
             release=release,
@@ -10068,10 +10204,11 @@ def _build_python_sidecar_impl(
             toolchain_evidence=toolchain_evidence,
             source_root=source_root,
         )
-        bundle = _validate_bundle_capability(
+        _validate_bundle_capability(
             scratch,
             error_message="Python sidecar bundle changed during manifest assembly",
         )
+        bundle = bundle_capability.path
         manifest_path = bundle / audit.MANIFEST_NAME
         _write_canonical_json(manifest_path, manifest)
         manifest_path.chmod(0o644)
@@ -10082,27 +10219,30 @@ def _build_python_sidecar_impl(
                 int(release["sourceDateEpoch"]),
             ),
         )
-        bundle = _validate_bundle_capability(
+        _validate_bundle_capability(
             scratch,
             accept_tree_changes=True,
             error_message="Python sidecar bundle changed during manifest sealing",
         )
+        bundle = bundle_capability.path
 
-        def final_verifier(_candidate: Path) -> dict[str, int]:
+        def final_verifier(candidate: Path) -> dict[str, int]:
             verify_exact_toolchain()
             verify_repository_provenance(release)
             _validate_source_snapshot(scratch)
-            held_root = _verify_held_bundle_tree(
+            _verify_held_bundle_candidate(
                 bundle_capability,
+                candidate,
                 error_message="Python sidecar bundle changed during final audit",
             )
             result = audit.audit_bundle(
-                held_root,
+                candidate,
                 repository_root=source_root,
                 verify_git_provenance=False,
             )
-            _verify_held_bundle_tree(
+            _verify_held_bundle_candidate(
                 bundle_capability,
+                candidate,
                 error_message="Python sidecar bundle changed during final audit",
             )
             verify_exact_toolchain()

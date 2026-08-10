@@ -40,15 +40,15 @@ REMEDIATION_EVIDENCE = (
 EXPECTED_REVIEWED_INPUT_SHA256 = {
     "workflow": "9755cdb77f61b936f6f11f2869444a911ab7947a47545792fc6a242cd888e126",
     "makefile": "3f6031722218b2d81094be3c488de17609abe07b34dd9f908bd7a2e1087b20ab",
-    "build_script": "d026b147aa40b5a461d5516322d3ef43ea7081c6365d632b7830dba51e6f2e18",
+    "build_script": "aa77a0f56493c9a18860761e61484f2dbce647b34af68e2f2c1ab033a98ef498",
     "audit_script": "7bd183332946a9497b11759e63ecd70c27125abe6cc7dcb6f736c7f40bba81ad",
-    "python_bootstrap": "ea3a40e29793ddc7a9326138d79584c74b87684048620e8e028b507734097a46",
+    "python_bootstrap": "5c0b2efd23ca32d9d253782ee3012d9774df613fa2264654d9323a2c1dbb4141",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "ce88f31c13dd3da3f062c1b814a38b2d9478372e09bc6d6450944d77bc28b836",
+    "python_packaging_tests": "3e4e878eedca35df457d1dced1f19472a4baec0cde4b627519fa7b4a701b941a",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "8ebbec2983f18a65b3d1c98a69d6f51d01bbe30c9e349ab299a7eca130d4fb6e",
+    "remediation_evidence": "ad6124f032c642d13644ae55e66106ece07ef633338a589e9f7f3c42cfe2755c",
     "package": "8572d59212b1233e701338d40bb3a47525db052a41b80b27e1a797d6e07fc712",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
@@ -56,7 +56,7 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "python_build_requirements_lock": "1e16e69c50364465e8587e58d4399c34146d11a91bfa3a2399e80e0741bf6342",
     "python_runtime_lock": "a961d5863a346c820cfdfa9daae0223672e761302b5f5aea92ef779c1b69f121",
     "python_toolchain_lock": "e409f11775f39d5da4c3b5df56ee147c54cd815c6b7cdba45c14b212c056b89d",
-    "pyinstaller_spec": "db0eb516b82ff9a33164f6cfb95024cfabd8cb9fa8de643d46ee8763e6864366",
+    "pyinstaller_spec": "e61b437496bd243f1fcbf73fae3faae911199f4d5d0f352f6365d7828928289d",
     "smoke_config": "b7b9dedb2fbe15cf5682ddd8255286feb799cc28eb2454c0ceaf4b5ec201b448",
     "common_audit": "1e754dc8f4d2e76f3a28a71f86622e6b0338feaf2ad4112fe6666d108c969398",
     "prepare": "8735b655e89565bd3209d3884d1e6ad75cd451357a0c528dbe5b78705a59c0d0",
@@ -81,10 +81,10 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
     "formal_workflow": "43c1e6be118b6997653d305a21dc7b86ad521e9efa48633dfe2f8f055c408aac",
-    "status": "e3367dead9ef1d1397088456dadbfbb2d12be547d2494d46599ed20ba125869f",
-    "todo": "9cbc0fe83072dc76538ac2f3c6243ce8979e59e6a346fcae95b6b3ebceaff258",
-    "trace": "61a9ee7b9371cbccb65bf26313e9cdaac0e8232f03badc7657f3f7ccf3f09c92",
-    "iteration": "f56e92edd8213dd417206a7340c4b48bfd4f404ac69c16e2d386f1598438a904",
+    "status": "ec639ead39fb77552f5c53cf5a145c15462438f7332709d31c61ca72b844c6ef",
+    "todo": "c76278404272b1ba82624ec0166e44b43b364823205aa6eabb3ce5a6903c131d",
+    "trace": "b1e85aaf383245cf7a79e14dc1ecf9dd93675d70d9a623b6a804bdf536a3d74a",
+    "iteration": "5e4780a81aca277ce81f67e976bbc1ddc00743e4f3e8ca8322b2cb244f926dbc",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -988,6 +988,451 @@ def _python_has_constant_false_ancestor(
     return False
 
 
+def _python_outer_uv_capability_is_semantic(held_root: ast.With) -> bool:
+    """Bind the held backend cwd through spawn, revalidation, and close."""
+
+    def name(node: ast.AST | None, expected: str) -> bool:
+        return isinstance(node, ast.Name) and node.id == expected
+
+    def none(node: ast.AST | None) -> bool:
+        return isinstance(node, ast.Constant) and node.value is None
+
+    def assigned_name(statement: ast.stmt, target: str) -> ast.expr | None:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and name(statement.targets[0], target)
+        ):
+            return statement.value
+        return None
+
+    def annotated_none(statement: ast.stmt, target: str) -> bool:
+        return (
+            isinstance(statement, ast.AnnAssign)
+            and statement.simple == 1
+            and name(statement.target, target)
+            and none(statement.value)
+        )
+
+    def identity_test(node: ast.expr, target: str, *, negate: bool) -> bool:
+        return (
+            isinstance(node, ast.Compare)
+            and name(node.left, target)
+            and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.IsNot if negate else ast.Is)
+            and len(node.comparators) == 1
+            and none(node.comparators[0])
+        )
+
+    def exception_assignment(
+        handler: ast.ExceptHandler,
+        exception: str,
+        target: str,
+        value: str,
+    ) -> bool:
+        return (
+            name(handler.type, exception)
+            and handler.name == "exc"
+            and len(handler.body) == 1
+            and name(assigned_name(handler.body[0], target), value)
+        )
+
+    def error_raise(statement: ast.stmt, cause: str) -> bool:
+        return (
+            isinstance(statement, ast.Raise)
+            and isinstance(statement.exc, ast.Call)
+            and _python_attribute_path(statement.exc.func)
+            == ("ToolchainBootstrapError",)
+            and name(statement.cause, cause)
+        )
+
+    openings = [
+        (offset, statement)
+        for offset, statement in enumerate(held_root.body)
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Tuple)
+            and tuple(
+                element.id
+                for element in statement.targets[0].elts
+                if isinstance(element, ast.Name)
+            )
+            == ("backend_fd", "backend_identity")
+            and len(statement.targets[0].elts) == 2
+            and isinstance(statement.value, ast.Call)
+            and _python_attribute_path(statement.value.func)
+            == ("_open_held_source_directory",)
+            and len(statement.value.args) == 2
+            and name(statement.value.args[0], "source")
+            and isinstance(statement.value.args[1], ast.Constant)
+            and statement.value.args[1].value == "backend"
+            and not statement.value.keywords
+        )
+    ]
+    if len(openings) != 1:
+        return False
+    start, _opening = openings[0]
+    if start + 9 > len(held_root.body):
+        return False
+    block = held_root.body[start : start + 9]
+    if (
+        not annotated_none(block[1], "runtime_text")
+        or not annotated_none(block[2], "runtime_error")
+        or not isinstance(block[3], ast.Try)
+        or not annotated_none(block[4], "capability_error")
+        or not isinstance(block[5], ast.With)
+        or not isinstance(block[6], ast.If)
+        or not isinstance(block[7], ast.If)
+        or not isinstance(block[8], ast.If)
+    ):
+        return False
+
+    runtime_try = block[3]
+    assert isinstance(runtime_try, ast.Try)
+    if (
+        len(runtime_try.body) != 1
+        or runtime_try.orelse
+        or runtime_try.finalbody
+        or len(runtime_try.handlers) != 1
+    ):
+        return False
+    runtime_call = assigned_name(runtime_try.body[0], "runtime_text")
+    if (
+        not isinstance(runtime_call, ast.Call)
+        or _python_attribute_path(runtime_call.func) != ("_run_owned_process",)
+        or any(keyword.arg is None for keyword in runtime_call.keywords)
+        or {
+            keyword.arg: _python_attribute_path(keyword.value)
+            for keyword in runtime_call.keywords
+            if keyword.arg in {"cwd_descriptor", "launcher_python"}
+        }
+        != {
+            "cwd_descriptor": ("backend_fd",),
+            "launcher_python": ("bootstrap_python",),
+        }
+        or not exception_assignment(
+            runtime_try.handlers[0],
+            "BaseException",
+            "runtime_error",
+            "exc",
+        )
+    ):
+        return False
+
+    cleanup_with = block[5]
+    assert isinstance(cleanup_with, ast.With)
+    if (
+        len(cleanup_with.items) != 1
+        or not isinstance(cleanup_with.items[0].context_expr, ast.Call)
+        or _python_attribute_path(cleanup_with.items[0].context_expr.func)
+        != ("build", "_defer_publish_signals")
+        or cleanup_with.items[0].context_expr.args
+        or len(cleanup_with.items[0].context_expr.keywords) != 1
+        or cleanup_with.items[0].context_expr.keywords[0].arg != "preserve_error"
+        or not name(
+            cleanup_with.items[0].context_expr.keywords[0].value,
+            "runtime_error",
+        )
+        or len(cleanup_with.body) != 2
+        or any(not isinstance(statement, ast.Try) for statement in cleanup_with.body)
+    ):
+        return False
+    revalidate_try, close_try = cleanup_with.body
+    assert isinstance(revalidate_try, ast.Try)
+    assert isinstance(close_try, ast.Try)
+    if (
+        len(revalidate_try.body) != 1
+        or revalidate_try.orelse
+        or revalidate_try.finalbody
+        or len(revalidate_try.handlers) != 1
+        or not isinstance(revalidate_try.body[0], ast.Expr)
+        or not isinstance(revalidate_try.body[0].value, ast.Call)
+        or _python_attribute_path(revalidate_try.body[0].value.func)
+        != ("_revalidate_held_source_directory",)
+        or len(revalidate_try.body[0].value.args) != 4
+        or not name(revalidate_try.body[0].value.args[0], "source")
+        or not isinstance(revalidate_try.body[0].value.args[1], ast.Constant)
+        or revalidate_try.body[0].value.args[1].value != "backend"
+        or not name(revalidate_try.body[0].value.args[2], "backend_fd")
+        or not name(revalidate_try.body[0].value.args[3], "backend_identity")
+        or revalidate_try.body[0].value.keywords
+        or not exception_assignment(
+            revalidate_try.handlers[0],
+            "BaseException",
+            "capability_error",
+            "exc",
+        )
+        or len(close_try.body) != 1
+        or close_try.orelse
+        or close_try.finalbody
+        or len(close_try.handlers) != 1
+        or not isinstance(close_try.body[0], ast.Expr)
+        or not isinstance(close_try.body[0].value, ast.Call)
+        or _python_attribute_path(close_try.body[0].value.func) != ("os", "close")
+        or _python_name_arguments(close_try.body[0].value) != ("backend_fd",)
+    ):
+        return False
+    close_handler = close_try.handlers[0]
+    close_value = (
+        assigned_name(close_handler.body[0], "capability_error")
+        if len(close_handler.body) == 1
+        else None
+    )
+    if (
+        not name(close_handler.type, "OSError")
+        or close_handler.name != "exc"
+        or not isinstance(close_value, ast.BoolOp)
+        or not isinstance(close_value.op, ast.Or)
+        or len(close_value.values) != 2
+        or not name(close_value.values[0], "capability_error")
+        or not name(close_value.values[1], "exc")
+    ):
+        return False
+
+    capability_if = block[6]
+    runtime_if = block[7]
+    text_if = block[8]
+    assert isinstance(capability_if, ast.If)
+    assert isinstance(runtime_if, ast.If)
+    assert isinstance(text_if, ast.If)
+    return (
+        identity_test(capability_if.test, "capability_error", negate=True)
+        and not capability_if.orelse
+        and len(capability_if.body) == 2
+        and isinstance(capability_if.body[0], ast.If)
+        and identity_test(
+            capability_if.body[0].test,
+            "runtime_error",
+            negate=True,
+        )
+        and not capability_if.body[0].orelse
+        and len(capability_if.body[0].body) == 1
+        and error_raise(capability_if.body[0].body[0], "runtime_error")
+        and error_raise(capability_if.body[1], "capability_error")
+        and identity_test(runtime_if.test, "runtime_error", negate=True)
+        and not runtime_if.orelse
+        and len(runtime_if.body) == 1
+        and isinstance(runtime_if.body[0], ast.Raise)
+        and name(runtime_if.body[0].exc, "runtime_error")
+        and runtime_if.body[0].cause is None
+        and identity_test(text_if.test, "runtime_text", negate=False)
+        and not text_if.orelse
+        and len(text_if.body) == 1
+        and isinstance(text_if.body[0], ast.Raise)
+        and isinstance(text_if.body[0].exc, ast.Call)
+        and _python_attribute_path(text_if.body[0].exc.func)
+        == ("ToolchainBootstrapError",)
+        and text_if.body[0].cause is None
+        and [
+            (offset, type(statement))
+            for offset, statement in enumerate(held_root.body[:-1])
+            if not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Expr))
+        ]
+        == [
+            (start + 3, ast.Try),
+            (start + 5, ast.With),
+            (start + 6, ast.If),
+            (start + 7, ast.If),
+            (start + 8, ast.If),
+        ]
+    )
+
+
+def _python_final_bundle_verifier_is_semantic(source: str) -> bool:
+    """Bind both final audits to the pathname currently being published."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    implementation = _python_function(tree, "_build_python_sidecar_impl")
+    held_verifier = _python_function(tree, "_verify_held_bundle_candidate")
+    if implementation is None or held_verifier is None:
+        return False
+    verifiers = [
+        node
+        for node in ast.walk(implementation)
+        if isinstance(node, ast.FunctionDef) and node.name == "final_verifier"
+    ]
+    if len(verifiers) != 1:
+        return False
+    verifier = verifiers[0]
+    if (
+        len(verifier.args.posonlyargs) != 0
+        or len(verifier.args.args) != 1
+        or verifier.args.args[0].arg != "candidate"
+        or verifier.args.vararg is not None
+        or verifier.args.kwonlyargs
+        or verifier.args.kwarg is not None
+        or verifier.args.defaults
+        or len(verifier.body) != 8
+        or any(
+            isinstance(node, ast.Name)
+            and node.id == "candidate"
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for node in ast.walk(verifier)
+        )
+    ):
+        return False
+
+    def expression_call(
+        statement: ast.stmt,
+        path: tuple[str, ...],
+        arguments: tuple[str, ...],
+    ) -> ast.Call | None:
+        if (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and _python_attribute_path(statement.value.func) == path
+            and tuple(
+                argument.id
+                for argument in statement.value.args
+                if isinstance(argument, ast.Name)
+            )
+            == arguments
+            and len(statement.value.args) == len(arguments)
+        ):
+            return statement.value
+        return None
+
+    def exact_no_keyword_call(
+        statement: ast.stmt,
+        path: tuple[str, ...],
+        arguments: tuple[str, ...],
+    ) -> bool:
+        call = expression_call(statement, path, arguments)
+        return call is not None and not call.keywords
+
+    first_held = expression_call(
+        verifier.body[3],
+        ("_verify_held_bundle_candidate",),
+        ("bundle_capability", "candidate"),
+    )
+    second_held = expression_call(
+        verifier.body[5],
+        ("_verify_held_bundle_candidate",),
+        ("bundle_capability", "candidate"),
+    )
+    held_calls = (first_held, second_held)
+    if any(
+        call is None
+        or len(call.keywords) != 1
+        or call.keywords[0].arg != "error_message"
+        or not isinstance(call.keywords[0].value, ast.Constant)
+        or call.keywords[0].value.value
+        != "Python sidecar bundle changed during final audit"
+        for call in held_calls
+    ):
+        return False
+    audit_value = (
+        verifier.body[4].value
+        if isinstance(verifier.body[4], ast.Assign)
+        and len(verifier.body[4].targets) == 1
+        and isinstance(verifier.body[4].targets[0], ast.Name)
+        and verifier.body[4].targets[0].id == "result"
+        and isinstance(verifier.body[4].value, ast.Call)
+        else None
+    )
+    if (
+        not exact_no_keyword_call(
+            verifier.body[0],
+            ("verify_exact_toolchain",),
+            (),
+        )
+        or not exact_no_keyword_call(
+            verifier.body[1],
+            ("verify_repository_provenance",),
+            ("release",),
+        )
+        or not exact_no_keyword_call(
+            verifier.body[2],
+            ("_validate_source_snapshot",),
+            ("scratch",),
+        )
+        or not isinstance(audit_value, ast.Call)
+        or _python_attribute_path(audit_value.func) != ("audit", "audit_bundle")
+        or len(audit_value.args) != 1
+        or not isinstance(audit_value.args[0], ast.Name)
+        or audit_value.args[0].id != "candidate"
+        or any(keyword.arg is None for keyword in audit_value.keywords)
+        or {
+            keyword.arg: _python_attribute_path(keyword.value)
+            for keyword in audit_value.keywords
+        }
+        != {
+            "repository_root": ("source_root",),
+            "verify_git_provenance": (),
+        }
+        or not any(
+            keyword.arg == "verify_git_provenance"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in audit_value.keywords
+        )
+        or not exact_no_keyword_call(
+            verifier.body[6],
+            ("verify_exact_toolchain",),
+            (),
+        )
+        or not isinstance(verifier.body[7], ast.Return)
+        or not isinstance(verifier.body[7].value, ast.Name)
+        or verifier.body[7].value.id != "result"
+    ):
+        return False
+
+    held_arguments = (
+        *held_verifier.args.posonlyargs,
+        *held_verifier.args.args,
+    )
+    held_returns = [
+        node
+        for node in ast.walk(held_verifier)
+        if isinstance(node, ast.Return)
+    ]
+    held_calls_by_path = {
+        path: [
+            node
+            for node in ast.walk(held_verifier)
+            if isinstance(node, ast.Call)
+            and _python_attribute_path(node.func) == path
+        ]
+        for path in (
+            ("_verify_held_bundle_tree",),
+            ("candidate", "is_absolute"),
+            ("candidate", "lstat"),
+            ("os", "open"),
+        )
+    }
+    open_calls = held_calls_by_path[("os", "open")]
+    return (
+        tuple(argument.arg for argument in held_arguments) == ("bundle", "candidate")
+        and tuple(argument.arg for argument in held_verifier.args.kwonlyargs)
+        == ("error_message",)
+        and held_verifier.args.vararg is None
+        and held_verifier.args.kwarg is None
+        and not held_verifier.args.defaults
+        and held_verifier.args.kw_defaults[0] is None
+        and len(held_calls_by_path[("_verify_held_bundle_tree",)]) == 1
+        and len(held_calls_by_path[("candidate", "is_absolute")]) == 1
+        and len(held_calls_by_path[("candidate", "lstat")]) == 1
+        and len(open_calls) == 1
+        and len(open_calls[0].args) == 2
+        and isinstance(open_calls[0].args[0], ast.Name)
+        and open_calls[0].args[0].id == "candidate"
+        and "O_NOFOLLOW" in ast.unparse(open_calls[0].args[1])
+        and len(held_returns) == 1
+        and isinstance(held_returns[0].value, ast.Name)
+        and held_returns[0].value.id == "candidate"
+        and not any(
+            isinstance(node, ast.Name)
+            and node.id == "candidate"
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for node in ast.walk(held_verifier)
+        )
+    )
+
+
 def _python_producer_privatization_is_semantic(source: str) -> bool:
     """Validate executable AST structure beyond reviewed text/hash markers."""
 
@@ -1112,36 +1557,74 @@ def _python_producer_privatization_is_semantic(source: str) -> bool:
     if (
         not held_root_body.body
         or not isinstance(held_root_body.body[-1], ast.Return)
-        or any(
-            not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Expr))
-            for statement in held_root_body.body[:-1]
-        )
+        or not _python_outer_uv_capability_is_semantic(held_root_body)
     ):
         return False
     for statement, call in production_calls:
         offset = held_root_body.body.index(statement)
+        call_arguments = _python_name_arguments(call)
+        if call_arguments == ("bootstrap_root", "bootstrap_fd", "build"):
+            expected_label = "Hash-locked Python bootstrap install"
+            expected_seal_name = "bootstrap_seal"
+            expected_seal_offset = offset + 2
+            reviewed_root = held_root_body.body[offset + 1]
+            if (
+                not isinstance(reviewed_root, ast.Assign)
+                or len(reviewed_root.targets) != 1
+                or not isinstance(reviewed_root.targets[0], ast.Name)
+                or reviewed_root.targets[0].id != "reviewed_framework_root"
+                or not isinstance(reviewed_root.value, ast.Call)
+                or _python_attribute_path(reviewed_root.value.func)
+                != ("PurePosixPath",)
+            ):
+                return False
+        else:
+            expected_label = "Complete hash-locked Python build install"
+            expected_seal_name = "installed_seal"
+            expected_seal_offset = offset + 1
+        previous = held_root_body.body[offset - 1] if offset else None
+        previous_call = (
+            previous.value
+            if isinstance(previous, ast.Expr)
+            and isinstance(previous.value, ast.Call)
+            else None
+        )
+        previous_keywords = {
+            keyword.arg: keyword.value
+            for keyword in previous_call.keywords
+            if keyword.arg is not None
+        } if previous_call is not None else {}
         if (
             offset == 0
-            or not isinstance(held_root_body.body[offset - 1], ast.Expr)
-            or not isinstance(held_root_body.body[offset - 1].value, ast.Call)
-            or _python_attribute_path(held_root_body.body[offset - 1].value.func)
-            != ("_run_owned_process",)
+            or previous_call is None
+            or _python_attribute_path(previous_call.func) != ("_run_owned_process",)
+            or not isinstance(previous_keywords.get("label"), ast.Constant)
+            or previous_keywords["label"].value != expected_label
         ):
             return False
-        expected_seal_offset = (
-            offset + 2
-            if _python_name_arguments(call)
-            == ("bootstrap_root", "bootstrap_fd", "build")
-            else offset + 1
-        )
         if expected_seal_offset >= len(held_root_body.body):
             return False
         seal_statement = held_root_body.body[expected_seal_offset]
         if (
             not isinstance(seal_statement, ast.Assign)
+            or len(seal_statement.targets) != 1
+            or not isinstance(seal_statement.targets[0], ast.Name)
+            or seal_statement.targets[0].id != expected_seal_name
             or not isinstance(seal_statement.value, ast.Call)
             or _python_attribute_path(seal_statement.value.func)
             != ("seal_installed_tree",)
+            or tuple(
+                argument.id
+                for argument in seal_statement.value.args
+                if isinstance(argument, ast.Name)
+            )
+            != call_arguments[:2]
+            or len(seal_statement.value.args) != 2
+            or len(seal_statement.value.keywords) != 1
+            or seal_statement.value.keywords[0].arg != "reviewed_framework_root"
+            or not isinstance(seal_statement.value.keywords[0].value, ast.Name)
+            or seal_statement.value.keywords[0].value.id
+            != "reviewed_framework_root"
         ):
             return False
 
@@ -2447,6 +2930,16 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         '"tools/build_python_sidecar.py"',
         '"tools/audit_python_sidecar.py"',
         '"runtime/python-sidecar-build-manifest.schema.json"',
+        'HELD_CWD_EXEC_RUNNER = r"""',
+        "os.fchdir(cwd_fd)",
+        "signal.SIG_UNBLOCK",
+        "os.execve(target, target_arguments, dict(os.environ))",
+        "def _held_cwd_exec_command(",
+        "def _open_held_source_directory(",
+        "cwd_descriptor=backend_fd",
+        "launcher_python=bootstrap_python",
+        "cwd_descriptor=source.descriptor",
+        "launcher_python=build_python",
         "def _validate_source_root(",
         "expected_mode=0o700",
         "root != REPOSITORY_ROOT or root != cwd",
@@ -2662,9 +3155,23 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "test_toolchain_evidence_rejects_impossible_inventory_hierarchy",
         "test_build_manifest_consumes_explicit_toolchain_evidence_without_environment",
         "test_make_uses_only_exact_bootstrap_without_repo_toolchain_scratch",
+        "test_held_cwd_exec_runner_uses_renamed_inode_and_exact_fd_allowlist",
+        "test_held_cwd_exec_runner_restores_real_signal_termination",
+        "test_held_cwd_exec_runner_rejects_bad_cwd_and_target_drift",
+        "test_run_owned_process_uses_fixed_held_cwd_spawn_contract",
     ):
         if marker not in python_packaging_tests:
             errors.append(f"exact Python toolchain tests missing {marker!r}")
+
+    for forbidden in (
+        'cwd=Path(f"/dev/fd/{source.descriptor}") / "backend"',
+        "preexec_fn=",
+        "shell=True",
+    ):
+        if forbidden in python_bootstrap:
+            errors.append(
+                f"exact Python held-cwd launcher retained {forbidden!r}"
+            )
 
     python_toolchain_consumer_markers = {
         "Python inner builder": (
@@ -2811,6 +3318,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "def _create_bundle_capability(",
         "def _validate_bundle_capability(",
         "def _verify_held_bundle_tree(",
+        "def _verify_held_bundle_candidate(",
         "def _close_published_bundle_capability(",
     ):
         if marker not in build_script:
@@ -2873,11 +3381,16 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         any(offset < 0 for offset in candidate_consumer_offsets)
         or candidate_consumer_offsets != sorted(candidate_consumer_offsets)
         or build_sidecar_source.count("_validate_bundle_capability(") != 9
-        or build_sidecar_source.count("_verify_held_bundle_tree(") != 2
+        or build_sidecar_source.count("_verify_held_bundle_candidate(") != 2
         or build_sidecar_source.count("bundle_descriptor=bundle_capability.descriptor")
         != 1
         or build_sidecar_source.count("_publish_owned_bundle(") != 1
-        or "def final_verifier(_candidate: Path)" not in build_sidecar_source
+        or build_sidecar_source.count("def final_verifier(candidate: Path)") != 1
+        or build_sidecar_source.count(
+            "audit.audit_bundle(\n                candidate,"
+        )
+        != 1
+        or not _python_final_bundle_verifier_is_semantic(build_script)
     ):
         errors.append(
             "Python sidecar held candidate producer/consumer/publish chain drifted"
@@ -2897,6 +3410,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "test_pyinstaller_first_open_replacement_poison_closes_and_preserves",
         "test_bundle_capability_precedes_producer_and_fd_consumers_ignore_root_aba",
         "test_publish_reuses_the_held_bundle_candidate",
+        "test_final_bundle_verifier_binds_pre_and_post_publish_candidate_paths",
         'in {"dist", "work", "pyinstaller-config", "tmp", "lcf-service"}',
         "held_candidate=capability",
         'assert observed == ["reviewed", "reviewed"]',
@@ -2904,7 +3418,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "assert scratch.bundle is None",
         "assert sentinel_descriptor == bundle_descriptor",
         "test_pyinstaller_command_inherits_source_and_all_private_output_fds",
-        "test_pyinstaller_runner_passes_capability_fds_to_grandchildren",
+        "test_pyinstaller_runner_validates_canonical_roots_and_closes_child_fds",
         "test_native_tool_inherits_an_fd_backed_bundle_target",
         "test_source_snapshot_first_open_replacement_is_refused_and_preserved",
         "test_sealed_evidence_consumers_ignore_root_replacement_and_restore",
@@ -2920,16 +3434,28 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     config_descriptor,
     temp_descriptor,
 )''',
-        "os.set_inheritable(capability_descriptor, True)",
-        "def capability_popen(*args, **kwargs):",
-        'if kwargs.get("close_fds") is False and not kwargs.get("pass_fds"):',
-        "inherited.update(capability_descriptors)",
-        'kwargs["pass_fds"] = tuple(sorted(inherited))',
-        'kwargs["close_fds"] = True',
-        "subprocess.Popen = capability_popen",
+        "source_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))",
+        "bundle_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))",
+        "observed = os.lstat(capability_root)",
+        '''probe = os.open(
+        capability_root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )''',
+        "os.set_inheritable(capability_descriptor, False)",
+        'os.environ["LCF_PYINSTALLER_SOURCE_FD"] = str(source_descriptor)',
+        'os.environ["LCF_PYINSTALLER_SOURCE_ROOT"] = source_root',
     ):
         if build_script.count(marker) != 1:
-            errors.append(f"PyInstaller grandchild capability wrapper missing {marker!r}")
+            errors.append(f"PyInstaller canonical capability runner missing {marker!r}")
+    for forbidden in (
+        'source_root = "/dev/fd/" + str(source_descriptor)',
+        "def capability_popen(*args, **kwargs):",
+        "subprocess.Popen = capability_popen",
+    ):
+        if forbidden in build_script:
+            errors.append(
+                f"PyInstaller canonical capability runner retained {forbidden!r}"
+            )
 
     auditor_build_boundary = _source_block(
         audit_script,

@@ -258,7 +258,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "(evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging "
             "smoke 不替代 packaged launch/runtime gate；[current PR #21 record]"
             "(evidence/W02/2026-08-07-pr21-remediation.md) binds latest independent `NO-GO`、"
-            "first and second remediation technical failures / superseded states and next exact "
+            "three remediation technical failures / superseded states and next exact "
             "candidate execution pending |"
         )
         self.assertIn(original, docs[2])
@@ -287,7 +287,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
     def test_w02_launch_phase_must_remain_not_run(self) -> None:
         docs = documents()
         marker = (
-            "packaged App launch/runtime smoke：两次 remediation 均未执行，下一 candidate 也尚未运行，\n"
+            "packaged App launch/runtime smoke：三次 remediation 均未执行，下一 candidate 也尚未运行，\n"
             "    当前 `not-run`"
         )
         docs[3] = replace_once(self, docs[3], marker, marker.replace("`not-run`", "`pass`"))
@@ -304,13 +304,13 @@ class Pre1WorkPlanTests(unittest.TestCase):
     def test_w02_static_assembly_phase_marker_is_required(self) -> None:
         docs = documents()
         marker = (
-            "acceptance `NO-GO`；第一次、第二次 remediation technical attempts 均为 `fail` / `superseded`"
+            "acceptance `NO-GO`；第一次、第二次、第三次 remediation technical attempts 均为 `fail` / `superseded`"
         )
         docs[3] = replace_once(
             self,
             docs[3],
             marker,
-            "acceptance `pass`；两次 remediation technical attempts `pass`",
+            "acceptance `pass`；三次 remediation technical attempts `pass`",
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
@@ -451,6 +451,26 @@ class Pre1WorkPlanTests(unittest.TestCase):
             errors,
         )
 
+    def test_w02_pr21_third_remediation_exact_authority_coordinates_are_required(
+        self,
+    ) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_PR21_THIRD_REMEDIATION_AUTHORITY_MARKER.replace(
+            CHECKER.W02_PR21_THIRD_REMEDIATION_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            CHECKER.W02_PR21_THIRD_REMEDIATION_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 PR #21 remediation must contain the exact third-attempt authority marker once",
+            errors,
+        )
+
     def test_w02_pr21_nogo_reviewed_document_is_immutable(self) -> None:
         docs = documents()
         docs[12] = replace_once(
@@ -467,7 +487,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
         required_marker = "| latest independent acceptance | `NO-GO`"
         marker = (
             "| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…` "
-            "head/tree；两次 remediation 均为 `pending`） |"
+            "head/tree；三次 remediation 均为 `pending`） |"
         )
         docs[12] = replace_once(
             self,

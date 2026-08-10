@@ -48,8 +48,11 @@
   no-publish success；该 attempt 已 `superseded`、independent `pending`，没有改变旧 head 的 latest
   independent `NO-GO`。第二次 exact `9ecf0e…` / tree `ee8271…` 的 assembly/source 也 technical
   `fail`（installed-toolchain file 与 Python real-venv mode/ownership），container 仍仅 no-publish
-  success；该 attempt 同样已 `superseded`、independent `pending`。下一 exact remediation technical
-  candidate `not-run`，assembled App 未启动，
+  success；该 attempt 同样已 `superseded`、independent `pending`。第三次 exact `2665ec…` / tree
+  `c3cd17…` 的 source success，但 assembly 因 Darwin fd-backed uv cwd technical `fail`；container
+  API/MCP success、Web QEMU Node/npm stall 后 cancelled，且仍未 publish。第三次 attempt 也已
+  `superseded`、independent `pending`。下一 exact remediation technical candidate `not-run`
+  （仅完成 local source validation；fresh exact-head Actions pending），assembled App 未启动，
   packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限

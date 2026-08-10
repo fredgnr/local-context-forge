@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import errno
 import hashlib
+import inspect
 import io
 import json
 import os
@@ -58,6 +59,360 @@ def _run_signal_probe(script: str) -> dict[str, Any]:
     assert "Traceback" not in completed.stderr
     assert completed.stderr == ""
     return json.loads(completed.stdout)
+
+
+def _cleanup_signal_numbers() -> tuple[int, ...]:
+    return tuple(
+        dict.fromkeys(
+            (
+                signal.SIGINT,
+                signal.SIGTERM,
+                getattr(signal, "SIGHUP", signal.SIGTERM),
+            )
+        )
+    )
+
+
+def test_held_cwd_exec_runner_uses_renamed_inode_and_exact_fd_allowlist(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    backend = source / "backend"
+    backend.mkdir(parents=True)
+    (backend / "marker").write_text("held", encoding="ascii")
+    cwd_descriptor = os.open(
+        backend,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    held_identity = os.fstat(cwd_descriptor)
+    held = tmp_path / "held-source"
+    source.rename(held)
+    replacement = source / "backend"
+    replacement.mkdir(parents=True)
+    (replacement / "marker").write_text("replacement", encoding="ascii")
+    keep_path = tmp_path / "keep"
+    keep_path.write_text("keep", encoding="ascii")
+    denied_path = tmp_path / "denied"
+    denied_path.write_text("denied", encoding="ascii")
+    keep_descriptor = os.open(keep_path, os.O_RDONLY | os.O_CLOEXEC)
+    denied_descriptor = os.open(denied_path, os.O_RDONLY | os.O_CLOEXEC)
+    target = r"""
+import json
+import os
+import signal
+import sys
+
+def opened(raw):
+    try:
+        os.fstat(int(raw))
+    except OSError:
+        return False
+    return True
+
+cleanup = tuple(map(int, sys.argv[6:]))
+mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+cwd = os.stat(".", follow_symlinks=False)
+print(json.dumps({
+    "cwd": open("marker", encoding="ascii").read(),
+    "cwdIdentity": (cwd.st_dev, cwd.st_ino) == tuple(map(int, sys.argv[4:6])),
+    "cwdFdOpen": opened(sys.argv[1]),
+    "keepFdOpen": opened(sys.argv[2]),
+    "deniedFdOpen": opened(sys.argv[3]),
+    "cleanupBlocked": any(item in mask for item in cleanup),
+    # CPython installs its own SIGINT handler during target startup; TERM/HUP
+    # remain a direct observation of the launcher's disposition reset.
+    "cleanupDefault": all(
+        signal.getsignal(item) == signal.SIG_DFL
+        for item in cleanup
+        if item != signal.SIGINT
+    ),
+}, sort_keys=True))
+""".strip()
+    cleanup_signals = _cleanup_signal_numbers()
+    command, inherited, _identity = bootstrap._held_cwd_exec_command(
+        Path(sys.executable),
+        (
+            sys.executable,
+            "-I",
+            "-c",
+            target,
+            str(cwd_descriptor),
+            str(keep_descriptor),
+            str(denied_descriptor),
+            str(held_identity.st_dev),
+            str(held_identity.st_ino),
+            *(str(item) for item in cleanup_signals),
+        ),
+        cwd_descriptor=cwd_descriptor,
+        keep_fds=(keep_descriptor,),
+    )
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set(cleanup_signals))
+    previous_handlers = {item: signal.getsignal(item) for item in cleanup_signals}
+    try:
+        for item in cleanup_signals:
+            signal.signal(item, signal.SIG_IGN)
+        completed = subprocess.run(
+            command,
+            cwd="/",
+            env=dict(os.environ),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            pass_fds=(*inherited, denied_descriptor),
+            close_fds=True,
+            start_new_session=True,
+            timeout=20,
+            check=False,
+        )
+    finally:
+        for item, handler in previous_handlers.items():
+            signal.signal(item, handler)
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        os.close(denied_descriptor)
+        os.close(keep_descriptor)
+        os.close(cwd_descriptor)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
+    assert json.loads(completed.stdout) == {
+        "cleanupBlocked": False,
+        "cleanupDefault": True,
+        "cwd": "held",
+        "cwdFdOpen": False,
+        "cwdIdentity": True,
+        "deniedFdOpen": False,
+        "keepFdOpen": True,
+    }
+
+
+@pytest.mark.parametrize("stop_signal", _cleanup_signal_numbers())
+def test_held_cwd_exec_runner_restores_real_signal_termination(
+    tmp_path: Path,
+    stop_signal: int,
+) -> None:
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    command, inherited, _identity = bootstrap._held_cwd_exec_command(
+        Path(sys.executable),
+        ("/bin/sleep", "30"),
+        cwd_descriptor=cwd_descriptor,
+        keep_fds=(),
+    )
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {stop_signal})
+    previous_handler = signal.getsignal(stop_signal)
+    process: subprocess.Popen[str] | None = None
+    try:
+        signal.signal(stop_signal, signal.SIG_IGN)
+        process = subprocess.Popen(
+            command,
+            cwd="/",
+            env=dict(os.environ),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            pass_fds=inherited,
+            close_fds=True,
+            start_new_session=True,
+        )
+    finally:
+        signal.signal(stop_signal, previous_handler)
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+    try:
+        time.sleep(0.2)
+        assert process is not None
+        assert process.poll() is None
+        os.kill(process.pid, stop_signal)
+        assert process.wait(timeout=5) == -stop_signal
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        os.close(cwd_descriptor)
+
+
+def test_held_cwd_exec_runner_rejects_bad_cwd_and_target_drift(
+    tmp_path: Path,
+) -> None:
+    regular = tmp_path / "regular"
+    regular.write_text("not-a-directory", encoding="ascii")
+    regular_descriptor = os.open(regular, os.O_RDONLY | os.O_CLOEXEC)
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="cwd capability is unsafe",
+    ):
+        bootstrap._held_cwd_exec_command(
+            Path(sys.executable),
+            (sys.executable, "-c", "pass"),
+            cwd_descriptor=regular_descriptor,
+            keep_fds=(),
+        )
+    os.close(regular_descriptor)
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="cwd capability is unavailable",
+    ):
+        bootstrap._held_cwd_exec_command(
+            Path(sys.executable),
+            (sys.executable, "-c", "pass"),
+            cwd_descriptor=regular_descriptor,
+            keep_fds=(),
+        )
+
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    target = tmp_path / "target"
+    target.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+    target.chmod(0o700)
+    command, inherited, _identity = bootstrap._held_cwd_exec_command(
+        Path(sys.executable),
+        (str(target),),
+        cwd_descriptor=cwd_descriptor,
+        keep_fds=(),
+    )
+    mismatched = list(command)
+    mismatched[6] = str(int(mismatched[6]) + 1)
+    mismatch_completed = subprocess.run(
+        mismatched,
+        cwd="/",
+        env=dict(os.environ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        pass_fds=inherited,
+        close_fds=True,
+        timeout=20,
+        check=False,
+    )
+    assert mismatch_completed.returncode == 126
+    assert mismatch_completed.stdout == ""
+    assert mismatch_completed.stderr == (
+        "lcf-held-cwd-exec: stage=cwd-fd "
+        f"errno={errno.ENOTDIR}\n"
+    )
+    target.write_text("#!/bin/sh\nexit 9\n# changed\n", encoding="ascii")
+    target.chmod(0o700)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd="/",
+            env=dict(os.environ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            pass_fds=inherited,
+            close_fds=True,
+            timeout=20,
+            check=False,
+        )
+    finally:
+        os.close(cwd_descriptor)
+    assert completed.returncode == 126
+    assert completed.stdout == ""
+    assert completed.stderr == "lcf-held-cwd-exec: stage=target errno=0\n"
+
+
+def test_run_owned_process_uses_fixed_held_cwd_spawn_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    observed: dict[str, Any] = {}
+
+    class CheckedPopen:
+        pid = 424242
+        returncode = 0
+
+        def __init__(self, arguments: list[str], **kwargs: Any) -> None:
+            observed["arguments"] = arguments
+            observed.update(kwargs)
+
+        def communicate(self, *, timeout: float) -> tuple[str, str]:
+            observed["timeout"] = timeout
+            return "ok", ""
+
+    monkeypatch.setattr(bootstrap.subprocess, "Popen", CheckedPopen)
+    monkeypatch.setattr(build, "_process_group_exists", lambda _pid: False)
+    try:
+        assert bootstrap._run_owned_process(
+            (sys.executable, "-I", "-c", "print('ok')"),
+            cwd=tmp_path,
+            environment={"PATH": "/usr/bin:/bin"},
+            pass_fds=(),
+            timeout=30,
+            label="held cwd probe",
+            build=build,
+            cwd_descriptor=cwd_descriptor,
+            launcher_python=Path(sys.executable),
+        ) == "ok"
+    finally:
+        os.close(cwd_descriptor)
+
+    assert observed["arguments"][:4] == [
+        sys.executable,
+        "-I",
+        "-c",
+        bootstrap.HELD_CWD_EXEC_RUNNER,
+    ]
+    assert observed["cwd"] == Path("/")
+    assert observed["close_fds"] is True
+    assert observed["start_new_session"] is True
+    assert "preexec_fn" not in observed
+    assert observed["pass_fds"] == (cwd_descriptor,)
+
+
+def test_darwin_external_process_contract_has_no_fd_child_lookup_or_unsafe_spawn(
+) -> None:
+    runner = bootstrap.HELD_CWD_EXEC_RUNNER
+    assert "os.fchdir(cwd_fd)" in runner
+    assert "os.set_inheritable(cwd_fd, False)" in runner
+    assert "os.execve(target, target_arguments, dict(os.environ))" in runner
+    assert 'os.listdir("/dev/fd")' in runner
+    assert "/dev/fd/" not in runner
+    for unsafe in (
+        "preexec_fn",
+        "shell=",
+        "os.system",
+        "subprocess",
+        "os.execvp(",
+        "os.execvpe(",
+    ):
+        assert unsafe not in runner
+
+    outer_source = inspect.getsource(bootstrap.build_with_exact_toolchain)
+    outer_uv_start = outer_source.index("runtime_text = _run_owned_process(")
+    outer_uv_end = outer_source.index("runtime_payload =", outer_uv_start)
+    outer_uv = outer_source[outer_uv_start:outer_uv_end]
+    assert "/dev/fd" not in outer_uv
+    assert "cwd_descriptor=backend_fd" in outer_uv
+    assert "launcher_python=bootstrap_python" in outer_uv
+
+    external_boundaries = "\n".join(
+        inspect.getsource(function)
+        for function in (
+            build.verify_uv_lock,
+            build._run_pyinstaller_command,
+            build.run_pyinstaller,
+            build.run_frozen_smoke,
+            build._build_manifest,
+            build._build_python_sidecar_impl,
+        )
+    )
+    assert "/dev/fd" not in external_boundaries
+    assert "preexec_fn" not in external_boundaries
+    assert "shell=" not in external_boundaries
+    assert "/dev/fd" not in build.PYINSTALLER_CAPABILITY_RUNNER
+    assert "/dev/fd" not in (
+        PROJECT_ROOT / "backend" / "packaging" / "lcf_sidecar.spec"
+    ).read_text(encoding="utf-8")
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -547,7 +902,7 @@ def test_uv_lock_check_binds_the_build_venv_to_the_reviewed_python(
     assert "HOME" not in environment
 
 
-def test_uv_lock_subprocess_inherits_the_reviewed_source_and_cache_fds(
+def test_uv_lock_subprocess_uses_revalidated_canonical_source_and_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -579,7 +934,7 @@ def test_uv_lock_subprocess_inherits_the_reviewed_source_and_cache_fds(
 
     monkeypatch.setattr(build.subprocess, "run", checked_run)
     try:
-        source_root = Path("/dev/fd") / str(source_descriptor)
+        source_root = source
         build.verify_uv_lock(
             uv_executable,
             backend_root=source_root / "backend",
@@ -593,10 +948,8 @@ def test_uv_lock_subprocess_inherits_the_reviewed_source_and_cache_fds(
         os.close(source_descriptor)
 
     assert observed["cwd"] == source_root / "backend"
-    assert observed["env"]["UV_CACHE_DIR"] == str(
-        Path("/dev/fd") / str(cache_descriptor)
-    )
-    assert observed["pass_fds"] == (source_descriptor, cache_descriptor)
+    assert observed["env"]["UV_CACHE_DIR"] == str(cache)
+    assert observed["pass_fds"] == ()
 
 
 def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
@@ -604,13 +957,21 @@ def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     descriptors: dict[str, int] = {}
-    for name in ("source", "dist", "bundle", "work", "config", "temp"):
+    paths: dict[str, Path] = {}
+    for name in ("source", "dist", "work", "config", "temp"):
         path = tmp_path / name
         path.mkdir()
+        paths[name] = path
         descriptors[name] = os.open(
             path,
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
         )
+    paths["bundle"] = paths["dist"] / "lcf-service"
+    paths["bundle"].mkdir()
+    descriptors["bundle"] = os.open(
+        paths["bundle"],
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
     observed: dict[str, Any] = {}
 
     class CheckedPopen:
@@ -631,11 +992,11 @@ def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
     monkeypatch.setattr(build.subprocess, "Popen", CheckedPopen)
     monkeypatch.setattr(build, "_process_group_exists", no_process_group)
     try:
-        source_root = Path("/dev/fd") / str(descriptors["source"])
-        dist_root = Path("/dev/fd") / str(descriptors["dist"])
-        work_root = Path("/dev/fd") / str(descriptors["work"])
-        config_root = Path("/dev/fd") / str(descriptors["config"])
-        temp_root = Path("/dev/fd") / str(descriptors["temp"])
+        source_root = paths["source"]
+        dist_root = paths["dist"]
+        work_root = paths["work"]
+        config_root = paths["config"]
+        temp_root = paths["temp"]
         build._run_pyinstaller_command(
             active_python=Path(sys.executable),
             source_root=source_root,
@@ -674,6 +1035,14 @@ def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
         str(descriptors["config"]),
         str(descriptors["temp"]),
     )
+    assert arguments[10:16] == (
+        str(source_root),
+        str(paths["bundle"]),
+        str(dist_root),
+        str(work_root),
+        str(config_root),
+        str(temp_root),
+    )
     assert arguments[arguments.index("--workpath") + 1] == str(work_root)
     assert arguments[-1] == str(
         source_root / "backend" / "packaging" / "lcf_sidecar.spec"
@@ -692,7 +1061,7 @@ def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
     )
 
 
-def test_pyinstaller_runner_passes_capability_fds_to_grandchildren(
+def test_pyinstaller_runner_validates_canonical_roots_and_closes_child_fds(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source"
@@ -710,12 +1079,18 @@ def test_pyinstaller_runner_passes_capability_fds_to_grandchildren(
         )
         for directory in (source, bundle, dist, work, config, temp)
     )
-    child = (
-        "import os,stat,sys; "
-        "fds=tuple(map(int,sys.argv[1:])); "
-        "assert all(stat.S_ISDIR(os.fstat(fd).st_mode) for fd in fds); "
-        "print(','.join(map(str,fds)))"
-    )
+    roots = (source, bundle, dist, work, config, temp)
+    child = r"""
+import os
+import sys
+for raw in sys.argv[1:]:
+    try:
+        os.fstat(int(raw))
+    except OSError:
+        continue
+    raise SystemExit("capability fd leaked")
+print("closed")
+""".strip()
     harness = f"""
 import os
 import subprocess
@@ -723,6 +1098,7 @@ import sys
 import types
 
 expected = tuple(map(int, sys.argv[1:7]))
+roots = tuple(sys.argv[7:13])
 
 pyinstaller = types.ModuleType("PyInstaller")
 pyinstaller.__path__ = []
@@ -747,20 +1123,17 @@ building.api = api
 main = types.ModuleType("PyInstaller.__main__")
 
 def run():
-    roots = tuple("/dev/fd/" + str(descriptor) for descriptor in expected)
     assert all(
         modulegraph.os.path.realpath(root + "/held") == root + "/held"
         for root in roots
     )
     completed = subprocess.run(
         [sys.executable, "-c", {child!r}, *map(str, expected)],
-        pass_fds=(expected[3],),
         check=True,
         stdout=subprocess.PIPE,
         text=True,
     )
     print(completed.stdout, end="")
-    os.set_inheritable(expected[3], True)
     isolated = subprocess.run(
         [sys.executable, "-c", {child!r}, *map(str, expected)],
         close_fds=False,
@@ -793,18 +1166,17 @@ exec({build.PYINSTALLER_CAPABILITY_RUNNER!r}, globals(), globals())
                 "-c",
                 harness,
                 *(str(descriptor) for descriptor in descriptors),
+                *(str(root) for root in roots),
                 "--distpath",
-                str(Path("/dev/fd") / str(descriptors[2])),
+                str(dist),
                 "--workpath",
-                str(Path("/dev/fd") / str(descriptors[3])),
+                str(work),
                 "synthetic.spec",
             ],
             env={
                 **os.environ,
-                "PYINSTALLER_CONFIG_DIR": str(
-                    Path("/dev/fd") / str(descriptors[4])
-                ),
-                "TMPDIR": str(Path("/dev/fd") / str(descriptors[5])),
+                "PYINSTALLER_CONFIG_DIR": str(config),
+                "TMPDIR": str(temp),
             },
             pass_fds=descriptors,
             check=False,
@@ -820,8 +1192,8 @@ exec({build.PYINSTALLER_CAPABILITY_RUNNER!r}, globals(), globals())
     assert completed.returncode == 0, completed.stderr
     assert completed.stderr == ""
     assert completed.stdout.splitlines() == [
-        ",".join(map(str, descriptors)),
-        ",".join(map(str, descriptors)),
+        "closed",
+        "closed",
     ]
 
 
@@ -869,9 +1241,11 @@ sys.path.insert(0, {json.dumps(str(TOOLS_ROOT))})
 import build_python_sidecar as build
 root = Path({json.dumps(str(root))})
 paths = {{}}
-for name in ("source", "bundle", "dist", "work", "config", "tmp"):
+for name in ("source", "dist", "work", "config", "tmp"):
     paths[name] = root / name
     paths[name].mkdir()
+paths["bundle"] = paths["dist"] / "lcf-service"
+paths["bundle"].mkdir()
 descriptors = {{
     name: os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     for name, path in paths.items()
@@ -880,8 +1254,8 @@ marker = root / "child.pid"
 build.PYINSTALLER_CAPABILITY_RUNNER = {runner!r}
 environment = {{
     "LCF_TEST_CHILD": str(marker),
-    "PYINSTALLER_CONFIG_DIR": "/dev/fd/" + str(descriptors["config"]),
-    "TMPDIR": "/dev/fd/" + str(descriptors["tmp"]),
+    "PYINSTALLER_CONFIG_DIR": str(paths["config"]),
+    "TMPDIR": str(paths["tmp"]),
 }}
 sender_code = r'''import os,signal,sys,time
 target = int(sys.argv[1])
@@ -902,17 +1276,17 @@ try:
     with build._translate_cleanup_signals():
         build._run_pyinstaller_command(
             active_python=Path(sys.executable),
-            source_root=Path("/dev/fd") / str(descriptors["source"]),
+            source_root=paths["source"],
             source_descriptor=descriptors["source"],
             bundle_descriptor=descriptors["bundle"],
             dist_descriptor=descriptors["dist"],
             work_descriptor=descriptors["work"],
             config_descriptor=descriptors["config"],
             temp_descriptor=descriptors["tmp"],
-            dist_root=Path("/dev/fd") / str(descriptors["dist"]),
-            work_root=Path("/dev/fd") / str(descriptors["work"]),
-            config_root=Path("/dev/fd") / str(descriptors["config"]),
-            temp_root=Path("/dev/fd") / str(descriptors["tmp"]),
+            dist_root=paths["dist"],
+            work_root=paths["work"],
+            config_root=paths["config"],
+            temp_root=paths["tmp"],
             environment=environment,
         )
 except build.BuildError as exc:
@@ -998,9 +1372,11 @@ import build_python_sidecar as build
 root = Path({json.dumps(str(root))})
 phase = {json.dumps(phase)}
 paths = {{}}
-for name in ("source", "bundle", "dist", "work", "config", "tmp"):
+for name in ("source", "dist", "work", "config", "tmp"):
     paths[name] = root / name
     paths[name].mkdir()
+paths["bundle"] = paths["dist"] / "lcf-service"
+paths["bundle"].mkdir()
 descriptors = {{
     name: os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     for name, path in paths.items()
@@ -1026,25 +1402,25 @@ build.PYINSTALLER_CAPABILITY_RUNNER = {runner!r}
 environment = {{
     "LCF_TEST_CHILD": str(marker),
     "LCF_TEST_PHASE": phase,
-    "PYINSTALLER_CONFIG_DIR": "/dev/fd/" + str(descriptors["config"]),
-    "TMPDIR": "/dev/fd/" + str(descriptors["tmp"]),
+    "PYINSTALLER_CONFIG_DIR": str(paths["config"]),
+    "TMPDIR": str(paths["tmp"]),
 }}
 error = None
 try:
     with build._translate_cleanup_signals():
         build._run_pyinstaller_command(
             active_python=Path(sys.executable),
-            source_root=Path("/dev/fd") / str(descriptors["source"]),
+            source_root=paths["source"],
             source_descriptor=descriptors["source"],
             bundle_descriptor=descriptors["bundle"],
             dist_descriptor=descriptors["dist"],
             work_descriptor=descriptors["work"],
             config_descriptor=descriptors["config"],
             temp_descriptor=descriptors["tmp"],
-            dist_root=Path("/dev/fd") / str(descriptors["dist"]),
-            work_root=Path("/dev/fd") / str(descriptors["work"]),
-            config_root=Path("/dev/fd") / str(descriptors["config"]),
-            temp_root=Path("/dev/fd") / str(descriptors["tmp"]),
+            dist_root=paths["dist"],
+            work_root=paths["work"],
+            config_root=paths["config"],
+            temp_root=paths["tmp"],
             environment=environment,
         )
 except build.BuildError as exc:
@@ -1077,7 +1453,7 @@ print(json.dumps({{
     }
 
 
-def test_pyinstaller_spec_keeps_entrypoint_and_pathex_under_the_fd_root(
+def test_pyinstaller_spec_keeps_entrypoint_under_revalidated_canonical_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1114,14 +1490,14 @@ def test_pyinstaller_spec_keeps_entrypoint_and_pathex_under_the_fd_root(
         return AnalysisResult()
 
     namespace = {
-        "SPECPATH": str(
-            Path("/dev/fd") / str(descriptor) / "backend" / "packaging"
-        ),
+        "SPECPATH": str(held / "backend" / "packaging"),
         "Analysis": analysis,
         "PYZ": lambda *_args, **_kwargs: object(),
         "EXE": lambda *_args, **_kwargs: object(),
         "COLLECT": lambda *_args, **_kwargs: object(),
     }
+    monkeypatch.setenv("LCF_PYINSTALLER_SOURCE_FD", str(descriptor))
+    monkeypatch.setenv("LCF_PYINSTALLER_SOURCE_ROOT", str(held))
     try:
         spec_text = (PROJECT_ROOT / "backend" / "packaging" / "lcf_sidecar.spec").read_text(
             encoding="utf-8"
@@ -1130,11 +1506,10 @@ def test_pyinstaller_spec_keeps_entrypoint_and_pathex_under_the_fd_root(
     finally:
         os.close(descriptor)
 
-    fd_root = Path(namespace["SPECPATH"]).parents[1]
     assert observed["arguments"] == [
-        str(fd_root / "backend" / "packaging" / "frozen_entrypoint.py")
+        str(held / "backend" / "packaging" / "frozen_entrypoint.py")
     ]
-    assert observed["pathex"] == [str(fd_root / "backend")]
+    assert observed["pathex"] == [str(held / "backend")]
     assert str(source) not in observed["arguments"][0]
 
 
@@ -6631,6 +7006,63 @@ def test_publish_reuses_the_held_bundle_candidate(
     assert observed == ["reviewed", "reviewed"]
     assert not capability.path.exists()
     assert (destination / "state").read_text(encoding="utf-8") == "reviewed"
+    build._cleanup_scratch_capability(scratch)
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["absent", "present"])
+def test_final_bundle_verifier_binds_pre_and_post_publish_candidate_paths(
+    tmp_path: Path,
+    existing: bool,
+) -> None:
+    scratch, capability, output_parent = _create_test_bundle_capability(
+        tmp_path,
+        existing_destination=existing,
+    )
+    (capability.path / "state").write_text("new", encoding="utf-8")
+    build._validate_bundle_capability(scratch, accept_tree_changes=True)
+    source_candidate = capability.path
+    destination = output_parent / "published"
+    observed: list[tuple[Path, str]] = []
+
+    def verifier(candidate: Path) -> None:
+        assert build._verify_held_bundle_candidate(
+            capability,
+            candidate,
+            error_message="bundle changed",
+        ) == candidate
+        observed.append(
+            (candidate, (candidate / "state").read_text(encoding="utf-8"))
+        )
+        build._verify_held_bundle_candidate(
+            capability,
+            candidate,
+            error_message="bundle changed",
+        )
+
+    build._publish_owned_bundle(
+        scratch,
+        capability,
+        destination,
+        verifier=verifier,
+    )
+
+    assert observed == [
+        (source_candidate, "new"),
+        (destination, "new"),
+    ]
+    assert (destination / "state").read_text(encoding="utf-8") == "new"
+    if existing:
+        retained = scratch.retained_published_directories[-1]
+        assert (retained.parent_path / retained.name / "state").read_text(
+            encoding="utf-8"
+        ) == "old"
+    else:
+        assert not source_candidate.exists()
+
+    implementation = inspect.getsource(build._build_python_sidecar_impl)
+    assert "def final_verifier(candidate: Path)" in implementation
+    assert "_verify_held_bundle_candidate(\n                bundle_capability,\n                candidate," in implementation
+    assert "audit.audit_bundle(\n                candidate," in implementation
     build._cleanup_scratch_capability(scratch)
 
 

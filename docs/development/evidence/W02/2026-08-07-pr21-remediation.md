@@ -215,6 +215,47 @@ group/world-writable hardlink、atomic exchange 不可用、任何 drift 或 spe
 树外 alias 后续变化不能修改已经 materialized 的 sealed inode。第三候选的实现与本地测试不等于
 Actions `pass`，其 technical result 在 fresh exact-head source/assembly 完成前仍是 `not-run`。
 
+## 第三次 remediation 技术执行：`fail` / `superseded`
+
+第三次 exact candidate 实现并验证了上一节的 producer output privatization，但 fresh macOS
+assembly 暴露了独立的 Darwin fdesc 可移植性缺口；container run 同时暴露 Web arm64 build
+在 QEMU 下执行 Node/npm 的阻塞。它仍是失败历史，不得由 source success 或本地后续修复提升。
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `2665ec61712fe410608ac50c7a6d44fa35746092` |
+| exact tree | `c3cd1706838f7050533e2812dfdcad482aaedde5` |
+| engineering-smoke run / job | [run `31258135925`](https://github.com/fredgnr/local-context-forge/actions/runs/31258135925) / job `93104615763` |
+| exact-head source run | [run `31258135929`](https://github.com/fredgnr/local-context-forge/actions/runs/31258135929) |
+| container run | [run `31258135932`](https://github.com/fredgnr/local-context-forge/actions/runs/31258135932) |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第三次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-third-remediation-authority: source=2665ec61712fe410608ac50c7a6d44fa35746092,tree=c3cd1706838f7050533e2812dfdcad482aaedde5,assembly-run=31258135925,assembly-job=93104615763,source-run=31258135929,container-run=31258135932,result=fail -->
+
+engineering-smoke run `31258135925` / job `93104615763` 在 `Build and audit locked Python
+sidecar` 失败：outer bootstrap 把 `/dev/fd/<held-source-fd>/backend` 作为 subprocess `cwd`，而
+Darwin fdesc 不能把已打开目录 fd 当作可继续遍历的 pathname。固定对外错误为
+`Exact uv runtime export failed`。紧随其后的 cleanup-only gate 成功；provenance、renderer、
+Desktop profile、static assembly/bundle audit 与 focused lifecycle tests 均 skipped，engineering
+product artifacts 为 `[]`。因此没有新的 `.app` inventory/digest 或 packaged launch evidence。
+
+exact-head source run `31258135929` 为 `success`：Python/QMD、Web、Desktop、macOS arm64 IPC 与
+W01 exact-head evidence 五个 jobs 均 success。payload artifact `9022014613` 与 provenance artifact
+`9022014784` 的 GitHub artifact SHA-256 分别为
+`374e3300b2501b340e590f97f80ace41d7f7a36a80671460ace4000401b4950d` 与
+`81879840d66d379e16a69d23d2161b645e8d3bb5e6636b8dae7dfa3d48cd134c`，均绑定 exact head
+`2665ec…`。source success 不能抵消 assembly failure，也不构成 packaged/physical evidence。
+
+container run `31258135932` 为 `cancelled`。API 与 MCP jobs success；Web 的 target-arm64 Node/npm
+builder 在 QEMU 下执行 `npm ci` 时出现 illegal-instruction/retry/stall，并在 120-minute job boundary
+取消。三个 PR jobs 的 registry login 与 published-platform verification 均 skipped，API/MCP
+Buildx 仍为 `push=false` / `load=false`；两个 `.dockerbuild` records 不是 product/engineering
+artifacts。后续本地 portability 修复只有在新的 exact head 完成 fresh Containers Actions 后才能
+获得 technical result。
+
 ## 解除条件（同一 W02-A implementation stage）
 
 本轮不创建新的 W、Requirement、TODO 或 Validation ID。新的候选必须至少提供：
@@ -228,7 +269,7 @@ Actions `pass`，其 technical result 在 fresh exact-head source/assembly 完�
    drift 的 deterministic adversarial tests，以及 workflow/policy mutation closure；
 5. 新 exact head 的 fresh source/assembly Actions、空 engineering artifact 列表和独立验收。
 
-在新的 exact head 被独立接受前，旧 run、checkpoint、inventory、两次 remediation 的失败
+在新的 exact head 被独立接受前，旧 run、checkpoint、inventory、三次 remediation 的失败
 payload/provenance 或本记录都不得迁移为新 head
 的 `pass`。当前状态固定为：
 
@@ -236,16 +277,17 @@ payload/provenance 或本记录都不得迁移为新 head
 | --- | --- |
 | PR #21 first remediation technical attempt | `fail` / `superseded`（绑定 `9f7d5d…` / `ea8e62…` 与 `311819*` runs） |
 | PR #21 second remediation technical attempt | `fail` / `superseded`（绑定 `9ecf0e…` / `ee8271…` 与 `311844*` runs） |
-| PR #21 next exact remediation technical candidate | `not-run`（等待 third exact head 与 fresh Actions） |
-| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…` head/tree；两次 remediation 均为 `pending`） |
+| PR #21 third remediation technical attempt | `fail` / `superseded`（绑定 `2665ec…` / `c3cd17…` 与 `312581*` runs） |
+| PR #21 next exact remediation technical candidate | `not-run`（local source validation 已完成；等待 fresh exact-head Actions） |
+| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…` head/tree；三次 remediation 均为 `pending`） |
 | W02 | `in-progress` |
 | `VAL-PACKAGED-SMOKE-001` | `not-run` |
 | W10/W11 | `locked` |
 | packaged App / bundle sidecar launch | `not-run` |
 | public release | `NO-GO` |
 
-两次 remediation 均未启动 packaged `.app`，未从 bundle 启动 sidecar；下一 exact remediation
-candidate 尚未运行。本 Work 不删除 legacy runtime，
+三次 remediation 均未启动 packaged `.app`，未从 bundle 启动 sidecar；下一 exact remediation
+candidate 尚无 fresh exact-head Actions result。本 Work 不删除 legacy runtime，
 不修改 production settings/credentials/trust pins，不创建 tag、engineering product artifact、
 Draft Release 或 Release；上文记录的 W01 source-evidence artifacts 与 Buildx action records 不属于
 engineering product artifact。

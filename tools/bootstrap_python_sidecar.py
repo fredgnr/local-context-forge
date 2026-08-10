@@ -69,6 +69,169 @@ SOURCE_INPUTS = (
     "tools/build_python_sidecar.py",
 )
 
+# A child created while ``_defer_publish_signals`` is active inherits the
+# blocked cleanup-signal mask.  Python's subprocess ``restore_signals`` does
+# not clear that mask, and Darwin cannot use ``/dev/fd/N/child`` as a cwd.
+# This fixed, isolated runner enters an already-held directory with fchdir,
+# reduces the inherited descriptor set to an explicit exec allowlist, restores
+# the cleanup signals, and performs one absolute execve without a shell or PATH
+# lookup.  It intentionally reports only fixed stages and errno values.
+HELD_CWD_EXEC_RUNNER = r"""
+import errno
+import os
+import signal
+import stat
+import sys
+
+def fail(stage, number=0):
+    try:
+        payload = (
+            "lcf-held-cwd-exec: stage=" + stage + " errno=" + str(int(number)) + "\n"
+        ).encode("ascii", errors="strict")
+        os.write(2, payload)
+    except BaseException:
+        pass
+    os._exit(126)
+
+try:
+    if len(sys.argv) < 13:
+        fail("contract")
+    raw_cwd = sys.argv[1]
+    raw_keep_count = sys.argv[2]
+    if not raw_cwd.isascii() or not raw_cwd.isdecimal():
+        fail("contract")
+    if not raw_keep_count.isascii() or not raw_keep_count.isdecimal():
+        fail("contract")
+    cwd_fd = int(raw_cwd, 10)
+    keep_count = int(raw_keep_count, 10)
+    if str(cwd_fd) != raw_cwd or cwd_fd < 3 or not 0 <= keep_count <= 256:
+        fail("contract")
+    cwd_identity_offset = 3 + keep_count
+    target_identity_offset = cwd_identity_offset + 9
+    if len(sys.argv) < target_identity_offset + 10:
+        fail("contract")
+    keep = []
+    for raw in sys.argv[3:cwd_identity_offset]:
+        if not raw.isascii() or not raw.isdecimal():
+            fail("contract")
+        descriptor = int(raw, 10)
+        if str(descriptor) != raw or descriptor < 3:
+            fail("contract")
+        keep.append(descriptor)
+    if len(set(keep)) != len(keep) or cwd_fd in keep:
+        fail("contract")
+    raw_cwd_identity = sys.argv[cwd_identity_offset:target_identity_offset]
+    raw_target_identity = sys.argv[target_identity_offset:target_identity_offset + 9]
+    if any(
+        not item.isascii() or not item.isdecimal()
+        for item in (*raw_cwd_identity, *raw_target_identity)
+    ):
+        fail("contract")
+    expected_cwd_identity = tuple(int(item, 10) for item in raw_cwd_identity)
+    expected_target_identity = tuple(int(item, 10) for item in raw_target_identity)
+    target_arguments = sys.argv[target_identity_offset + 9:]
+    if not target_arguments or not target_arguments[0].startswith("/"):
+        fail("contract")
+    target = target_arguments[0]
+    stage = "target"
+    observed_target = os.stat(target, follow_symlinks=True)
+    target_identity = (
+        observed_target.st_dev,
+        observed_target.st_ino,
+        observed_target.st_mode,
+        observed_target.st_uid,
+        observed_target.st_gid,
+        observed_target.st_nlink,
+        observed_target.st_size,
+        observed_target.st_mtime_ns,
+        observed_target.st_ctime_ns,
+    )
+    if (
+        target_identity != expected_target_identity
+        or not stat.S_ISREG(observed_target.st_mode)
+        or not observed_target.st_mode & 0o111
+    ):
+        fail("target")
+    stage = "cwd-fd"
+    cwd_info = os.fstat(cwd_fd)
+    cwd_identity = (
+        cwd_info.st_dev,
+        cwd_info.st_ino,
+        cwd_info.st_mode,
+        cwd_info.st_uid,
+        cwd_info.st_gid,
+        cwd_info.st_nlink,
+        cwd_info.st_size,
+        cwd_info.st_mtime_ns,
+        cwd_info.st_ctime_ns,
+    )
+    if not stat.S_ISDIR(cwd_info.st_mode) or cwd_identity != expected_cwd_identity:
+        fail("cwd-fd", errno.ENOTDIR)
+    for descriptor in keep:
+        os.fstat(descriptor)
+    # PEP 446 makes interpreter-created descriptors non-inheritable, while
+    # Popen passed only cwd_fd plus keep.  Close any unexpected descriptor
+    # anyway so execve has a mechanically explicit allowlist on Darwin too.
+    stage = "fd-allowlist"
+    for raw in os.listdir("/dev/fd"):
+        if not raw.isdecimal():
+            continue
+        descriptor = int(raw, 10)
+        if descriptor < 3 or descriptor == cwd_fd or descriptor in keep:
+            continue
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            if exc.errno != errno.EBADF:
+                fail("fd-allowlist", exc.errno or 0)
+    for descriptor in keep:
+        os.set_inheritable(descriptor, True)
+    stage = "fchdir"
+    os.fchdir(cwd_fd)
+    entered = os.stat(".", follow_symlinks=False)
+    entered_identity = (
+        entered.st_dev,
+        entered.st_ino,
+        entered.st_mode,
+        entered.st_uid,
+        entered.st_gid,
+        entered.st_nlink,
+        entered.st_size,
+        entered.st_mtime_ns,
+        entered.st_ctime_ns,
+    )
+    if entered_identity != expected_cwd_identity:
+        fail("fchdir")
+    os.set_inheritable(cwd_fd, False)
+    stage = "signal-reset"
+    reset_signals = {
+        signal.SIGINT,
+        signal.SIGTERM,
+        getattr(signal, "SIGHUP", signal.SIGTERM),
+        getattr(signal, "SIGPIPE", signal.SIGTERM),
+        getattr(signal, "SIGXFZ", signal.SIGTERM),
+        getattr(signal, "SIGXFSZ", signal.SIGTERM),
+    }
+    for number in reset_signals:
+        signal.signal(number, signal.SIG_DFL)
+    if not hasattr(signal, "pthread_sigmask"):
+        fail("signal-reset")
+    signal.pthread_sigmask(
+        signal.SIG_UNBLOCK,
+        {
+            signal.SIGINT,
+            signal.SIGTERM,
+            getattr(signal, "SIGHUP", signal.SIGTERM),
+        },
+    )
+    stage = "execve"
+    os.execve(target, target_arguments, dict(os.environ))
+except OSError as exc:
+    fail(locals().get("stage", "contract"), exc.errno or 0)
+except BaseException:
+    fail("contract")
+""".strip()
+
 BUILD_TOOL_MANIFEST_KEYS = {
     "altgraph": "altgraphVersion",
     "macholib": "macholibVersion",
@@ -1461,6 +1624,97 @@ def _sanitized_environment(
     }
 
 
+def _exec_target_identity(path: Path) -> tuple[int, ...]:
+    """Bind one absolute executable without resolving it into a PATH lookup."""
+
+    try:
+        if not path.is_absolute() or ".." in path.parts:
+            raise ToolchainBootstrapError("Owned process executable is unsafe")
+        info = path.stat(follow_symlinks=True)
+    except ToolchainBootstrapError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ToolchainBootstrapError("Owned process executable is unsafe") from exc
+    if not stat.S_ISREG(info.st_mode) or not stat.S_IMODE(info.st_mode) & 0o111:
+        raise ToolchainBootstrapError("Owned process executable is unsafe")
+    return _identity(info)
+
+
+def _held_cwd_exec_command(
+    launcher_python: Path,
+    arguments: Sequence[str],
+    *,
+    cwd_descriptor: int,
+    keep_fds: Sequence[int],
+) -> tuple[tuple[str, ...], tuple[int, ...], tuple[int, ...]]:
+    """Wrap an absolute argv in the fixed fchdir/execve runner contract."""
+
+    if not arguments:
+        raise ToolchainBootstrapError("Owned process command is empty")
+    launcher_identity = _exec_target_identity(launcher_python)
+    target = Path(arguments[0])
+    target_identity = _exec_target_identity(target)
+    try:
+        cwd_info = os.fstat(cwd_descriptor)
+    except OSError as exc:
+        raise ToolchainBootstrapError("Owned process cwd capability is unavailable") from exc
+    if (
+        cwd_descriptor < 3
+        or not stat.S_ISDIR(cwd_info.st_mode)
+        or cwd_info.st_uid != os.geteuid()
+        or stat.S_IMODE(cwd_info.st_mode) & 0o022
+    ):
+        raise ToolchainBootstrapError("Owned process cwd capability is unsafe")
+    normalized_keep = tuple(int(item) for item in keep_fds)
+    if (
+        len(normalized_keep) > 256
+        or len(set(normalized_keep)) != len(normalized_keep)
+        or cwd_descriptor in normalized_keep
+        or any(item < 3 for item in normalized_keep)
+    ):
+        raise ToolchainBootstrapError("Owned process fd allowlist is invalid")
+    try:
+        for descriptor in normalized_keep:
+            os.fstat(descriptor)
+    except OSError as exc:
+        raise ToolchainBootstrapError("Owned process fd allowlist is unavailable") from exc
+    command = (
+        str(launcher_python),
+        "-I",
+        "-c",
+        HELD_CWD_EXEC_RUNNER,
+        str(cwd_descriptor),
+        str(len(normalized_keep)),
+        *(str(item) for item in normalized_keep),
+        *(str(item) for item in _identity(cwd_info)),
+        *(str(item) for item in target_identity),
+        *tuple(arguments),
+    )
+    inherited = (cwd_descriptor, *normalized_keep)
+    return command, inherited, (*launcher_identity, *target_identity)
+
+
+def _revalidate_exec_identity(
+    launcher_python: Path,
+    arguments: Sequence[str],
+    expected: Sequence[int],
+) -> None:
+    observed = (*_exec_target_identity(launcher_python), *_exec_target_identity(Path(arguments[0])))
+    if tuple(expected) != observed:
+        raise ToolchainBootstrapError("Owned process executable changed")
+
+
+def _held_cwd_failure_category(stderr: str) -> str:
+    matches = re.findall(
+        r"^lcf-held-cwd-exec: stage="
+        r"(contract|target|cwd-fd|fd-allowlist|fchdir|signal-reset|execve) "
+        r"errno=[0-9]+$",
+        stderr,
+        flags=re.MULTILINE,
+    )
+    return matches[0] if len(matches) == 1 else "unclassified"
+
+
 def _run_owned_process(
     arguments: Sequence[str],
     *,
@@ -1470,23 +1724,50 @@ def _run_owned_process(
     timeout: int,
     label: str,
     build: Any,
+    cwd_descriptor: int | None = None,
+    launcher_python: Path | None = None,
 ) -> str:
     process: subprocess.Popen[str] | None = None
+    spawn_arguments: Sequence[str] = arguments
+    spawn_cwd = cwd
+    inherited_fds = tuple(pass_fds)
+    executable_identity: tuple[int, ...] | None = None
+    cwd_identity: tuple[int, ...] | None = None
     try:
+        if cwd_descriptor is not None:
+            if launcher_python is None:
+                raise ToolchainBootstrapError(
+                    "Owned process fchdir launcher is unavailable"
+                )
+            cwd_identity = _identity(os.fstat(cwd_descriptor))
+            spawn_arguments, inherited_fds, executable_identity = (
+                _held_cwd_exec_command(
+                    launcher_python,
+                    arguments,
+                    cwd_descriptor=cwd_descriptor,
+                    keep_fds=pass_fds,
+                )
+            )
+            spawn_cwd = Path("/")
+        elif launcher_python is not None:
+            raise ToolchainBootstrapError(
+                "Owned process fchdir launcher contract is invalid"
+            )
         with build._defer_publish_signals():
             process = subprocess.Popen(
-                list(arguments),
-                cwd=cwd,
+                list(spawn_arguments),
+                cwd=spawn_cwd,
                 env=dict(environment),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                pass_fds=tuple(pass_fds),
+                pass_fds=inherited_fds,
+                close_fds=True,
                 start_new_session=True,
                 umask=0o077,
             )
-        stdout, _stderr = process.communicate(timeout=timeout)
+        stdout, stderr = process.communicate(timeout=timeout)
         with build._defer_publish_signals():
             descendants = build._process_group_exists(process.pid)
             if descendants:
@@ -1496,9 +1777,32 @@ def _run_owned_process(
                 )
         if descendants:
             raise ToolchainBootstrapError(f"{label} left a descendant process")
+        if cwd_descriptor is not None:
+            if cwd_identity != _identity(os.fstat(cwd_descriptor)):
+                raise ToolchainBootstrapError(
+                    f"{label} cwd capability changed"
+                )
+            if launcher_python is None or executable_identity is None:
+                raise ToolchainBootstrapError(
+                    f"{label} executable binding is unavailable"
+                )
+            _revalidate_exec_identity(
+                launcher_python,
+                arguments,
+                executable_identity,
+            )
         if process.returncode != 0:
+            if cwd_descriptor is not None:
+                category = _held_cwd_failure_category(stderr)
+                raise ToolchainBootstrapError(
+                    f"{label} failed (exit={process.returncode}; "
+                    f"category={category})"
+                )
             raise ToolchainBootstrapError(f"{label} failed")
-        if len(stdout.encode("utf-8")) > MAX_SUBPROCESS_OUTPUT_BYTES:
+        if (
+            len(stdout.encode("utf-8")) + len(stderr.encode("utf-8"))
+            > MAX_SUBPROCESS_OUTPUT_BYTES
+        ):
             raise ToolchainBootstrapError(f"{label} output exceeds its bound")
         return stdout
     except BaseException as exc:
@@ -1724,6 +2028,84 @@ def _source_file(seal: _SourceSeal, relative: str) -> _BoundFile:
             "Reviewed exact source input is missing or ambiguous"
         )
     return matches[0]
+
+
+def _open_held_source_directory(
+    seal: _SourceSeal,
+    relative: str,
+) -> tuple[int, tuple[int, ...]]:
+    """Open one reviewed source child with openat and bind its inode."""
+
+    if (
+        not relative
+        or "/" in relative
+        or "\\" in relative
+        or relative in {".", ".."}
+    ):
+        raise ToolchainBootstrapError("Reviewed source directory is invalid")
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            relative,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=seal.descriptor,
+        )
+        held = os.fstat(descriptor)
+        observed = os.stat(
+            relative,
+            dir_fd=seal.descriptor,
+            follow_symlinks=False,
+        )
+        identity = _identity(held)
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or identity != _identity(observed)
+            or held.st_uid != os.geteuid()
+            or stat.S_IMODE(held.st_mode) & 0o022
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed source directory capability is unsafe"
+            )
+        result = (descriptor, identity)
+        descriptor = None
+        return result
+    except ToolchainBootstrapError:
+        raise
+    except OSError as exc:
+        raise ToolchainBootstrapError(
+            "Reviewed source directory capability is unavailable"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _revalidate_held_source_directory(
+    seal: _SourceSeal,
+    relative: str,
+    descriptor: int,
+    identity: tuple[int, ...],
+) -> None:
+    try:
+        held = os.fstat(descriptor)
+        observed = os.stat(
+            relative,
+            dir_fd=seal.descriptor,
+            follow_symlinks=False,
+        )
+        if _identity(held) != identity or _identity(observed) != identity:
+            raise ToolchainBootstrapError(
+                "Reviewed source directory capability changed"
+            )
+    except ToolchainBootstrapError:
+        raise
+    except OSError as exc:
+        raise ToolchainBootstrapError(
+            "Reviewed source directory capability changed"
+        ) from exc
 
 
 def _load_bound_json(bound: _BoundFile, label: str) -> dict[str, Any]:
@@ -2184,25 +2566,66 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     reviewed_framework_root=reviewed_framework_root,
                 )
                 uv_environment = {**sanitized, "UV_OFFLINE": "1"}
-                runtime_text = _run_owned_process(
-                    (
-                        str(bootstrap_root / "bin" / "uv"),
-                        "export",
-                        "--frozen",
-                        "--no-dev",
-                        "--no-emit-project",
-                        "--format",
-                        "requirements-txt",
-                        "--python",
-                        str(bootstrap_python),
-                    ),
-                    cwd=Path(f"/dev/fd/{source.descriptor}") / "backend",
-                    environment=uv_environment,
-                    pass_fds=pass_fds,
-                    timeout=300,
-                    label="Exact uv runtime export",
-                    build=build,
+                backend_fd, backend_identity = _open_held_source_directory(
+                    source,
+                    "backend",
                 )
+                runtime_text: str | None = None
+                runtime_error: BaseException | None = None
+                try:
+                    runtime_text = _run_owned_process(
+                        (
+                            str(bootstrap_root / "bin" / "uv"),
+                            "export",
+                            "--frozen",
+                            "--no-dev",
+                            "--no-emit-project",
+                            "--format",
+                            "requirements-txt",
+                            "--python",
+                            str(bootstrap_python),
+                        ),
+                        cwd=source.root,
+                        environment=uv_environment,
+                        pass_fds=pass_fds,
+                        timeout=300,
+                        label="Exact uv runtime export",
+                        build=build,
+                        cwd_descriptor=backend_fd,
+                        launcher_python=bootstrap_python,
+                    )
+                except BaseException as exc:
+                    runtime_error = exc
+                capability_error: BaseException | None = None
+                with build._defer_publish_signals(preserve_error=runtime_error):
+                    try:
+                        _revalidate_held_source_directory(
+                            source,
+                            "backend",
+                            backend_fd,
+                            backend_identity,
+                        )
+                    except BaseException as exc:
+                        capability_error = exc
+                    try:
+                        os.close(backend_fd)
+                    except OSError as exc:
+                        capability_error = capability_error or exc
+                if capability_error is not None:
+                    if runtime_error is not None:
+                        raise ToolchainBootstrapError(
+                            "Exact uv runtime export failed and its source "
+                            "capability could not be revalidated"
+                        ) from runtime_error
+                    raise ToolchainBootstrapError(
+                        "Exact uv runtime export source capability changed"
+                    ) from capability_error
+                if runtime_error is not None:
+                    raise runtime_error
+                if runtime_text is None:  # pragma: no cover - closed contract
+                    raise ToolchainBootstrapError(
+                        "Exact uv runtime export produced no output"
+                    )
                 runtime_payload = runtime_text.encode("utf-8")
                 _validate_exported_runtime_lock(runtime_payload)
                 runtime_lock = _write_bound_file(
@@ -2313,7 +2736,11 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     "LCF_PYTHON_TOOLCHAIN_EVIDENCE_SHA256": evidence_file.sha256,
                 }
                 child_fds = (
-                    *final_pass_fds,
+                    *(
+                        descriptor
+                        for descriptor in final_pass_fds
+                        if descriptor != source.descriptor
+                    ),
                     evidence_file.descriptor,
                 )
                 stdout = _run_owned_process(
@@ -2328,6 +2755,8 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     timeout=3600,
                     label="Exact Python sidecar inner build",
                     build=build,
+                    cwd_descriptor=source.descriptor,
+                    launcher_python=build_python,
                 )
                 verify_installed_tree(
                     build_root,

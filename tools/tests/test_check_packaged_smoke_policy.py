@@ -902,6 +902,106 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             errors,
         )
 
+    def test_python_outer_uv_capability_ast_rejects_weakened_cleanup(self) -> None:
+        mutations = (
+            (
+                "preserve_error=runtime_error",
+                "preserve_error=None",
+            ),
+            (
+                "capability_error = capability_error or exc",
+                "capability_error = exc",
+            ),
+            (
+                "cwd_descriptor=backend_fd",
+                "cwd_descriptor=source.descriptor",
+            ),
+            (
+                ") from capability_error\n"
+                "                if runtime_error is not None:",
+                ") from runtime_error\n"
+                "                if runtime_error is not None:",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact Python toolchain producer privatization AST closure drifted",
+                    errors,
+                )
+
+    def test_held_cwd_launcher_and_canonical_runner_mutations_are_rejected(
+        self,
+    ) -> None:
+        launcher_mutations = (
+            ("os.fchdir(cwd_fd)", 'os.chdir("/")'),
+            ("signal.SIG_UNBLOCK", "signal.SIG_BLOCK"),
+            (
+                "os.execve(target, target_arguments, dict(os.environ))",
+                "os.execv(target, target_arguments)",
+            ),
+            (
+                "cwd_descriptor=source.descriptor",
+                "cwd_descriptor=build_fd",
+            ),
+        )
+        for old, new in launcher_mutations:
+            with self.subTest(launcher=old):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(
+                    any(
+                        "exact Python toolchain bootstrap" in error
+                        or "exact Python held-cwd launcher" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+        canonical_runner_mutations = (
+            (
+                "source_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))",
+                'source_root = "/dev/fd/" + str(source_descriptor)',
+            ),
+            (
+                "os.lstat(capability_root)",
+                "os.stat(capability_root)",
+            ),
+            (
+                "os.set_inheritable(capability_descriptor, False)",
+                "os.set_inheritable(capability_descriptor, True)",
+            ),
+            (
+                'os.environ["LCF_PYINSTALLER_SOURCE_ROOT"] = source_root',
+                'os.environ["LCF_PYINSTALLER_SOURCE_ROOT"] = "/dev/fd/" + str(source_descriptor)',
+            ),
+        )
+        for old, new in canonical_runner_mutations:
+            with self.subTest(canonical_runner=old):
+                current = inputs()
+                changed(current, "build_script", old, new)
+                with synchronized_input_document_summaries(current, "build_script"):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(
+                    any(
+                        "PyInstaller canonical capability runner" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
     def test_python_strict_seal_ast_rejects_unreachable_guards(self) -> None:
         mutations = (
             (
@@ -1401,6 +1501,11 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         mutations = (
             (
                 "build_script",
+                "def _verify_held_bundle_candidate(\n",
+                "def _ignore_held_bundle_candidate(\n",
+            ),
+            (
+                "build_script",
                 "        bundle_capability = _create_bundle_capability(\n",
                 "        bundle_capability = None  # capability removed\n",
             ),
@@ -1424,8 +1529,15 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "build_script",
-                "        def final_verifier(_candidate: Path) -> dict[str, int]:\n",
                 "        def final_verifier(candidate: Path) -> dict[str, int]:\n",
+                "        def final_verifier(_candidate: Path) -> dict[str, int]:\n",
+            ),
+            (
+                "build_script",
+                "            result = audit.audit_bundle(\n"
+                "                candidate,\n",
+                "            result = audit.audit_bundle(\n"
+                "                bundle_capability.path,\n",
             ),
             (
                 "build_script",
@@ -1444,19 +1556,19 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "        _validate_source_snapshot(scratch)\n",
             ),
             (
-                "build_script",
-                "    inherited.update(capability_descriptors)\n",
-                "    pass  # capability fds omitted from grandchildren\n",
-            ),
-            (
                 "python_packaging_tests",
                 "test_bundle_capability_precedes_producer_and_fd_consumers_ignore_root_aba",
                 "test_pathname_consumers_ignore_root_aba",
             ),
             (
                 "python_packaging_tests",
-                "test_pyinstaller_runner_passes_capability_fds_to_grandchildren",
-                "test_pyinstaller_runner_drops_capability_fds_from_grandchildren",
+                "test_pyinstaller_runner_validates_canonical_roots_and_closes_child_fds",
+                "test_pyinstaller_runner_ignores_canonical_roots_and_leaks_child_fds",
+            ),
+            (
+                "python_packaging_tests",
+                "test_final_bundle_verifier_binds_pre_and_post_publish_candidate_paths",
+                "test_final_bundle_verifier_ignores_publish_candidate_paths",
             ),
         )
         for key, old, new in mutations:
@@ -1488,6 +1600,24 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         build_script = build_script.replace(components, frozen, 1)
         build_script = build_script.replace("__LCF_ORDER_SWAP__", components, 1)
         current["build_script"] = build_script
+        with synchronized_input_document_summaries(current, "build_script"):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "Python sidecar held candidate producer/consumer/publish chain drifted",
+            errors,
+        )
+
+        current = inputs()
+        changed_last(
+            current,
+            "build_script",
+            "            _verify_held_bundle_candidate(\n"
+            "                bundle_capability,\n"
+            "                candidate,\n",
+            "            _verify_held_bundle_candidate(\n"
+            "                bundle_capability,\n"
+            "                bundle_capability.path,\n",
+        )
         with synchronized_input_document_summaries(current, "build_script"):
             errors = CHECKER.validate_policy(current)
         self.assertIn(

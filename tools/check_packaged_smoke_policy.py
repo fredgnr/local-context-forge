@@ -14,7 +14,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
 EXPECTED_WORKFLOW_SHA256 = (
-    "9755cdb77f61b936f6f11f2869444a911ab7947a47545792fc6a242cd888e126"
+    "c485d25d085d98dd7d5c88ae4ae9ec02c5dffd24819f44e9b8e18e67da448b53"
 )
 MAKEFILE = ROOT / "Makefile"
 BUILD_SCRIPT = ROOT / "tools" / "build_python_sidecar.py"
@@ -38,17 +38,17 @@ REMEDIATION_EVIDENCE = (
     / "2026-08-07-pr21-remediation.md"
 )
 EXPECTED_REVIEWED_INPUT_SHA256 = {
-    "workflow": "9755cdb77f61b936f6f11f2869444a911ab7947a47545792fc6a242cd888e126",
+    "workflow": "c485d25d085d98dd7d5c88ae4ae9ec02c5dffd24819f44e9b8e18e67da448b53",
     "makefile": "3f6031722218b2d81094be3c488de17609abe07b34dd9f908bd7a2e1087b20ab",
-    "build_script": "aa77a0f56493c9a18860761e61484f2dbce647b34af68e2f2c1ab033a98ef498",
-    "audit_script": "7bd183332946a9497b11759e63ecd70c27125abe6cc7dcb6f736c7f40bba81ad",
-    "python_bootstrap": "5c0b2efd23ca32d9d253782ee3012d9774df613fa2264654d9323a2c1dbb4141",
+    "build_script": "dd19982686d1dc6067797fe0e0a777d2576fed5c687522e600b206dd2fb59036",
+    "audit_script": "d3b2d638e28981915f346ead114f86f8bc82ddbbfb91f15416bc3127866504c9",
+    "python_bootstrap": "87369520db59ba8a9f9e74adde937d17b52f4df25d62b0ad5d89982836f9fc7c",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "3e4e878eedca35df457d1dced1f19472a4baec0cde4b627519fa7b4a701b941a",
+    "python_packaging_tests": "7282fee1da2117af7dbfae54382314eebddb1d12c2bd36f87ce21d763635d947",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "ad6124f032c642d13644ae55e66106ece07ef633338a589e9f7f3c42cfe2755c",
+    "remediation_evidence": "90379dfbe99a5fb8854c48f3b446611edd6fb1371f37420325069c175c33359a",
     "package": "8572d59212b1233e701338d40bb3a47525db052a41b80b27e1a797d6e07fc712",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
@@ -80,11 +80,11 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "formal_prepare_release": "86f42e539c4c9825760de56ccd07409b1cec07ac588380f4e64da41612df3311",
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
-    "formal_workflow": "43c1e6be118b6997653d305a21dc7b86ad521e9efa48633dfe2f8f055c408aac",
-    "status": "ec639ead39fb77552f5c53cf5a145c15462438f7332709d31c61ca72b844c6ef",
-    "todo": "c76278404272b1ba82624ec0166e44b43b364823205aa6eabb3ce5a6903c131d",
-    "trace": "b1e85aaf383245cf7a79e14dc1ecf9dd93675d70d9a623b6a804bdf536a3d74a",
-    "iteration": "5e4780a81aca277ce81f67e976bbc1ddc00743e4f3e8ca8322b2cb244f926dbc",
+    "formal_workflow": "1fbf1f932b9d83e11ce4480c0e0a2cae100482b3d24db5f3f0a1fc23d5cbb509",
+    "status": "33f2f40dc2a86c1edd5ddf91fb8384a7e76aee279b91b3a130036f7aa8168310",
+    "todo": "a63542a471c5f569e64cdf67906755d795921c5461f4571df5e147d0af4b2a67",
+    "trace": "4c9268ee6ebff9337701bca043e600cb162e316043bf01d282becee7e45686fe",
+    "iteration": "dcd9ab2a88817a19a6c16e886c52b00bd8ee66f795bd5558be1b4fee12ad8c7c",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -318,7 +318,7 @@ EXPECTED_FORMAL_BOUNDARY_SHA256 = {
         "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5"
     ),
     "formal workflow": (
-        "43c1e6be118b6997653d305a21dc7b86ad521e9efa48633dfe2f8f055c408aac"
+        "1fbf1f932b9d83e11ce4480c0e0a2cae100482b3d24db5f3f0a1fc23d5cbb509"
     ),
 }
 STATUS = ROOT / "docs" / "development" / "status.md"
@@ -377,21 +377,40 @@ EXPECTED_PYTHON_BUILD_RUN = (
     'cd "${LCF_REVIEWED_SOURCE_ROOT}" && make python-sidecar-build'
 )
 EXPECTED_POST_BUILD_CLEANUP_RUN = r'''set -euo pipefail
+cleanup_assertion="runner-temp-present"
+trap 'cleanup_status=$?; printf "lcf-scratch-cleanup: assertion=%s\n" "${cleanup_assertion}" >&2; exit "${cleanup_status}"' ERR
 test -n "${RUNNER_TEMP:-}"
+cleanup_assertion="runner-temp-absolute"
 [[ "${RUNNER_TEMP}" = /* ]]
+cleanup_assertion="runner-temp-directory"
 test -d "${RUNNER_TEMP}"
+cleanup_assertion="runner-temp-not-symlink"
 test ! -L "${RUNNER_TEMP}"
+cleanup_assertion="runner-temp-canonical"
 runner_temp_real="$(cd "${RUNNER_TEMP}" && /bin/pwd -P)"
 test "${runner_temp_real}" = "${RUNNER_TEMP}"
+cleanup_assertion="runner-temp-owner"
 test "$(/usr/bin/stat -f '%u' "${RUNNER_TEMP}")" = "$(/usr/bin/id -u)"
+cleanup_assertion="runner-temp-mode"
 runner_temp_mode="$(/usr/bin/stat -f '%Lp' "${RUNNER_TEMP}")"
 (( (8#${runner_temp_mode} & 0022) == 0 ))
-! compgen -G "${RUNNER_TEMP}/python-sidecar-toolchain-*" > /dev/null
-! compgen -G "${RUNNER_TEMP}/lcf-python-installer.*" > /dev/null
+shopt -s nullglob
+cleanup_assertion="runner-toolchain-residue"
+runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)
+test "${#runner_toolchain_residue[@]}" -eq 0
+cleanup_assertion="runner-installer-residue"
+runner_installer_residue=("${RUNNER_TEMP}"/lcf-python-installer.*)
+test "${#runner_installer_residue[@]}" -eq 0
+cleanup_assertion="source-root-bound"
 cd "${LCF_REVIEWED_SOURCE_ROOT:?reviewed source root was not bound}"
+cleanup_assertion="repo-fixed-directory-residue"
 test ! -e desktop/generated/python-sidecar-build
+cleanup_assertion="repo-fixed-symlink-residue"
 test ! -L desktop/generated/python-sidecar-build
-! compgen -G 'desktop/generated/python-sidecar-build-*' > /dev/null'''
+cleanup_assertion="repo-random-directory-residue"
+repo_random_residue=(desktop/generated/python-sidecar-build-*)
+test "${#repo_random_residue[@]}" -eq 0
+trap - ERR'''
 EXPECTED_POST_BUILD_PROVENANCE_RUN = r'''set -euo pipefail
 cd "${LCF_REVIEWED_SOURCE_ROOT}"
 [[ "${LCF_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
@@ -689,7 +708,7 @@ EXPECTED_RUN_BLOCK_SHA256 = (
     ("policy", "dde289c56ef0fd9f70601af44d49578dddaddec8639538f89c33943aa073ca7d"),
     ("Python sources", "f01e0ddbe2fd917eb765723935eaceb7a606db3350a9ee059402032ff89789a7"),
     ("Python sidecar", "af4ac525fb69726e592d6b743fd4951b5c61b3ad611d4be1f9099aac362c1579"),
-    ("Python cleanup", "e57ec8252683a0d4f2a22472c3fd0c2b1f0b642d0f19b5780cd0078152de018b"),
+    ("Python cleanup", "af8a6c1386e3e3654367192deb80067733ee0138974ff0177299f86ac2ec9439"),
     ("Python provenance", "42242bf20c667175068a3e140aba6ed1947e69286cab3b9efedf1f9aca91fff0"),
     ("renderer", "2db53fd812c47c613361413200bfadec046be100dbb598a19c665d293bb6c024"),
     ("Desktop", "00cfc4213532da6e78034d720cb79f76a9e232c5f7dfa7f9262314f4e79478e2"),
@@ -753,6 +772,64 @@ def _reviewed_input_digest(value: Any) -> str:
     else:
         serialized = str(value)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _python_exec_runner_signal_contract_is_semantic(source: str) -> bool:
+    """Require every reviewed Python exec runner to reset and unblock signals."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    runners: dict[str, str] = {}
+    expected_names = {
+        "HELD_CWD_EXEC_RUNNER",
+        "PATH_CAPABILITY_EXEC_RUNNER",
+    }
+    for statement in tree.body:
+        if (
+            not isinstance(statement, ast.Assign)
+            or len(statement.targets) != 1
+            or not isinstance(statement.targets[0], ast.Name)
+            or statement.targets[0].id not in expected_names
+        ):
+            continue
+        value = statement.value
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "strip"
+            and not value.args
+            and not value.keywords
+        ):
+            value = value.func.value
+        if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+            return False
+        runners[statement.targets[0].id] = value.value
+    if set(runners) != expected_names:
+        return False
+    required_markers = (
+        "signal.pthread_sigmask(",
+        "signal.SIGINT",
+        "signal.SIGTERM",
+        'getattr(signal, "SIGHUP", signal.SIGTERM)',
+        'getattr(signal, "SIGPIPE", signal.SIGTERM)',
+        'getattr(signal, "SIGXFZ", signal.SIGTERM)',
+        'getattr(signal, "SIGXFSZ", signal.SIGTERM)',
+        "signal.signal(number, signal.SIG_DFL)",
+        'fail("signal-reset")',
+        "os.execve(",
+    )
+    for runner in runners.values():
+        try:
+            ast.parse(runner)
+        except SyntaxError:
+            return False
+        if runner.count("signal.SIG_UNBLOCK") != 1:
+            return False
+        if any(marker not in runner for marker in required_markers):
+            return False
+    return True
 
 
 def _python_emitted_environment_keys(source: str) -> tuple[str, ...]:
@@ -1334,6 +1411,35 @@ def _python_final_bundle_verifier_is_semantic(source: str) -> bool:
         and isinstance(verifier.body[4].value, ast.Call)
         else None
     )
+    audit_keywords = (
+        {keyword.arg: keyword.value for keyword in audit_value.keywords}
+        if isinstance(audit_value, ast.Call)
+        and all(keyword.arg is not None for keyword in audit_value.keywords)
+        else {}
+    )
+    native_scanner = audit_keywords.get("native_scanner")
+    native_body = (
+        native_scanner.body
+        if isinstance(native_scanner, ast.Lambda)
+        and len(native_scanner.args.args) == 1
+        and native_scanner.args.args[0].arg == "native_root"
+        and native_scanner.args.vararg is None
+        and native_scanner.args.kwarg is None
+        and not native_scanner.args.kwonlyargs
+        else None
+    )
+    native_root_descriptor = (
+        native_body.keywords[0].value
+        if isinstance(native_body, ast.Call)
+        and _python_attribute_path(native_body.func)
+        == ("audit", "scan_macho_inventory")
+        and len(native_body.args) == 1
+        and isinstance(native_body.args[0], ast.Name)
+        and native_body.args[0].id == "native_root"
+        and len(native_body.keywords) == 1
+        and native_body.keywords[0].arg == "root_descriptor"
+        else None
+    )
     if (
         not exact_no_keyword_call(
             verifier.body[0],
@@ -1355,21 +1461,17 @@ def _python_final_bundle_verifier_is_semantic(source: str) -> bool:
         or len(audit_value.args) != 1
         or not isinstance(audit_value.args[0], ast.Name)
         or audit_value.args[0].id != "candidate"
-        or any(keyword.arg is None for keyword in audit_value.keywords)
-        or {
-            keyword.arg: _python_attribute_path(keyword.value)
-            for keyword in audit_value.keywords
-        }
-        != {
-            "repository_root": ("source_root",),
-            "verify_git_provenance": (),
-        }
-        or not any(
-            keyword.arg == "verify_git_provenance"
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is False
-            for keyword in audit_value.keywords
+        or set(audit_keywords)
+        != {"native_scanner", "repository_root", "verify_git_provenance"}
+        or not isinstance(audit_keywords.get("repository_root"), ast.Name)
+        or audit_keywords["repository_root"].id != "source_root"
+        or not isinstance(
+            audit_keywords.get("verify_git_provenance"),
+            ast.Constant,
         )
+        or audit_keywords["verify_git_provenance"].value is not False
+        or _python_attribute_path(native_root_descriptor)
+        != ("bundle_capability", "descriptor")
         or not exact_no_keyword_call(
             verifier.body[6],
             ("verify_exact_toolchain",),
@@ -1430,6 +1532,123 @@ def _python_final_bundle_verifier_is_semantic(source: str) -> bool:
             and isinstance(node.ctx, (ast.Store, ast.Del))
             for node in ast.walk(held_verifier)
         )
+    )
+
+
+def _python_repository_gate_is_semantic(source: str) -> bool:
+    """Bind every Git consumer to the held repository and .git descriptors."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    gate = _python_function(tree, "_validate_repository_state")
+    if gate is None:
+        return False
+
+    def calls(path: tuple[str, ...]) -> list[ast.Call]:
+        return [
+            node
+            for node in ast.walk(gate)
+            if isinstance(node, ast.Call)
+            and _python_attribute_path(node.func) == path
+        ]
+
+    def keywords(call: ast.Call) -> dict[str, ast.expr]:
+        if any(keyword.arg is None for keyword in call.keywords):
+            return {}
+        return {str(keyword.arg): keyword.value for keyword in call.keywords}
+
+    def name(value: ast.expr | None, expected: str) -> bool:
+        return isinstance(value, ast.Name) and value.id == expected
+
+    local_calls = calls(("_validate_local_git_configuration",))
+    index_calls = calls(("_validate_git_index",))
+    worktree_calls = calls(("_validate_tracked_worktree",))
+    nested = [
+        node
+        for node in ast.walk(gate)
+        if isinstance(node, ast.FunctionDef) and node.name == "git_output"
+    ]
+    if (
+        len(local_calls) != 1
+        or len(index_calls) != 1
+        or len(worktree_calls) != 1
+        or len(nested) != 1
+    ):
+        return False
+    local_keywords = keywords(local_calls[0])
+    index_keywords = keywords(index_calls[0])
+    worktree_keywords = keywords(worktree_calls[0])
+    if (
+        local_calls[0].args
+        or set(local_keywords)
+        != {"repository_root", "repository_descriptor", "git_descriptor"}
+        or not name(local_keywords.get("repository_root"), "repository_root")
+        or not name(
+            local_keywords.get("repository_descriptor"),
+            "repository_descriptor",
+        )
+        or not name(local_keywords.get("git_descriptor"), "git_descriptor")
+        or len(index_calls[0].args) != 1
+        or not name(index_calls[0].args[0], "inventory")
+        or set(index_keywords)
+        != {"repository_root", "repository_descriptor", "git_descriptor"}
+        or not name(index_keywords.get("repository_root"), "repository_root")
+        or not name(
+            index_keywords.get("repository_descriptor"),
+            "repository_descriptor",
+        )
+        or not name(index_keywords.get("git_descriptor"), "git_descriptor")
+        or len(worktree_calls[0].args) != 1
+        or not name(worktree_calls[0].args[0], "inventory")
+        or set(worktree_keywords)
+        != {"repository_root", "repository_descriptor"}
+        or not name(
+            worktree_keywords.get("repository_root"),
+            "repository_root",
+        )
+        or not name(
+            worktree_keywords.get("repository_descriptor"),
+            "repository_descriptor",
+        )
+    ):
+        return False
+
+    git_calls = [
+        node
+        for node in ast.walk(nested[0])
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func) == ("_git_output",)
+    ]
+    if len(git_calls) != 1:
+        return False
+    git_keywords = keywords(git_calls[0])
+    if (
+        set(git_keywords)
+        != {"repository_root", "repository_descriptor", "git_descriptor"}
+        or not name(git_keywords.get("repository_root"), "repository_root")
+        or not name(
+            git_keywords.get("repository_descriptor"),
+            "repository_descriptor",
+        )
+        or not name(git_keywords.get("git_descriptor"), "git_descriptor")
+    ):
+        return False
+
+    git_output_calls = calls(("git_output",))
+    arguments = [
+        tuple(
+            item.value
+            for item in call.args
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+        )
+        for call in git_output_calls
+    ]
+    return (
+        ("status", "--porcelain=v2", "--untracked-files=all") in arguments
+        and ("submodule", "status", "--recursive") in arguments
+        and not any(values and values[0] == "write-tree" for values in arguments)
     )
 
 
@@ -2931,6 +3150,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         '"tools/audit_python_sidecar.py"',
         '"runtime/python-sidecar-build-manifest.schema.json"',
         'HELD_CWD_EXEC_RUNNER = r"""',
+        'PATH_CAPABILITY_EXEC_RUNNER = r"""',
         "os.fchdir(cwd_fd)",
         "signal.SIG_UNBLOCK",
         "os.execve(target, target_arguments, dict(os.environ))",
@@ -2973,7 +3193,9 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         'f"/dev/fd/{runtime_lock.descriptor}"',
         "start_new_session=True",
         "build._terminate_owned_process_group(",
-        "process.communicate(timeout=timeout)",
+        "def _communicate_bounded(",
+        "selectors.DefaultSelector()",
+        "inner_build_diagnostic=True",
         '"LCF_PYTHON_BUILD_VENV_FD"',
         '"LCF_PYTHON_TOOLCHAIN_EVIDENCE_FD"',
         "pass_fds=child_fds",
@@ -2998,6 +3220,34 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     for marker in python_bootstrap_markers:
         if marker not in python_bootstrap:
             errors.append(f"exact Python toolchain bootstrap missing {marker!r}")
+    if not _python_exec_runner_signal_contract_is_semantic(python_bootstrap):
+        errors.append("exact Python held-cwd launcher signal contract drifted")
+    if (
+        python_bootstrap.count("subprocess.Popen(") != 1
+        or build_script.count("subprocess.Popen(") != 2
+        or "subprocess.run(" in python_bootstrap
+        or "subprocess.run(" in build_script
+        or "subprocess.run(" in audit_script
+        or "subprocess.Popen(" in audit_script
+    ):
+        errors.append("Python sidecar owned external-process inventory drifted")
+    for marker in (
+        "class _BoundedFrozenLogCollector:",
+        "stdout=subprocess.PIPE",
+        "log_collector.start()",
+        "log_collector.assert_healthy()",
+        "log_collector.finish()",
+        '"Frozen sidecar log exceeded its size bound"',
+    ):
+        if marker not in build_script:
+            errors.append(f"frozen sidecar bounded log owner missing {marker!r}")
+    if (
+        build_script.count("log_collector.start()") != 1
+        or build_script.count("log_collector.finish()") != 6
+    ):
+        errors.append("frozen sidecar bounded log owner lifecycle drifted")
+    if "stdout=log_handle" in build_script:
+        errors.append("frozen sidecar output bypasses its bounded owner")
     exact_toolchain_build = _source_block(
         python_bootstrap,
         "def build_with_exact_toolchain(",
@@ -3063,6 +3313,22 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         or reviewed_python_install.count("prefix=INSTALLER_ROOT_PREFIX") != 1
         or reviewed_python_install.count("_revalidate_bound_file(") != 2
         or reviewed_python_install.count("_revalidate_source_seal(") < 3
+        or reviewed_python_install.count(
+            "path_capabilities=installer_path_capabilities"
+        )
+        != 2
+        or exact_toolchain_build.count(
+            "path_capabilities=toolchain_path_capabilities"
+        )
+        != 6
+        or "(capability.descriptor, str(capability.path), False)"
+        not in reviewed_python_install
+        or "(cache_fd, str(cache_root), False)"
+        not in reviewed_python_install
+        or "(capability.descriptor, str(capability.path), False)"
+        not in exact_toolchain_build
+        or "(cache_fd, str(cache_root), False)"
+        not in exact_toolchain_build
         or any(
             reviewed_python_install.count(command) != 1
             for command in exact_installer_commands
@@ -3159,6 +3425,25 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "test_held_cwd_exec_runner_restores_real_signal_termination",
         "test_held_cwd_exec_runner_rejects_bad_cwd_and_target_drift",
         "test_run_owned_process_uses_fixed_held_cwd_spawn_contract",
+        "test_path_capability_exec_runner_rejects_replaced_child_input",
+        "test_owned_process_rejects_path_capability_without_held_cwd",
+        "test_owned_process_rejects_regular_keep_fd_metadata_drift",
+        "test_inner_build_fixed_diagnostic_is_bounded_and_does_not_leak_stderr",
+        "test_inner_build_rejects_unreviewed_diagnostic_enum_without_leaking",
+        "test_inner_build_diagnostic_writer_emits_only_fixed_enums",
+        "test_inner_build_diagnostic_reader_rejects_a_retained_writer_without_blocking",
+        "test_owned_process_output_bound_terminates_without_echoing_payload",
+        "test_owned_process_timeout_stops_and_reaps_the_exact_group",
+        "test_process_group_cleanup_reaps_an_already_exited_leader",
+        "test_exact_git_archive_pipe_reader_has_a_total_deadline",
+        "test_pyinstaller_command_rejects_exec_target_identity_drift",
+        "test_source_inventory_accepts_one_consistent_directory_link_model",
+        "test_darwin_apfs_directory_link_count_includes_immediate_files",
+        "test_source_inventory_rejects_mixed_directory_link_models",
+        "test_remove_tree_restores_owner_write_before_directory_quarantine",
+        "test_scratch_root_final_gate_preserves_a_quarantine_replacement",
+        "test_build_lifecycle_classifies_source_materialization_and_clean_cleanup",
+        "test_non_build_primary_keeps_its_fixed_stage_through_cleanup_failure",
     ):
         if marker not in python_packaging_tests:
             errors.append(f"exact Python toolchain tests missing {marker!r}")
@@ -3172,6 +3457,12 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             errors.append(
                 f"exact Python held-cwd launcher retained {forbidden!r}"
             )
+    if (
+        python_bootstrap.count("cwd_descriptor=source.descriptor") != 7
+        or python_bootstrap.count("cwd_descriptor=backend_fd") != 1
+        or python_bootstrap.count("inner_build_diagnostic=True") != 1
+    ):
+        errors.append("exact Python held-cwd launcher call closure drifted")
 
     python_toolchain_consumer_markers = {
         "Python inner builder": (
@@ -3383,7 +3674,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         or build_sidecar_source.count("_validate_bundle_capability(") != 9
         or build_sidecar_source.count("_verify_held_bundle_candidate(") != 2
         or build_sidecar_source.count("bundle_descriptor=bundle_capability.descriptor")
-        != 1
+        != 2
         or build_sidecar_source.count("_publish_owned_bundle(") != 1
         or build_sidecar_source.count("def final_verifier(candidate: Path)") != 1
         or build_sidecar_source.count(
@@ -3399,8 +3690,10 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "_validate_bundle_capability(\n                capability,",
         "os.close(bundle.descriptor)",
         "os.close(bundle.parent_descriptor)",
-        "_remove_tree_contents(\n                capability.build_root_descriptor,",
-        "dir_fd=capability.scratch_parent_descriptor",
+        'cleanup_stage = "build-root-quarantine"',
+        "parent_descriptor=capability.scratch_parent_descriptor",
+        'cleanup_stage = "scratch-root-quarantine"',
+        "parent_descriptor=capability.destination_parent_descriptor",
     ):
         if marker not in scratch_cleanup_source:
             errors.append(
@@ -3419,7 +3712,11 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "assert sentinel_descriptor == bundle_descriptor",
         "test_pyinstaller_command_inherits_source_and_all_private_output_fds",
         "test_pyinstaller_runner_validates_canonical_roots_and_closes_child_fds",
-        "test_native_tool_inherits_an_fd_backed_bundle_target",
+        "test_native_tool_rejects_an_fd_child_path_for_external_tools",
+        "test_native_tool_uses_a_held_canonical_root",
+        "test_native_input_exec_runner_binds_the_child_opened_target",
+        "test_held_native_inventory_never_enumerates_a_replacement_root",
+        "test_frozen_live_log_collector_bounds_output_before_owner_cleanup",
         "test_source_snapshot_first_open_replacement_is_refused_and_preserved",
         "test_sealed_evidence_consumers_ignore_root_replacement_and_restore",
     ):
@@ -3462,10 +3759,20 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "def _reviewed_build_boundary(",
         "\ndef _git_provenance_output(",
     )
+    auditor_held_git_boundary = _source_block(
+        audit_script,
+        "def _held_git_boundary(",
+        "\ndef _git_provenance_output(",
+    )
     auditor_git_output = _source_block(
         audit_script,
         "def _git_provenance_output(",
         "\ndef _git_tree_inventory_sha256(",
+    )
+    auditor_git_inventory = _source_block(
+        audit_script,
+        "def _git_tree_inventory_sha256(",
+        "\ndef _validate_repository_provenance(",
     )
     auditor_repository_provenance = _source_block(
         audit_script,
@@ -3483,13 +3790,58 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
                 f"standalone Python auditor reviewed module boundary missing {marker!r}"
             )
     for marker in (
-        "build._validate_local_git_configuration(repository_root=repository_root)",
+        "with _held_git_boundary(repository_root)",
+        "build._validate_local_git_configuration(",
+        "repository_descriptor=repository_descriptor",
+        "git_descriptor=git_descriptor",
         "build._validate_git_info_overrides(repository_root=repository_root)",
-        "return build._git_bytes(*arguments, repository_root=repository_root)",
-        "return build._git_output(*arguments, repository_root=repository_root)",
+        "return build._git_bytes(",
+        "return build._git_output(",
     ):
-        if auditor_git_output.count(marker) != 1:
+        if marker not in auditor_git_output:
             errors.append(f"standalone Python auditor Git boundary missing {marker!r}")
+    if (
+        auditor_git_output.count(
+            "repository_descriptor=repository_descriptor"
+        )
+        != 3
+        or auditor_git_output.count("git_descriptor=git_descriptor") != 3
+    ):
+        errors.append("standalone Python auditor Git descriptor threading drifted")
+    for marker in (
+        "repository_root.resolve(strict=True) != repository_root",
+        "os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC",
+        'os.open(\n            ".git"',
+        "build._stat_metadata(os.fstat(repository_descriptor))",
+        "build._stat_metadata(os.fstat(git_descriptor))",
+        "os.close(descriptor)",
+    ):
+        if marker not in auditor_held_git_boundary:
+            errors.append(
+                f"standalone Python auditor held Git capability missing {marker!r}"
+            )
+    for marker in (
+        "with _held_git_boundary(repository_root)",
+        "build._validate_local_git_configuration(",
+        "build._git_output(",
+        "build._repository_tree_inventory(",
+        "repository_descriptor=repository_descriptor",
+        "git_descriptor=git_descriptor",
+    ):
+        if marker not in auditor_git_inventory:
+            errors.append(
+                f"standalone Python auditor Git inventory binding missing {marker!r}"
+            )
+    if (
+        auditor_git_inventory.count(
+            "repository_descriptor=repository_descriptor"
+        )
+        != 3
+        or auditor_git_inventory.count("git_descriptor=git_descriptor") != 3
+    ):
+        errors.append(
+            "standalone Python auditor Git inventory descriptor threading drifted"
+        )
     for marker in (
         "_reviewed_build_boundary()._validate_repository_state(",
         '{"LCF_SOURCE_SHA": commit, "LCF_SOURCE_TREE": tree}',
@@ -3586,16 +3938,8 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     ):
         if marker not in python_tracked_worktree:
             errors.append(f"Python sidecar raw tracked-worktree guard missing {marker!r}")
-    for marker in (
-        "_validate_local_git_configuration(repository_root=repository_root)",
-        "_validate_git_info_overrides(repository_root=repository_root)",
-        "_validate_git_index(inventory, repository_root=repository_root)",
-        "_validate_tracked_worktree(inventory, repository_root=repository_root)",
-        '"status",\n        "--porcelain=v2",\n        "--untracked-files=all"',
-        '"submodule",\n        "status",\n        "--recursive"',
-    ):
-        if python_repository_state.count(marker) != 1:
-            errors.append(f"Python sidecar exact repository gate missing {marker!r}")
+    if not _python_repository_gate_is_semantic(build_script):
+        errors.append("Python sidecar exact repository gate is not descriptor-bound")
     for marker in (
         "test_git_filter_configuration_is_rejected_without_executing_the_filter",
         "test_git_local_execution_and_visibility_keys_are_rejected",

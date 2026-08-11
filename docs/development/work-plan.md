@@ -51,8 +51,13 @@
   success；该 attempt 同样已 `superseded`、independent `pending`。第三次 exact `2665ec…` / tree
   `c3cd17…` 的 source success，但 assembly 因 Darwin fd-backed uv cwd technical `fail`；container
   API/MCP success、Web QEMU Node/npm stall 后 cancelled，且仍未 publish。第三次 attempt 也已
-  `superseded`、independent `pending`。下一 exact remediation technical candidate `not-run`
-  （仅完成 local source validation；fresh exact-head Actions pending），assembled App 未启动，
+  `superseded`、independent `pending`。第四次 exact `c2be665f…` / tree `f90b527b…` 的 source 与
+  Containers success；Engineering inner build 与 cleanup gate technical `fail`，exact tree、平台和
+  当时实现把高置信根因分别归到 APFS/Darwin directory-link inventory 与 Darwin sealed-source
+  cleanup ordering（raw log 未打印 inner stage、`st_nlink` 或 cleanup errno）。该 attempt 也已
+  `superseded`、independent `pending`。第五次
+  exact remediation technical candidate `not-run`（仅完成 local regression；fresh exact-head
+  Actions pending），assembled App 未启动，
   packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限

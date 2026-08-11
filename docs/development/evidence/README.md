@@ -14,7 +14,7 @@
 | W01 remediation historical Checkpoint A | `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree `f059ad8bd3cfc6accac707745d5d8727bfb532bd` | 记录时刻 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [immutable schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597`；[closed schema](W01/schema-v2.json) |
 | W01 accepted remediation / W02 entry | final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`；resulting main `1786255b55dd1a78659ed92235893876175a0722`；same tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64` | PR/source、independent acceptance、merge、resulting-main source、W02 activation `pass`；packaged smoke `not-run` | [W02 entry closeout](W02/2026-08-05-entry.md)；[Actions 30986208251](https://github.com/fredgnr/local-context-forge/actions/runs/30986208251) |
 | W02 static assembly substage | `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38` | `.app` directory assembly / bundle audit `pass`；packaged launch/runtime 与 `VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [assembly record](W02/2026-08-06-08137c7-assembly.md)；[run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806)；source run `31024794734` success |
-| W02 PR #21 independent NO-GO / remediation entry | reviewed `8c5fd23206b671b768fd21d253bf292642f93a51` / tree `785f4656de8a7233b6dd632fe4815976d33468fb`；latest failed exact `2665ec61712fe410608ac50c7a6d44fa35746092` / tree `c3cd1706838f7050533e2812dfdcad482aaedde5` | independent `NO-GO`；first/second/third remediation technical attempts `fail` / `superseded`；next exact candidate `not-run`；W02 `in-progress`；`VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [append-only remediation record](W02/2026-08-07-pr21-remediation.md)；third assembly `31258135925` / job `93104615763` fail；source `31258135929` success；container `31258135932` cancelled/no publish |
+| W02 PR #21 independent NO-GO / remediation entry | reviewed `8c5fd23206b671b768fd21d253bf292642f93a51` / tree `785f4656de8a7233b6dd632fe4815976d33468fb`；latest failed exact `c2be665f5832c15064cae87c694a782e51351e7c` / tree `f90b527b4de1a422f63c4bfeb01f9c1010e22b7d` | independent `NO-GO`；first/second/third/fourth remediation technical attempts `fail` / `superseded`；fifth exact candidate `not-run`；W02 `in-progress`；`VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [append-only remediation record](W02/2026-08-07-pr21-remediation.md)；fourth Engineering `31358373320` / job `93362214499` fail；source `31358373316` success；Containers `31358373311` success/no publish |
 
 旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。W01 JSON
 冻结其记录时刻的 remediation lifecycle；后续 external acceptance/merge/main run 由新的 W02 entry
@@ -230,10 +230,10 @@ App 未启动、sidecar 未从 bundle 启动，上述 launch/runtime 观察均�
 
 [2026-08-07 PR #21 remediation record](W02/2026-08-07-pr21-remediation.md) 进一步保存最终独立
 验收对 reviewed head `8c5fd232…` / tree `785f4656…` 的 `NO-GO`。该候选的旧 exact-head runs
-以及三次 remediation executions 只能作为失败候选的历史技术证据；最新第三次 exact
-`2665ec…` / tree `c3cd17…` 的 source success，但 Engineering 因 Darwin fd-backed cwd fail，
-Containers 的 Web job cancelled 且未 publish。在新的 exact head 被 fresh Actions 和独立验收接受前，
-W02 保持 `in-progress`、next exact remediation technical candidate 保持 `not-run`，packaged launch/runtime 与
+以及四次 remediation executions 只能作为失败候选的历史技术证据；最新第四次 exact
+`c2be665f…` / tree `f90b527b…` 的 source 与 Containers success，但 Engineering inner build 和
+cleanup-only gate fail，且未 publish。在新的 exact head 被 fresh Actions 和独立验收接受前，
+W02 保持 `in-progress`、fifth exact remediation technical candidate 保持 `not-run`，packaged launch/runtime 与
 `VAL-PACKAGED-SMOKE-001` 保持 `not-run`，W10/W11 保持 locked。
 
 ### W10/W11 slice

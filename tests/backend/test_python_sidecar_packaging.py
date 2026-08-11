@@ -340,6 +340,11 @@ def test_run_owned_process_uses_fixed_held_cwd_spawn_contract(
             return "ok", ""
 
     monkeypatch.setattr(bootstrap.subprocess, "Popen", CheckedPopen)
+    monkeypatch.setattr(
+        bootstrap,
+        "_communicate_bounded",
+        lambda _process, **_kwargs: ("ok", ""),
+    )
     monkeypatch.setattr(build, "_process_group_exists", lambda _pid: False)
     try:
         assert bootstrap._run_owned_process(
@@ -367,6 +372,437 @@ def test_run_owned_process_uses_fixed_held_cwd_spawn_contract(
     assert observed["start_new_session"] is True
     assert "preexec_fn" not in observed
     assert observed["pass_fds"] == (cwd_descriptor,)
+
+
+def test_run_owned_process_check_false_returns_bounded_completed_process(
+    tmp_path: Path,
+) -> None:
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    arguments = (
+        sys.executable,
+        "-I",
+        "-c",
+        "import os,sys; os.write(1,b'out'); os.write(2,b'err'); sys.exit(7)",
+    )
+    try:
+        completed = bootstrap._run_owned_process(
+            arguments,
+            cwd=tmp_path,
+            environment={"PATH": "/usr/bin:/bin"},
+            pass_fds=(),
+            timeout=30,
+            label="completed-process probe",
+            build=build,
+            cwd_descriptor=cwd_descriptor,
+            launcher_python=Path(sys.executable),
+            check=False,
+        )
+    finally:
+        os.close(cwd_descriptor)
+
+    assert isinstance(completed, subprocess.CompletedProcess)
+    assert completed.args == arguments
+    assert completed.returncode == 7
+    assert completed.stdout == "out"
+    assert completed.stderr == "err"
+
+
+def test_owned_process_allows_owned_content_in_a_stable_keep_directory(
+    tmp_path: Path,
+) -> None:
+    cwd = tmp_path / "cwd"
+    producer = tmp_path / "producer"
+    cwd.mkdir()
+    producer.mkdir(mode=0o700)
+    cwd_descriptor = os.open(
+        cwd,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    producer_descriptor = os.open(
+        producer,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    child = (
+        "import os,sys;"
+        "fd=int(sys.argv[1]);"
+        "created=os.open('created',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600,dir_fd=fd);"
+        "os.write(created,b'owned');os.close(created)"
+    )
+    try:
+        assert bootstrap._run_owned_process(
+            (sys.executable, "-I", "-c", child, str(producer_descriptor)),
+            cwd=cwd,
+            environment={"PATH": "/usr/bin:/bin"},
+            pass_fds=(producer_descriptor,),
+            timeout=30,
+            label="mutable keep-fd probe",
+            build=build,
+            cwd_descriptor=cwd_descriptor,
+            launcher_python=Path(sys.executable),
+        ) == ""
+    finally:
+        os.close(producer_descriptor)
+        os.close(cwd_descriptor)
+
+    assert (producer / "created").read_bytes() == b"owned"
+
+
+def test_path_capability_exec_runner_rejects_replaced_child_input(
+    tmp_path: Path,
+) -> None:
+    held = tmp_path / "input"
+    held.write_text("reviewed", encoding="utf-8")
+    descriptor = os.open(held, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    identity = bootstrap._identity(os.fstat(descriptor))
+    actual = (
+        sys.executable,
+        "-I",
+        "-c",
+        "from pathlib import Path;print(Path('input').read_text())",
+    )
+    effective = (
+        sys.executable,
+        "-I",
+        "-c",
+        bootstrap.PATH_CAPABILITY_EXEC_RUNNER,
+        "1",
+        str(descriptor),
+        "relative",
+        *(str(value) for value in identity),
+        "input",
+        *(str(value) for value in bootstrap._exec_target_identity(Path(actual[0]))),
+        *actual,
+    )
+    held.rename(tmp_path / "reviewed-input")
+    held.write_text("replacement", encoding="utf-8")
+    command, inherited, _exec_identity = bootstrap._held_cwd_exec_command(
+        Path(sys.executable),
+        effective,
+        cwd_descriptor=cwd_descriptor,
+        keep_fds=(descriptor,),
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd="/",
+            env=dict(os.environ),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            pass_fds=inherited,
+            close_fds=True,
+            timeout=20,
+            check=False,
+        )
+    finally:
+        os.close(descriptor)
+        os.close(cwd_descriptor)
+
+    assert completed.returncode == 126
+    assert completed.stdout == ""
+    assert completed.stderr == "lcf-path-capability-exec: stage=path-name errno=0\n"
+
+
+def test_owned_process_rejects_path_capability_without_held_cwd(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "input"
+    target.write_text("reviewed", encoding="utf-8")
+    descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match=r"requires a held cwd",
+        ):
+            bootstrap._run_owned_process(
+                (sys.executable, "-I", "-c", "pass"),
+                cwd=tmp_path,
+                environment={"PATH": "/usr/bin:/bin"},
+                pass_fds=(),
+                timeout=30,
+                label="path capability probe",
+                build=build,
+                path_capabilities=((descriptor, "input", False),),
+            )
+    finally:
+        os.close(descriptor)
+
+
+def test_owned_process_rejects_regular_keep_fd_metadata_drift(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "immutable"
+    target.write_bytes(b"reviewed")
+    descriptor = os.open(target, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    child = "import os,sys;os.write(int(sys.argv[1]),b'!')"
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match=r"owned process state could not be verified",
+        ):
+            bootstrap._run_owned_process(
+                (sys.executable, "-I", "-c", child, str(descriptor)),
+                cwd=tmp_path,
+                environment={"PATH": "/usr/bin:/bin"},
+                pass_fds=(descriptor,),
+                timeout=30,
+                label="immutable keep-fd probe",
+                build=build,
+                cwd_descriptor=cwd_descriptor,
+                launcher_python=Path(sys.executable),
+            )
+    finally:
+        os.close(descriptor)
+        os.close(cwd_descriptor)
+
+
+def test_inner_build_fixed_diagnostic_is_bounded_and_does_not_leak_stderr(
+    tmp_path: Path,
+) -> None:
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    secret = "token=/private/unreviewed/secret"
+    child = (
+        "import os,sys;"
+        f"fd=int(os.environ[{bootstrap.INNER_BUILD_DIAGNOSTIC_FD_ENV!r}]);"
+        "os.write(fd,b'lcf-inner-build: primary=source-materialize "
+        "cleanup=build-root-quarantine\\n');"
+        f"os.write(2,{secret.encode()!r});"
+        "sys.exit(2)"
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match=(
+                r"category=inner-build; primary=source-materialize; "
+                r"cleanup=build-root-quarantine"
+            ),
+        ) as failure:
+            bootstrap._run_owned_process(
+                (sys.executable, "-I", "-c", child),
+                cwd=tmp_path,
+                environment={"PATH": "/usr/bin:/bin"},
+                pass_fds=(),
+                timeout=30,
+                label="Exact Python sidecar inner build",
+                build=build,
+                cwd_descriptor=cwd_descriptor,
+                launcher_python=Path(sys.executable),
+                inner_build_diagnostic=True,
+            )
+    finally:
+        os.close(cwd_descriptor)
+
+    assert secret not in str(failure.value)
+    assert "/private" not in str(failure.value)
+
+
+def test_inner_build_rejects_unreviewed_diagnostic_enum_without_leaking(
+    tmp_path: Path,
+) -> None:
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    child = (
+        "import os,sys;"
+        f"fd=int(os.environ[{bootstrap.INNER_BUILD_DIAGNOSTIC_FD_ENV!r}]);"
+        "os.write(fd,b'lcf-inner-build: primary=secret-path "
+        "cleanup=none\\n');"
+        "os.write(2,b'/private/token');"
+        "sys.exit(2)"
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match=r"category=unclassified",
+        ) as failure:
+            bootstrap._run_owned_process(
+                (sys.executable, "-I", "-c", child),
+                cwd=tmp_path,
+                environment={"PATH": "/usr/bin:/bin"},
+                pass_fds=(),
+                timeout=30,
+                label="Exact Python sidecar inner build",
+                build=build,
+                cwd_descriptor=cwd_descriptor,
+                launcher_python=Path(sys.executable),
+                inner_build_diagnostic=True,
+            )
+    finally:
+        os.close(cwd_descriptor)
+
+    assert "/private" not in str(failure.value)
+    assert "token" not in str(failure.value)
+
+
+def test_inner_build_diagnostic_writer_emits_only_fixed_enums(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader, writer = os.pipe()
+    monkeypatch.setenv(build.INNER_BUILD_DIAGNOSTIC_FD_ENV, str(writer))
+    failure = build.BuildError(
+        "token=/private/unreviewed/secret",
+        primary_category="source-materialize",
+        cleanup_category="build-root-quarantine",
+    )
+    try:
+        build._write_inner_build_diagnostic(failure)
+        payload = os.read(reader, 256)
+    finally:
+        os.close(reader)
+
+    assert payload == (
+        b"lcf-inner-build: primary=source-materialize "
+        b"cleanup=build-root-quarantine\n"
+    )
+    assert b"token" not in payload
+    assert b"private" not in payload
+    with pytest.raises(OSError):
+        os.fstat(writer)
+
+
+def test_inner_build_diagnostic_reader_rejects_a_retained_writer_without_blocking(
+) -> None:
+    reader, writer = os.pipe()
+    os.write(
+        writer,
+        b"lcf-inner-build: primary=source-materialize cleanup=none\n",
+    )
+    started = time.monotonic()
+    try:
+        assert bootstrap._read_inner_build_diagnostic(reader) is None
+    finally:
+        os.close(writer)
+
+    assert time.monotonic() - started < 1
+
+
+def test_owned_process_output_bound_terminates_without_echoing_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    monkeypatch.setattr(bootstrap, "MAX_SUBPROCESS_OUTPUT_BYTES", 128)
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match=r"output exceeds its bound",
+        ) as failure:
+            bootstrap._run_owned_process(
+                (
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "import os; os.write(1, b'private-token/' * 64)",
+                ),
+                cwd=tmp_path,
+                environment={"PATH": "/usr/bin:/bin"},
+                pass_fds=(),
+                timeout=30,
+                label="bounded output probe",
+                build=build,
+                cwd_descriptor=cwd_descriptor,
+                launcher_python=Path(sys.executable),
+            )
+    finally:
+        os.close(cwd_descriptor)
+
+    assert "private-token" not in str(failure.value)
+
+
+def test_owned_process_timeout_stops_and_reaps_the_exact_group(
+    tmp_path: Path,
+) -> None:
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match=r"^timeout probe failed$",
+        ):
+            bootstrap._run_owned_process(
+                ("/bin/sleep", "30"),
+                cwd=tmp_path,
+                environment={"PATH": "/usr/bin:/bin"},
+                pass_fds=(),
+                timeout=1,
+                label="timeout probe",
+                build=build,
+                cwd_descriptor=cwd_descriptor,
+                launcher_python=Path(sys.executable),
+            )
+    finally:
+        os.close(cwd_descriptor)
+
+    assert time.monotonic() - started < 8
+
+
+def test_process_group_cleanup_reaps_an_already_exited_leader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    waits: list[float | None] = []
+
+    class ExitedProcess:
+        pid = 424242
+
+        def wait(self, timeout: float | None = None) -> int:
+            waits.append(timeout)
+            return 0
+
+    monkeypatch.setattr(
+        build.os,
+        "killpg",
+        lambda _process_group, _signal: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    monkeypatch.setattr(build, "_process_group_exists", lambda _group: False)
+
+    build._terminate_owned_process_group(
+        ExitedProcess(),
+        error_message="process group did not stop",
+    )
+
+    assert waits
+
+
+def test_exact_git_archive_pipe_reader_has_a_total_deadline() -> None:
+    reader_descriptor, writer_descriptor = os.pipe()
+    stream = os.fdopen(reader_descriptor, "rb", buffering=0)
+    reader = build._DeadlinePipeReader(
+        stream,
+        arguments=("/usr/bin/git", "archive"),
+        timeout=0.05,
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            reader.read(512)
+    finally:
+        reader.close()
+        stream.close()
+        os.close(writer_descriptor)
+
+    assert time.monotonic() - started < 1
 
 
 def test_darwin_external_process_contract_has_no_fd_child_lookup_or_unsafe_spawn(
@@ -866,39 +1302,51 @@ def test_uv_lock_check_binds_the_build_venv_to_the_reviewed_python(
     observed: dict[str, Any] = {}
 
     def checked_run(
-        arguments: list[str],
+        arguments: tuple[str, ...],
         **kwargs: Any,
     ) -> subprocess.CompletedProcess[str]:
         observed["arguments"] = arguments
+        observed["cwd_descriptor_identity"] = os.fstat(kwargs["cwd_descriptor"])
         observed.update(kwargs)
         return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(build.subprocess, "run", checked_run)
+    monkeypatch.setattr(build, "_run_owned_command", checked_run)
 
     cache = tmp_path / "uv-cache"
     cache.mkdir(mode=0o700)
-    build.verify_uv_lock(
-        uv_executable,
-        backend_root=build.BACKEND_ROOT,
-        cache_directory=cache,
+    source = tmp_path / "source"
+    (source / "backend").mkdir(parents=True)
+    source_descriptor = os.open(
+        source,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
     )
+    try:
+        build.verify_uv_lock(
+            uv_executable,
+            backend_root=source / "backend",
+            cache_directory=cache,
+            source_descriptor=source_descriptor,
+        )
+    finally:
+        os.close(source_descriptor)
 
-    assert observed["arguments"] == [
+    assert observed["arguments"] == (
         str(uv_executable),
         "lock",
         "--check",
+        "--no-cache",
         "--python",
         str(framework_python),
-    ]
-    assert observed["cwd"] == build.BACKEND_ROOT
-    assert observed["check"] is False
+    )
+    assert observed["cwd"] == source / "backend"
+    assert stat.S_ISDIR(observed["cwd_descriptor_identity"].st_mode)
     assert observed["timeout"] == 180
-    environment = observed["env"]
+    environment = observed["environment"]
     assert environment["PATH"] == "/usr/bin:/bin"
     assert environment["UV_NO_CONFIG"] == "1"
     assert environment["UV_OFFLINE"] == "1"
     assert environment["UV_PYTHON_DOWNLOADS"] == "never"
-    assert Path(environment["UV_CACHE_DIR"]) == cache
+    assert "UV_CACHE_DIR" not in environment
     assert "HOME" not in environment
 
 
@@ -927,12 +1375,16 @@ def test_uv_lock_subprocess_uses_revalidated_canonical_source_and_cache(
     cache_snapshot = build._snapshot_from_stat(os.fstat(cache_descriptor), ())
     observed: dict[str, Any] = {}
 
-    def checked_run(arguments: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def checked_run(
+        arguments: tuple[str, ...],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
         observed["arguments"] = arguments
+        observed["cwd_descriptor_identity"] = os.fstat(kwargs["cwd_descriptor"])
         observed.update(kwargs)
         return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(build.subprocess, "run", checked_run)
+    monkeypatch.setattr(build, "_run_owned_command", checked_run)
     try:
         source_root = source
         build.verify_uv_lock(
@@ -948,8 +1400,10 @@ def test_uv_lock_subprocess_uses_revalidated_canonical_source_and_cache(
         os.close(source_descriptor)
 
     assert observed["cwd"] == source_root / "backend"
-    assert observed["env"]["UV_CACHE_DIR"] == str(cache)
-    assert observed["pass_fds"] == ()
+    assert "--no-cache" in observed["arguments"]
+    assert "UV_CACHE_DIR" not in observed["environment"]
+    assert stat.S_ISDIR(observed["cwd_descriptor_identity"].st_mode)
+    assert observed["launcher_python"] == active_python.resolve()
 
 
 def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
@@ -974,23 +1428,24 @@ def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
     )
     observed: dict[str, Any] = {}
 
-    class CheckedPopen:
-        pid = 424242
-        returncode = 0
+    def checked_owner(
+        arguments: tuple[str, ...],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        observed["arguments"] = arguments
+        observed["cwd_identity"] = (
+            os.fstat(kwargs["cwd_descriptor"]).st_dev,
+            os.fstat(kwargs["cwd_descriptor"]).st_ino,
+        )
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(
+            arguments,
+            0,
+            stdout="ok",
+            stderr="",
+        )
 
-        def __init__(self, arguments: tuple[str, ...], **kwargs: Any) -> None:
-            observed["arguments"] = arguments
-            observed.update(kwargs)
-
-        def communicate(self, *, timeout: float) -> tuple[str, None]:
-            observed["timeout"] = timeout
-            return "ok", None
-
-    def no_process_group(_process_group: int) -> bool:
-        return False
-
-    monkeypatch.setattr(build.subprocess, "Popen", CheckedPopen)
-    monkeypatch.setattr(build, "_process_group_exists", no_process_group)
+    monkeypatch.setattr(build, "_run_owned_command", checked_owner)
     try:
         source_root = paths["source"]
         dist_root = paths["dist"]
@@ -1048,9 +1503,13 @@ def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
         source_root / "backend" / "packaging" / "lcf_sidecar.spec"
     )
     assert observed["cwd"] == source_root
-    assert observed["env"]["PYINSTALLER_CONFIG_DIR"] == str(config_root)
-    assert observed["env"]["TMPDIR"] == str(temp_root)
-    assert observed["start_new_session"] is True
+    assert observed["cwd_identity"] == (
+        source_root.stat().st_dev,
+        source_root.stat().st_ino,
+    )
+    assert observed["environment"]["PYINSTALLER_CONFIG_DIR"] == str(config_root)
+    assert observed["environment"]["TMPDIR"] == str(temp_root)
+    assert observed["launcher_python"] == Path(sys.executable)
     assert observed["pass_fds"] == (
         descriptors["source"],
         descriptors["bundle"],
@@ -1060,6 +1519,62 @@ def test_pyinstaller_command_inherits_source_and_all_private_output_fds(
         descriptors["temp"],
     )
 
+
+def test_pyinstaller_command_rejects_exec_target_identity_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths: dict[str, Path] = {}
+    descriptors: dict[str, int] = {}
+    for name in ("source", "dist", "work", "config", "temp"):
+        path = tmp_path / name
+        path.mkdir()
+        paths[name] = path
+        descriptors[name] = os.open(
+            path,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+    paths["bundle"] = paths["dist"] / "lcf-service"
+    paths["bundle"].mkdir()
+    descriptors["bundle"] = os.open(
+        paths["bundle"],
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    def failed_owner(
+        _arguments: tuple[str, ...],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        assert kwargs["launcher_python"] == Path(sys.executable)
+        raise build.BuildError("PyInstaller failed (category=target)")
+
+    monkeypatch.setattr(build, "_run_owned_command", failed_owner)
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=r"^PyInstaller failed \(category=target\)$",
+        ):
+            build._run_pyinstaller_command(
+                active_python=Path(sys.executable),
+                source_root=paths["source"],
+                source_descriptor=descriptors["source"],
+                bundle_descriptor=descriptors["bundle"],
+                dist_descriptor=descriptors["dist"],
+                work_descriptor=descriptors["work"],
+                config_descriptor=descriptors["config"],
+                temp_descriptor=descriptors["temp"],
+                dist_root=paths["dist"],
+                work_root=paths["work"],
+                config_root=paths["config"],
+                temp_root=paths["temp"],
+                environment={
+                    "LC_ALL": "C",
+                    "PYINSTALLER_CONFIG_DIR": str(paths["config"]),
+                    "TMPDIR": str(paths["temp"]),
+                },
+            )
+    finally:
+        for descriptor in descriptors.values():
+            os.close(descriptor)
 
 def test_pyinstaller_runner_validates_canonical_roots_and_closes_child_fds(
     tmp_path: Path,
@@ -1369,6 +1884,7 @@ import time
 from pathlib import Path
 sys.path.insert(0, {json.dumps(str(TOOLS_ROOT))})
 import build_python_sidecar as build
+import bootstrap_python_sidecar as bootstrap
 root = Path({json.dumps(str(root))})
 phase = {json.dumps(phase)}
 paths = {{}}
@@ -1382,7 +1898,8 @@ descriptors = {{
     for name, path in paths.items()
 }}
 marker = root / "child.pid"
-original_popen = build.subprocess.Popen
+original_popen = bootstrap.subprocess.Popen
+original_communicate = bootstrap._communicate_bounded
 
 class SignallingPopen:
     def __init__(self, *args, **kwargs):
@@ -1391,13 +1908,16 @@ class SignallingPopen:
             os.kill(os.getpid(), getattr(signal, {json.dumps(signal_name)}))
     def __getattr__(self, name):
         return getattr(self.inner, name)
-    def communicate(self, *args, **kwargs):
-        result = self.inner.communicate(*args, **kwargs)
-        if phase == "communicate-return":
-            os.kill(os.getpid(), getattr(signal, {json.dumps(signal_name)}))
-        return result
 
-build.subprocess.Popen = SignallingPopen
+def signalling_communicate(process, **kwargs):
+    result = original_communicate(process, **kwargs)
+    if phase == "communicate-return":
+        os.kill(os.getpid(), getattr(signal, {json.dumps(signal_name)}))
+    return result
+
+bootstrap._communicate_bounded = signalling_communicate
+
+bootstrap.subprocess.Popen = SignallingPopen
 build.PYINSTALLER_CAPABILITY_RUNNER = {runner!r}
 environment = {{
     "LCF_TEST_CHILD": str(marker),
@@ -1426,16 +1946,23 @@ try:
 except build.BuildError as exc:
     error = str(exc)
 finally:
-    build.subprocess.Popen = original_popen
-child_pid = int(marker.read_text(encoding="ascii"))
-for _attempt in range(100):
-    try:
-        os.kill(child_pid, 0)
-    except ProcessLookupError:
-        child_alive = False
-        break
-    child_alive = True
-    time.sleep(0.01)
+    bootstrap.subprocess.Popen = original_popen
+    bootstrap._communicate_bounded = original_communicate
+if marker.exists():
+    child_pid = int(marker.read_text(encoding="ascii"))
+    for _attempt in range(100):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            child_alive = False
+            break
+        child_alive = True
+        time.sleep(0.01)
+else:
+    # The signal may arrive after the owned leader exists but before its
+    # capability wrapper has started the grandchild.  Absence is the strongest
+    # no-orphan result for that handoff cut point.
+    child_alive = False
 fds_open = all(stat.S_ISDIR(os.fstat(fd).st_mode) for fd in descriptors.values())
 for fd in descriptors.values():
     os.close(fd)
@@ -1557,24 +2084,34 @@ def test_uv_lock_check_reports_only_a_controlled_failure_category(
     monkeypatch.setattr(build.sys, "executable", str(active_python))
 
     def failed_run(
-        arguments: list[str],
+        arguments: tuple[str, ...],
         **_: Any,
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(arguments, 2, stdout="", stderr=stderr)
 
-    monkeypatch.setattr(build.subprocess, "run", failed_run)
+    monkeypatch.setattr(build, "_run_owned_command", failed_run)
     cache = tmp_path / "uv-cache"
     cache.mkdir(mode=0o700)
+    source = tmp_path / "source"
+    (source / "backend").mkdir(parents=True)
+    source_descriptor = os.open(
+        source,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
 
-    with pytest.raises(
-        build.BuildError,
-        match=rf"^uv lock check failed \(exit=2; category={category}\)$",
-    ) as failure:
-        build.verify_uv_lock(
-            uv_executable,
-            backend_root=build.BACKEND_ROOT,
-            cache_directory=cache,
-        )
+    try:
+        with pytest.raises(
+            build.BuildError,
+            match=rf"^uv lock check failed \(exit=2; category={category}\)$",
+        ) as failure:
+            build.verify_uv_lock(
+                uv_executable,
+                backend_root=source / "backend",
+                cache_directory=cache,
+                source_descriptor=source_descriptor,
+            )
+    finally:
+        os.close(source_descriptor)
 
     assert "must-not-leak" not in str(failure.value)
 
@@ -1635,6 +2172,54 @@ def test_missing_import_validator_rejects_a_path_like_module_without_leaking_it(
         build.validate_missing_imports(warning)
 
     assert "must-not-leak" not in str(failure.value)
+
+
+def test_frozen_live_log_collector_bounds_output_before_owner_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log_path = tmp_path / "sidecar.log"
+    log_handle, _identity = build._open_frozen_log(log_path)
+    monkeypatch.setattr(build, "MAX_FROZEN_START_LOG_BYTES", 128)
+    process = subprocess.Popen(
+        (
+            sys.executable,
+            "-I",
+            "-c",
+            "import os,time;os.write(1,b'x'*512);time.sleep(30)",
+        ),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        close_fds=True,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    collector = build._BoundedFrozenLogCollector(process.stdout, log_handle)
+    collector.start()
+    deadline = time.monotonic() + 5
+    observed = False
+    try:
+        while time.monotonic() < deadline:
+            try:
+                collector.assert_healthy()
+            except build.BuildError as exc:
+                assert str(exc) == "Frozen sidecar log exceeded its size bound"
+                observed = True
+                break
+            time.sleep(0.01)
+        assert observed
+        assert process.poll() is None
+        assert os.fstat(log_handle.fileno()).st_size == 128
+    finally:
+        build._terminate_owned_process_group(
+            process,
+            error_message="Frozen log test process group did not stop",
+        )
+        log_handle.close()
+
+    assert process.poll() is not None
+    assert not build._process_group_exists(process.pid)
 
 
 @pytest.mark.parametrize(
@@ -2709,8 +3294,8 @@ first_signal = getattr(signal, {json.dumps(signal_name)})
 second_signal = getattr(signal, {json.dumps(second_signal)})
 original_open = build.os.open
 original_mkdir = build.os.mkdir
-original_rmdir = build.os.rmdir
 original_capture = build._capture_bound_directory
+original_remove_leaf = build._remove_verified_quarantine_leaf
 first_fired = False
 second_fired = False
 target_bound = False
@@ -2772,18 +3357,17 @@ def injected_capture(descriptor, path, **kwargs):
             fire_first()
     return result
 
-def injected_rmdir(path, *, dir_fd=None):
-    if is_target(path):
+def injected_remove_leaf(parent_descriptor, **kwargs):
+    if is_target(kwargs.get("original_name")):
         if first_stage == "cleanup":
             fire_first()
         fire_second()
-    keyword = {{}} if dir_fd is None else {{"dir_fd": dir_fd}}
-    return original_rmdir(path, **keyword)
+    return original_remove_leaf(parent_descriptor, **kwargs)
 
 build.os.open = injected_open
 build.os.mkdir = injected_mkdir
-build.os.rmdir = injected_rmdir
 build._capture_bound_directory = injected_capture
+build._remove_verified_quarantine_leaf = injected_remove_leaf
 error = None
 try:
     capability = build._create_private_build_root(destination)
@@ -2794,8 +3378,8 @@ else:
 finally:
     build.os.open = original_open
     build.os.mkdir = original_mkdir
-    build.os.rmdir = original_rmdir
     build._capture_bound_directory = original_capture
+    build._remove_verified_quarantine_leaf = original_remove_leaf
 print(json.dumps({{
     "entries": sorted(item.name for item in destination.iterdir()),
     "error": error,
@@ -3202,6 +3786,39 @@ print(json.dumps({{
     }
 
 
+def test_build_lifecycle_classifies_source_materialization_and_clean_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "generated"
+    output.mkdir(mode=0o755)
+    monkeypatch.setattr(build, "DEFAULT_STAGING", output / "sidecar")
+    monkeypatch.setattr(build, "DEFAULT_EVIDENCE", output / "evidence")
+    monkeypatch.setattr(build, "_ensure_fixed_output_parent", lambda: output)
+    monkeypatch.setattr(
+        build,
+        "_verify_exact_toolchain_environment",
+        lambda _environment: ({}, b""),
+    )
+    monkeypatch.setattr(build, "_validate_repository_state", lambda _environment: {})
+
+    def fail_materialization(*_args: Any, **_kwargs: Any) -> None:
+        raise build.BuildError("private source /token/path")
+
+    monkeypatch.setattr(build, "_materialize_source_snapshot", fail_materialization)
+
+    with pytest.raises(build.BuildError) as failure:
+        build.build_python_sidecar(
+            destination=build.DEFAULT_STAGING,
+            evidence_destination=build.DEFAULT_EVIDENCE,
+            environment={},
+        )
+
+    assert failure.value.primary_category == "source-materialize"
+    assert failure.value.cleanup_category is None
+    assert not list(output.glob(f"{build.SCRATCH_PARENT_NAME}-*"))
+
+
 @pytest.mark.parametrize(
     "signal_name",
     ["SIGTERM", *(["SIGHUP"] if hasattr(signal, "SIGHUP") else [])],
@@ -3346,75 +3963,220 @@ def test_build_rejects_nonfixed_output_paths_before_creating_alias_children(
     assert not (outside / "created").exists()
 
 
+def _stub_native_exec_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        bootstrap,
+        "_exec_target_identity",
+        lambda _path: (1, 2, stat.S_IFREG | 0o755, os.geteuid(), os.getegid(), 1, 1, 1, 1),
+    )
+
+
+@pytest.mark.parametrize("replace_target", [False, True])
+def test_native_input_exec_runner_binds_the_child_opened_target(
+    tmp_path: Path,
+    replace_target: bool,
+) -> None:
+    target = tmp_path / "target"
+    target.write_text("held", encoding="ascii")
+    target_descriptor = os.open(
+        target,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    tool = tmp_path / "native-tool"
+    tool.write_text("#!/bin/sh\ncat \"$2\"\n", encoding="ascii")
+    tool.chmod(0o700)
+    target_identity = audit._bound_file_identity(os.fstat(target_descriptor))
+    tool_identity = bootstrap._exec_target_identity(tool)
+    command = (
+        sys.executable,
+        "-I",
+        "-c",
+        audit.NATIVE_INPUT_EXEC_RUNNER,
+        str(target_descriptor),
+        *(str(item) for item in target_identity),
+        *(str(item) for item in tool_identity),
+        str(tool),
+        "inspect",
+        target.name,
+    )
+    held = tmp_path / "held-target"
+    if replace_target:
+        target.rename(held)
+        target.write_text("replacement", encoding="ascii")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            pass_fds=(target_descriptor,),
+            close_fds=True,
+            start_new_session=True,
+            timeout=20,
+            check=False,
+        )
+    finally:
+        os.close(target_descriptor)
+
+    if replace_target:
+        assert completed.returncode == 126
+        assert completed.stdout == ""
+        assert completed.stderr == (
+            "lcf-native-input-exec: stage=input-path errno=0\n"
+        )
+        assert target.read_text(encoding="ascii") == "replacement"
+        assert held.read_text(encoding="ascii") == "held"
+    else:
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == "held"
+        assert completed.stderr == ""
+
+
+def test_held_native_inventory_never_enumerates_a_replacement_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    (root / "lcf-service").write_bytes(
+        b"\xcf\xfa\xed\xfe" + b"held macho"
+    )
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    held = tmp_path / "held-bundle"
+    root.rename(held)
+    root.mkdir()
+    (root / "replacement").write_bytes(b"not macho")
+    try:
+        inventory = audit._held_native_tree_inventory(descriptor)
+    finally:
+        os.close(descriptor)
+
+    assert [(relative, kind, macho) for relative, _identity, kind, macho in inventory] == [
+        ("lcf-service", "file", True),
+    ]
+    assert (root / "replacement").read_bytes() == b"not macho"
+
+
 @pytest.mark.parametrize(
-    ("arguments", "label"),
+    ("command", "label"),
     [
-        (("/usr/bin/otool", "-l", "/secret/path"), "otool-load-commands"),
-        (("/usr/bin/otool", "-L", "/secret/path"), "otool-dependencies"),
-        (("/usr/bin/otool", "-D", "/secret/path"), "otool-install-name"),
-        (("/usr/bin/lipo", "-archs", "/secret/path"), "lipo-architectures"),
+        (("/usr/bin/otool", "-l"), "otool-load-commands"),
+        (("/usr/bin/otool", "-L"), "otool-dependencies"),
+        (("/usr/bin/otool", "-D"), "otool-install-name"),
+        (("/usr/bin/lipo", "-archs"), "lipo-architectures"),
         (
-            ("/usr/bin/codesign", "--verify", "--strict", "/secret/path"),
+            ("/usr/bin/codesign", "--verify", "--strict"),
             "codesign-verify",
         ),
     ],
 )
 def test_native_tool_failure_reports_only_a_fixed_label(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    arguments: tuple[str, ...],
+    command: tuple[str, ...],
     label: str,
 ) -> None:
     monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+    _stub_native_exec_identity(monkeypatch)
+    root = tmp_path / "native-root"
+    root.mkdir()
+    native_target = root / "other"
+    native_target.write_bytes(b"synthetic macho")
+    root_descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    arguments = (*command, str(native_target))
 
-    def failed_run(*_args: Any, **_kwargs: Any) -> Any:
-        raise subprocess.CalledProcessError(
+    def failed_run(
+        observed_arguments: tuple[str, ...],
+        **_kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            observed_arguments,
             1,
-            arguments,
+            stdout="",
             stderr="token/path-must-not-leak",
         )
 
-    monkeypatch.setattr(audit.subprocess, "run", failed_run)
+    monkeypatch.setattr(build, "_run_owned_command", failed_run)
 
-    with pytest.raises(
-        audit.AuditError,
-        match=(
-            rf"^Native inspection tool failed \(tool={label}; target=other-macho; "
-            r"category=exit; code=1\)$"
-        ),
-    ) as failure:
-        audit._run_native_tool(arguments)
+    try:
+        with pytest.raises(
+            audit.AuditError,
+            match=(
+                rf"^Native inspection tool failed \(tool={label}; "
+                r"target=other-macho; category=exit; code=1\)$"
+            ),
+        ) as failure:
+            audit._run_native_tool(
+                arguments,
+                execution_root=root,
+                execution_root_descriptor=root_descriptor,
+            )
+    finally:
+        os.close(root_descriptor)
 
     assert "must-not-leak" not in str(failure.value)
     assert "/secret" not in str(failure.value)
 
 
 def test_codesign_unsigned_failure_uses_only_fixed_categories(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+    _stub_native_exec_identity(monkeypatch)
+    root = tmp_path / "native-root"
+    root.mkdir()
+    native_target = root / "lcf-service"
+    native_target.write_bytes(b"synthetic macho")
+    root_descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
 
-    def failed_run(*_args: Any, **_kwargs: Any) -> Any:
-        raise subprocess.CalledProcessError(
+    def failed_run(
+        arguments: tuple[str, ...],
+        **_kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            arguments,
             1,
-            ("/usr/bin/codesign", "--verify", "--strict", "/secret/lcf-service"),
+            stdout="",
             stderr=(
                 "/secret/lcf-service: code object is not signed at all; "
                 "token-must-not-leak"
             ),
         )
 
-    monkeypatch.setattr(audit.subprocess, "run", failed_run)
+    monkeypatch.setattr(build, "_run_owned_command", failed_run)
 
-    with pytest.raises(
-        audit.AuditError,
-        match=(
-            r"^Native inspection tool failed \(tool=codesign-verify; "
-            r"target=entrypoint; category=unsigned; code=1\)$"
-        ),
-    ) as failure:
-        audit._run_native_tool(
-            ("/usr/bin/codesign", "--verify", "--strict", "/secret/lcf-service")
-        )
+    try:
+        with pytest.raises(
+            audit.AuditError,
+            match=(
+                r"^Native inspection tool failed \(tool=codesign-verify; "
+                r"target=entrypoint; category=unsigned; code=1\)$"
+            ),
+        ) as failure:
+            audit._run_native_tool(
+                (
+                    "/usr/bin/codesign",
+                    "--verify",
+                    "--strict",
+                    str(native_target),
+                ),
+                execution_root=root,
+                execution_root_descriptor=root_descriptor,
+            )
+    finally:
+        os.close(root_descriptor)
 
     assert "must-not-leak" not in str(failure.value)
     assert "/secret" not in str(failure.value)
@@ -3428,16 +4190,21 @@ def test_codesign_framework_leaf_failure_uses_only_fixed_categories(
     source = _write_reviewed_python_framework(tmp_path / "sidecar")
     isolation = audit._prepare_isolated_framework_leaf(source)
     monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+    _stub_native_exec_identity(monkeypatch)
     target = isolation.copy
 
-    def failed_run(*_args: Any, **_kwargs: Any) -> Any:
-        raise subprocess.CalledProcessError(
+    def failed_run(
+        arguments: tuple[str, ...],
+        **_kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            arguments,
             1,
-            ("/usr/bin/codesign", "--verify", "--strict", str(target)),
+            stdout="",
             stderr=f"{target}: code object is not signed at all; token-must-not-leak",
         )
 
-    monkeypatch.setattr(audit.subprocess, "run", failed_run)
+    monkeypatch.setattr(build, "_run_owned_command", failed_run)
 
     with pytest.raises(
         audit.AuditError,
@@ -3553,35 +4320,56 @@ def test_isolated_framework_leaf_contract_rejects_mismatched_capability(
     ],
 )
 def test_codesign_framework_failure_reports_only_a_fixed_framework_kind(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     framework: str,
     expected_target: str,
 ) -> None:
     monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
-    target = f"/secret/{framework}/Versions/A/{framework.removesuffix('.framework')}"
+    _stub_native_exec_identity(monkeypatch)
+    root = tmp_path / "native-root"
+    target_path = (
+        root / framework / "Versions" / "A" / framework.removesuffix(".framework")
+    )
+    target_path.parent.mkdir(parents=True)
+    target_path.write_bytes(b"synthetic macho")
+    target = str(target_path)
+    root_descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
 
-    def failed_run(*_args: Any, **_kwargs: Any) -> Any:
-        raise subprocess.CalledProcessError(
+    def failed_run(
+        arguments: tuple[str, ...],
+        **_kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            arguments,
             1,
-            ("/usr/bin/codesign", "--verify", "--strict", target),
+            stdout="",
             stderr=(
                 f"{target}: main executable failed strict validation; "
                 "token-must-not-leak"
             ),
         )
 
-    monkeypatch.setattr(audit.subprocess, "run", failed_run)
+    monkeypatch.setattr(build, "_run_owned_command", failed_run)
 
-    with pytest.raises(
-        audit.AuditError,
-        match=(
-            r"^Native inspection tool failed \(tool=codesign-verify; "
-            rf"target={expected_target}; category=strict-layout; code=1\)$"
-        ),
-    ) as failure:
-        audit._run_native_tool(
-            ("/usr/bin/codesign", "--verify", "--strict", target)
-        )
+    try:
+        with pytest.raises(
+            audit.AuditError,
+            match=(
+                r"^Native inspection tool failed \(tool=codesign-verify; "
+                rf"target={expected_target}; category=strict-layout; code=1\)$"
+            ),
+        ) as failure:
+            audit._run_native_tool(
+                ("/usr/bin/codesign", "--verify", "--strict", target),
+                execution_root=root,
+                execution_root_descriptor=root_descriptor,
+            )
+    finally:
+        os.close(root_descriptor)
 
     assert "must-not-leak" not in str(failure.value)
     assert "/secret" not in str(failure.value)
@@ -3599,7 +4387,7 @@ def test_native_tool_rejects_an_unreviewed_command(
         audit._run_native_tool(("/usr/bin/file", "--brief", "/secret/path"))
 
 
-def test_native_tool_inherits_an_fd_backed_bundle_target(
+def test_native_tool_rejects_an_fd_child_path_for_external_tools(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3610,23 +4398,76 @@ def test_native_tool_inherits_an_fd_backed_bundle_target(
         root,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
     )
-    observed: dict[str, Any] = {}
     monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
-
-    def checked_run(arguments: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        observed["arguments"] = arguments
-        observed.update(kwargs)
-        return subprocess.CompletedProcess(arguments, 0, stdout="ok", stderr="")
-
-    monkeypatch.setattr(audit.subprocess, "run", checked_run)
     try:
         target = Path("/dev/fd") / str(descriptor) / "lcf-service"
-        assert audit._run_native_tool(("/usr/bin/otool", "-l", str(target))) == "ok"
+        with pytest.raises(
+            audit.AuditError,
+            match=r"^Native inspection tool contract is invalid$",
+        ):
+            audit._run_native_tool(
+                ("/usr/bin/otool", "-l", str(target)),
+                execution_root=root,
+                execution_root_descriptor=descriptor,
+            )
     finally:
         os.close(descriptor)
 
-    assert observed["arguments"] == ["/usr/bin/otool", "-l", str(target)]
-    assert observed["pass_fds"] == (descriptor,)
+
+def test_native_tool_uses_a_held_canonical_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    target = root / "lcf-service"
+    target.write_bytes(b"macho")
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    observed: dict[str, Any] = {}
+    monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
+    _stub_native_exec_identity(monkeypatch)
+
+    def checked_owner(
+        arguments: tuple[str, ...],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        observed["arguments"] = arguments
+        observed["cwd_identity"] = (
+            os.fstat(kwargs["cwd_descriptor"]).st_dev,
+            os.fstat(kwargs["cwd_descriptor"]).st_ino,
+        )
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(arguments, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(build, "_run_owned_command", checked_owner)
+    try:
+        assert audit._run_native_tool(
+            ("/usr/bin/otool", "-l", str(target)),
+            execution_root=root,
+            execution_root_descriptor=descriptor,
+        ) == "ok"
+    finally:
+        os.close(descriptor)
+
+    assert observed["arguments"][:4] == (
+        sys.executable,
+        "-I",
+        "-c",
+        audit.NATIVE_INPUT_EXEC_RUNNER,
+    )
+    assert observed["arguments"][-3:] == (
+        "/usr/bin/otool",
+        "-l",
+        "lcf-service",
+    )
+    assert observed["cwd"] == root
+    assert observed["cwd_identity"] == (root.stat().st_dev, root.stat().st_ino)
+    assert observed["pass_fds"]
+    assert observed["launcher_python"] == Path(sys.executable)
+    assert "/dev/fd" not in str(observed["arguments"])
 
 
 def _write_reviewed_python_framework(root: Path) -> Path:
@@ -4566,7 +5407,11 @@ Load command 0
 
     monkeypatch.setattr(audit.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(audit, "is_macho", lambda _path: True)
-    monkeypatch.setattr(audit, "_verify_code_signature", lambda _root, _path: None)
+    monkeypatch.setattr(
+        audit,
+        "_verify_code_signature",
+        lambda _root, _path, **_kwargs: None,
+    )
     monkeypatch.setattr(audit, "_run_native_tool", inspect)
 
 
@@ -4576,7 +5421,9 @@ def test_scan_macho_inventory_pairs_install_name_with_raw_dependencies(
 ) -> None:
     root = tmp_path / "sidecar"
     root.mkdir()
-    (root / audit.EXPECTED_EXECUTABLE).write_bytes(b"synthetic Mach-O")
+    (root / audit.EXPECTED_EXECUTABLE).write_bytes(
+        b"\xcf\xfa\xed\xfe" + b"synthetic Mach-O"
+    )
     _mock_macho_scan_tools(
         monkeypatch,
         dependencies="""/secret/lcf-service:
@@ -4598,7 +5445,9 @@ def test_scan_macho_inventory_pairing_failure_does_not_leak_paths(
 ) -> None:
     root = tmp_path / "secret-sidecar"
     root.mkdir()
-    (root / audit.EXPECTED_EXECUTABLE).write_bytes(b"synthetic Mach-O")
+    (root / audit.EXPECTED_EXECUTABLE).write_bytes(
+        b"\xcf\xfa\xed\xfe" + b"synthetic Mach-O"
+    )
     install_name = "@rpath/token-must-not-leak.dylib"
     _mock_macho_scan_tools(
         monkeypatch,
@@ -5597,6 +6446,125 @@ def test_remove_tree_quarantines_and_restores_a_racing_leaf_replacement(
     assert not list(root.glob(".lcf-delete-*"))
 
 
+def test_remove_tree_restores_owner_write_before_directory_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir(mode=0o700)
+    victim = root / "victim"
+    victim.mkdir(mode=0o500)
+    (victim / "state").write_text("held", encoding="utf-8")
+    (victim / "state").chmod(0o400)
+    descriptor = os.open(
+        root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    victim_descriptor = os.open(
+        victim,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    original_rename = build._rename_noreplace_at
+    observed_modes: list[int] = []
+
+    def darwin_permission_probe(
+        source_parent: int,
+        source_name: str,
+        destination_parent: int,
+        destination_name: str,
+    ) -> None:
+        info = os.stat(source_name, dir_fd=source_parent, follow_symlinks=False)
+        if stat.S_ISDIR(info.st_mode):
+            observed_modes.append(stat.S_IMODE(info.st_mode))
+            if not stat.S_IMODE(info.st_mode) & stat.S_IWUSR:
+                raise PermissionError(errno.EACCES, "Darwin directory rename denied")
+        original_rename(
+            source_parent,
+            source_name,
+            destination_parent,
+            destination_name,
+        )
+
+    monkeypatch.setattr(build, "_rename_noreplace_at", darwin_permission_probe)
+    try:
+        build._remove_tree_contents(descriptor, error_message="cleanup refused")
+    finally:
+        os.close(victim_descriptor)
+        os.close(descriptor)
+
+    assert observed_modes[0] == 0o700
+    assert not victim.exists()
+    assert not list(root.iterdir())
+
+
+def test_scratch_root_final_gate_preserves_a_quarantine_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination_parent = tmp_path / "generated"
+    destination_parent.mkdir(mode=0o755)
+    capability = build._create_private_build_root(destination_parent)
+    (capability.build_root / "state").write_text("held", encoding="utf-8")
+    original = build._remove_verified_quarantine_leaf
+    attacked = False
+
+    def replace_at_root_final_gate(
+        parent_descriptor: int,
+        *,
+        original_name: str,
+        quarantine_name: str,
+        expected: os.stat_result,
+        directory: bool,
+        error_message: str,
+    ) -> None:
+        nonlocal attacked
+        if not attacked and quarantine_name.startswith(".lcf-acquisition-"):
+            attacked = True
+            os.rename(
+                quarantine_name,
+                "held-root",
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+            os.mkdir(quarantine_name, mode=0o700, dir_fd=parent_descriptor)
+            replacement = os.open(
+                quarantine_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC,
+                dir_fd=parent_descriptor,
+            )
+            try:
+                marker = os.open(
+                    "replacement",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=replacement,
+                )
+                os.close(marker)
+            finally:
+                os.close(replacement)
+        original(
+            parent_descriptor,
+            original_name=original_name,
+            quarantine_name=quarantine_name,
+            expected=expected,
+            directory=directory,
+            error_message=error_message,
+        )
+
+    monkeypatch.setattr(
+        build,
+        "_remove_verified_quarantine_leaf",
+        replace_at_root_final_gate,
+    )
+
+    with pytest.raises(build.BuildError, match="scratch cleanup failed"):
+        build._cleanup_scratch_capability(capability)
+
+    assert attacked is True
+    assert (capability.build_root / "replacement").is_file()
+    assert (capability.scratch_parent / "held-root").is_dir()
+
+
 @pytest.mark.parametrize("leaf_kind", ["file", "directory"])
 def test_remove_tree_final_gate_retains_a_quarantine_replacement(
     tmp_path: Path,
@@ -5803,10 +6771,16 @@ def test_primary_and_cleanup_failure_is_fixed_and_sanitized(
     destination_parent = tmp_path / "generated"
     destination_parent.mkdir(mode=0o755)
     capability = build._create_private_build_root(destination_parent)
-    primary = OSError(errno.EIO, "primary token /private/primary")
+    primary = build.BuildError(
+        "primary token /private/primary",
+        primary_category="source-materialize",
+    )
 
     def cleanup_failure(_capability: Any) -> None:
-        raise OSError(errno.EIO, "cleanup token /private/cleanup")
+        raise build.BuildError(
+            "cleanup token /private/cleanup",
+            cleanup_category="build-root-quarantine",
+        )
 
     monkeypatch.setattr(build, "_cleanup_scratch_capability", cleanup_failure)
 
@@ -5816,6 +6790,37 @@ def test_primary_and_cleanup_failure_is_fixed_and_sanitized(
     ) as failure:
         build._finish_scratch_lifecycle(capability, primary)
 
+    assert "token" not in str(failure.value)
+    assert "/private" not in str(failure.value)
+    assert failure.value.primary_category == "source-materialize"
+    assert failure.value.cleanup_category == "build-root-quarantine"
+    build._close_scratch_descriptors(capability)
+
+
+def test_non_build_primary_keeps_its_fixed_stage_through_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination_parent = tmp_path / "generated"
+    destination_parent.mkdir(mode=0o755)
+    capability = build._create_private_build_root(destination_parent)
+    primary = build._bind_failure_categories(
+        RuntimeError("primary token /private/primary"),
+        primary="final-audit",
+    )
+
+    def cleanup_failure(_capability: Any) -> None:
+        raise build.BuildError(
+            "cleanup token /private/cleanup",
+            cleanup_category="scratch-root-quarantine",
+        )
+
+    monkeypatch.setattr(build, "_cleanup_scratch_capability", cleanup_failure)
+    with pytest.raises(build.BuildError) as failure:
+        build._finish_scratch_lifecycle(capability, primary)
+
+    assert failure.value.primary_category == "final-audit"
+    assert failure.value.cleanup_category == "scratch-root-quarantine"
     assert "token" not in str(failure.value)
     assert "/private" not in str(failure.value)
     build._close_scratch_descriptors(capability)
@@ -6355,6 +7360,162 @@ def test_exact_source_snapshot_is_tree_bound_read_only_and_live_mutation_indepen
     assert (snapshot / "README.md").read_bytes() == original
     build._cleanup_scratch_capability(capability)
     assert not list(output_parent.glob(f"{build.SCRATCH_PARENT_NAME}-*"))
+
+
+@pytest.mark.parametrize("link_model", ["subdirectories", "entries"])
+def test_source_inventory_accepts_one_consistent_directory_link_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    link_model: str,
+) -> None:
+    repository = tmp_path / "repository"
+    commit, tree = _create_exact_git_fixture(repository)
+    state = build._validate_repository_state(
+        {"LCF_SOURCE_SHA": commit, "LCF_SOURCE_TREE": tree},
+        repository_root=repository,
+    )
+    output_parent = tmp_path / "generated"
+    output_parent.mkdir(mode=0o755)
+    capability = build._create_private_build_root(output_parent)
+    snapshot = build._materialize_source_snapshot(
+        capability,
+        state,
+        repository_root=repository,
+    )
+    descriptor = capability.source_snapshot_descriptor
+    assert descriptor is not None
+
+    link_counts: dict[tuple[int, int], int] = {}
+    directories = [snapshot, *(path for path in snapshot.rglob("*") if path.is_dir())]
+    for directory in directories:
+        info = directory.stat()
+        children = tuple(directory.iterdir())
+        link_counts[(info.st_dev, info.st_ino)] = 2 + (
+            sum(child.is_dir() for child in children)
+            if link_model == "subdirectories"
+            else len(children)
+        )
+
+    class LinkCountView:
+        def __init__(self, value: os.stat_result, links: int) -> None:
+            self._value = value
+            self.st_nlink = links
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._value, name)
+
+    original_fstat = os.fstat
+    original_stat = os.stat
+
+    def with_link_count(value: os.stat_result) -> os.stat_result | LinkCountView:
+        links = link_counts.get((value.st_dev, value.st_ino))
+        return value if links is None else LinkCountView(value, links)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            build.os,
+            "fstat",
+            lambda file_descriptor: with_link_count(original_fstat(file_descriptor)),
+        )
+        patch.setattr(
+            build.os,
+            "stat",
+            lambda path, *args, **kwargs: with_link_count(
+                original_stat(path, *args, **kwargs)
+            ),
+        )
+        records = build._verify_source_inventory(
+            descriptor,
+            state["sourceInventory"],
+            error_message="source inventory rejected",
+        )
+
+    assert len(records) == len(state["sourceInventory"]) + 2
+    build._cleanup_scratch_capability(capability)
+    assert not list(output_parent.glob(f"{build.SCRATCH_PARENT_NAME}-*"))
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires Darwin/APFS stat")
+def test_darwin_apfs_directory_link_count_includes_immediate_files(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "apfs-link-model"
+    root.mkdir()
+    assert root.stat().st_nlink == 2
+    (root / "file").write_bytes(b"reviewed")
+    assert root.stat().st_nlink == 3
+    (root / "directory").mkdir()
+    assert root.stat().st_nlink == 4
+
+
+def test_source_inventory_rejects_mixed_directory_link_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    commit, tree = _create_exact_git_fixture(repository)
+    state = build._validate_repository_state(
+        {"LCF_SOURCE_SHA": commit, "LCF_SOURCE_TREE": tree},
+        repository_root=repository,
+    )
+    output_parent = tmp_path / "generated"
+    output_parent.mkdir(mode=0o755)
+    capability = build._create_private_build_root(output_parent)
+    snapshot = build._materialize_source_snapshot(
+        capability,
+        state,
+        repository_root=repository,
+    )
+    descriptor = capability.source_snapshot_descriptor
+    assert descriptor is not None
+
+    link_counts: dict[tuple[int, int], int] = {}
+    directories = [snapshot, *(path for path in snapshot.rglob("*") if path.is_dir())]
+    for directory in directories:
+        info = directory.stat()
+        children = tuple(directory.iterdir())
+        link_counts[(info.st_dev, info.st_ino)] = 2 + (
+            len(children)
+            if directory == snapshot
+            else sum(child.is_dir() for child in children)
+        )
+
+    class LinkCountView:
+        def __init__(self, value: os.stat_result, links: int) -> None:
+            self._value = value
+            self.st_nlink = links
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._value, name)
+
+    original_fstat = os.fstat
+    original_stat = os.stat
+
+    def with_link_count(value: os.stat_result) -> os.stat_result | LinkCountView:
+        links = link_counts.get((value.st_dev, value.st_ino))
+        return value if links is None else LinkCountView(value, links)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            build.os,
+            "fstat",
+            lambda file_descriptor: with_link_count(original_fstat(file_descriptor)),
+        )
+        patch.setattr(
+            build.os,
+            "stat",
+            lambda path, *args, **kwargs: with_link_count(
+                original_stat(path, *args, **kwargs)
+            ),
+        )
+        with pytest.raises(build.BuildError, match="source inventory rejected"):
+            build._verify_source_inventory(
+                descriptor,
+                state["sourceInventory"],
+                error_message="source inventory rejected",
+            )
+
+    build._cleanup_scratch_capability(capability)
 
 
 def test_source_consumer_inherits_fd_root_across_path_replacement_window(
@@ -9547,7 +10708,11 @@ def test_build_manifest_consumes_explicit_toolchain_evidence_without_environment
     bundle = tmp_path / "bundle"
     bundle.mkdir()
     monkeypatch.setattr(audit, "build_file_inventory", lambda _root: [])
-    monkeypatch.setattr(audit, "scan_macho_inventory", lambda _root: [])
+    monkeypatch.setattr(
+        audit,
+        "scan_macho_inventory",
+        lambda _root, **_kwargs: [],
+    )
     monkeypatch.setattr(audit, "validate_native_inventory", lambda *_args: None)
     monkeypatch.setattr(
         audit,
@@ -9565,8 +10730,14 @@ def test_build_manifest_consumes_explicit_toolchain_evidence_without_environment
         },
     }
 
-    manifest = build._build_manifest(
+    bundle_descriptor = os.open(
+        bundle,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        manifest = build._build_manifest(
         bundle=bundle,
+        bundle_descriptor=bundle_descriptor,
         versions={
             "productVersion": "0.1.0",
             "pythonDistributionVersion": "3.13.14",
@@ -9594,7 +10765,9 @@ def test_build_manifest_consumes_explicit_toolchain_evidence_without_environment
         frozen_smoke={"status": "pass"},
         toolchain_evidence=evidence,
         source_root=PROJECT_ROOT,
-    )
+        )
+    finally:
+        os.close(bundle_descriptor)
 
     assert manifest["build"]["pythonToolchain"] == evidence
     assert manifest["artifacts"]["pythonBuildToolchain"] == (

@@ -46,7 +46,7 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 | TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `done` | Governance/Architecture | 无 | accepted head + independent acceptance + resulting-main source `pass` |
 | TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `done` | Governance/CI | 无 | immutable history + external closeout evidence |
 | TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `done` | CI/QMD/Sites | 无 | resulting-main run `30986208251` success |
-| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；three remediation attempts `fail` / `superseded`；next exact candidate `not-run`；`VAL-PACKAGED-SMOKE-001` remains `not-run` |
+| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；four remediation attempts `fail` / `superseded`；fifth exact candidate `not-run`；`VAL-PACKAGED-SMOKE-001` remains `not-run` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
 | TODO-DATA-BACKUP-001 | Priority-1 | W04/P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
@@ -137,9 +137,11 @@ W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建�
    `9ecf0effaa48a8b010ff46ffb42afc57e0f3d948` / tree
    `ee82712c7874155eba038d1ce05d374416ed34e5` 同样 technical `fail` / `superseded`；第三次 exact
    `2665ec61712fe410608ac50c7a6d44fa35746092` / tree
-   `c3cd1706838f7050533e2812dfdcad482aaedde5` 也为 technical `fail` / `superseded`；下一 exact
+   `c3cd1706838f7050533e2812dfdcad482aaedde5` 也为 technical `fail` / `superseded`；第四次 exact
+   `c2be665f5832c15064cae87c694a782e51351e7c` / tree
+   `f90b527b4de1a422f63c4bfeb01f9c1010e22b7d` 仍为 technical `fail` / `superseded`；第五次 exact
    remediation candidate 尚无 fresh exact-head Actions result；
-2. packaged App launch/runtime smoke：三次 remediation 均未启动 bundle，下一 candidate 也尚未运行，
+2. packaged App launch/runtime smoke：四次 remediation 均未启动 bundle，第五 candidate 也尚未运行，
    保持 `not-run`；未来验证 renderer/preload
    handshake、Main → private UDS sidecar health/领域请求、正常退出、无 orphan、无 public INET
    listener，并以 PATH trap 证明 exercised path 不发现系统 Python/Node/Git。
@@ -161,8 +163,13 @@ no-publish success，engineering product artifacts `[]`。third remediation tech
 `fail` / `superseded`：source `31258135929` 五个 jobs success；assembly `31258135925` / job
 `93104615763` 因 Darwin fd-backed uv cwd failure，cleanup-only success、later stages skipped、
 engineering product artifacts `[]`；container `31258135932` 的 API/MCP success、Web QEMU
-Node/npm stall 后 cancelled，PR 未 login/publish。next exact remediation technical candidate
-`not-run`，W02 `in-progress`。packaged App
+Node/npm stall 后 cancelled，PR 未 login/publish。fourth remediation technical attempt 也为
+`fail` / `superseded`：source `31358373316` 五个 jobs success；Engineering `31358373320` / job
+`93362214499` 的高置信根因分别为 APFS/Darwin directory-link inventory 与 Darwin sealed-source
+cleanup ordering；raw log 没有打印 inner stage、`st_nlink`、cleanup assertion label 或 errno，
+later stages skipped、engineering product artifacts `[]`；Containers `31358373311` API/Web/MCP
+`3/3` success 且 PR no-login/no-push。fifth exact remediation technical candidate `not-run`，W02
+`in-progress`。packaged App
 launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。W10/W11 保持 locked，直至未来
 packaged 阶段在 independently accepted exact head、合入后 resulting `main` 上取得完整 smoke
 `pass`。

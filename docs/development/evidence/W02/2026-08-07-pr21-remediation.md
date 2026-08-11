@@ -291,3 +291,128 @@ candidate 尚无 fresh exact-head Actions result。本 Work 不删除 legacy run
 不修改 production settings/credentials/trust pins，不创建 tag、engineering product artifact、
 Draft Release 或 Release；上文记录的 W01 source-evidence artifacts 与 Buildx action records 不属于
 engineering product artifact。
+
+## 第四次 remediation 技术执行：`fail` / `superseded`
+
+第四次 exact candidate 修复了第三次执行的 Darwin held-cwd 和 Web `$BUILDPLATFORM`
+blocker；fresh Desktop source 与 Containers 均成功，但 Engineering 在 Python sidecar inner build
+与其后的 cleanup-only gate 分别失败。因此这一 head 仍只能作为 append-only 失败历史，不能把
+source/container success 迁移成 technical candidate `pass`。
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `c2be665f5832c15064cae87c694a782e51351e7c` |
+| exact parent | `2665ec61712fe410608ac50c7a6d44fa35746092` |
+| exact tree | `f90b527b4de1a422f63c4bfeb01f9c1010e22b7d` |
+| base / merge-base | `main@1786255b55dd1a78659ed92235893876175a0722` |
+| synthetic PR context SHA | `95bd786d11289d1755086e9d3411469c1f0fe45b` |
+| engineering-smoke run / job | [run `31358373320`](https://github.com/fredgnr/local-context-forge/actions/runs/31358373320) / job `93362214499` |
+| exact-head source run | [run `31358373316`](https://github.com/fredgnr/local-context-forge/actions/runs/31358373316) |
+| container run | [run `31358373311`](https://github.com/fredgnr/local-context-forge/actions/runs/31358373311) |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第四次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-fourth-remediation-authority: source=c2be665f5832c15064cae87c694a782e51351e7c,tree=f90b527b4de1a422f63c4bfeb01f9c1010e22b7d,assembly-run=31358373320,assembly-job=93362214499,source-run=31358373316,container-run=31358373311,result=fail -->
+
+Engineering run `31358373320` / job `93362214499` 正确区分 source head/tree 与 synthetic PR
+context。policy `62/62` 与 exact-Git test `1/1` 成功；`Build and audit locked Python sidecar`
+随后以 `Exact Python sidecar inner build failed (exit=2; category=unclassified)` 失败，紧接的
+cleanup-only `always()` gate 也以 exit `1` 失败。日志没有输出 inner fixed error enum，也没有为
+cleanup assertion 命名；provenance、renderer、Desktop profile、static assembly/bundle audit 与
+focused lifecycle tests 全部 skipped，engineering product artifacts 为 `[]`。
+
+Actions 原始日志直接证明的是 inner `exit=2/category=unclassified` 与随后 cleanup gate `exit=1`；
+它没有打印 inner stage、`st_nlink`、cleanup assertion label 或 errno。exact tree、运行平台与当时实现
+分别给出以下高置信因果归因；fresh Darwin Actions 仍须以新增的固定分类和真机回归完成实证闭环：
+
+1. `_verify_source_inventory()` 把所有 filesystem 的 directory `st_nlink` 固定为
+   `2 + immediate subdirectory count`。Apple APFS reference 把 directory `nchildren` 定义为全部
+   directory entries，但没有找到公开 Apple/XNU source 对 `nchildren` 到 POSIX `st_nlink` 的直接
+   映射；Darwin/APFS 实测资料支持 `2 + all immediate entries`。exact root 有 `15` 个 directory 与
+   `12` 个 non-directory entries，所以旧模型要求 `17`，entries 模型要求 `29`。在该平台和代码
+   路径下，最强因果归因是 post-materialization inventory 在 uv、PyInstaller、frozen smoke 和
+   publish 之前 fail closed；outer 只识别 launcher 固定行，所以 inner exit `2` 被折叠成
+   `unclassified`。新增 Darwin 真机回归将直接观测空目录、普通文件与子目录对 `st_nlink` 的影响。
+2. source snapshot 已密封为 `0500`。Darwin 对 directory rename 还要求 source directory 的
+   owner-write authorization；旧 cleanup 在 held child fd 仍为 `0500` 时先调用
+   `renameatx_np(RENAME_EXCL)`，之后才 `fchmod(0700)`。结合 Apple `rename(2)` 对 write-disabled
+   directory 的限制，最强因果归因是该 ordering 使 exact tree cleanup 失败并留下随机后缀 build
+   root。lifecycle 状态和 outer cleanup result 排除了 `RUNNER_TEMP` canonical/owner/mode、installer/
+   toolchain prefix 与无后缀 scratch residue，因此最后的
+   `desktop/generated/python-sidecar-build-*` assertion 是唯一与 observed exit 相容的 gate；这仍是
+   从代码与状态作出的归因，不是 raw log 输出的 assertion label。fresh fixed enum 与同时持有 child
+   dirfd 的 Darwin cleanup 回归将验证 errno/order；诊断不会列举路径或目录内容。
+
+Desktop source run `31358373316` 的五个 expected jobs 全部 success。Containers run
+`31358373311` 的 API/Web/MCP 三个 jobs 全部 success，证明 Web 双架构修复没有回退；PR 路径
+registry login 与 published-platform verification 均 skipped，Buildx `push=false`，没有 GHCR
+publication。`.dockerbuild` records 仍只是 action records，不是 product/engineering artifacts。
+
+## 第五次 remediation technical candidate：`not-run`
+
+本次 remediation 继续使用同一 Draft PR #21 与
+`agent/w02a-engineering-smoke-boundary`，没有创建新 W/Requirement/TODO/Validation ID。candidate
+bytes 在 commit 后才获得非自引用的 exact head/tree；该坐标与 fresh run IDs 将写入 Draft PR
+body，而不是为回写成功 run ID 再制造 docs-only head。
+
+实现保持原安全边界并增加以下闭环：
+
+- source inventory 只接受**整棵树一致**的 `subdirectories` 或 APFS `entries` link-count 模型；
+  混合模型继续 fail closed，name/type/hash/mode/uid/gid/device 与 pre/post fd identity 复验不变；
+- held child fd 先恢复为 owner-only `0700`，立即复验原 name 与同一 inode，再执行 no-replace
+  quarantine；build root、scratch parent 与 old destination 也统一走 identity-bound quarantine，
+  对所有可观察、可注入测试的 rename/recreate/ABA identity drift 均保留 replacement 并 fail closed；
+- inner builder 只向 lifecycle owner 创建并显式 allowlist 的 pipe 写一条最多 `128` bytes 的固定
+  primary/cleanup enum；outer 严格校验 schema/allowlist，不回显 raw stderr/path/token；
+- workflow cleanup-only gate 保持 build 后第一个独立 `always()` gate，并为每个 assertion 输出一个
+  固定脱敏 label；success-only provenance 仍与它分离；
+- owned external child 统一由 capability owner 启动：child-only `fchdir`、absolute exact target、
+  explicit fd allowlist、signal disposition/mask reset、bounded output/deadline、TERM→KILL→reap 与
+  descendant absence proof；Git/native/frozen/PyInstaller consumers 绑定 held repository/source/bundle
+  descriptors，outer installer/toolchain 另以 private root epoch capability 拒绝 namespace drift。accepted
+  threat boundary 仍明确排除 exact checkout 完成后主动同 UID writer；不把 pathname consumer 的最终
+  syscall interval夸写为工具直接消费 held regular-file bytes。
+
+本地完整 Python packaging corpus 为 `533 passed / 2 skipped`；两个 skip 分别是 foreign-owner
+filesystem capability case 与 Darwin/APFS 真机 case，在当前 Linux 环境 `not-run`。最终 reviewed
+bytes 的实际 local gate 记录如下；所有命令均设置 `PYTHONDONTWRITEBYTECODE=1`，除显式 npm cache
+override 外使用 repository canonical recipe：
+
+| Gate | 实际命令 | 结果 |
+| --- | --- | --- |
+| Python sidecar packaging | `make python-sidecar-packaging-test` | exit `0`；collected `535`，`533 passed / 2 skipped` |
+| backend full | `cd backend && .venv/bin/pytest`；另以 `-q -rs` 只读复跑取得 skip reason | exit `0`；`797 passed / 3 skipped / 2 warnings`；skip 为 sandbox 禁止 AF_UNIX、filesystem 拒绝 foreign uid、Darwin/APFS-only stat；warnings 为既有 Starlette/httpx deprecation 与 Pydantic forward-reference |
+| tools full unittest | `python3 -B -m unittest discover -s tools/tests -p 'test_*.py'` | exit `0`；`207/207` |
+| packaged-smoke policy | `make packaged-smoke-policy-check` | exit `0`；semantic checker pass、policy mutations `66/66`、exact-Git `1/1` |
+| pre-1 aggregate | `make pre1-work-plan-check` | exit `0`；CI coverage、W01 evidence、pre-1 plan、packaged-smoke policy pass；tools `207/207` |
+| individual governance | `backend/.venv/bin/python tools/check_version_sync.py`；`check_markdown_links.py`；`-B tools/check_ci_coverage.py`；`-B tools/check_w01_evidence.py` | exit `0`；version `0.3.0-alpha.1`、Desktop protocols `1.0/1.1`；links `89` files；coverage/W01 pass |
+| Web source | `make NPM='npm --cache /tmp/lcf-web-npm-cache-3024e8ed3918' ci-web` | exit `0`；Vitest `7/7` files、`51/51` tests、0 skip；typecheck pass；Vite build `35` modules |
+| Containers policy | `backend/.venv/bin/pytest -q tests/backend/test_container_workflow_policy.py` | exit `0`；`3/3`；未运行 Docker/buildx/login/push |
+| Desktop source | `make desktop-test desktop-typecheck desktop-build` | exit `0`；Vitest `31/31` files、`286 passed / 7 skipped`；7 skips 均因当前 sandbox AF_UNIX `EPERM`；typecheck/build pass |
+| syntax/static | in-memory `compile()` 8 个 modified Python files；PyYAML parse + 每个 workflow `run` block 送入 `bash -n` | exit `0`；Desktop release `19/19` 与 packaged-smoke `10/10` Bash blocks pass；`actionlint` / `shellcheck` 未安装，标为 `not-run` |
+| diff/status | `git diff --check`；before/after `git status --short` | exit `0`；同一 `17` 个 tracked modifications，无 staged/untracked drift |
+
+最初两个 Web `npm ci` 尝试因 sandbox 不允许默认 `/root/.npm` cache 而在 tests 前 exit `2`；一次
+Desktop test 随后因该不完整 Web dependency 出现 `285 passed / 7 skipped / 1 failed`。改用 task-private
+`/tmp` npm cache 完成 canonical Web install 后，表中 Web 与 Desktop recipes 均 fresh pass；这些
+environment prerequisite failures 没有被改写成产品 regression，也没有产生 tracked drift。上述 local
+source 结果不替代真实 macOS arm64 Actions。
+在同一最终 exact head 的 fresh Desktop source、Engineering、Containers 全部成功且 Draft PR body
+准确之前，本候选固定为：
+
+| 项目 | 当前结论 |
+| --- | --- |
+| PR #21 fourth remediation technical attempt | `fail` / `superseded`（绑定 `c2be665f…` / `f90b527b…` 与 `31358373316` / `31358373320` / `31358373311`） |
+| PR #21 fifth remediation technical candidate | `not-run`（local regression only；fresh exact-head Actions pending） |
+| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…`）；本候选 `pending` |
+| canonical activation | `blocked` |
+| W02 | `in-progress` |
+| `VAL-PACKAGED-SMOKE-001` | `not-run` |
+| W10/W11 | `locked` |
+| packaged App / bundle sidecar launch | `not-run` |
+| public release | `NO-GO` |
+
+第四次和本次 remediation 均未启动 assembled `.app`，未从 assembled bundle 启动 sidecar，未创建
+DMG/ZIP/tag/Draft Release/Release，未发布 GHCR，未读取或修改 production credentials/settings。

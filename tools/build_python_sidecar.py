@@ -30,6 +30,7 @@ import os
 import platform
 import re
 import secrets
+import selectors
 import signal
 import shutil
 import socket
@@ -81,6 +82,7 @@ MAX_FROZEN_UDS_PATH_BYTES = 100
 MAX_SOURCE_SNAPSHOT_FILES = 100_000
 MAX_SOURCE_SNAPSHOT_FILE_BYTES = 256 * 1024 * 1024
 MAX_SOURCE_SNAPSHOT_TOTAL_BYTES = 1024 * 1024 * 1024
+SOURCE_ARCHIVE_TIMEOUT_SECONDS = 300
 MAX_EVIDENCE_FILES = 2
 MAX_EVIDENCE_DIRECTORIES = 16
 MAX_EVIDENCE_FILE_BYTES = 16 * 1024 * 1024
@@ -123,6 +125,47 @@ BUILD_TOOL_EVIDENCE_KEYS = {
     "setuptools": "setuptoolsVersion",
     "uv": "uvVersion",
 }
+INNER_BUILD_DIAGNOSTIC_FD_ENV = "LCF_INNER_BUILD_DIAGNOSTIC_FD"
+INNER_PRIMARY_CATEGORIES = frozenset(
+    {
+        "preflight",
+        "scratch-create",
+        "repository-state",
+        "source-materialize",
+        "source-revalidate",
+        "toolchain-contract",
+        "distribution",
+        "installed-toolchain",
+        "uv-lock",
+        "runtime-lock",
+        "pyinstaller",
+        "frozen-smoke",
+        "component-assembly",
+        "compliance-assembly",
+        "normalize",
+        "manifest",
+        "final-audit",
+        "publish",
+        "none",
+        "unclassified",
+    }
+)
+INNER_CLEANUP_CATEGORIES = frozenset(
+    {
+        "poisoned-preserved",
+        "capability-revalidation",
+        "retained-publish",
+        "bundle-close",
+        "evidence-close",
+        "source-close",
+        "build-root-quarantine",
+        "scratch-root-quarantine",
+        "descriptor-close",
+        "evidence-preserve",
+        "none",
+        "unclassified",
+    }
+)
 
 # The locked runner receives canonical paths only after the outer owner has
 # bound each private path to a held descriptor.  Darwin fdesc child traversal
@@ -130,8 +173,26 @@ BUILD_TOOL_EVIDENCE_KEYS = {
 # because isolated mode ignores PYTHONPATH and sitecustomize.
 PYINSTALLER_CAPABILITY_RUNNER = r"""
 import os
+import signal
 import stat
 import sys
+
+for signal_number in {
+    signal.SIGINT,
+    signal.SIGTERM,
+    getattr(signal, "SIGHUP", signal.SIGTERM),
+}:
+    signal.signal(signal_number, signal.SIG_DFL)
+if not hasattr(signal, "pthread_sigmask"):
+    raise RuntimeError("signal mask control is unavailable")
+signal.pthread_sigmask(
+    signal.SIG_UNBLOCK,
+    {
+        signal.SIGINT,
+        signal.SIGTERM,
+        getattr(signal, "SIGHUP", signal.SIGTERM),
+    },
+)
 
 source_descriptor = int(sys.argv.pop(1))
 bundle_descriptor = int(sys.argv.pop(1))
@@ -185,6 +246,15 @@ for capability_descriptor, capability_root in zip(
     finally:
         os.close(probe)
     os.set_inheritable(capability_descriptor, False)
+
+os.fchdir(source_descriptor)
+entered_source = os.stat(".", follow_symlinks=False)
+held_source = os.fstat(source_descriptor)
+if (
+    (entered_source.st_dev, entered_source.st_ino)
+    != (held_source.st_dev, held_source.st_ino)
+):
+    raise RuntimeError("PyInstaller source capability could not be entered")
 
 held_bundle = os.fstat(bundle_descriptor)
 observed_bundle = os.stat(bundle_root)
@@ -304,6 +374,82 @@ PyInstaller.__main__.run()
 
 class BuildError(RuntimeError):
     """Raised when a release build cannot prove a required invariant."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        primary_category: str | None = None,
+        cleanup_category: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.primary_category = primary_category
+        self.cleanup_category = cleanup_category
+
+
+def _bind_failure_categories(
+    error: BaseException,
+    *,
+    primary: str | None = None,
+    cleanup: str | None = None,
+) -> BaseException:
+    """Attach only fixed diagnostic enums without changing error text."""
+
+    if isinstance(error, BuildError):
+        if error.primary_category is None and primary in INNER_PRIMARY_CATEGORIES:
+            error.primary_category = primary
+        if error.cleanup_category is None and cleanup in INNER_CLEANUP_CATEGORIES:
+            error.cleanup_category = cleanup
+        return error
+    if (
+        primary in INNER_PRIMARY_CATEGORIES
+        and not isinstance(error, (KeyboardInterrupt, SystemExit))
+    ):
+        wrapped = BuildError(
+            "Python sidecar build failed",
+            primary_category=primary,
+        )
+        wrapped.__cause__ = error
+        return wrapped
+    return error
+
+
+def _write_inner_build_diagnostic(error: BaseException) -> None:
+    """Write one bounded, fixed-enum record to the owner's dedicated pipe."""
+
+    raw_descriptor = os.environ.get(INNER_BUILD_DIAGNOSTIC_FD_ENV)
+    if raw_descriptor is None or re.fullmatch(r"[0-9]+", raw_descriptor) is None:
+        return
+    descriptor = int(raw_descriptor, 10)
+    if descriptor < 3 or str(descriptor) != raw_descriptor:
+        return
+    primary = getattr(error, "primary_category", None) or "unclassified"
+    cleanup = getattr(error, "cleanup_category", None) or "none"
+    if (
+        primary not in INNER_PRIMARY_CATEGORIES
+        or cleanup not in INNER_CLEANUP_CATEGORIES
+    ):
+        primary = "unclassified"
+        cleanup = "unclassified"
+    payload = (
+        f"lcf-inner-build: primary={primary} cleanup={cleanup}\n"
+    ).encode("ascii", errors="strict")
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISFIFO(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or len(payload) > 128
+        ):
+            return
+        os.write(descriptor, payload)
+    except OSError:
+        return
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
 
 
 class _CapabilityDriftError(BuildError):
@@ -1503,6 +1649,29 @@ def _remove_tree_contents(
                         or stat.S_IMODE(opened.st_mode) & 0o022
                     ):
                         raise BuildError(error_message)
+                    # Darwin authorizes a directory rename with VWRITE on the
+                    # directory being moved.  Exact source snapshots are
+                    # deliberately sealed 0500, so restore only owner access
+                    # through the already-held descriptor before asking the
+                    # kernel for the no-replace quarantine rename.  Rebind the
+                    # original name after chmod so a replacement is never
+                    # renamed or removed.
+                    os.fchmod(child_descriptor, 0o700)
+                    opened = os.fstat(child_descriptor)
+                    relative = os.stat(
+                        name,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        (opened.st_dev, opened.st_ino)
+                        != (before.st_dev, before.st_ino)
+                        or _stat_metadata(relative) != _stat_metadata(opened)
+                        or opened.st_uid != os.geteuid()
+                        or opened.st_gid != os.getegid()
+                        or stat.S_IMODE(opened.st_mode) != 0o700
+                    ):
+                        raise _CleanupBlockedError(error_message)
                     _rename_noreplace_at(
                         descriptor,
                         name,
@@ -1528,8 +1697,6 @@ def _remove_tree_contents(
                         except BaseException as restore_error:
                             raise _CleanupBlockedError(error_message) from restore_error
                         raise _CleanupBlockedError(error_message)
-                    os.fchmod(child_descriptor, 0o700)
-                    opened = os.fstat(child_descriptor)
                     relative = os.stat(
                         quarantine,
                         dir_fd=descriptor,
@@ -1963,24 +2130,140 @@ def _run_checked(
     arguments: Sequence[str],
     *,
     cwd: Path = REPOSITORY_ROOT,
+    cwd_descriptor: int | None = None,
     env: Mapping[str, str] | None = None,
     timeout: int = 120,
     label: str,
+    path_capabilities: Sequence[tuple[int, str, bool]] = (),
 ) -> str:
-    try:
-        completed = subprocess.run(
-            list(arguments),
-            cwd=cwd,
-            env=dict(env) if env is not None else None,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise BuildError(f"{label} failed") from exc
+    completed = _run_owned_command(
+        arguments,
+        cwd=cwd,
+        cwd_descriptor=cwd_descriptor,
+        environment=(
+            dict(env)
+            if env is not None
+            else {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
+        ),
+        timeout=timeout,
+        label=label,
+        path_capabilities=path_capabilities,
+    )
+    if completed.returncode != 0:
+        raise BuildError(f"{label} failed")
     return completed.stdout.strip()
+
+
+def _run_owned_command(
+    arguments: Sequence[str],
+    *,
+    cwd: Path,
+    environment: Mapping[str, str],
+    timeout: int,
+    label: str,
+    cwd_descriptor: int | None = None,
+    pass_fds: Sequence[int] = (),
+    launcher_python: Path | None = None,
+    path_capabilities: Sequence[tuple[int, str, bool]] = (),
+) -> subprocess.CompletedProcess[str]:
+    """Run one exact executable from a held cwd under the shared owner."""
+
+    error_message = f"{label} failed"
+    owned_descriptor: int | None = None
+    active_descriptor = cwd_descriptor
+    before: _DirectorySnapshot | None = None
+    result: subprocess.CompletedProcess[str] | None = None
+    primary_error: BaseException | None = None
+    try:
+        if active_descriptor is None:
+            active_descriptor = os.open(
+                cwd,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            owned_descriptor = active_descriptor
+        before = _capture_bound_directory(
+            active_descriptor,
+            cwd,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if (
+            before.gid != os.getegid()
+            or stat.S_IMODE(before.mode) & 0o022
+        ):
+            raise BuildError(error_message)
+        try:
+            import bootstrap_python_sidecar as bootstrap
+
+            observed_result = bootstrap._run_owned_process(
+                tuple(arguments),
+                cwd=cwd,
+                environment=environment,
+                pass_fds=pass_fds,
+                timeout=timeout,
+                label=label,
+                build=sys.modules[__name__],
+                cwd_descriptor=active_descriptor,
+                launcher_python=launcher_python or Path(sys.executable),
+                check=False,
+                path_capabilities=path_capabilities,
+            )
+        except ImportError as exc:
+            raise BuildError(error_message) from exc
+        if not isinstance(observed_result, subprocess.CompletedProcess):
+            raise BuildError(error_message)
+        result = observed_result
+        if result.returncode == 126:
+            category = bootstrap._held_cwd_failure_category(result.stderr)
+            if category != "unclassified":
+                raise BuildError(
+                    f"{label} failed (category={category})"
+                )
+    except BaseException as exc:
+        primary_error = exc
+
+    postcheck_error: BaseException | None = None
+    if active_descriptor is not None and before is not None:
+        try:
+            after = _capture_bound_directory(
+                active_descriptor,
+                cwd,
+                parent_descriptor=None,
+                relative_name=None,
+                expected=before,
+                expected_mode=None,
+                exact_entries=before.entries,
+                error_message=error_message,
+            )
+            if after != before:
+                raise BuildError(error_message)
+        except BaseException as exc:
+            postcheck_error = exc
+    if owned_descriptor is not None:
+        try:
+            os.close(owned_descriptor)
+        except OSError as exc:
+            postcheck_error = postcheck_error or exc
+
+    if primary_error is not None:
+        if postcheck_error is not None:
+            raise BuildError(
+                f"{label} failed and its cwd capability could not be verified"
+            ) from primary_error
+        if isinstance(primary_error, (BuildError, KeyboardInterrupt, SystemExit)):
+            raise primary_error
+        raise BuildError(error_message) from primary_error
+    if postcheck_error is not None:
+        if isinstance(postcheck_error, (KeyboardInterrupt, SystemExit)):
+            raise postcheck_error
+        raise BuildError(error_message) from postcheck_error
+    if result is None:
+        raise BuildError(error_message)
+    return result
 
 
 def _isolated_git_environment() -> dict[str, str]:
@@ -2026,12 +2309,12 @@ def _isolated_git_command(
         raise BuildError(error_message) from exc
     return [
         "/usr/bin/git",
-        f"--git-dir={git_directory}",
-        f"--work-tree={repository_root}",
+        "--git-dir=.git",
+        "--work-tree=.",
         "-c",
         "core.bare=false",
         "-c",
-        f"core.worktree={repository_root}",
+        "core.worktree=.",
         "-c",
         "core.fsmonitor=false",
         "-c",
@@ -2057,32 +2340,45 @@ def _isolated_git_command(
 def _git_output(
     *arguments: str,
     repository_root: Path = REPOSITORY_ROOT,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
 ) -> str:
     return _run_checked(
         _isolated_git_command(*arguments, repository_root=repository_root),
         cwd=repository_root,
+        cwd_descriptor=repository_descriptor,
         env=_isolated_git_environment(),
         label="Git provenance check",
+        path_capabilities=(
+            ((git_descriptor, ".git", False),)
+            if git_descriptor is not None
+            else ()
+        ),
     )
 
 
 def _git_bytes(
     *arguments: str,
     repository_root: Path = REPOSITORY_ROOT,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
 ) -> bytes:
-    try:
-        completed = subprocess.run(
-            _isolated_git_command(*arguments, repository_root=repository_root),
-            cwd=repository_root,
-            env=_isolated_git_environment(),
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=120,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise BuildError("Git provenance check failed") from exc
-    return completed.stdout
+    completed = _run_owned_command(
+        _isolated_git_command(*arguments, repository_root=repository_root),
+        cwd=repository_root,
+        cwd_descriptor=repository_descriptor,
+        environment=_isolated_git_environment(),
+        timeout=120,
+        label="Git provenance check",
+        path_capabilities=(
+            ((git_descriptor, ".git", False),)
+            if git_descriptor is not None
+            else ()
+        ),
+    )
+    if completed.returncode != 0:
+        raise BuildError("Git provenance check failed")
+    return completed.stdout.encode("utf-8", errors="strict")
 
 
 def _selected_source_commit(environment: Mapping[str, str]) -> str:
@@ -2105,6 +2401,8 @@ def _repository_tree_inventory(
     repository_commit: str,
     *,
     repository_root: Path = REPOSITORY_ROOT,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
 ) -> tuple[_TreeEntry, ...]:
     """Return the exact safe blob inventory for one commit tree."""
 
@@ -2115,6 +2413,8 @@ def _repository_tree_inventory(
         "--full-tree",
         repository_commit,
         repository_root=repository_root,
+        repository_descriptor=repository_descriptor,
+        git_descriptor=git_descriptor,
     )
     result: list[_TreeEntry] = []
     seen: set[str] = set()
@@ -2173,43 +2473,99 @@ def _source_snapshot_sha256(entries: Sequence[_TreeEntry]) -> str:
 def _validate_local_git_configuration(
     *,
     repository_root: Path,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
 ) -> None:
     """Reject repository-local configuration that can execute or hide input."""
 
     error_message = "Git repository local configuration is unsafe"
     config = repository_root / ".git" / "config"
+    active_git_descriptor = git_descriptor
+    owned_git_descriptor: int | None = None
+    config_descriptor: int | None = None
     try:
-        info = config.lstat()
+        if repository_descriptor is None:
+            raise BuildError(error_message)
+        if active_git_descriptor is None:
+            active_git_descriptor = os.open(
+                ".git",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=repository_descriptor,
+            )
+            owned_git_descriptor = active_git_descriptor
+        config_descriptor = os.open(
+            "config",
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=active_git_descriptor,
+        )
+        info = os.fstat(config_descriptor)
+        relative_info = os.stat(
+            "config",
+            dir_fd=active_git_descriptor,
+            follow_symlinks=False,
+        )
+        path_info = config.lstat()
         if (
             not stat.S_ISREG(info.st_mode)
-            or stat.S_ISLNK(info.st_mode)
+            or stat.S_ISLNK(relative_info.st_mode)
+            or _stat_metadata(info) != _stat_metadata(relative_info)
+            or _stat_metadata(info) != _stat_metadata(path_info)
             or info.st_uid != os.geteuid()
             or info.st_nlink != 1
             or info.st_size > 1024 * 1024
             or stat.S_IMODE(info.st_mode) & 0o022
         ):
             raise BuildError(error_message)
-        completed = subprocess.run(
-            [
+        completed = _run_owned_command(
+            (
                 "/usr/bin/git",
-                f"--git-dir={repository_root / '.git'}",
+                "--git-dir=.git",
                 "config",
-                f"--file={config}",
+                "--file=.git/config",
                 "--no-includes",
                 "--null",
                 "--list",
-            ],
+            ),
             cwd=repository_root,
-            env=_isolated_git_environment(),
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            cwd_descriptor=repository_descriptor,
+            environment=_isolated_git_environment(),
             timeout=30,
+            label="Git local configuration check",
+            path_capabilities=(
+                (active_git_descriptor, ".git", False),
+                (config_descriptor, ".git/config", False),
+            ),
         )
+        if completed.returncode != 0:
+            raise BuildError(error_message)
+        if (
+            _stat_metadata(os.fstat(config_descriptor)) != _stat_metadata(info)
+            or _stat_metadata(
+                os.stat(
+                    "config",
+                    dir_fd=active_git_descriptor,
+                    follow_symlinks=False,
+                )
+            )
+            != _stat_metadata(info)
+            or _stat_metadata(config.lstat()) != _stat_metadata(info)
+        ):
+            raise BuildError(error_message)
     except BuildError:
         raise
     except (OSError, subprocess.SubprocessError) as exc:
         raise BuildError(error_message) from exc
+    finally:
+        close_error: OSError | None = None
+        for descriptor in (config_descriptor, owned_git_descriptor):
+            if descriptor is None:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                close_error = close_error or exc
+        if close_error is not None and sys.exception() is None:
+            raise BuildError(error_message) from close_error
     allowed_values: dict[str, frozenset[str] | None] = {
         "core.repositoryformatversion": frozenset({"0"}),
         "core.filemode": frozenset({"true", "false"}),
@@ -2225,7 +2581,7 @@ def _validate_local_git_configuration(
     }
     try:
         records: list[tuple[str, str]] = []
-        for raw in completed.stdout.split(b"\0"):
+        for raw in completed.stdout.encode("utf-8", errors="strict").split(b"\0"):
             if not raw:
                 continue
             encoded_key, separator, encoded_value = raw.partition(b"\n")
@@ -2331,6 +2687,8 @@ def _validate_git_index(
     inventory: Sequence[_TreeEntry],
     *,
     repository_root: Path,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
 ) -> None:
     """Require a stage-zero index with no hidden per-entry flags."""
 
@@ -2345,6 +2703,8 @@ def _validate_git_index(
         "--stage",
         "-z",
         repository_root=repository_root,
+        repository_descriptor=repository_descriptor,
+        git_descriptor=git_descriptor,
     )
     for raw in raw_stage.split(b"\0"):
         if not raw:
@@ -2369,6 +2729,8 @@ def _validate_git_index(
         "-v",
         "-z",
         repository_root=repository_root,
+        repository_descriptor=repository_descriptor,
+        git_descriptor=git_descriptor,
     )
     flagged_paths: set[str] = set()
     for raw in raw_flags.split(b"\0"):
@@ -2391,6 +2753,7 @@ def _validate_tracked_worktree(
     inventory: Sequence[_TreeEntry],
     *,
     repository_root: Path,
+    repository_descriptor: int | None = None,
 ) -> None:
     """Compare tracked no-follow bytes and modes directly with commit blobs."""
 
@@ -2410,9 +2773,13 @@ def _validate_tracked_worktree(
     try:
         root_before = repository_root.lstat()
         validate_directory(root_before)
-        root_descriptor = os.open(
-            repository_root,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        root_descriptor = (
+            os.dup(repository_descriptor)
+            if repository_descriptor is not None
+            else os.open(
+                repository_root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
         )
         root_opened = os.fstat(root_descriptor)
         validate_directory(root_opened)
@@ -2590,55 +2957,183 @@ def _validate_repository_state(
 ) -> dict[str, Any]:
     repository_commit = _selected_source_commit(environment)
     repository_tree = _selected_source_tree(environment)
-    _validate_local_git_configuration(repository_root=repository_root)
-    _validate_git_info_overrides(repository_root=repository_root)
-    if (
-        _git_output("rev-parse", "HEAD", repository_root=repository_root).lower()
-        != repository_commit
-        or _git_output(
-            "rev-parse",
-            "HEAD^{tree}",
+    error_message = "Git provenance repository capability is unsafe"
+    repository_descriptor: int | None = None
+    repository_binding: _DirectorySnapshot | None = None
+    git_descriptor: int | None = None
+    git_identity: tuple[Any, ...] | None = None
+    try:
+        repository_descriptor = os.open(
+            repository_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        repository_binding = _capture_bound_directory(
+            repository_descriptor,
+            repository_root,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if (
+            repository_binding.gid != os.getegid()
+            or stat.S_IMODE(repository_binding.mode) & 0o022
+        ):
+            raise BuildError(error_message)
+        git_descriptor = os.open(
+            ".git",
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=repository_descriptor,
+        )
+        held_git = os.fstat(git_descriptor)
+        relative_git = os.stat(
+            ".git",
+            dir_fd=repository_descriptor,
+            follow_symlinks=False,
+        )
+        path_git = (repository_root / ".git").lstat()
+        git_identity = _stat_metadata(held_git)
+        if (
+            not stat.S_ISDIR(held_git.st_mode)
+            or stat.S_ISLNK(relative_git.st_mode)
+            or git_identity != _stat_metadata(relative_git)
+            or git_identity != _stat_metadata(path_git)
+            or held_git.st_uid != os.geteuid()
+            or held_git.st_gid != os.getegid()
+            or stat.S_IMODE(held_git.st_mode) & 0o022
+        ):
+            raise BuildError(error_message)
+        _validate_local_git_configuration(
             repository_root=repository_root,
-        ).lower()
-        != repository_tree
-        or _git_output(
-            "rev-parse",
-            f"{repository_commit}^{{tree}}",
+            repository_descriptor=repository_descriptor,
+            git_descriptor=git_descriptor,
+        )
+        _validate_git_info_overrides(repository_root=repository_root)
+
+        def git_output(*arguments: str) -> str:
+            return _git_output(
+                *arguments,
+                repository_root=repository_root,
+                repository_descriptor=repository_descriptor,
+                git_descriptor=git_descriptor,
+            )
+
+        if (
+            git_output("rev-parse", "HEAD").lower() != repository_commit
+            or git_output("rev-parse", "HEAD^{tree}").lower()
+            != repository_tree
+            or git_output(
+                "rev-parse",
+                f"{repository_commit}^{{tree}}",
+            ).lower()
+            != repository_tree
+        ):
+            raise BuildError(
+                "Selected Git commit/tree does not identify the checkout"
+            )
+        inventory = _repository_tree_inventory(
+            repository_commit,
             repository_root=repository_root,
-        ).lower()
-        != repository_tree
-        or _git_output("write-tree", repository_root=repository_root).lower()
-        != repository_tree
-    ):
-        raise BuildError("Selected Git commit/tree does not identify the checkout")
-    inventory = _repository_tree_inventory(
-        repository_commit,
-        repository_root=repository_root,
-    )
-    _validate_git_index(inventory, repository_root=repository_root)
-    _validate_tracked_worktree(inventory, repository_root=repository_root)
-    if _git_output(
-        "status",
-        "--porcelain=v2",
-        "--untracked-files=all",
-        repository_root=repository_root,
-    ):
-        raise BuildError("Source changes must be committed before packaging")
-    if _git_output(
-        "submodule",
-        "status",
-        "--recursive",
-        repository_root=repository_root,
-    ):
-        # Exact snapshot materialization intentionally has no implicit
-        # submodule network or secondary-checkout contract.
-        raise BuildError("Git submodules are not supported by the exact source snapshot")
-    return {
-        "repositoryCommit": repository_commit,
-        "repositoryTree": repository_tree,
-        "sourceSnapshotSha256": _source_snapshot_sha256(inventory),
-        "sourceInventory": inventory,
-    }
+            repository_descriptor=repository_descriptor,
+            git_descriptor=git_descriptor,
+        )
+        _validate_git_index(
+            inventory,
+            repository_root=repository_root,
+            repository_descriptor=repository_descriptor,
+            git_descriptor=git_descriptor,
+        )
+        _validate_tracked_worktree(
+            inventory,
+            repository_root=repository_root,
+            repository_descriptor=repository_descriptor,
+        )
+        if git_output(
+            "status",
+            "--porcelain=v2",
+            "--untracked-files=all",
+        ):
+            raise BuildError("Source changes must be committed before packaging")
+        if git_output("submodule", "status", "--recursive"):
+            # Exact snapshot materialization intentionally has no implicit
+            # submodule network or secondary-checkout contract.
+            raise BuildError(
+                "Git submodules are not supported by the exact source snapshot"
+            )
+        source_date_epoch = int(
+            git_output("show", "-s", "--format=%ct", "HEAD")
+        )
+        repository_after = _capture_bound_directory(
+            repository_descriptor,
+            repository_root,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=repository_binding,
+            expected_mode=None,
+            exact_entries=repository_binding.entries,
+            error_message=error_message,
+        )
+        if repository_after != repository_binding:
+            raise BuildError(error_message)
+        return {
+            "repositoryCommit": repository_commit,
+            "repositoryTree": repository_tree,
+            "sourceSnapshotSha256": _source_snapshot_sha256(inventory),
+            "sourceInventory": inventory,
+            "sourceDateEpoch": source_date_epoch,
+        }
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        active_error = sys.exception()
+        binding_error: BaseException | None = None
+        if repository_descriptor is not None and repository_binding is not None:
+            try:
+                repository_after = _capture_bound_directory(
+                    repository_descriptor,
+                    repository_root,
+                    parent_descriptor=None,
+                    relative_name=None,
+                    expected=repository_binding,
+                    expected_mode=None,
+                    exact_entries=repository_binding.entries,
+                    error_message=error_message,
+                )
+                if repository_after != repository_binding:
+                    raise BuildError(error_message)
+                if git_descriptor is not None and git_identity is not None:
+                    if (
+                        _stat_metadata(os.fstat(git_descriptor)) != git_identity
+                        or _stat_metadata(
+                            os.stat(
+                                ".git",
+                                dir_fd=repository_descriptor,
+                                follow_symlinks=False,
+                            )
+                        )
+                        != git_identity
+                        or _stat_metadata((repository_root / ".git").lstat())
+                        != git_identity
+                    ):
+                        raise BuildError(error_message)
+            except BaseException as exc:
+                binding_error = exc
+        if git_descriptor is not None:
+            try:
+                os.close(git_descriptor)
+            except OSError as exc:
+                binding_error = binding_error or exc
+        if repository_descriptor is not None:
+            try:
+                os.close(repository_descriptor)
+            except OSError as exc:
+                binding_error = binding_error or exc
+        if binding_error is not None:
+            raise BuildError(error_message) from (active_error or binding_error)
 
 
 def validate_release_environment(
@@ -2681,7 +3176,7 @@ def validate_release_environment(
         raise BuildError("LCF_SOURCE_DATE_EPOCH must be an integer") from exc
     if (
         source_epoch < 100_000_000
-        or int(_git_output("show", "-s", "--format=%ct", "HEAD")) != source_epoch
+        or repository_state.get("sourceDateEpoch") != source_epoch
     ):
         raise BuildError("SOURCE_DATE_EPOCH differs from the source commit timestamp")
 
@@ -2729,8 +3224,7 @@ def verify_repository_provenance(release: Mapping[str, Any]) -> None:
     if (
         state.get("sourceSnapshotSha256")
         != release.get("sourceSnapshotSha256")
-        or int(_git_output("show", "-s", "--format=%ct", "HEAD"))
-        != release.get("sourceDateEpoch")
+        or state.get("sourceDateEpoch") != release.get("sourceDateEpoch")
     ):
         raise BuildError("Repository provenance changed during packaging")
 
@@ -2898,6 +3392,7 @@ def verify_uv_lock(
         raise BuildError("Build venv Python path must be absolute")
     backend_descriptor: int | None = None
     backend_identity: tuple[int, ...] | None = None
+    captured_cache: _DirectorySnapshot | None = None
     try:
         uv_path_info = uv_executable.lstat()
         resolved = uv_executable.resolve(strict=True)
@@ -2998,68 +3493,91 @@ def verify_uv_lock(
             str(resolved),
             "lock",
             "--check",
+            "--no-cache",
             "--python",
             str(resolved_python),
         )
-        completed = subprocess.run(
-            list(command),
+        if backend_descriptor is None:
+            raise BuildError("uv source capability is unavailable")
+        completed = _run_owned_command(
+            command,
             cwd=backend_root,
-            env={
+            cwd_descriptor=backend_descriptor,
+            environment={
                 "PATH": "/usr/bin:/bin",
                 "LANG": "C",
                 "LC_ALL": "C",
-                "UV_CACHE_DIR": str(cache_directory),
                 "UV_NO_CONFIG": "1",
                 "UV_NO_PROGRESS": "1",
                 "UV_OFFLINE": "1",
                 "UV_PYTHON_DOWNLOADS": "never",
             },
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
             timeout=180,
-            pass_fds=(),
-            close_fds=True,
+            label="uv lock check",
+            launcher_python=resolved_python,
         )
-        if backend_descriptor is not None:
-            if (
-                backend_identity != _stat_metadata(os.fstat(backend_descriptor))
-                or backend_identity != _stat_metadata(backend_root.lstat())
-            ):
-                raise BuildError("uv source capability changed during lock verification")
-        _capture_bound_directory(
-            active_cache_descriptor,
-            cache_directory,
-            parent_descriptor=cache_parent_descriptor,
-            relative_name=(
-                cache_directory.name
-                if cache_parent_descriptor is not None
-                else None
-            ),
-            expected=captured_cache,
-            expected_mode=0o700,
-            exact_entries=None,
-            error_message="uv cache capability changed during lock verification",
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise BuildError("uv lock check timed out") from exc
     except BuildError:
         raise
     except OSError as exc:
         raise BuildError("uv lock check could not start") from exc
     finally:
+        active_error = sys.exception()
+        capability_error: BaseException | None = None
+        if backend_descriptor is not None and backend_identity is not None:
+            try:
+                if (
+                    backend_identity
+                    != _stat_metadata(os.fstat(backend_descriptor))
+                    or backend_identity != _stat_metadata(backend_root.lstat())
+                    or source_descriptor is None
+                    or backend_identity
+                    != _stat_metadata(
+                        os.stat(
+                            "backend",
+                            dir_fd=source_descriptor,
+                            follow_symlinks=False,
+                        )
+                    )
+                ):
+                    raise BuildError(
+                        "uv source capability changed during lock verification"
+                    )
+            except BaseException as exc:
+                capability_error = exc
+        if active_cache_descriptor is not None and captured_cache is not None:
+            try:
+                _capture_bound_directory(
+                    active_cache_descriptor,
+                    cache_directory,
+                    parent_descriptor=cache_parent_descriptor,
+                    relative_name=(
+                        cache_directory.name
+                        if cache_parent_descriptor is not None
+                        else None
+                    ),
+                    expected=captured_cache,
+                    expected_mode=0o700,
+                    exact_entries=None,
+                    error_message=(
+                        "uv cache capability changed during lock verification"
+                    ),
+                )
+            except BaseException as exc:
+                capability_error = capability_error or exc
         if backend_descriptor is not None:
             try:
                 os.close(backend_descriptor)
             except OSError as exc:
-                if sys.exception() is None:
-                    raise BuildError("uv source capability cleanup failed") from exc
+                capability_error = capability_error or exc
         if owns_cache_descriptor and active_cache_descriptor is not None:
             try:
                 os.close(active_cache_descriptor)
             except OSError as exc:
-                raise BuildError("uv cache capability cleanup failed") from exc
+                capability_error = capability_error or exc
+        if capability_error is not None:
+            raise BuildError(
+                "uv capability could not be verified after lock verification"
+            ) from (active_error or capability_error)
     if completed.returncode != 0:
         category = _uv_lock_failure_category(completed.stderr)
         raise BuildError(
@@ -4088,7 +4606,8 @@ def _run_pyinstaller_command(
         (config_descriptor, config_root),
         (temp_descriptor, temp_root),
     )
-    try:
+
+    def revalidate_roots() -> None:
         for descriptor, root in roots:
             observed = root.lstat()
             probe = os.open(
@@ -4111,6 +4630,9 @@ def _run_pyinstaller_command(
                     raise BuildError(error_message)
             finally:
                 os.close(probe)
+
+    try:
+        revalidate_roots()
         if (
             environment.get("PYINSTALLER_CONFIG_DIR") != str(config_root)
             or environment.get("TMPDIR") != str(temp_root)
@@ -4145,77 +4667,50 @@ def _run_pyinstaller_command(
         str(work_root),
         str(source_root / "backend" / "packaging" / "lcf_sidecar.spec"),
     )
-    process: subprocess.Popen[str] | None = None
+    source_cwd_descriptor: int | None = None
+    result: subprocess.CompletedProcess[str] | None = None
+    primary_error: BaseException | None = None
     try:
-        # A spawned process group is an owned capability before Python can
-        # expose the return value to an unmasked signal handler.  Keep the
-        # spawn/assignment handoff masked; any pending cancellation then lands
-        # in this try block with a usable pid and must terminate the group.
-        with _defer_publish_signals():
-            process = subprocess.Popen(
-                arguments,
-                cwd=source_root,
-                env=environment,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                pass_fds=(
-                    source_descriptor,
-                    bundle_descriptor,
-                    dist_descriptor,
-                    work_descriptor,
-                    config_descriptor,
-                    temp_descriptor,
-                ),
-                start_new_session=True,
-            )
-        stdout, _stderr = process.communicate(timeout=1800)
-        for descriptor, root in roots:
-            observed = root.lstat()
-            probe = os.open(
-                root,
-                os.O_RDONLY
-                | os.O_DIRECTORY
-                | os.O_NOFOLLOW
-                | os.O_CLOEXEC,
-            )
-            try:
-                if (
-                    _stable_directory_identity(observed)
-                    != _stable_directory_identity(os.fstat(descriptor))
-                    or _stable_directory_identity(os.fstat(probe))
-                    != _stable_directory_identity(os.fstat(descriptor))
-                ):
-                    raise BuildError(error_message)
-            finally:
-                os.close(probe)
-        descendants = False
-        # Stabilize the communicate -> process-group absence decision.  A
-        # signal observed at this handoff is caught below and still runs the
-        # bounded group cleanup while the pid owner remains live.
-        with _defer_publish_signals():
-            descendants = _process_group_exists(process.pid)
-            if descendants:
-                _terminate_pyinstaller_process_group(process)
-            completed = subprocess.CompletedProcess(
-                arguments,
-                process.returncode,
-                stdout=stdout,
-                stderr=None,
-            )
-        if descendants:
-            raise BuildError("PyInstaller left a descendant process running")
-        return completed
+        source_cwd_descriptor = os.dup(source_descriptor)
+        result = _run_owned_command(
+            arguments,
+            cwd=source_root,
+            cwd_descriptor=source_cwd_descriptor,
+            environment=environment,
+            timeout=1800,
+            label="PyInstaller",
+            pass_fds=tuple(descriptor for descriptor, _root in roots),
+            launcher_python=active_python,
+        )
     except BaseException as exc:
-        if process is not None:
-            try:
-                with _defer_publish_signals(preserve_error=exc):
-                    _terminate_pyinstaller_process_group(process)
-            except BaseException as cleanup_error:
-                raise BuildError(
-                    "PyInstaller process group cleanup failed"
-                ) from exc
-        raise
+        primary_error = exc
+
+    postcheck_error: BaseException | None = None
+    try:
+        revalidate_roots()
+    except BaseException as exc:
+        postcheck_error = exc
+    if source_cwd_descriptor is not None:
+        try:
+            os.close(source_cwd_descriptor)
+        except OSError as exc:
+            postcheck_error = postcheck_error or exc
+    if primary_error is not None:
+        if postcheck_error is not None:
+            raise BuildError(
+                "PyInstaller failed and its directory capabilities changed"
+            ) from primary_error
+        raise primary_error
+    if postcheck_error is not None:
+        raise BuildError(error_message) from postcheck_error
+    if result is None:
+        raise BuildError(error_message)
+    return subprocess.CompletedProcess(
+        arguments,
+        result.returncode,
+        stdout=result.stdout + result.stderr,
+        stderr=None,
+    )
 
 
 def _process_group_exists(process_group: int) -> bool:
@@ -4259,7 +4754,14 @@ def _terminate_owned_process_group(
             except subprocess.TimeoutExpired:
                 pass
             if not _process_group_exists(process_group):
-                return
+                try:
+                    process.wait(
+                        timeout=min(0.1, max(0.01, deadline - time.monotonic()))
+                    )
+                except subprocess.TimeoutExpired:
+                    continue
+                if not _process_group_exists(process_group):
+                    return
             time.sleep(0.01)
     try:
         process.wait(timeout=0.1)
@@ -5304,27 +5806,17 @@ def _run_frozen_command(
     arguments: Sequence[str],
     *,
     environment: Mapping[str, str],
-    inherited_descriptor: int | None = None,
+    cwd_descriptor: int,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(
-            (str(executable), *arguments),
-            cwd=executable.parent,
-            env=dict(environment),
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-            pass_fds=(
-                (inherited_descriptor,)
-                if inherited_descriptor is not None
-                else ()
-            ),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise BuildError("Frozen sidecar command did not complete") from exc
+    return _run_owned_command(
+        (str(executable), *arguments),
+        cwd=executable.parent,
+        cwd_descriptor=cwd_descriptor,
+        environment=environment,
+        timeout=timeout,
+        label="Frozen sidecar command",
+    )
 
 
 def _http_json_over_uds(
@@ -5837,6 +6329,93 @@ def _read_bound_frozen_log(
     return "ok", bytes(raw)
 
 
+class _BoundedFrozenLogCollector:
+    """Drain one owned child pipe into the held log without unbounded output."""
+
+    def __init__(self, stream: Any, log_handle: Any) -> None:
+        self._stream = stream
+        self._log_handle = log_handle
+        self._status: str | None = None
+        self._status_lock = threading.Lock()
+        self._thread = threading.Thread(
+            target=self._capture,
+            name="lcf-frozen-log-collector",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        try:
+            self._thread.start()
+        except RuntimeError as exc:
+            self._set_status("log-start")
+            raise BuildError(
+                "Frozen sidecar log capture failed (category=log-start)"
+            ) from exc
+
+    def _set_status(self, status: str) -> None:
+        with self._status_lock:
+            if self._status is None:
+                self._status = status
+
+    def _capture(self) -> None:
+        captured = 0
+        status = "ok"
+        try:
+            source_descriptor = self._stream.fileno()
+            target_descriptor = self._log_handle.fileno()
+            while True:
+                chunk = os.read(source_descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                remaining = MAX_FROZEN_START_LOG_BYTES - captured
+                if len(chunk) > remaining:
+                    if remaining > 0:
+                        view = memoryview(chunk)[:remaining]
+                        while view:
+                            written = os.write(target_descriptor, view)
+                            if written <= 0:
+                                raise OSError(errno.EIO, "bounded log write failed")
+                            view = view[written:]
+                    captured += max(remaining, 0)
+                    status = "log-overflow"
+                    break
+                view = memoryview(chunk)
+                while view:
+                    written = os.write(target_descriptor, view)
+                    if written <= 0:
+                        raise OSError(errno.EIO, "bounded log write failed")
+                    view = view[written:]
+                captured += len(chunk)
+        except OSError:
+            status = "log-io"
+        finally:
+            try:
+                self._stream.close()
+            except OSError:
+                if status == "ok":
+                    status = "log-close"
+            self._set_status(status)
+
+    def assert_healthy(self) -> None:
+        with self._status_lock:
+            status = self._status
+        if status in {None, "ok"}:
+            return
+        if status == "log-overflow":
+            raise BuildError("Frozen sidecar log exceeded its size bound")
+        raise BuildError(
+            f"Frozen sidecar log capture failed (category={status})"
+        )
+
+    def finish(self, *, timeout: float = 5.0) -> None:
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            raise BuildError(
+                "Frozen sidecar log capture failed (category=log-drain-timeout)"
+            )
+        self.assert_healthy()
+
+
 def _frozen_start_failure_category(
     log_handle: Any,
     log_path: Path,
@@ -5873,12 +6452,18 @@ def _wait_for_socket(
     log_handle: Any,
     log_path: Path,
     log_identity: tuple[int, int],
+    *,
+    log_collector: _BoundedFrozenLogCollector | None = None,
 ) -> None:
     deadline = time.monotonic() + 30
     socket_identity: tuple[int, int] | None = None
     while time.monotonic() < deadline:
+        if log_collector is not None:
+            log_collector.assert_healthy()
         return_code = process.poll()
         if return_code is not None:
+            if log_collector is not None:
+                log_collector.finish()
             category = _frozen_start_failure_category(
                 log_handle,
                 log_path,
@@ -5917,6 +6502,8 @@ def _wait_for_socket(
 
         return_code = process.poll()
         if return_code is not None:
+            if log_collector is not None:
+                log_collector.finish()
             category = _frozen_start_failure_category(
                 log_handle,
                 log_path,
@@ -5983,6 +6570,8 @@ def _wait_for_socket(
             raise BuildError("Frozen sidecar socket changed during readiness")
         return_code = process.poll()
         if return_code is not None:
+            if log_collector is not None:
+                log_collector.finish()
             category = _frozen_start_failure_category(
                 log_handle,
                 log_path,
@@ -5993,10 +6582,14 @@ def _wait_for_socket(
                 f"(exit={return_code}; category={category})"
             )
         if not connection_refused:
+            if log_collector is not None:
+                log_collector.assert_healthy()
             return
         time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
     return_code = process.poll()
     if return_code is not None:
+        if log_collector is not None:
+            log_collector.finish()
         category = _frozen_start_failure_category(
             log_handle,
             log_path,
@@ -6006,6 +6599,8 @@ def _wait_for_socket(
             "Frozen sidecar exited before its UDS became ready "
             f"(exit={return_code}; category={category})"
         )
+    if log_collector is not None:
+        log_collector.assert_healthy()
     raise BuildError("Frozen sidecar UDS readiness timed out")
 
 
@@ -6348,23 +6943,28 @@ def _cleanup_scratch_capability(capability: _ScratchCapability) -> None:
 
     error_message = "Python sidecar scratch cleanup failed"
     if capability.poisoned:
-        try:
-            _close_scratch_descriptors(capability)
-        except BaseException:
-            pass
-        raise BuildError(error_message)
-    failed = False
+        close_failed = _close_scratch_descriptors(capability)
+        raise BuildError(
+            error_message,
+            cleanup_category=(
+                "descriptor-close" if close_failed else "poisoned-preserved"
+            ),
+        )
+    failed_category: str | None = None
     safe_to_remove = False
+    cleanup_stage = "capability-revalidation"
     try:
         if capability.closed:
             raise BuildError(error_message)
         _refresh_scratch_capability(capability)
+        cleanup_stage = "retained-publish"
         retained_close_failed = _cleanup_retained_published_directories(
             capability,
             error_message=error_message,
         )
         if retained_close_failed:
-            failed = True
+            failed_category = cleanup_stage
+        cleanup_stage = "bundle-close"
         if capability.bundle is not None:
             bundle = capability.bundle
             _validate_bundle_capability(
@@ -6375,6 +6975,7 @@ def _cleanup_scratch_capability(capability: _ScratchCapability) -> None:
             os.close(bundle.parent_descriptor)
             bundle.closed = True
             capability.bundle = None
+        cleanup_stage = "evidence-close"
         if capability.evidence is not None:
             evidence = _revalidate_failure_evidence_capability(
                 capability,
@@ -6382,74 +6983,52 @@ def _cleanup_scratch_capability(capability: _ScratchCapability) -> None:
             )
             os.close(evidence.descriptor)
             evidence.closed = True
+        cleanup_stage = "source-close"
         if capability.source_snapshot_descriptor is not None:
             os.close(capability.source_snapshot_descriptor)
             capability.source_snapshot_descriptor = None
         safe_to_remove = True
-    except BaseException:
-        failed = True
+    except BaseException as exc:
+        failed_category = (
+            getattr(exc, "cleanup_category", None) or cleanup_stage
+        )
 
     if safe_to_remove:
         try:
-            _remove_tree_contents(
-                capability.build_root_descriptor,
-                error_message=error_message,
-            )
-            _capture_bound_directory(
-                capability.build_root_descriptor,
-                capability.build_root,
+            cleanup_stage = "build-root-quarantine"
+            _rollback_bound_directory(
                 parent_descriptor=capability.scratch_parent_descriptor,
-                relative_name=capability.build_root_name,
-                expected=capability.build_root_snapshot,
-                expected_mode=0o700,
-                exact_entries=(),
+                parent_path=capability.scratch_parent,
+                name=capability.build_root_name,
+                descriptor=capability.build_root_descriptor,
+                snapshot=capability.build_root_snapshot,
                 error_message=error_message,
             )
-            os.rmdir(
-                capability.build_root_name,
-                dir_fd=capability.scratch_parent_descriptor,
-            )
-            try:
-                os.stat(
-                    capability.build_root_name,
-                    dir_fd=capability.scratch_parent_descriptor,
-                    follow_symlinks=False,
-                )
-            except FileNotFoundError:
-                pass
-            else:
-                raise BuildError(error_message)
-            _capture_bound_directory(
-                capability.scratch_parent_descriptor,
-                capability.scratch_parent,
+            cleanup_stage = "scratch-root-quarantine"
+            _rollback_bound_directory(
                 parent_descriptor=capability.destination_parent_descriptor,
-                relative_name=capability.scratch_parent_name,
-                expected=capability.scratch_parent_snapshot,
-                expected_mode=0o700,
-                exact_entries=(),
+                parent_path=capability.destination_parent,
+                name=capability.scratch_parent_name,
+                descriptor=capability.scratch_parent_descriptor,
+                snapshot=capability.scratch_parent_snapshot,
                 error_message=error_message,
             )
-            os.rmdir(
-                capability.scratch_parent_name,
-                dir_fd=capability.destination_parent_descriptor,
+        except BaseException as exc:
+            failed_category = failed_category or (
+                getattr(exc, "cleanup_category", None) or cleanup_stage
             )
-            try:
-                os.stat(
-                    capability.scratch_parent_name,
-                    dir_fd=capability.destination_parent_descriptor,
-                    follow_symlinks=False,
-                )
-            except FileNotFoundError:
-                pass
-            else:
-                raise BuildError(error_message)
-        except BaseException:
-            failed = True
 
     if _close_scratch_descriptors(capability):
-        failed = True
-    if failed:
-        raise BuildError(error_message)
+        failed_category = failed_category or "descriptor-close"
+    if failed_category is not None:
+        raise BuildError(
+            error_message,
+            cleanup_category=(
+                failed_category
+                if failed_category in INNER_CLEANUP_CATEGORIES
+                else "unclassified"
+            ),
+        )
 
 
 def _finish_scratch_lifecycle(
@@ -6461,11 +7040,25 @@ def _finish_scratch_lifecycle(
     try:
         _cleanup_scratch_capability(capability)
     except BaseException as cleanup_error:
+        primary_category = (
+            getattr(primary_error, "primary_category", None)
+            if primary_error is not None
+            else "none"
+        ) or "unclassified"
+        cleanup_category = (
+            getattr(cleanup_error, "cleanup_category", None) or "unclassified"
+        )
         if primary_error is not None:
             raise BuildError(
-                "Python sidecar build failed and scratch cleanup failed"
+                "Python sidecar build failed and scratch cleanup failed",
+                primary_category=primary_category,
+                cleanup_category=cleanup_category,
             ) from primary_error
-        raise BuildError("Python sidecar scratch cleanup failed") from cleanup_error
+        raise BuildError(
+            "Python sidecar scratch cleanup failed",
+            primary_category="none",
+            cleanup_category=cleanup_category,
+        ) from cleanup_error
 
 
 def _cleanup_failed_scratch_creation(
@@ -6497,21 +7090,18 @@ def _cleanup_failed_scratch_creation(
                     raise BuildError(
                         "Python sidecar scratch creation cleanup failed"
                     )
-                _capture_bound_directory(
-                    active_build_descriptor,
-                    build_root,
+                _rollback_bound_directory(
                     parent_descriptor=active_scratch_descriptor,
-                    relative_name=build_name,
-                    expected=build_snapshot,
-                    expected_mode=0o700,
-                    exact_entries=(),
+                    parent_path=scratch_parent,
+                    name=build_name,
+                    descriptor=active_build_descriptor,
+                    snapshot=build_snapshot,
                     error_message=(
                         "Python sidecar scratch creation cleanup failed"
                     ),
                 )
                 os.close(active_build_descriptor)
                 active_build_descriptor = None
-                os.rmdir(build_name, dir_fd=active_scratch_descriptor)
             else:
                 cleanup_failed = True
         except (BuildError, OSError):
@@ -6523,21 +7113,18 @@ def _cleanup_failed_scratch_creation(
                     raise BuildError(
                         "Python sidecar scratch creation cleanup failed"
                     )
-                _capture_bound_directory(
-                    active_scratch_descriptor,
-                    scratch_parent,
+                _rollback_bound_directory(
                     parent_descriptor=destination_descriptor,
-                    relative_name=scratch_name,
-                    expected=scratch_snapshot,
-                    expected_mode=0o700,
-                    exact_entries=(),
+                    parent_path=scratch_parent.parent,
+                    name=scratch_name,
+                    descriptor=active_scratch_descriptor,
+                    snapshot=scratch_snapshot,
                     error_message=(
                         "Python sidecar scratch creation cleanup failed"
                     ),
                 )
                 os.close(active_scratch_descriptor)
                 active_scratch_descriptor = None
-                os.rmdir(scratch_name, dir_fd=destination_descriptor)
             else:
                 cleanup_failed = True
         except (BuildError, OSError):
@@ -7153,23 +7740,36 @@ def _verify_source_inventory(
     except OSError as exc:
         raise BuildError(error_message) from exc
     root_device = root_info.st_dev
+    link_models = {"subdirectories", "entries"}
 
-    def expected_directory_links(path: str) -> int:
-        return 2 + sum(
-            1
-            for name in children[path]
-            if (f"{path}/{name}" if path else name) in directories
-        )
+    def expected_directory_links(path: str) -> dict[str, int]:
+        return {
+            "subdirectories": 2 + sum(
+                1
+                for name in children[path]
+                if (f"{path}/{name}" if path else name) in directories
+            ),
+            # APFS reports a directory link count using all immediate
+            # directory entries, rather than only immediate subdirectories.
+            "entries": 2 + len(children[path]),
+        }
 
     def validate_directory(info: os.stat_result, path: str) -> None:
+        expected_links = expected_directory_links(path)
         if (
             not stat.S_ISDIR(info.st_mode)
             or info.st_dev != root_device
             or info.st_uid != os.geteuid()
             or info.st_gid != os.getegid()
-            or info.st_nlink != expected_directory_links(path)
             or stat.S_IMODE(info.st_mode) != 0o500
         ):
+            raise BuildError(error_message)
+        link_models.intersection_update(
+            model
+            for model, expected in expected_links.items()
+            if info.st_nlink == expected
+        )
+        if not link_models:
             raise BuildError(error_message)
 
     def visit(directory_descriptor: int, prefix: str, depth: int) -> None:
@@ -7373,7 +7973,8 @@ def _verify_source_inventory(
     except (OSError, RuntimeError, ValueError) as exc:
         raise BuildError(error_message) from exc
     if (
-        len(records) != len(entries) + len(directories) - 1
+        len(link_models) != 1
+        or len(records) != len(entries) + len(directories) - 1
         or set(symlink_targets)
         != {path for path, entry in entries.items() if entry.mode == "120000"}
         or not _source_symlinks_are_contained(
@@ -7384,6 +7985,51 @@ def _verify_source_inventory(
     ):
         raise BuildError(error_message)
     return tuple(records)
+
+
+class _DeadlinePipeReader:
+    """Read one owned child pipe without exceeding a total deadline."""
+
+    def __init__(
+        self,
+        stream: Any,
+        *,
+        arguments: Sequence[str],
+        timeout: float,
+    ) -> None:
+        self._stream = stream
+        self._arguments = tuple(arguments)
+        self._timeout = timeout
+        self._deadline = time.monotonic() + timeout
+        self._descriptor = stream.fileno()
+        self._selector = selectors.DefaultSelector()
+        os.set_blocking(self._descriptor, False)
+        self._selector.register(self._descriptor, selectors.EVENT_READ)
+
+    def remaining(self) -> float:
+        return max(0.0, self._deadline - time.monotonic())
+
+    def read(self, size: int = -1) -> bytes:
+        if size == 0:
+            return b""
+        if size < 0:
+            raise BuildError("Exact Git archive read contract is unsafe")
+        while True:
+            remaining = self.remaining()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(
+                    self._arguments,
+                    self._timeout,
+                )
+            if not self._selector.select(min(0.1, remaining)):
+                continue
+            try:
+                return os.read(self._descriptor, size)
+            except BlockingIOError:
+                continue
+
+    def close(self) -> None:
+        self._selector.close()
 
 
 def _materialize_source_snapshot(
@@ -7416,6 +8062,15 @@ def _materialize_source_snapshot(
     snapshot_initial: _DirectorySnapshot | None = None
     build_root_binding: _DirectorySnapshot | None = None
     process: subprocess.Popen[bytes] | None = None
+    repository_descriptor: int | None = None
+    repository_identity: tuple[Any, ...] | None = None
+    git_descriptor: int | None = None
+    git_identity: tuple[Any, ...] | None = None
+    archive_arguments: tuple[str, ...] | None = None
+    archive_effective_arguments: tuple[str, ...] | None = None
+    archive_actual_exec_identity: tuple[int, ...] | None = None
+    archive_exec_identity: tuple[int, ...] | None = None
+    archive_reader: _DeadlinePipeReader | None = None
     stdout_closed = False
     try:
         _refresh_scratch_capability(capability, exact_build_entries=())
@@ -7501,27 +8156,104 @@ def _materialize_source_snapshot(
                         except OSError as exc:
                             if active_error is None:
                                 raise BuildError(error_message) from exc
+        try:
+            if (
+                not repository_root.is_absolute()
+                or repository_root.resolve(strict=True) != repository_root
+            ):
+                raise BuildError(error_message)
+            repository_descriptor = os.open(
+                repository_root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            held_repository = os.fstat(repository_descriptor)
+            named_repository = repository_root.lstat()
+            repository_identity = _stat_metadata(held_repository)
+            if (
+                repository_identity != _stat_metadata(named_repository)
+                or held_repository.st_uid != os.geteuid()
+                or stat.S_IMODE(held_repository.st_mode) & 0o022
+            ):
+                raise BuildError(error_message)
+            git_descriptor = os.open(
+                ".git",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=repository_descriptor,
+            )
+            held_git = os.fstat(git_descriptor)
+            relative_git = os.stat(
+                ".git",
+                dir_fd=repository_descriptor,
+                follow_symlinks=False,
+            )
+            named_git = (repository_root / ".git").lstat()
+            git_identity = _stat_metadata(held_git)
+            if (
+                not stat.S_ISDIR(held_git.st_mode)
+                or git_identity != _stat_metadata(relative_git)
+                or git_identity != _stat_metadata(named_git)
+                or held_git.st_uid != os.geteuid()
+                or held_git.st_gid != os.getegid()
+                or stat.S_IMODE(held_git.st_mode) & 0o022
+            ):
+                raise BuildError(error_message)
+            import bootstrap_python_sidecar as bootstrap
+
+            archive_arguments = tuple(_isolated_git_command(
+                "archive",
+                "--format=tar",
+                str(release_state.get("repositoryCommit", "")),
+                repository_root=repository_root,
+            ))
+            archive_actual_exec_identity = bootstrap._exec_target_identity(
+                Path(archive_arguments[0])
+            )
+            archive_effective_arguments = (
+                str(Path(sys.executable)),
+                "-I",
+                "-c",
+                bootstrap.PATH_CAPABILITY_EXEC_RUNNER,
+                "1",
+                str(git_descriptor),
+                "relative",
+                *(str(item) for item in git_identity),
+                ".git",
+                *(str(item) for item in archive_actual_exec_identity),
+                *archive_arguments,
+            )
+            archive_command, archive_pass_fds, archive_exec_identity = (
+                bootstrap._held_cwd_exec_command(
+                    Path(sys.executable),
+                    archive_effective_arguments,
+                    cwd_descriptor=repository_descriptor,
+                    keep_fds=(git_descriptor,),
+                )
+            )
+        except BuildError:
+            raise
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            raise BuildError(error_message) from exc
         with _defer_publish_signals():
             process = subprocess.Popen(
-                [
-                    *_isolated_git_command(
-                        "archive",
-                        "--format=tar",
-                        str(release_state.get("repositoryCommit", "")),
-                        repository_root=repository_root,
-                    ),
-                ],
-                cwd=repository_root,
+                list(archive_command),
+                cwd=Path("/"),
                 env=_isolated_git_environment(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                pass_fds=archive_pass_fds,
+                close_fds=True,
                 start_new_session=True,
             )
         if process.stdout is None:
             raise BuildError(error_message)
+        archive_reader = _DeadlinePipeReader(
+            process.stdout,
+            arguments=archive_arguments,
+            timeout=SOURCE_ARCHIVE_TIMEOUT_SECONDS,
+        )
         total_size = 0
-        with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+        with tarfile.open(fileobj=archive_reader, mode="r|") as archive:
             for member in archive:
                 name = member.name[:-1] if member.name.endswith("/") else member.name
                 pure = PurePosixPath(name)
@@ -7713,10 +8445,29 @@ def _materialize_source_snapshot(
                 else:  # pragma: no cover - inventory parsing rejects this
                     raise BuildError(error_message)
                 seen.add(name)
+        archive_reader.close()
         process.stdout.close()
         stdout_closed = True
-        if process.wait(timeout=30) != 0 or seen != set(expected):
+        remaining = archive_reader.remaining()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(
+                archive_arguments,
+                SOURCE_ARCHIVE_TIMEOUT_SECONDS,
+            )
+        if process.wait(timeout=remaining) != 0 or seen != set(expected):
             raise BuildError(error_message)
+        if (
+            repository_descriptor is None
+            or archive_exec_identity is None
+            or _stat_metadata(os.fstat(repository_descriptor))
+            != _stat_metadata(repository_root.lstat())
+        ):
+            raise BuildError(error_message)
+        bootstrap._revalidate_exec_identity(
+            Path(sys.executable),
+            archive_effective_arguments,
+            archive_exec_identity,
+        )
         with _defer_publish_signals():
             descendants = _process_group_exists(process.pid)
             if descendants:
@@ -7792,6 +8543,8 @@ def _materialize_source_snapshot(
     finally:
         active_error = sys.exception()
         process_cleanup_error: BaseException | None = None
+        if archive_reader is not None:
+            archive_reader.close()
         if process is not None and process.stdout is not None and not stdout_closed:
             try:
                 process.stdout.close()
@@ -7800,15 +8553,67 @@ def _materialize_source_snapshot(
         if process is not None:
             try:
                 with _defer_publish_signals(preserve_error=active_error):
-                    if _process_group_exists(process.pid):
-                        _terminate_owned_process_group(
-                            process,
-                            error_message=(
-                                "Exact Git archive process group did not stop"
-                            ),
-                        )
+                    _terminate_owned_process_group(
+                        process,
+                        error_message=(
+                            "Exact Git archive process group did not stop"
+                        ),
+                    )
             except BaseException as exc:
                 process_cleanup_error = exc
+        if repository_descriptor is not None and repository_identity is not None:
+            try:
+                if (
+                    _stat_metadata(os.fstat(repository_descriptor))
+                    != repository_identity
+                    or _stat_metadata(repository_root.lstat())
+                    != repository_identity
+                ):
+                    raise BuildError(error_message)
+                if git_descriptor is not None and git_identity is not None:
+                    if (
+                        _stat_metadata(os.fstat(git_descriptor)) != git_identity
+                        or _stat_metadata(
+                            os.stat(
+                                ".git",
+                                dir_fd=repository_descriptor,
+                                follow_symlinks=False,
+                            )
+                        )
+                        != git_identity
+                        or _stat_metadata((repository_root / ".git").lstat())
+                        != git_identity
+                    ):
+                        raise BuildError(error_message)
+                if (
+                    archive_exec_identity is not None
+                    and archive_effective_arguments is not None
+                    and archive_actual_exec_identity is not None
+                ):
+                    import bootstrap_python_sidecar as bootstrap
+
+                    bootstrap._revalidate_exec_identity(
+                        Path(sys.executable),
+                        archive_effective_arguments,
+                        archive_exec_identity,
+                    )
+                    if (
+                        bootstrap._exec_target_identity(Path(archive_arguments[0]))
+                        != archive_actual_exec_identity
+                    ):
+                        raise BuildError(error_message)
+            except BaseException as exc:
+                process_cleanup_error = process_cleanup_error or exc
+        if git_descriptor is not None:
+            try:
+                os.close(git_descriptor)
+            except OSError as exc:
+                process_cleanup_error = process_cleanup_error or exc
+        if repository_descriptor is not None:
+            try:
+                os.close(repository_descriptor)
+            except OSError as exc:
+                process_cleanup_error = process_cleanup_error or exc
         if (
             snapshot_descriptor is not None
             and capability.source_snapshot_descriptor != snapshot_descriptor
@@ -8023,6 +8828,18 @@ def run_frozen_smoke(
         or not stat.S_IMODE(executable_info.st_mode) & 0o111
     ):
         raise BuildError("Frozen sidecar executable is unsafe")
+    if bundle_descriptor is None:
+        raise BuildError("Frozen sidecar bundle capability is unavailable")
+    bundle_binding = _capture_bound_directory(
+        bundle_descriptor,
+        bundle,
+        parent_descriptor=None,
+        relative_name=None,
+        expected=None,
+        expected_mode=None,
+        exact_entries=None,
+        error_message="Frozen sidecar bundle capability is unavailable",
+    )
     with _held_private_smoke_root() as smoke_root:
         trap_directory = smoke_root / "trap"
         trap_marker = smoke_root / "path-used.log"
@@ -8044,7 +8861,7 @@ def run_frozen_smoke(
             executable,
             ("version",),
             environment=environment,
-            inherited_descriptor=bundle_descriptor,
+            cwd_descriptor=bundle_descriptor,
         )
         if (
             version.returncode != 0
@@ -8057,7 +8874,7 @@ def run_frozen_smoke(
             executable,
             ("doctor",),
             environment=environment,
-            inherited_descriptor=bundle_descriptor,
+            cwd_descriptor=bundle_descriptor,
         )
         try:
             doctor = json.loads(doctor_result.stdout)
@@ -8135,45 +8952,69 @@ def run_frozen_smoke(
         log_path = smoke_root / "sidecar.log"
         log_handle: Any | None = None
         log_identity: tuple[int, int] | None = None
+        log_collector: _BoundedFrozenLogCollector | None = None
         process: subprocess.Popen[Any] | None = None
+        api_exec_identity: tuple[int, ...] | None = None
+        api_arguments: tuple[str, ...] | None = None
         try:
             writers, saved_descriptors = _open_child_control_fds()
             broker_thread.start()
             broker_started = True
             log_handle, log_identity = _open_frozen_log(log_path)
+            try:
+                import bootstrap_python_sidecar as bootstrap
+
+                api_arguments = (
+                    str(executable),
+                    "api",
+                    "--uds",
+                    str(socket_path),
+                    "--launch-id",
+                    launch_id,
+                    "--token-fd",
+                    "3",
+                    "--data-dir",
+                    str(data_directory),
+                    "--local-source-root",
+                    str(source_root),
+                    "--retrieval-broker-uds",
+                    str(broker_socket_path),
+                    "--retrieval-capability-fd",
+                    "4",
+                )
+                api_command, api_pass_fds, api_exec_identity = (
+                    bootstrap._held_cwd_exec_command(
+                        Path(sys.executable),
+                        api_arguments,
+                        cwd_descriptor=bundle_descriptor,
+                        keep_fds=(3, 4),
+                    )
+                )
+            except BuildError:
+                raise
+            except (ImportError, OSError, RuntimeError, ValueError) as exc:
+                raise BuildError(
+                    "Frozen sidecar exec capability is unavailable"
+                ) from exc
             with _defer_publish_signals():
                 process = subprocess.Popen(
-                    (
-                        str(executable),
-                        "api",
-                        "--uds",
-                        str(socket_path),
-                        "--launch-id",
-                        launch_id,
-                        "--token-fd",
-                        "3",
-                        "--data-dir",
-                        str(data_directory),
-                        "--local-source-root",
-                        str(source_root),
-                        "--retrieval-broker-uds",
-                        str(broker_socket_path),
-                        "--retrieval-capability-fd",
-                        "4",
-                    ),
-                    cwd=executable.parent,
+                    api_command,
+                    cwd=Path("/"),
                     env=environment,
                     stdin=subprocess.DEVNULL,
-                    stdout=log_handle,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    pass_fds=tuple(
-                        descriptor
-                        for descriptor in (3, 4, bundle_descriptor)
-                        if descriptor is not None
-                    ),
+                    pass_fds=api_pass_fds,
                     close_fds=True,
                     start_new_session=True,
                 )
+            if process.stdout is None:
+                raise BuildError("Frozen sidecar log pipe is unavailable")
+            log_collector = _BoundedFrozenLogCollector(
+                process.stdout,
+                log_handle,
+            )
+            log_collector.start()
             _restore_parent_control_fds(saved_descriptors)
             saved_descriptors = {}
             os.write(writers[3], token.encode("ascii") + b"\n")
@@ -8185,13 +9026,29 @@ def run_frozen_smoke(
                 log_handle,
                 log_path,
                 log_identity,
+                log_collector=log_collector,
             )
-            handshake = _http_json_over_uds(
-                socket_path,
+
+            def smoke_http(
+                request_path: str,
+                **request_options: Any,
+            ) -> Any:
+                if log_collector is None:
+                    raise BuildError("Frozen sidecar log capture is unavailable")
+                log_collector.assert_healthy()
+                response = _http_json_over_uds(
+                    socket_path,
+                    request_path,
+                    token=token,
+                    launch_id=launch_id,
+                    **request_options,
+                )
+                log_collector.assert_healthy()
+                return response
+
+            handshake = smoke_http(
                 "/api/desktop/handshake",
                 check="handshake",
-                token=token,
-                launch_id=launch_id,
             )
             if (
                 not isinstance(handshake, dict)
@@ -8211,12 +9068,9 @@ def run_frozen_smoke(
                 }.issubset(set(handshake.get("capabilities", [])))
             ):
                 raise BuildError("Frozen UDS handshake differs from the contract")
-            health = _http_json_over_uds(
-                socket_path,
+            health = smoke_http(
                 "/api/health",
                 check="health",
-                token=token,
-                launch_id=launch_id,
             )
             if (
                 not isinstance(health, dict)
@@ -8226,12 +9080,9 @@ def run_frozen_smoke(
             ):
                 raise BuildError("Frozen UDS health differs from the contract")
 
-            library = _http_json_over_uds(
-                socket_path,
+            library = smoke_http(
                 "/api/libraries",
                 check="library-create",
-                token=token,
-                launch_id=launch_id,
                 method="POST",
                 body={
                     "name": "Frozen Widget",
@@ -8248,12 +9099,9 @@ def run_frozen_smoke(
             ):
                 raise BuildError("Frozen domain smoke could not create a library")
             library_id = library["id"]
-            job = _http_json_over_uds(
-                socket_path,
+            job = smoke_http(
                 f"/api/libraries/{library_id}/ingest",
                 check="library-ingest",
-                token=token,
-                launch_id=launch_id,
                 method="POST",
                 body={
                     "version": "1.0.0",
@@ -8271,12 +9119,9 @@ def run_frozen_smoke(
             job_id = job["id"]
             job_deadline = time.monotonic() + 90
             while True:
-                completed_job = _http_json_over_uds(
-                    socket_path,
+                completed_job = smoke_http(
                     f"/api/jobs/{job_id}",
                     check="job-status",
-                    token=token,
-                    launch_id=launch_id,
                 )
                 if (
                     not isinstance(completed_job, dict)
@@ -8315,12 +9160,9 @@ def run_frozen_smoke(
                     "Frozen domain job did not prove mock auto-publication"
                 )
 
-            pages = _http_json_over_uds(
-                socket_path,
+            pages = smoke_http(
                 f"/api/libraries/{library_id}/pages?version=1.0.0",
                 check="pages",
-                token=token,
-                launch_id=launch_id,
             )
             if (
                 not isinstance(pages, list)
@@ -8335,22 +9177,16 @@ def run_frozen_smoke(
                 )
             ):
                 raise BuildError("Frozen domain smoke did not publish pages")
-            lint = _http_json_over_uds(
-                socket_path,
+            lint = smoke_http(
                 f"/api/libraries/{library_id}/lint?version=1.0.0",
                 check="lint",
-                token=token,
-                launch_id=launch_id,
                 method="POST",
             )
             if not isinstance(lint, dict) or lint.get("ok") is not True:
                 raise BuildError("Frozen domain lint did not pass")
-            published_library = _http_json_over_uds(
-                socket_path,
+            published_library = smoke_http(
                 f"/api/libraries/{library_id}",
                 check="library-publish",
-                token=token,
-                launch_id=launch_id,
             )
             if (
                 not isinstance(published_library, dict)
@@ -8365,12 +9201,9 @@ def run_frozen_smoke(
                 )
             ):
                 raise BuildError("Frozen domain version was not activated")
-            post_publish_health = _http_json_over_uds(
-                socket_path,
+            post_publish_health = smoke_http(
                 "/api/health",
                 check="post-publish-health",
-                token=token,
-                launch_id=launch_id,
             )
             if (
                 not isinstance(post_publish_health, dict)
@@ -8390,6 +9223,9 @@ def run_frozen_smoke(
                 raise BuildError(
                     "Frozen domain publication did not reconcile retrieval"
                 )
+            if log_collector is None:
+                raise BuildError("Frozen sidecar log capture is unavailable")
+            log_collector.assert_healthy()
             os.close(writers.pop(3))
             try:
                 return_code = process.wait(timeout=20)
@@ -8397,6 +9233,14 @@ def run_frozen_smoke(
                 raise BuildError("Frozen sidecar did not stop after parent EOF") from exc
             if return_code != 0:
                 raise BuildError("Frozen sidecar exited unsuccessfully")
+            log_collector.finish()
+            if api_exec_identity is None:
+                raise BuildError("Frozen sidecar exec capability is unavailable")
+            bootstrap._revalidate_exec_identity(
+                Path(sys.executable),
+                api_arguments,
+                api_exec_identity,
+            )
             with _defer_publish_signals():
                 descendants = _process_group_exists(process.pid)
                 if descendants:
@@ -8438,15 +9282,46 @@ def run_frozen_smoke(
             if process is not None:
                 try:
                     with _defer_publish_signals(preserve_error=active_error):
-                        if _process_group_exists(process.pid):
-                            _terminate_owned_process_group(
-                                process,
-                                error_message=(
-                                    "Frozen sidecar process group did not stop"
-                                ),
-                            )
+                        _terminate_owned_process_group(
+                            process,
+                            error_message=(
+                                "Frozen sidecar process group did not stop"
+                            ),
+                        )
                 except BaseException as exc:
                     process_cleanup_error = exc
+            if log_collector is not None:
+                try:
+                    log_collector.finish()
+                except BaseException as exc:
+                    process_cleanup_error = process_cleanup_error or exc
+            try:
+                bundle_after = _capture_bound_directory(
+                    bundle_descriptor,
+                    bundle,
+                    parent_descriptor=None,
+                    relative_name=None,
+                    expected=bundle_binding,
+                    expected_mode=None,
+                    exact_entries=bundle_binding.entries,
+                    error_message=(
+                        "Frozen sidecar bundle capability changed during smoke"
+                    ),
+                )
+                if bundle_after != bundle_binding:
+                    raise BuildError(
+                        "Frozen sidecar bundle capability changed during smoke"
+                    )
+                if api_exec_identity is not None and api_arguments is not None:
+                    import bootstrap_python_sidecar as bootstrap
+
+                    bootstrap._revalidate_exec_identity(
+                        Path(sys.executable),
+                        api_arguments,
+                        api_exec_identity,
+                    )
+            except BaseException as exc:
+                process_cleanup_error = process_cleanup_error or exc
             broker_stop.set()
             broker_listener.close()
             if broker_started:
@@ -8456,7 +9331,7 @@ def run_frozen_smoke(
                 log_handle.close()
             if process_cleanup_error is not None:
                 raise BuildError(
-                    "Frozen sidecar process group cleanup failed"
+                    "Frozen sidecar process state cleanup or verification failed"
                 ) from (active_error or process_cleanup_error)
         if broker_shutdown_failed:
             raise BuildError("Frozen smoke broker did not stop")
@@ -9314,9 +10189,13 @@ def _publish_staging_impl(
             held = os.fstat(capability.existing_destination_descriptor)
             if _stable_directory_identity(relative) != _stable_directory_identity(held):
                 raise BuildError("Published staging old destination cleanup failed")
-            os.rmdir(
-                quarantine,
-                dir_fd=capability.candidate_parent_descriptor,
+            _remove_verified_quarantine_leaf(
+                capability.candidate_parent_descriptor,
+                original_name=capability.candidate_name,
+                quarantine_name=quarantine,
+                expected=held,
+                directory=True,
+                error_message="Published staging old destination cleanup failed",
             )
             try:
                 os.stat(
@@ -9905,6 +10784,7 @@ def _preserve_evidence(
 def _build_manifest(
     *,
     bundle: Path,
+    bundle_descriptor: int,
     versions: Mapping[str, Any],
     toolchain: Mapping[str, Any],
     release: Mapping[str, Any],
@@ -9924,7 +10804,10 @@ def _build_manifest(
     target = _mapping(toolchain.get("target"), "toolchain target")
     tools = _mapping(toolchain.get("tools"), "toolchain tools")
     files = audit.build_file_inventory(bundle)
-    native = audit.scan_macho_inventory(bundle)
+    native = audit.scan_macho_inventory(
+        bundle,
+        root_descriptor=bundle_descriptor,
+    )
     audit.validate_native_inventory(bundle, native)
     return {
         "$schema": "python-sidecar-build-manifest.schema.json",
@@ -10021,18 +10904,23 @@ def _build_python_sidecar_impl(
     evidence: _EvidenceCapability | None = None
     primary_error: BaseException | None = None
     summary: dict[str, int] | None = None
+    primary_stage = "scratch-create"
     try:
         # The lifecycle owner must cover the callee RETURN_VALUE -> caller
         # STORE_FAST window.  If the transaction reports a pending signal
         # after the assignment, this same try still owns exact cleanup.
         with _defer_publish_signals():
             scratch = _create_private_build_root(output_parent)
+        primary_stage = "repository-state"
         repository_state = _validate_repository_state(environment)
+        primary_stage = "source-materialize"
         _materialize_source_snapshot(scratch, repository_state)
+        primary_stage = "source-revalidate"
         _validate_source_snapshot(scratch)
         source_root = scratch.source_snapshot
         if source_root is None:  # pragma: no cover - validated immediately above
             raise BuildError("Exact Git source capability path is unavailable")
+        primary_stage = "toolchain-contract"
         toolchain = _load_json(
             source_root
             / "backend"
@@ -10051,6 +10939,7 @@ def _build_python_sidecar_impl(
         ):
             raise BuildError("Repository provenance changed before snapshot use")
         _validate_source_snapshot(scratch)
+        primary_stage = "distribution"
         archive = Path(environment["LCF_PYTHON_DISTRIBUTION_ARCHIVE"])
         hash_manifest = Path(
             environment["LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST"]
@@ -10060,6 +10949,7 @@ def _build_python_sidecar_impl(
             hash_manifest,
             toolchain=toolchain,
         )
+        primary_stage = "installed-toolchain"
         install_root = Path(environment["LCF_PYTHON_INSTALL_ROOT"])
         python_fingerprint = verify_python_install_binding(
             install_root,
@@ -10077,6 +10967,7 @@ def _build_python_sidecar_impl(
         )
         verify_exact_toolchain()
         verify_build_tool_versions(toolchain, build_versions)
+        primary_stage = "uv-lock"
         uv_cache = scratch.build_root / UV_CACHE_NAME
         uv_cache_descriptor, uv_cache_snapshot = _create_bound_child_directory(
             parent_descriptor=scratch.build_root_descriptor,
@@ -10106,6 +10997,7 @@ def _build_python_sidecar_impl(
                     raise _CleanupBlockedError(
                         "uv cache capability cleanup failed"
                     ) from exc
+        primary_stage = "runtime-lock"
         runtime_versions = runtime_dependency_versions(
             source_root / "backend" / "uv.lock"
         )
@@ -10118,6 +11010,7 @@ def _build_python_sidecar_impl(
         _validate_source_snapshot(scratch)
         verify_repository_provenance(release)
         verify_exact_toolchain()
+        primary_stage = "pyinstaller"
         bundle_capability, evidence = run_pyinstaller(
             scratch=scratch,
             install_root=install_root,
@@ -10130,6 +11023,7 @@ def _build_python_sidecar_impl(
         verify_repository_provenance(release)
         _validate_bundle_capability(scratch)
         canonical_bundle = bundle_capability.path
+        primary_stage = "frozen-smoke"
         frozen_smoke = run_frozen_smoke(
             canonical_bundle,
             versions,
@@ -10142,6 +11036,7 @@ def _build_python_sidecar_impl(
         )
         _validate_bundle_capability(scratch)
         bundle = bundle_capability.path
+        primary_stage = "component-assembly"
         components = build_components(
             bundle=bundle,
             runtime_versions=runtime_versions,
@@ -10154,6 +11049,7 @@ def _build_python_sidecar_impl(
             error_message="Python sidecar bundle changed during component assembly",
         )
         bundle = bundle_capability.path
+        primary_stage = "compliance-assembly"
         artifacts = write_compliance_artifacts(
             bundle=bundle,
             components=components,
@@ -10183,6 +11079,7 @@ def _build_python_sidecar_impl(
         _validate_source_snapshot(scratch)
         _validate_bundle_capability(scratch)
         bundle = bundle_capability.path
+        primary_stage = "normalize"
         normalize_tree(bundle, int(release["sourceDateEpoch"]))
         _validate_bundle_capability(
             scratch,
@@ -10191,8 +11088,10 @@ def _build_python_sidecar_impl(
         )
         bundle = bundle_capability.path
         canonical_bundle = bundle_capability.path
+        primary_stage = "manifest"
         manifest = _build_manifest(
             bundle=canonical_bundle,
+            bundle_descriptor=bundle_capability.descriptor,
             versions=versions,
             toolchain=toolchain,
             release=release,
@@ -10237,6 +11136,10 @@ def _build_python_sidecar_impl(
             )
             result = audit.audit_bundle(
                 candidate,
+                native_scanner=lambda native_root: audit.scan_macho_inventory(
+                    native_root,
+                    root_descriptor=bundle_capability.descriptor,
+                ),
                 repository_root=source_root,
                 verify_git_provenance=False,
             )
@@ -10248,8 +11151,10 @@ def _build_python_sidecar_impl(
             verify_exact_toolchain()
             return result
 
+        primary_stage = "final-audit"
         summary = final_verifier(bundle)
         verify_exact_toolchain()
+        primary_stage = "publish"
         _publish_owned_bundle(
             scratch,
             bundle_capability,
@@ -10258,7 +11163,7 @@ def _build_python_sidecar_impl(
         )
         verify_exact_toolchain()
     except BaseException as exc:
-        primary_error = exc
+        primary_error = _bind_failure_categories(exc, primary=primary_stage)
         if scratch is None:
             pass
         elif isinstance(exc, _CleanupBlockedError):
@@ -10282,7 +11187,12 @@ def _build_python_sidecar_impl(
                 if isinstance(preservation_error, _CleanupBlockedError):
                     scratch.poisoned = True
                 combined_error = BuildError(
-                    "Python sidecar build failed and evidence preservation failed"
+                    "Python sidecar build failed and evidence preservation failed",
+                    primary_category=(
+                        getattr(primary_error, "primary_category", None)
+                        or primary_stage
+                    ),
+                    cleanup_category="evidence-preserve",
                 )
                 combined_error.__cause__ = primary_error
                 primary_error = combined_error
@@ -10294,7 +11204,10 @@ def _build_python_sidecar_impl(
             raise primary_error
         if isinstance(primary_error, (KeyboardInterrupt, SystemExit)):
             raise primary_error
-        raise BuildError("Python sidecar build failed") from primary_error
+        raise BuildError(
+            "Python sidecar build failed",
+            primary_category=primary_stage,
+        ) from primary_error
     if summary is None:
         raise BuildError("Python sidecar build produced no audit summary")
     return summary
@@ -10308,12 +11221,16 @@ def build_python_sidecar(
 ) -> dict[str, int]:
     """Run the complete scratch-owned lifecycle with cancellable translation."""
 
-    with _translate_cleanup_signals():
-        return _build_python_sidecar_impl(
-            destination=destination,
-            evidence_destination=evidence_destination,
-            environment=environment,
-        )
+    try:
+        with _translate_cleanup_signals():
+            return _build_python_sidecar_impl(
+                destination=destination,
+                evidence_destination=evidence_destination,
+                environment=environment,
+            )
+    except BuildError as exc:
+        _bind_failure_categories(exc, primary="preflight")
+        raise
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -10417,7 +11334,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             environment=os.environ,
         )
     except (BuildError, audit_error_type()) as exc:
-        print(f"python-sidecar build failed: {exc}", file=sys.stderr)
+        _write_inner_build_diagnostic(exc)
+        print("python-sidecar build failed", file=sys.stderr)
         return 2
     print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
     return 0

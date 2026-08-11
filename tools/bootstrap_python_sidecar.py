@@ -23,9 +23,11 @@ import json
 import os
 import re
 import secrets
+import selectors
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -50,6 +52,8 @@ MAX_TREE_TOTAL_BYTES = 1024 * 1024 * 1024
 MAX_RUNTIME_LOCK_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 128 * 1024 * 1024
 MAX_SUBPROCESS_OUTPUT_BYTES = 32 * 1024 * 1024
+MAX_INNER_DIAGNOSTIC_BYTES = 128
+INNER_BUILD_DIAGNOSTIC_FD_ENV = "LCF_INNER_BUILD_DIAGNOSTIC_FD"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 DEFAULT_REVIEWED_FRAMEWORK_ROOT = PurePosixPath(
@@ -106,12 +110,13 @@ try:
     keep_count = int(raw_keep_count, 10)
     if str(cwd_fd) != raw_cwd or cwd_fd < 3 or not 0 <= keep_count <= 256:
         fail("contract")
-    cwd_identity_offset = 3 + keep_count
+    keep_identity_offset = 3 + keep_count
+    cwd_identity_offset = keep_identity_offset + (keep_count * 9)
     target_identity_offset = cwd_identity_offset + 9
     if len(sys.argv) < target_identity_offset + 10:
         fail("contract")
     keep = []
-    for raw in sys.argv[3:cwd_identity_offset]:
+    for raw in sys.argv[3:keep_identity_offset]:
         if not raw.isascii() or not raw.isdecimal():
             fail("contract")
         descriptor = int(raw, 10)
@@ -120,12 +125,26 @@ try:
         keep.append(descriptor)
     if len(set(keep)) != len(keep) or cwd_fd in keep:
         fail("contract")
+    raw_keep_identities = sys.argv[keep_identity_offset:cwd_identity_offset]
     raw_cwd_identity = sys.argv[cwd_identity_offset:target_identity_offset]
     raw_target_identity = sys.argv[target_identity_offset:target_identity_offset + 9]
     if any(
         not item.isascii() or not item.isdecimal()
-        for item in (*raw_cwd_identity, *raw_target_identity)
+        for item in (
+            *raw_keep_identities,
+            *raw_cwd_identity,
+            *raw_target_identity,
+        )
     ):
+        fail("contract")
+    expected_keep_identities = tuple(
+        tuple(
+            int(item, 10)
+            for item in raw_keep_identities[index:index + 9]
+        )
+        for index in range(0, len(raw_keep_identities), 9)
+    )
+    if len(expected_keep_identities) != keep_count:
         fail("contract")
     expected_cwd_identity = tuple(int(item, 10) for item in raw_cwd_identity)
     expected_target_identity = tuple(int(item, 10) for item in raw_target_identity)
@@ -167,8 +186,25 @@ try:
     )
     if not stat.S_ISDIR(cwd_info.st_mode) or cwd_identity != expected_cwd_identity:
         fail("cwd-fd", errno.ENOTDIR)
-    for descriptor in keep:
-        os.fstat(descriptor)
+    for descriptor, expected_identity in zip(
+        keep,
+        expected_keep_identities,
+        strict=True,
+    ):
+        keep_info = os.fstat(descriptor)
+        keep_identity = (
+            keep_info.st_dev,
+            keep_info.st_ino,
+            keep_info.st_mode,
+            keep_info.st_uid,
+            keep_info.st_gid,
+            keep_info.st_nlink,
+            keep_info.st_size,
+            keep_info.st_mtime_ns,
+            keep_info.st_ctime_ns,
+        )
+        if keep_identity != expected_identity:
+            fail("fd-allowlist")
     # PEP 446 makes interpreter-created descriptors non-inheritable, while
     # Popen passed only cwd_fd plus keep.  Close any unexpected descriptor
     # anyway so execve has a mechanically explicit allowlist on Darwin too.
@@ -230,6 +266,162 @@ except OSError as exc:
     fail(locals().get("stage", "contract"), exc.errno or 0)
 except BaseException:
     fail("contract")
+""".strip()
+
+PATH_CAPABILITY_EXEC_RUNNER = r"""
+import errno
+import os
+import signal
+import stat
+import sys
+
+def fail(stage, number=0):
+    try:
+        os.write(
+            2,
+            (
+                "lcf-path-capability-exec: stage=" + stage
+                + " errno=" + str(int(number)) + "\n"
+            ).encode("ascii", errors="strict"),
+        )
+    except BaseException:
+        pass
+    os._exit(126)
+
+try:
+    if len(sys.argv) < 12:
+        fail("contract")
+    raw_count = sys.argv[1]
+    if not raw_count.isascii() or not raw_count.isdecimal():
+        fail("contract")
+    count = int(raw_count, 10)
+    if str(count) != raw_count or not 1 <= count <= 16:
+        fail("contract")
+    target_identity_offset = 2 + (count * 12)
+    target_arguments_offset = target_identity_offset + 9
+    if len(sys.argv) <= target_arguments_offset:
+        fail("contract")
+    descriptors = []
+    for index in range(count):
+        offset = 2 + (index * 12)
+        raw_descriptor = sys.argv[offset]
+        kind = sys.argv[offset + 1]
+        raw_identity = sys.argv[offset + 2:offset + 11]
+        path = sys.argv[offset + 11]
+        if (
+            not raw_descriptor.isascii()
+            or not raw_descriptor.isdecimal()
+            or kind not in {"absolute", "relative"}
+            or len(raw_identity) != 9
+            or any(not item.isascii() or not item.isdecimal() for item in raw_identity)
+            or not path
+            or "\x00" in path
+            or (kind == "absolute") != path.startswith("/")
+            or (kind == "relative" and (
+                os.path.isabs(path)
+                or path in {".", ".."}
+                or ".." in path.split("/")
+            ))
+        ):
+            fail("contract")
+        descriptor = int(raw_descriptor, 10)
+        if descriptor < 3 or str(descriptor) != raw_descriptor:
+            fail("contract")
+        expected = tuple(int(item, 10) for item in raw_identity)
+        stage = "path-fd"
+        held = os.fstat(descriptor)
+        held_identity = (
+            held.st_dev,
+            held.st_ino,
+            held.st_mode,
+            held.st_uid,
+            held.st_gid,
+            held.st_nlink,
+            held.st_size,
+            held.st_mtime_ns,
+            held.st_ctime_ns,
+        )
+        stage = "path-name"
+        named = os.lstat(path)
+        named_identity = (
+            named.st_dev,
+            named.st_ino,
+            named.st_mode,
+            named.st_uid,
+            named.st_gid,
+            named.st_nlink,
+            named.st_size,
+            named.st_mtime_ns,
+            named.st_ctime_ns,
+        )
+        if held_identity != expected or named_identity != expected:
+            fail("path-name")
+        descriptors.append(descriptor)
+    if len(set(descriptors)) != len(descriptors):
+        fail("contract")
+    raw_target_identity = sys.argv[
+        target_identity_offset:target_arguments_offset
+    ]
+    target_arguments = sys.argv[target_arguments_offset:]
+    if (
+        len(raw_target_identity) != 9
+        or any(
+            not item.isascii() or not item.isdecimal()
+            for item in raw_target_identity
+        )
+        or not target_arguments
+        or not target_arguments[0].startswith("/")
+    ):
+        fail("contract")
+    expected_target = tuple(int(item, 10) for item in raw_target_identity)
+    stage = "target"
+    target = os.stat(target_arguments[0], follow_symlinks=True)
+    target_identity = (
+        target.st_dev,
+        target.st_ino,
+        target.st_mode,
+        target.st_uid,
+        target.st_gid,
+        target.st_nlink,
+        target.st_size,
+        target.st_mtime_ns,
+        target.st_ctime_ns,
+    )
+    if (
+        target_identity != expected_target
+        or not stat.S_ISREG(target.st_mode)
+        or not stat.S_IMODE(target.st_mode) & 0o111
+    ):
+        fail("target")
+    for descriptor in descriptors:
+        os.set_inheritable(descriptor, False)
+    stage = "signal-reset"
+    reset = {
+        signal.SIGINT,
+        signal.SIGTERM,
+        getattr(signal, "SIGHUP", signal.SIGTERM),
+        getattr(signal, "SIGPIPE", signal.SIGTERM),
+        getattr(signal, "SIGXFZ", signal.SIGTERM),
+        getattr(signal, "SIGXFSZ", signal.SIGTERM),
+    }
+    for number in reset:
+        signal.signal(number, signal.SIG_DFL)
+    if not hasattr(signal, "pthread_sigmask"):
+        fail("signal-reset")
+    signal.pthread_sigmask(
+        signal.SIG_UNBLOCK,
+        {
+            signal.SIGINT,
+            signal.SIGTERM,
+            getattr(signal, "SIGHUP", signal.SIGTERM),
+        },
+    )
+    stage = "execve"
+    os.execve(target_arguments[0], target_arguments, dict(os.environ))
+except OSError as exc:
+    fail(locals().get("stage", "contract"), exc.errno or 0)
+except BaseException:
+    fail("contract", errno.EINVAL)
 """.strip()
 
 BUILD_TOOL_MANIFEST_KEYS = {
@@ -1674,8 +1866,9 @@ def _held_cwd_exec_command(
     ):
         raise ToolchainBootstrapError("Owned process fd allowlist is invalid")
     try:
-        for descriptor in normalized_keep:
-            os.fstat(descriptor)
+        keep_identities = tuple(
+            _identity(os.fstat(descriptor)) for descriptor in normalized_keep
+        )
     except OSError as exc:
         raise ToolchainBootstrapError("Owned process fd allowlist is unavailable") from exc
     command = (
@@ -1686,6 +1879,11 @@ def _held_cwd_exec_command(
         str(cwd_descriptor),
         str(len(normalized_keep)),
         *(str(item) for item in normalized_keep),
+        *(
+            str(item)
+            for identity in keep_identities
+            for item in identity
+        ),
         *(str(item) for item in _identity(cwd_info)),
         *(str(item) for item in target_identity),
         *tuple(arguments),
@@ -1705,14 +1903,143 @@ def _revalidate_exec_identity(
 
 
 def _held_cwd_failure_category(stderr: str) -> str:
-    matches = re.findall(
+    held_matches = re.findall(
         r"^lcf-held-cwd-exec: stage="
         r"(contract|target|cwd-fd|fd-allowlist|fchdir|signal-reset|execve) "
         r"errno=[0-9]+$",
         stderr,
         flags=re.MULTILINE,
     )
-    return matches[0] if len(matches) == 1 else "unclassified"
+    path_matches = re.findall(
+        r"^lcf-path-capability-exec: stage="
+        r"(contract|path-fd|path-name|target|signal-reset|execve) "
+        r"errno=[0-9]+$",
+        stderr,
+        flags=re.MULTILINE,
+    )
+    categories = [
+        *held_matches,
+        *(f"path-{stage}" for stage in path_matches),
+    ]
+    return categories[0] if len(categories) == 1 else "unclassified"
+
+
+def _communicate_bounded(
+    process: subprocess.Popen[bytes],
+    *,
+    timeout: int,
+    label: str,
+) -> tuple[str, str]:
+    """Drain two owned pipes without allowing unbounded child output."""
+
+    if process.stdout is None or process.stderr is None:
+        raise ToolchainBootstrapError(f"{label} output pipes are unavailable")
+    streams = {
+        process.stdout.fileno(): bytearray(),
+        process.stderr.fileno(): bytearray(),
+    }
+    stream_objects = {
+        process.stdout.fileno(): process.stdout,
+        process.stderr.fileno(): process.stderr,
+    }
+    stdout_descriptor = process.stdout.fileno()
+    total = 0
+    deadline = time.monotonic() + timeout
+    selector = selectors.DefaultSelector()
+    try:
+        for descriptor in streams:
+            os.set_blocking(descriptor, False)
+            selector.register(descriptor, selectors.EVENT_READ)
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            events = selector.select(min(0.1, remaining))
+            for key, _mask in events:
+                descriptor = int(key.fd)
+                chunk = os.read(
+                    descriptor,
+                    min(65_536, MAX_SUBPROCESS_OUTPUT_BYTES - total + 1),
+                )
+                if not chunk:
+                    selector.unregister(descriptor)
+                    continue
+                total += len(chunk)
+                if total > MAX_SUBPROCESS_OUTPUT_BYTES:
+                    raise ToolchainBootstrapError(
+                        f"{label} output exceeds its bound"
+                    )
+                streams[descriptor].extend(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        process.wait(timeout=remaining)
+    finally:
+        selector.close()
+        for stream in stream_objects.values():
+            stream.close()
+    try:
+        stdout = bytes(streams[stdout_descriptor]).decode("utf-8", errors="strict")
+        stderr_descriptor = next(
+            descriptor for descriptor in streams if descriptor != stdout_descriptor
+        )
+        stderr = bytes(streams[stderr_descriptor]).decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise ToolchainBootstrapError(f"{label} output is not UTF-8") from exc
+    return stdout, stderr
+
+
+def _read_inner_build_diagnostic(descriptor: int) -> tuple[str, str] | None:
+    """Read exactly one strict fixed-enum inner-build diagnostic record."""
+
+    payload = bytearray()
+    try:
+        os.set_blocking(descriptor, False)
+        while len(payload) <= MAX_INNER_DIAGNOSTIC_BYTES:
+            try:
+                chunk = os.read(
+                    descriptor,
+                    MAX_INNER_DIAGNOSTIC_BYTES + 1 - len(payload),
+                )
+            except BlockingIOError:
+                # The leader has already exited.  A live writer now means an
+                # unreviewed descendant retained the capability; reject it
+                # without waiting on an attacker-controlled lifetime.
+                return None
+            if not chunk:
+                break
+            payload.extend(chunk)
+    except OSError:
+        return None
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    if len(payload) > MAX_INNER_DIAGNOSTIC_BYTES:
+        return None
+    try:
+        record = payload.decode("ascii", errors="strict")
+    except UnicodeError:
+        return None
+    match = re.fullmatch(
+        r"lcf-inner-build: primary=([a-z][a-z-]{0,31}) "
+        r"cleanup=([a-z][a-z-]{0,31})\n",
+        record,
+    )
+    if match is None:
+        return None
+    try:
+        import build_python_sidecar as inner
+    except ImportError:
+        return None
+    primary, cleanup = match.groups()
+    if (
+        primary not in inner.INNER_PRIMARY_CATEGORIES
+        or cleanup not in inner.INNER_CLEANUP_CATEGORIES
+    ):
+        return None
+    return primary, cleanup
 
 
 def _run_owned_process(
@@ -1726,26 +2053,197 @@ def _run_owned_process(
     build: Any,
     cwd_descriptor: int | None = None,
     launcher_python: Path | None = None,
-) -> str:
-    process: subprocess.Popen[str] | None = None
+    inner_build_diagnostic: bool = False,
+    check: bool = True,
+    path_capabilities: Sequence[tuple[int, str, bool]] = (),
+) -> str | subprocess.CompletedProcess[str]:
+    process: subprocess.Popen[bytes] | None = None
     spawn_arguments: Sequence[str] = arguments
     spawn_cwd = cwd
     inherited_fds = tuple(pass_fds)
+    spawn_environment = dict(environment)
     executable_identity: tuple[int, ...] | None = None
     cwd_identity: tuple[int, ...] | None = None
+    diagnostic_reader: int | None = None
+    diagnostic_writer: int | None = None
+    diagnostic: tuple[str, str] | None = None
+    keep_fd_identities: tuple[tuple[int, ...], ...] = ()
+    path_capability_bindings: tuple[
+        tuple[int, str, bool, tuple[int, ...]], ...
+    ] = ()
+    actual_target_identity: tuple[int, ...] | None = None
+    effective_arguments: Sequence[str] = arguments
+
+    def terminal_fd_identity(
+        descriptor: int,
+        expected: Sequence[int] | None = None,
+    ) -> tuple[int, ...]:
+        identity = _identity(os.fstat(descriptor))
+        # Inherited producer-directory capabilities may legitimately gain
+        # entries while the child runs.  Bind those descriptors to the same
+        # object and access contract here; call-site owners separately verify
+        # the allowed tree/content transition.  Immutable regular-file
+        # capabilities retain their complete metadata identity on every exit.
+        reference = tuple(expected) if expected is not None else identity
+        return identity[:5] if stat.S_ISDIR(reference[2]) else identity
+
+    def revalidate_owned_bindings() -> None:
+        if cwd_descriptor is None:
+            return
+        if cwd_identity != _identity(os.fstat(cwd_descriptor)):
+            raise ToolchainBootstrapError(f"{label} cwd capability changed")
+        if launcher_python is None or executable_identity is None:
+            raise ToolchainBootstrapError(
+                f"{label} executable binding is unavailable"
+            )
+        if len(keep_fd_identities) != len(pass_fds) or any(
+            expected != terminal_fd_identity(descriptor, expected)
+            for descriptor, expected in zip(
+                pass_fds,
+                keep_fd_identities,
+                strict=True,
+            )
+        ):
+            raise ToolchainBootstrapError(f"{label} fd capability changed")
+        for descriptor, path, _mutable, expected in path_capability_bindings:
+            held = _identity(os.fstat(descriptor))
+            named = _identity(
+                os.stat(
+                    path,
+                    dir_fd=(
+                        cwd_descriptor if not os.path.isabs(path) else None
+                    ),
+                    follow_symlinks=False,
+                )
+            )
+            if (
+                held != expected
+                or named != expected
+            ):
+                raise ToolchainBootstrapError(
+                    f"{label} path capability changed"
+                )
+        _revalidate_exec_identity(
+            launcher_python,
+            effective_arguments,
+            executable_identity,
+        )
+        if (
+            actual_target_identity is not None
+            and actual_target_identity
+            != _exec_target_identity(Path(arguments[0]))
+        ):
+            raise ToolchainBootstrapError(f"{label} executable changed")
+
     try:
+        if path_capabilities and cwd_descriptor is None:
+            raise ToolchainBootstrapError(
+                "Owned process path capability requires a held cwd"
+            )
+        if inner_build_diagnostic and not check:
+            raise ToolchainBootstrapError(
+                "Owned process diagnostic contract is invalid"
+            )
+        if inner_build_diagnostic:
+            diagnostic_reader, diagnostic_writer = os.pipe()
+            os.set_inheritable(diagnostic_reader, False)
+            os.set_inheritable(diagnostic_writer, False)
+            inherited_fds = (*inherited_fds, diagnostic_writer)
+            spawn_environment[INNER_BUILD_DIAGNOSTIC_FD_ENV] = str(
+                diagnostic_writer
+            )
         if cwd_descriptor is not None:
             if launcher_python is None:
                 raise ToolchainBootstrapError(
                     "Owned process fchdir launcher is unavailable"
                 )
             cwd_identity = _identity(os.fstat(cwd_descriptor))
+            keep_fd_identities = tuple(
+                terminal_fd_identity(descriptor) for descriptor in pass_fds
+            )
+            if path_capabilities:
+                if launcher_python is None:
+                    raise ToolchainBootstrapError(
+                        "Owned process path-capability launcher is unavailable"
+                    )
+                normalized_paths: list[
+                    tuple[int, str, bool, tuple[int, ...]]
+                ] = []
+                seen_descriptors: set[int] = set()
+                for raw_descriptor, raw_path, mutable in path_capabilities:
+                    descriptor = int(raw_descriptor)
+                    path = str(raw_path)
+                    if (
+                        descriptor < 3
+                        or descriptor == cwd_descriptor
+                        or descriptor in pass_fds
+                        or descriptor in seen_descriptors
+                        or not path
+                        or "\x00" in path
+                        or (
+                            not os.path.isabs(path)
+                            and (
+                                path in {".", ".."}
+                                or ".." in path.split("/")
+                            )
+                        )
+                        or mutable is not False
+                    ):
+                        raise ToolchainBootstrapError(
+                            "Owned process path capability is invalid"
+                        )
+                    identity = _identity(os.fstat(descriptor))
+                    named = _identity(
+                        os.stat(
+                            path,
+                            dir_fd=(
+                                cwd_descriptor
+                                if not os.path.isabs(path)
+                                else None
+                            ),
+                            follow_symlinks=False,
+                        )
+                    )
+                    if named != identity:
+                        raise ToolchainBootstrapError(
+                            "Owned process path capability is unavailable"
+                        )
+                    seen_descriptors.add(descriptor)
+                    normalized_paths.append(
+                        (descriptor, path, mutable, identity)
+                    )
+                path_capability_bindings = tuple(normalized_paths)
+                actual_target_identity = _exec_target_identity(Path(arguments[0]))
+                effective_arguments = (
+                    str(launcher_python),
+                    "-I",
+                    "-c",
+                    PATH_CAPABILITY_EXEC_RUNNER,
+                    str(len(path_capability_bindings)),
+                    *(
+                        item
+                        for descriptor, path, _mutable, identity
+                        in path_capability_bindings
+                        for item in (
+                            str(descriptor),
+                            "absolute" if os.path.isabs(path) else "relative",
+                            *(str(value) for value in identity),
+                            path,
+                        )
+                    ),
+                    *(str(item) for item in actual_target_identity),
+                    *tuple(arguments),
+                )
+                inherited_fds = (
+                    *inherited_fds,
+                    *(descriptor for descriptor, *_rest in path_capability_bindings),
+                )
             spawn_arguments, inherited_fds, executable_identity = (
                 _held_cwd_exec_command(
                     launcher_python,
-                    arguments,
+                    effective_arguments,
                     cwd_descriptor=cwd_descriptor,
-                    keep_fds=pass_fds,
+                    keep_fds=inherited_fds,
                 )
             )
             spawn_cwd = Path("/")
@@ -1757,17 +2255,27 @@ def _run_owned_process(
             process = subprocess.Popen(
                 list(spawn_arguments),
                 cwd=spawn_cwd,
-                env=dict(environment),
+                env=spawn_environment,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                text=False,
                 pass_fds=inherited_fds,
                 close_fds=True,
                 start_new_session=True,
                 umask=0o077,
             )
-        stdout, stderr = process.communicate(timeout=timeout)
+        if diagnostic_writer is not None:
+            os.close(diagnostic_writer)
+            diagnostic_writer = None
+        stdout, stderr = _communicate_bounded(
+            process,
+            timeout=timeout,
+            label=label,
+        )
+        if diagnostic_reader is not None:
+            diagnostic = _read_inner_build_diagnostic(diagnostic_reader)
+            diagnostic_reader = None
         with build._defer_publish_signals():
             descendants = build._process_group_exists(process.pid)
             if descendants:
@@ -1777,35 +2285,32 @@ def _run_owned_process(
                 )
         if descendants:
             raise ToolchainBootstrapError(f"{label} left a descendant process")
-        if cwd_descriptor is not None:
-            if cwd_identity != _identity(os.fstat(cwd_descriptor)):
-                raise ToolchainBootstrapError(
-                    f"{label} cwd capability changed"
-                )
-            if launcher_python is None or executable_identity is None:
-                raise ToolchainBootstrapError(
-                    f"{label} executable binding is unavailable"
-                )
-            _revalidate_exec_identity(
-                launcher_python,
-                arguments,
-                executable_identity,
-            )
-        if process.returncode != 0:
+        revalidate_owned_bindings()
+        if process.returncode != 0 and check:
             if cwd_descriptor is not None:
                 category = _held_cwd_failure_category(stderr)
+                if diagnostic is not None and category == "unclassified":
+                    primary, cleanup = diagnostic
+                    raise ToolchainBootstrapError(
+                        f"{label} failed (exit={process.returncode}; "
+                        f"category=inner-build; primary={primary}; "
+                        f"cleanup={cleanup})"
+                    )
                 raise ToolchainBootstrapError(
                     f"{label} failed (exit={process.returncode}; "
                     f"category={category})"
                 )
             raise ToolchainBootstrapError(f"{label} failed")
-        if (
-            len(stdout.encode("utf-8")) + len(stderr.encode("utf-8"))
-            > MAX_SUBPROCESS_OUTPUT_BYTES
-        ):
-            raise ToolchainBootstrapError(f"{label} output exceeds its bound")
+        if not check:
+            return subprocess.CompletedProcess(
+                tuple(arguments),
+                process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
         return stdout
     except BaseException as exc:
+        cleanup_error: BaseException | None = None
         if process is not None:
             try:
                 with build._defer_publish_signals(preserve_error=exc):
@@ -1813,15 +2318,30 @@ def _run_owned_process(
                         process,
                         error_message=f"{label} process group did not stop",
                     )
-            except BaseException as cleanup_error:
-                raise ToolchainBootstrapError(
-                    f"{label} failed and its process group could not be cleaned"
-                ) from exc
+            except BaseException as observed_cleanup_error:
+                cleanup_error = observed_cleanup_error
+        binding_error: BaseException | None = None
+        try:
+            revalidate_owned_bindings()
+        except BaseException as observed_error:
+            binding_error = observed_error
+        if cleanup_error is not None or binding_error is not None:
+            raise ToolchainBootstrapError(
+                f"{label} failed and its owned process state could not be verified"
+            ) from exc
         if isinstance(exc, ToolchainBootstrapError):
             raise
         if isinstance(exc, build.BuildError):
             raise
         raise ToolchainBootstrapError(f"{label} failed") from exc
+    finally:
+        for descriptor in (diagnostic_reader, diagnostic_writer):
+            if descriptor is None:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def _write_bound_file(
@@ -2249,6 +2769,20 @@ def install_reviewed_python(
                     temporary_fd,
                     package.descriptor,
                 )
+                source_child_fds = tuple(
+                    descriptor
+                    for descriptor in pass_fds
+                    if descriptor
+                    not in {
+                        source.descriptor,
+                        capability.descriptor,
+                        cache_fd,
+                    }
+                )
+                installer_path_capabilities = (
+                    (capability.descriptor, str(capability.path), False),
+                    (cache_fd, str(cache_root), False),
+                )
                 for arguments, label, timeout in (
                     (
                         ("/usr/sbin/pkgutil", "--check-signature", str(package_path)),
@@ -2291,10 +2825,13 @@ def install_reviewed_python(
                         arguments,
                         cwd=source.root,
                         environment=sanitized,
-                        pass_fds=pass_fds,
+                        pass_fds=source_child_fds,
                         timeout=timeout,
                         label=label,
                         build=build,
+                        cwd_descriptor=source.descriptor,
+                        launcher_python=Path(sys.executable),
+                        path_capabilities=installer_path_capabilities,
                     )
                 try:
                     interpreter_info = interpreter.lstat()
@@ -2330,10 +2867,13 @@ def install_reviewed_python(
                     (str(interpreter), "-I", "-c", observer),
                     cwd=source.root,
                     environment=sanitized,
-                    pass_fds=pass_fds,
+                    pass_fds=source_child_fds,
                     timeout=120,
                     label="Installed framework interpreter verification",
                     build=build,
+                    cwd_descriptor=source.descriptor,
+                    launcher_python=interpreter,
+                    path_capabilities=installer_path_capabilities,
                 )
                 try:
                     observed = json.loads(observed_text)
@@ -2507,6 +3047,20 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     home_fd,
                     temporary_fd,
                 )
+                source_child_fds = tuple(
+                    descriptor
+                    for descriptor in pass_fds
+                    if descriptor
+                    not in {
+                        source.descriptor,
+                        capability.descriptor,
+                        cache_fd,
+                    }
+                )
+                toolchain_path_capabilities = (
+                    (capability.descriptor, str(capability.path), False),
+                    (cache_fd, str(cache_root), False),
+                )
                 _revalidate_source_seal(source, build)
                 _run_owned_process(
                     (
@@ -2519,10 +3073,13 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     ),
                     cwd=source.root,
                     environment=sanitized,
-                    pass_fds=pass_fds,
+                    pass_fds=source_child_fds,
                     timeout=300,
                     label="Python bootstrap venv creation",
                     build=build,
+                    cwd_descriptor=source.descriptor,
+                    launcher_python=framework_python,
+                    path_capabilities=toolchain_path_capabilities,
                 )
                 bootstrap_python = bootstrap_root / "bin" / "python"
                 _run_owned_process(
@@ -2544,10 +3101,13 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     ),
                     cwd=source.root,
                     environment=sanitized,
-                    pass_fds=pass_fds,
+                    pass_fds=source_child_fds,
                     timeout=900,
                     label="Hash-locked Python bootstrap install",
                     build=build,
+                    cwd_descriptor=source.descriptor,
+                    launcher_python=bootstrap_python,
+                    path_capabilities=toolchain_path_capabilities,
                 )
                 _privatize_installed_tree(bootstrap_root, bootstrap_fd, build)
                 reviewed_framework_root = PurePosixPath(
@@ -2587,12 +3147,13 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                         ),
                         cwd=source.root,
                         environment=uv_environment,
-                        pass_fds=pass_fds,
+                        pass_fds=source_child_fds,
                         timeout=300,
                         label="Exact uv runtime export",
                         build=build,
                         cwd_descriptor=backend_fd,
                         launcher_python=bootstrap_python,
+                        path_capabilities=toolchain_path_capabilities,
                     )
                 except BaseException as exc:
                     runtime_error = exc
@@ -2645,6 +3206,16 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                 )
                 _revalidate_source_seal(source, build)
                 final_pass_fds = (*pass_fds, runtime_lock.descriptor)
+                final_source_child_fds = tuple(
+                    descriptor
+                    for descriptor in final_pass_fds
+                    if descriptor
+                    not in {
+                        source.descriptor,
+                        capability.descriptor,
+                        cache_fd,
+                    }
+                )
                 _run_owned_process(
                     (
                         str(framework_python),
@@ -2656,10 +3227,13 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     ),
                     cwd=source.root,
                     environment=sanitized,
-                    pass_fds=final_pass_fds,
+                    pass_fds=final_source_child_fds,
                     timeout=300,
                     label="Python build venv creation",
                     build=build,
+                    cwd_descriptor=source.descriptor,
+                    launcher_python=framework_python,
+                    path_capabilities=toolchain_path_capabilities,
                 )
                 build_python = build_root / "bin" / "python"
                 _run_owned_process(
@@ -2683,10 +3257,13 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     ),
                     cwd=source.root,
                     environment=sanitized,
-                    pass_fds=final_pass_fds,
+                    pass_fds=final_source_child_fds,
                     timeout=1200,
                     label="Complete hash-locked Python build install",
                     build=build,
+                    cwd_descriptor=source.descriptor,
+                    launcher_python=build_python,
+                    path_capabilities=toolchain_path_capabilities,
                 )
                 _privatize_installed_tree(build_root, build_fd, build)
                 installed_seal = seal_installed_tree(
@@ -2739,7 +3316,12 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     *(
                         descriptor
                         for descriptor in final_pass_fds
-                        if descriptor != source.descriptor
+                        if descriptor
+                        not in {
+                            source.descriptor,
+                            capability.descriptor,
+                            cache_fd,
+                        }
                     ),
                     evidence_file.descriptor,
                 )
@@ -2757,6 +3339,8 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     build=build,
                     cwd_descriptor=source.descriptor,
                     launcher_python=build_python,
+                    inner_build_diagnostic=True,
+                    path_capabilities=toolchain_path_capabilities,
                 )
                 verify_installed_tree(
                     build_root,

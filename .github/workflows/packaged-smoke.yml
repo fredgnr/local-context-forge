@@ -179,21 +179,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cleanup_assertion="runner-temp-present"
+          trap 'cleanup_status=$?; printf "lcf-scratch-cleanup: assertion=%s\n" "${cleanup_assertion}" >&2; exit "${cleanup_status}"' ERR
           test -n "${RUNNER_TEMP:-}"
+          cleanup_assertion="runner-temp-absolute"
           [[ "${RUNNER_TEMP}" = /* ]]
+          cleanup_assertion="runner-temp-directory"
           test -d "${RUNNER_TEMP}"
+          cleanup_assertion="runner-temp-not-symlink"
           test ! -L "${RUNNER_TEMP}"
+          cleanup_assertion="runner-temp-canonical"
           runner_temp_real="$(cd "${RUNNER_TEMP}" && /bin/pwd -P)"
           test "${runner_temp_real}" = "${RUNNER_TEMP}"
+          cleanup_assertion="runner-temp-owner"
           test "$(/usr/bin/stat -f '%u' "${RUNNER_TEMP}")" = "$(/usr/bin/id -u)"
+          cleanup_assertion="runner-temp-mode"
           runner_temp_mode="$(/usr/bin/stat -f '%Lp' "${RUNNER_TEMP}")"
           (( (8#${runner_temp_mode} & 0022) == 0 ))
-          ! compgen -G "${RUNNER_TEMP}/python-sidecar-toolchain-*" > /dev/null
-          ! compgen -G "${RUNNER_TEMP}/lcf-python-installer.*" > /dev/null
+          shopt -s nullglob
+          cleanup_assertion="runner-toolchain-residue"
+          runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)
+          test "${#runner_toolchain_residue[@]}" -eq 0
+          cleanup_assertion="runner-installer-residue"
+          runner_installer_residue=("${RUNNER_TEMP}"/lcf-python-installer.*)
+          test "${#runner_installer_residue[@]}" -eq 0
+          cleanup_assertion="source-root-bound"
           cd "${LCF_REVIEWED_SOURCE_ROOT:?reviewed source root was not bound}"
+          cleanup_assertion="repo-fixed-directory-residue"
           test ! -e desktop/generated/python-sidecar-build
+          cleanup_assertion="repo-fixed-symlink-residue"
           test ! -L desktop/generated/python-sidecar-build
-          ! compgen -G 'desktop/generated/python-sidecar-build-*' > /dev/null
+          cleanup_assertion="repo-random-directory-residue"
+          repo_random_residue=(desktop/generated/python-sidecar-build-*)
+          test "${#repo_random_residue[@]}" -eq 0
+          trap - ERR
 
       - name: Validate Python sidecar provenance
         shell: bash

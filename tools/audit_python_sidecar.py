@@ -22,6 +22,7 @@ import stat
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -101,6 +102,8 @@ EXPECTED_FROZEN_SMOKE = {
     ],
 }
 MAX_REVIEWED_FRAMEWORK_LEAF_BYTES = 256 * 1024 * 1024
+MAX_NATIVE_SCAN_ENTRIES = 100_000
+MAX_NATIVE_SCAN_DEPTH = 64
 ISOLATED_FRAMEWORK_LEAF_TEMP_PREFIX = "lcf-python-leaf-"
 PRODUCTION_ISOLATION_PARENT = Path("/private/tmp")
 ISOLATED_FRAMEWORK_LEAF_PARENT = PRODUCTION_ISOLATION_PARENT
@@ -115,6 +118,133 @@ BOUND_FILE_STAT_FIELDS = (
     "st_mtime_ns",
     "st_ctime_ns",
 )
+NATIVE_INPUT_EXEC_RUNNER = r"""
+import errno
+import os
+import signal
+import stat
+import sys
+
+def fail(stage, number=0):
+    try:
+        os.write(
+            2,
+            (
+                "lcf-native-input-exec: stage=" + stage
+                + " errno=" + str(int(number)) + "\n"
+            ).encode("ascii", errors="strict"),
+        )
+    except BaseException:
+        pass
+    os._exit(126)
+
+try:
+    if len(sys.argv) < 22:
+        fail("contract")
+    raw_descriptor = sys.argv[1]
+    raw_target_identity = sys.argv[2:11]
+    raw_tool_identity = sys.argv[11:20]
+    tool_arguments = sys.argv[20:]
+    if (
+        not raw_descriptor.isascii()
+        or not raw_descriptor.isdecimal()
+        or any(
+            not item.isascii() or not item.isdecimal()
+            for item in (*raw_target_identity, *raw_tool_identity)
+        )
+        or not tool_arguments
+        or not tool_arguments[0].startswith("/")
+        or os.path.isabs(tool_arguments[-1])
+        or tool_arguments[-1] in {"", ".", ".."}
+        or ".." in tool_arguments[-1].split("/")
+    ):
+        fail("contract")
+    descriptor = int(raw_descriptor, 10)
+    if descriptor < 3 or str(descriptor) != raw_descriptor:
+        fail("contract")
+    expected_target = tuple(int(item, 10) for item in raw_target_identity)
+    expected_tool = tuple(int(item, 10) for item in raw_tool_identity)
+    stage = "input-fd"
+    held = os.fstat(descriptor)
+    held_identity = (
+        held.st_dev,
+        held.st_ino,
+        held.st_mode,
+        held.st_uid,
+        held.st_gid,
+        held.st_nlink,
+        held.st_size,
+        held.st_mtime_ns,
+        held.st_ctime_ns,
+    )
+    stage = "input-path"
+    named = os.lstat(tool_arguments[-1])
+    named_identity = (
+        named.st_dev,
+        named.st_ino,
+        named.st_mode,
+        named.st_uid,
+        named.st_gid,
+        named.st_nlink,
+        named.st_size,
+        named.st_mtime_ns,
+        named.st_ctime_ns,
+    )
+    if (
+        held_identity != expected_target
+        or named_identity != expected_target
+        or not stat.S_ISREG(held.st_mode)
+        or stat.S_ISLNK(named.st_mode)
+    ):
+        fail("input-path")
+    stage = "tool"
+    tool = os.stat(tool_arguments[0], follow_symlinks=True)
+    tool_identity = (
+        tool.st_dev,
+        tool.st_ino,
+        tool.st_mode,
+        tool.st_uid,
+        tool.st_gid,
+        tool.st_nlink,
+        tool.st_size,
+        tool.st_mtime_ns,
+        tool.st_ctime_ns,
+    )
+    if (
+        tool_identity != expected_tool
+        or not stat.S_ISREG(tool.st_mode)
+        or not stat.S_IMODE(tool.st_mode) & 0o111
+    ):
+        fail("tool")
+    os.set_inheritable(descriptor, False)
+    stage = "signal-reset"
+    reset = {
+        signal.SIGINT,
+        signal.SIGTERM,
+        getattr(signal, "SIGHUP", signal.SIGTERM),
+        getattr(signal, "SIGPIPE", signal.SIGTERM),
+        getattr(signal, "SIGXFZ", signal.SIGTERM),
+        getattr(signal, "SIGXFSZ", signal.SIGTERM),
+    }
+    for number in reset:
+        signal.signal(number, signal.SIG_DFL)
+    if not hasattr(signal, "pthread_sigmask"):
+        fail("signal-reset")
+    signal.pthread_sigmask(
+        signal.SIG_UNBLOCK,
+        {
+            signal.SIGINT,
+            signal.SIGTERM,
+            getattr(signal, "SIGHUP", signal.SIGTERM),
+        },
+    )
+    stage = "execve"
+    os.execve(tool_arguments[0], tool_arguments, dict(os.environ))
+except OSError as exc:
+    fail(locals().get("stage", "contract"), exc.errno or 0)
+except BaseException:
+    fail("contract", errno.EINVAL)
+""".strip()
 
 
 class AuditError(RuntimeError):
@@ -602,10 +732,26 @@ def _native_failure_category(
     return "exit"
 
 
+def _native_input_exec_failure_category(stderr: Any) -> str | None:
+    if not isinstance(stderr, str):
+        return None
+    matches = re.findall(
+        r"^lcf-native-input-exec: stage="
+        r"(contract|input-fd|input-path|tool|signal-reset|execve) "
+        r"errno=[0-9]+$",
+        stderr,
+        flags=re.MULTILINE,
+    )
+    return f"wrapper-{matches[0]}" if len(matches) == 1 else None
+
+
 def _run_native_tool(
     arguments: Sequence[str],
     *,
     isolated_framework_leaf: _IsolatedFrameworkLeaf | None = None,
+    execution_root: Path | None = None,
+    execution_root_descriptor: int | None = None,
+    target_descriptor: int | None = None,
 ) -> str:
     if platform.system() != "Darwin":
         raise AuditError("Real Mach-O inspection requires Darwin")
@@ -617,77 +763,187 @@ def _run_native_tool(
         arguments,
         isolated_framework_leaf=isolated_framework_leaf,
     )
-    inherited: dict[int, tuple[int, int]] = {}
-    for argument in arguments:
+    native_target = Path(arguments[-1])
+    if _fd_capability_root(native_target) is not None:
+        raise AuditError("Native inspection tool contract is invalid")
+    held_target_descriptor = target_descriptor
+    if isolated_framework_leaf is not None:
+        if held_target_descriptor is not None:
+            raise AuditError("Native inspection tool contract is invalid")
+        active_root = isolated_framework_leaf.child
+        active_root_descriptor = isolated_framework_leaf.child_descriptor
+        target_descriptor = isolated_framework_leaf.copy_descriptor
+        owns_target_descriptor = False
+        target_parent_descriptor: int | None = active_root_descriptor
+        target_name: str | None = "Python"
+        target_mode: int | None = 0o500
+    else:
+        if execution_root is None or execution_root_descriptor is None:
+            raise AuditError("Native inspection execution capability is unavailable")
+        active_root = execution_root
+        active_root_descriptor = execution_root_descriptor
         try:
-            candidate = Path(argument)
-        except TypeError:
-            continue
-        capability = _fd_capability_root(candidate)
-        if capability is None:
-            continue
-        root, descriptor = capability
-        info = os.fstat(descriptor)
-        root_info = os.stat(root)
-        identity = (info.st_dev, info.st_ino)
-        if identity != (root_info.st_dev, root_info.st_ino):
-            raise AuditError("Native inspection fd capability is unavailable")
-        inherited[descriptor] = identity
+            target_descriptor = (
+                os.dup(held_target_descriptor)
+                if held_target_descriptor is not None
+                else None
+            )
+        except OSError as exc:
+            raise AuditError(
+                "Native inspection execution capability is unavailable"
+            ) from exc
+        owns_target_descriptor = True
+        target_parent_descriptor = None
+        target_name = None
+        target_mode = None
+    error_message = "Native inspection execution capability is unavailable"
+    completed: Any | None = None
+    primary_error: BaseException | None = None
+    root_snapshot: tuple[Any, ...] | None = None
+    target_snapshot: tuple[Any, ...] | None = None
+    native_tool_identity: tuple[int, ...] | None = None
+    bootstrap: Any | None = None
     try:
-        completed = subprocess.run(
-            list(arguments),
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30,
-            env={
+        active_root = _resolve_path(active_root, strict=True)
+        native_target = _resolve_path(native_target, strict=True)
+        try:
+            relative_target = native_target.relative_to(active_root)
+        except ValueError as exc:
+            raise AuditError(error_message) from exc
+        if (
+            not relative_target.parts
+            or any(part in {"", ".", ".."} for part in relative_target.parts)
+        ):
+            raise AuditError(error_message)
+        root_info = os.fstat(active_root_descriptor)
+        root_mode = stat.S_IMODE(root_info.st_mode)
+        if root_mode & 0o022:
+            raise AuditError(error_message)
+        root_entries = tuple(sorted(os.listdir(active_root_descriptor)))
+        root_snapshot = _bound_directory_snapshot(
+            active_root_descriptor,
+            active_root,
+            expected_uid=os.geteuid(),
+            expected_mode=root_mode,
+            exact_entries=root_entries,
+            shared_parent=False,
+            error_message=error_message,
+        )
+        if target_descriptor is None:
+            target_descriptor = os.open(
+                native_target,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+        target_snapshot = _bound_open_regular_file_snapshot(
+            target_descriptor,
+            native_target,
+            required_mode=target_mode,
+            relative_parent_descriptor=target_parent_descriptor,
+            relative_name=target_name,
+            error_message=error_message,
+        )
+        try:
+            import build_python_sidecar as build
+            import bootstrap_python_sidecar as bootstrap_module
+        except ImportError as exc:
+            raise AuditError(error_message) from exc
+        bootstrap = bootstrap_module
+        native_tool_identity = bootstrap._exec_target_identity(
+            Path(arguments[0])
+        )
+        native_arguments = (
+            *tuple(arguments[:-1]),
+            relative_target.as_posix(),
+        )
+        bound_arguments = (
+            sys.executable,
+            "-I",
+            "-c",
+            NATIVE_INPUT_EXEC_RUNNER,
+            str(target_descriptor),
+            *(str(item) for item in target_snapshot[:9]),
+            *(str(item) for item in native_tool_identity),
+            *native_arguments,
+        )
+        completed = build._run_owned_command(
+            bound_arguments,
+            cwd=active_root,
+            cwd_descriptor=active_root_descriptor,
+            environment={
                 "PATH": "/usr/bin:/bin",
                 "LANG": "C",
                 "LC_ALL": "C",
             },
-            pass_fds=tuple(sorted(inherited)),
+            timeout=30,
+            label=f"Native {label}",
+            pass_fds=(target_descriptor,),
+            launcher_python=Path(sys.executable),
         )
-    except subprocess.CalledProcessError as exc:
-        category = _native_failure_category(label, exc.stderr)
+    except BaseException as exc:
+        primary_error = exc
+
+    postcheck_error: BaseException | None = None
+    if root_snapshot is not None and target_snapshot is not None:
+        try:
+            root_after = _bound_directory_snapshot(
+                active_root_descriptor,
+                active_root,
+                expected_uid=os.geteuid(),
+                expected_mode=stat.S_IMODE(os.fstat(active_root_descriptor).st_mode),
+                exact_entries=tuple(root_snapshot[-1]),
+                shared_parent=False,
+                error_message=error_message,
+            )
+            target_after = _bound_open_regular_file_snapshot(
+                target_descriptor,
+                native_target,
+                required_mode=target_mode,
+                relative_parent_descriptor=target_parent_descriptor,
+                relative_name=target_name,
+                error_message=error_message,
+            )
+            if root_after != root_snapshot or target_after != target_snapshot:
+                raise AuditError(error_message)
+            if (
+                bootstrap is None
+                or native_tool_identity is None
+                or bootstrap._exec_target_identity(Path(arguments[0]))
+                != native_tool_identity
+            ):
+                raise AuditError(error_message)
+        except BaseException as exc:
+            postcheck_error = exc
+    if owns_target_descriptor and target_descriptor is not None:
+        try:
+            os.close(target_descriptor)
+        except OSError as exc:
+            postcheck_error = postcheck_error or exc
+
+    if primary_error is not None or postcheck_error is not None:
+        category = "capability" if postcheck_error is not None else "lifecycle"
+        raise AuditError(
+            "Native inspection tool failed "
+            f"(tool={label}; target={target}; category={category})"
+        ) from (primary_error or postcheck_error)
+    if completed is None:
+        raise AuditError(error_message)
+    if completed.returncode != 0:
+        category = (
+            _native_input_exec_failure_category(completed.stderr)
+            if completed.returncode == 126
+            else None
+        ) or _native_failure_category(label, completed.stderr)
         return_code = (
-            exc.returncode
-            if isinstance(exc.returncode, int) and -255 <= exc.returncode <= 255
+            completed.returncode
+            if isinstance(completed.returncode, int)
+            and -255 <= completed.returncode <= 255
             else "other"
         )
         raise AuditError(
             "Native inspection tool failed "
             f"(tool={label}; target={target}; category={category}; "
             f"code={return_code})"
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise AuditError(
-            "Native inspection tool failed "
-            f"(tool={label}; target={target}; category=timeout)"
-        ) from exc
-    except OSError as exc:
-        raise AuditError(
-            "Native inspection tool failed "
-            f"(tool={label}; target={target}; category=launch)"
-        ) from exc
-    finally:
-        active_error = sys.exception()
-        for descriptor, identity in inherited.items():
-            try:
-                held = os.fstat(descriptor)
-                observed = os.stat(Path("/dev/fd") / str(descriptor))
-                if (
-                    (held.st_dev, held.st_ino) != identity
-                    or (observed.st_dev, observed.st_ino) != identity
-                ):
-                    raise AuditError(
-                        "Native inspection fd capability changed"
-                    )
-            except (OSError, RuntimeError, ValueError) as exc:
-                if active_error is None:
-                    raise AuditError(
-                        "Native inspection fd capability changed"
-                    ) from exc
+        )
     return completed.stdout
 
 
@@ -1475,7 +1731,11 @@ def _cleanup_isolated_framework_leaf(
         raise AuditError("Python framework isolation cleanup failed")
 
 
-def _prepare_isolated_framework_leaf(source: Path) -> _IsolatedFrameworkLeaf:
+def _prepare_isolated_framework_leaf(
+    source: Path,
+    *,
+    held_source_descriptor: int | None = None,
+) -> _IsolatedFrameworkLeaf:
     """Create one byte-identical private copy while retaining every bound fd."""
 
     parent: Path | None = None
@@ -1518,9 +1778,13 @@ def _prepare_isolated_framework_leaf(source: Path) -> _IsolatedFrameworkLeaf:
             error_message=error_message,
         )
 
-        source_descriptor = os.open(
-            source,
-            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        source_descriptor = (
+            os.dup(held_source_descriptor)
+            if held_source_descriptor is not None
+            else os.open(
+                source,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            )
         )
         source_snapshot = _bound_open_regular_file_snapshot(
             source_descriptor,
@@ -1705,10 +1969,52 @@ def _validate_isolated_framework_leaf_state(
         raise AuditError(error_message)
 
 
-def _verify_code_signature(root: Path, path: Path) -> None:
+def _verify_code_signature(
+    root: Path,
+    path: Path,
+    *,
+    root_descriptor: int | None = None,
+    target_descriptor: int | None = None,
+) -> None:
+    owned_descriptor: int | None = None
+    active_descriptor = root_descriptor
+    try:
+        if active_descriptor is None:
+            active_descriptor = os.open(
+                root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            owned_descriptor = active_descriptor
+        _verify_code_signature_bound(
+            root,
+            path,
+            root_descriptor=active_descriptor,
+            target_descriptor=target_descriptor,
+        )
+    finally:
+        if owned_descriptor is not None:
+            try:
+                os.close(owned_descriptor)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise AuditError(
+                        "Native signature root capability cleanup failed"
+                    ) from exc
+
+
+def _verify_code_signature_bound(
+    root: Path,
+    path: Path,
+    *,
+    root_descriptor: int,
+    target_descriptor: int | None,
+) -> None:
     framework_snapshot = _validate_reviewed_python_framework(root, path)
     if framework_snapshot is not None:
-        isolation = _prepare_isolated_framework_leaf(path)
+        isolation = _prepare_isolated_framework_leaf(
+            path,
+            held_source_descriptor=target_descriptor,
+        )
         try:
             _run_native_tool(
                 (
@@ -1739,49 +2045,311 @@ def _verify_code_signature(root: Path, path: Path) -> None:
                 copy_created=True,
             )
         return
-    _run_native_tool(("/usr/bin/codesign", "--verify", "--strict", str(path)))
+    _run_native_tool(
+        ("/usr/bin/codesign", "--verify", "--strict", str(path)),
+        execution_root=root,
+        execution_root_descriptor=root_descriptor,
+        target_descriptor=target_descriptor,
+    )
 
 
-def scan_macho_inventory(root: Path) -> list[dict[str, Any]]:
+def _held_native_tree_inventory(
+    root_descriptor: int,
+) -> tuple[tuple[str, tuple[Any, ...], str, bool], ...]:
+    """Enumerate and classify a native tree without reopening its root name."""
+
+    records: list[tuple[str, tuple[Any, ...], str, bool]] = []
+    root_info = os.fstat(root_descriptor)
+    root_device = root_info.st_dev
+
+    def walk(descriptor: int, parts: tuple[str, ...]) -> None:
+        if len(parts) > MAX_NATIVE_SCAN_DEPTH:
+            raise AuditError("Native inventory exceeds its depth bound")
+        before = _bound_file_identity(os.fstat(descriptor))
+        try:
+            names = tuple(sorted(os.listdir(descriptor)))
+        except OSError as exc:
+            raise AuditError("Native inventory directory is unreadable") from exc
+        for name in names:
+            if (
+                not name
+                or name in {".", ".."}
+                or "/" in name
+                or "\\" in name
+                or "\x00" in name
+                or any(ord(character) < 0x20 for character in name)
+            ):
+                raise AuditError("Native inventory contains an unsafe name")
+            relative_parts = (*parts, name)
+            relative = PurePosixPath(*relative_parts).as_posix()
+            try:
+                named_before = os.stat(
+                    name,
+                    dir_fd=descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise AuditError("Native inventory entry changed") from exc
+            identity = _bound_file_identity(named_before)
+            if named_before.st_uid != os.geteuid() or named_before.st_dev != root_device:
+                raise AuditError("Native inventory entry is unsafe")
+            if stat.S_ISDIR(named_before.st_mode):
+                if stat.S_IMODE(named_before.st_mode) & 0o022:
+                    raise AuditError("Native inventory directory is writable")
+                child = os.open(
+                    name,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    dir_fd=descriptor,
+                )
+                try:
+                    if _bound_file_identity(os.fstat(child)) != identity:
+                        raise AuditError("Native inventory entry changed")
+                    records.append((relative, identity, "directory", False))
+                    if len(records) > MAX_NATIVE_SCAN_ENTRIES:
+                        raise AuditError("Native inventory exceeds its entry bound")
+                    walk(child, relative_parts)
+                    if (
+                        _bound_file_identity(os.fstat(child)) != identity
+                        or _bound_file_identity(
+                            os.stat(
+                                name,
+                                dir_fd=descriptor,
+                                follow_symlinks=False,
+                            )
+                        )
+                        != identity
+                    ):
+                        raise AuditError("Native inventory entry changed")
+                finally:
+                    os.close(child)
+            elif stat.S_ISREG(named_before.st_mode):
+                if (
+                    named_before.st_nlink != 1
+                    or stat.S_IMODE(named_before.st_mode) & 0o022
+                ):
+                    raise AuditError("Native inventory file is unsafe")
+                child = os.open(
+                    name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=descriptor,
+                )
+                try:
+                    if _bound_file_identity(os.fstat(child)) != identity:
+                        raise AuditError("Native inventory entry changed")
+                    magic = os.pread(child, 4, 0)
+                    if (
+                        _bound_file_identity(os.fstat(child)) != identity
+                        or _bound_file_identity(
+                            os.stat(
+                                name,
+                                dir_fd=descriptor,
+                                follow_symlinks=False,
+                            )
+                        )
+                        != identity
+                    ):
+                        raise AuditError("Native inventory entry changed")
+                finally:
+                    os.close(child)
+                records.append((relative, identity, "file", magic in MACHO_MAGICS))
+            elif stat.S_ISLNK(named_before.st_mode):
+                try:
+                    link_target = os.readlink(name, dir_fd=descriptor)
+                    named_after = os.stat(
+                        name,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                except OSError as exc:
+                    raise AuditError("Native inventory entry changed") from exc
+                if _bound_file_identity(named_after) != identity:
+                    raise AuditError("Native inventory entry changed")
+                records.append((relative, identity, f"symlink:{link_target}", False))
+            else:
+                raise AuditError("Native inventory contains a special file")
+            if len(records) > MAX_NATIVE_SCAN_ENTRIES:
+                raise AuditError("Native inventory exceeds its entry bound")
+        if _bound_file_identity(os.fstat(descriptor)) != before:
+            raise AuditError("Native inventory directory changed")
+
+    walk(root_descriptor, ())
+    return tuple(records)
+
+
+def _open_held_native_leaf(
+    root_descriptor: int,
+    relative: str,
+    expected: Mapping[str, tuple[Any, ...]],
+) -> int:
+    """Open one inventoried regular leaf through no-follow directory fds."""
+
+    pure = PurePosixPath(relative)
+    if not pure.parts or any(part in {"", ".", ".."} for part in pure.parts):
+        raise AuditError("Native inventory path is unsafe")
+    current = os.dup(root_descriptor)
+    try:
+        for index, part in enumerate(pure.parts):
+            final = index == len(pure.parts) - 1
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+            if not final:
+                flags |= os.O_DIRECTORY
+            child = os.open(part, flags, dir_fd=current)
+            os.close(current)
+            current = child
+            prefix = PurePosixPath(*pure.parts[: index + 1]).as_posix()
+            if _bound_file_identity(os.fstat(current)) != expected.get(prefix):
+                raise AuditError("Native inventory path changed")
+        return current
+    except BaseException:
+        try:
+            os.close(current)
+        except OSError:
+            pass
+        raise
+
+
+def scan_macho_inventory(
+    root: Path,
+    *,
+    root_descriptor: int | None = None,
+) -> list[dict[str, Any]]:
     """Inspect every Mach-O using platform tools and return canonical evidence."""
 
     if platform.system() != "Darwin":
         raise AuditError("Real Mach-O inspection requires Darwin")
     root = _resolve_path(root, strict=True)
+    held_root_descriptor = root_descriptor
+    root_descriptor = None
+    root_snapshot: tuple[Any, ...] | None = None
+    tree_snapshot: tuple[tuple[str, tuple[Any, ...], str, bool], ...] | None = None
     records: list[dict[str, Any]] = []
-    for path in sorted(
-        (candidate for candidate in root.rglob("*") if candidate.is_file()),
-        key=lambda candidate: candidate.relative_to(root).as_posix(),
-    ):
-        if path.is_symlink() or not is_macho(path):
-            continue
-        load_commands = _run_native_tool(("/usr/bin/otool", "-l", str(path)))
-        native_platform, minimum_macos = _parse_otool_build_target(load_commands)
-        _verify_code_signature(root, path)
-        raw_dependencies = _parse_otool_dependencies(
-            _run_native_tool(("/usr/bin/otool", "-L", str(path)))
+    try:
+        root_descriptor = (
+            os.dup(held_root_descriptor)
+            if held_root_descriptor is not None
+            else os.open(
+                root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
         )
-        install_name = _parse_otool_install_name(
-            _run_native_tool(("/usr/bin/otool", "-D", str(path)))
+        root_info = os.fstat(root_descriptor)
+        root_mode = stat.S_IMODE(root_info.st_mode)
+        if root_mode & 0o022:
+            raise AuditError("Native inventory root capability is unsafe")
+        root_entries = tuple(sorted(os.listdir(root_descriptor)))
+        root_snapshot = _bound_directory_snapshot(
+            root_descriptor,
+            root,
+            expected_uid=os.geteuid(),
+            expected_mode=root_mode,
+            exact_entries=root_entries,
+            shared_parent=False,
+            error_message="Native inventory root capability is unsafe",
         )
-        record: dict[str, Any] = {
-            "path": _relative_name(root, path),
-            "architectures": _parse_lipo_architectures(
-                _run_native_tool(("/usr/bin/lipo", "-archs", str(path)))
-            ),
-            "dylibs": _reconcile_otool_dependencies(
-                raw_dependencies,
-                install_name,
-            ),
-            "rpaths": _parse_otool_rpaths(load_commands),
-            "platform": native_platform,
-            "minimumMacosVersion": minimum_macos,
-            "codeSignature": "valid",
+        tree_snapshot = _held_native_tree_inventory(root_descriptor)
+        expected_identities = {
+            relative: identity
+            for relative, identity, _kind, _is_macho in tree_snapshot
         }
-        if install_name is not None:
-            record["installName"] = install_name
-        records.append(record)
-    return records
+        for relative, _identity, kind, macho in tree_snapshot:
+            if kind != "file" or not macho:
+                continue
+            path = root.joinpath(*PurePosixPath(relative).parts)
+            target_descriptor = _open_held_native_leaf(
+                root_descriptor,
+                relative,
+                expected_identities,
+            )
+            native_options = {
+                "execution_root": root,
+                "execution_root_descriptor": root_descriptor,
+                "target_descriptor": target_descriptor,
+            }
+            try:
+                load_commands = _run_native_tool(
+                    ("/usr/bin/otool", "-l", str(path)),
+                    **native_options,
+                )
+                native_platform, minimum_macos = _parse_otool_build_target(
+                    load_commands
+                )
+                _verify_code_signature(
+                    root,
+                    path,
+                    root_descriptor=root_descriptor,
+                    target_descriptor=target_descriptor,
+                )
+                raw_dependencies = _parse_otool_dependencies(
+                    _run_native_tool(
+                        ("/usr/bin/otool", "-L", str(path)),
+                        **native_options,
+                    )
+                )
+                install_name = _parse_otool_install_name(
+                    _run_native_tool(
+                        ("/usr/bin/otool", "-D", str(path)),
+                        **native_options,
+                    )
+                )
+                record: dict[str, Any] = {
+                    "path": relative,
+                    "architectures": _parse_lipo_architectures(
+                        _run_native_tool(
+                            ("/usr/bin/lipo", "-archs", str(path)),
+                            **native_options,
+                        )
+                    ),
+                    "dylibs": _reconcile_otool_dependencies(
+                        raw_dependencies,
+                        install_name,
+                    ),
+                    "rpaths": _parse_otool_rpaths(load_commands),
+                    "platform": native_platform,
+                    "minimumMacosVersion": minimum_macos,
+                    "codeSignature": "valid",
+                }
+                if install_name is not None:
+                    record["installName"] = install_name
+                records.append(record)
+            finally:
+                os.close(target_descriptor)
+        return records
+    finally:
+        active_error = sys.exception()
+        capability_error: BaseException | None = None
+        if root_descriptor is not None and root_snapshot is not None:
+            try:
+                if (
+                    tree_snapshot is not None
+                    and _held_native_tree_inventory(root_descriptor)
+                    != tree_snapshot
+                ):
+                    raise AuditError("Native inventory tree changed")
+                root_after = _bound_directory_snapshot(
+                    root_descriptor,
+                    root,
+                    expected_uid=os.geteuid(),
+                    expected_mode=stat.S_IMODE(os.fstat(root_descriptor).st_mode),
+                    exact_entries=tuple(root_snapshot[-1]),
+                    shared_parent=False,
+                    error_message="Native inventory root capability changed",
+                )
+                if root_after != root_snapshot:
+                    raise AuditError("Native inventory root capability changed")
+            except BaseException as exc:
+                capability_error = exc
+        if root_descriptor is not None:
+            try:
+                os.close(root_descriptor)
+            except OSError as exc:
+                capability_error = capability_error or exc
+        if capability_error is not None:
+            raise AuditError("Native inventory root capability changed") from (
+                active_error or capability_error
+            )
 
 
 def _safe_manifest_path(value: Any, label: str) -> PurePosixPath:
@@ -2047,6 +2615,107 @@ def _reviewed_build_boundary() -> Any:
         raise AuditError("Manifest Git provenance cannot be verified") from exc
 
 
+@contextmanager
+def _held_git_boundary(
+    repository_root: Path,
+) -> Iterable[tuple[Any, int, int]]:
+    """Hold the reviewed repository and .git namespace for one audit query."""
+
+    build = _reviewed_build_boundary()
+    repository_descriptor: int | None = None
+    git_descriptor: int | None = None
+    repository_identity: tuple[Any, ...] | None = None
+    git_identity: tuple[Any, ...] | None = None
+    error_message = "Manifest Git provenance cannot be verified"
+    try:
+        if (
+            not repository_root.is_absolute()
+            or repository_root.resolve(strict=True) != repository_root
+        ):
+            raise AuditError(error_message)
+        repository_descriptor = os.open(
+            repository_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        held_repository = os.fstat(repository_descriptor)
+        named_repository = repository_root.lstat()
+        repository_identity = build._stat_metadata(held_repository)
+        if (
+            repository_identity != build._stat_metadata(named_repository)
+            or not stat.S_ISDIR(held_repository.st_mode)
+            or stat.S_ISLNK(named_repository.st_mode)
+            or held_repository.st_uid != os.geteuid()
+            or held_repository.st_gid != os.getegid()
+            or stat.S_IMODE(held_repository.st_mode) & 0o022
+        ):
+            raise AuditError(error_message)
+        git_descriptor = os.open(
+            ".git",
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=repository_descriptor,
+        )
+        held_git = os.fstat(git_descriptor)
+        relative_git = os.stat(
+            ".git",
+            dir_fd=repository_descriptor,
+            follow_symlinks=False,
+        )
+        named_git = (repository_root / ".git").lstat()
+        git_identity = build._stat_metadata(held_git)
+        if (
+            git_identity != build._stat_metadata(relative_git)
+            or git_identity != build._stat_metadata(named_git)
+            or not stat.S_ISDIR(held_git.st_mode)
+            or stat.S_ISLNK(relative_git.st_mode)
+            or held_git.st_uid != os.geteuid()
+            or held_git.st_gid != os.getegid()
+            or stat.S_IMODE(held_git.st_mode) & 0o022
+        ):
+            raise AuditError(error_message)
+        yield build, repository_descriptor, git_descriptor
+    except AuditError:
+        raise
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise AuditError(error_message) from exc
+    finally:
+        active_error = sys.exception()
+        boundary_error: BaseException | None = None
+        if repository_descriptor is not None and repository_identity is not None:
+            try:
+                if (
+                    build._stat_metadata(os.fstat(repository_descriptor))
+                    != repository_identity
+                    or build._stat_metadata(repository_root.lstat())
+                    != repository_identity
+                    or git_descriptor is None
+                    or git_identity is None
+                    or build._stat_metadata(os.fstat(git_descriptor))
+                    != git_identity
+                    or build._stat_metadata(
+                        os.stat(
+                            ".git",
+                            dir_fd=repository_descriptor,
+                            follow_symlinks=False,
+                        )
+                    )
+                    != git_identity
+                    or build._stat_metadata((repository_root / ".git").lstat())
+                    != git_identity
+                ):
+                    raise AuditError(error_message)
+            except BaseException as exc:
+                boundary_error = exc
+        for descriptor in (git_descriptor, repository_descriptor):
+            if descriptor is None:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                boundary_error = boundary_error or exc
+        if boundary_error is not None:
+            raise AuditError(error_message) from (active_error or boundary_error)
+
+
 def _git_provenance_output(
     repository_root: Path,
     *arguments: str,
@@ -2055,12 +2724,30 @@ def _git_provenance_output(
     """Run one Git query only through the reviewed build-side boundary."""
 
     try:
-        build = _reviewed_build_boundary()
-        build._validate_local_git_configuration(repository_root=repository_root)
-        build._validate_git_info_overrides(repository_root=repository_root)
-        if binary:
-            return build._git_bytes(*arguments, repository_root=repository_root)
-        return build._git_output(*arguments, repository_root=repository_root)
+        with _held_git_boundary(repository_root) as (
+            build,
+            repository_descriptor,
+            git_descriptor,
+        ):
+            build._validate_local_git_configuration(
+                repository_root=repository_root,
+                repository_descriptor=repository_descriptor,
+                git_descriptor=git_descriptor,
+            )
+            build._validate_git_info_overrides(repository_root=repository_root)
+            if binary:
+                return build._git_bytes(
+                    *arguments,
+                    repository_root=repository_root,
+                    repository_descriptor=repository_descriptor,
+                    git_descriptor=git_descriptor,
+                )
+            return build._git_output(
+                *arguments,
+                repository_root=repository_root,
+                repository_descriptor=repository_descriptor,
+                git_descriptor=git_descriptor,
+            )
     except AuditError:
         raise
     except (ImportError, OSError, RuntimeError, ValueError) as exc:
@@ -2072,13 +2759,32 @@ def _git_tree_inventory_sha256(
     repository_commit: str,
 ) -> str:
     try:
-        build = _reviewed_build_boundary()
-        _git_provenance_output(repository_root, "rev-parse", repository_commit)
-        inventory = build._repository_tree_inventory(
-            repository_commit,
-            repository_root=repository_root,
-        )
-        return build._source_snapshot_sha256(inventory)
+        with _held_git_boundary(repository_root) as (
+            build,
+            repository_descriptor,
+            git_descriptor,
+        ):
+            build._validate_local_git_configuration(
+                repository_root=repository_root,
+                repository_descriptor=repository_descriptor,
+                git_descriptor=git_descriptor,
+            )
+            build._validate_git_info_overrides(repository_root=repository_root)
+            if build._git_output(
+                "rev-parse",
+                repository_commit,
+                repository_root=repository_root,
+                repository_descriptor=repository_descriptor,
+                git_descriptor=git_descriptor,
+            ).lower() != repository_commit:
+                raise AuditError("Manifest Git provenance cannot be verified")
+            inventory = build._repository_tree_inventory(
+                repository_commit,
+                repository_root=repository_root,
+                repository_descriptor=repository_descriptor,
+                git_descriptor=git_descriptor,
+            )
+            return build._source_snapshot_sha256(inventory)
     except AuditError:
         raise
     except (ImportError, OSError, RuntimeError, ValueError) as exc:

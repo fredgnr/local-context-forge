@@ -254,9 +254,9 @@ CURRENT_W01_TRACE_MARKER = (
 )
 W02_PHASE_MARKERS = {
     "engineering-smoke boundary/assembly：旧 static technical run 保留；PR #21 independent",
-    "acceptance `NO-GO`；第一次、第二次、第三次 remediation technical attempts 均为 `fail` / `superseded`",
-    "下一 exact candidate `not-run`。旧 exact Draft head",
-    "packaged App launch/runtime smoke：三次 remediation 均未执行，下一 candidate 也尚未运行，\n"
+    "acceptance `NO-GO`；第一次至第四次 remediation technical attempts 均为 `fail` / `superseded`",
+    "第五 exact candidate `not-run`。旧 exact Draft head",
+    "packaged App launch/runtime smoke：四次 remediation 均未执行，第五 candidate 也尚未运行，\n"
     "    当前 `not-run`",
     "W10/W11 保持 locked",
 }
@@ -354,6 +354,12 @@ W02_PR21_THIRD_REMEDIATION_ASSEMBLY_RUN = "31258135925"
 W02_PR21_THIRD_REMEDIATION_ASSEMBLY_JOB = "93104615763"
 W02_PR21_THIRD_REMEDIATION_SOURCE_RUN = "31258135929"
 W02_PR21_THIRD_REMEDIATION_CONTAINER_RUN = "31258135932"
+W02_PR21_FOURTH_REMEDIATION_HEAD = "c2be665f5832c15064cae87c694a782e51351e7c"
+W02_PR21_FOURTH_REMEDIATION_TREE = "f90b527b4de1a422f63c4bfeb01f9c1010e22b7d"
+W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_RUN = "31358373320"
+W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_JOB = "93362214499"
+W02_PR21_FOURTH_REMEDIATION_SOURCE_RUN = "31358373316"
+W02_PR21_FOURTH_REMEDIATION_CONTAINER_RUN = "31358373311"
 W02_PR21_AUTHORITY_MARKER = (
     "<!-- w02-pr21-nogo-authority: "
     f"context={W02_PR21_CONTEXT},base={W02_PR21_BASE},"
@@ -391,8 +397,17 @@ W02_PR21_THIRD_REMEDIATION_AUTHORITY_MARKER = (
     f"source-run={W02_PR21_THIRD_REMEDIATION_SOURCE_RUN},"
     f"container-run={W02_PR21_THIRD_REMEDIATION_CONTAINER_RUN},result=fail -->"
 )
+W02_PR21_FOURTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-fourth-remediation-authority: "
+    f"source={W02_PR21_FOURTH_REMEDIATION_HEAD},"
+    f"tree={W02_PR21_FOURTH_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_FOURTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_FOURTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
 W02_PR21_REMEDIATION_DOCUMENT_SHA256 = (
-    "ad6124f032c642d13644ae55e66106ece07ef633338a589e9f7f3c42cfe2755c"
+    "90379dfbe99a5fb8854c48f3b446611edd6fb1371f37420325069c175c33359a"
 )
 W02_PR21_REMEDIATION_REQUIRED_MARKERS = {
     "PR #21 independent NO-GO 与 remediation 交接",
@@ -452,6 +467,26 @@ W02_PR21_REMEDIATION_REQUIRED_MARKERS = {
     "| technical result | **`fail`**；第三次 remediation attempt 已 `superseded` |",
     "| PR #21 third remediation technical attempt | `fail` / `superseded`",
     "| PR #21 next exact remediation technical candidate | `not-run`",
+    "第四次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_FOURTH_REMEDIATION_HEAD}` |",
+    f"| exact tree | `{W02_PR21_FOURTH_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_FOURTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_FOURTH_REMEDIATION_CONTAINER_RUN}`",
+    "`Exact Python sidecar inner build failed (exit=2; category=unclassified)`",
+    "cleanup-only `always()` gate 也以 exit `1` 失败",
+    "Actions 原始日志直接证明的是 inner `exit=2/category=unclassified` 与随后 cleanup gate `exit=1`",
+    "Apple APFS reference 把 directory `nchildren` 定义为全部\n   directory entries",
+    "没有找到公开 Apple/XNU source 对 `nchildren` 到 POSIX `st_nlink` 的直接",
+    "source snapshot 已密封为 `0500`",
+    "| technical result | **`fail`**；第四次 remediation attempt 已 `superseded` |",
+    "| PR #21 fourth remediation technical attempt | `fail` / `superseded`",
+    "第五次 remediation technical candidate：`not-run`",
+    "| PR #21 fifth remediation technical candidate | `not-run`",
+    "本地完整 Python packaging corpus 为 `533 passed / 2 skipped`",
+    "两个 skip 分别是 foreign-owner\nfilesystem capability case 与 Darwin/APFS 真机 case，在当前 Linux 环境 `not-run`",
+    "| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…`）；本候选 `pending` |",
     "| latest independent acceptance | `NO-GO`",
     "| W02 | `in-progress` |",
     "| `VAL-PACKAGED-SMOKE-001` | `not-run` |",
@@ -478,7 +513,8 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         "exact `9f7d5d…` / tree `ea8e62…`",
         "exact `9ecf0e…` / tree `ee8271…`",
         "第三次 exact `2665ec…` / tree\n  `c3cd17…`",
-        "下一 exact remediation technical candidate `not-run`",
+        "第四次 exact `c2be665f…` / tree `f90b527b…`",
+        "第五次\n  exact remediation technical candidate `not-run`",
         "`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`",
     },
     "TODO": {
@@ -492,15 +528,18 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_THIRD_REMEDIATION_HEAD,
         W02_PR21_THIRD_REMEDIATION_TREE,
         "third remediation technical attempt 仍为\n`fail` / `superseded`",
-        "next exact remediation technical candidate\n`not-run`",
+        W02_PR21_FOURTH_REMEDIATION_HEAD,
+        W02_PR21_FOURTH_REMEDIATION_TREE,
+        "fourth remediation technical attempt 也为\n`fail` / `superseded`",
+        "fifth exact remediation technical candidate `not-run`",
         "W10/W11 保持 locked",
     },
     "traceability": {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "independent `NO-GO`",
-        "first `9f7d5d…`、second `9ecf0e…`、third `2665ec…` remediations technical `fail` / `superseded` appended",
-        "next exact candidate `not-run`",
+        "first `9f7d5d…`、second `9ecf0e…`、third `2665ec…`、fourth `c2be665f…` remediations technical `fail` / `superseded` appended",
+        "fifth exact candidate `not-run`",
         "W10/W11 locked",
     },
     "iteration": {
@@ -511,6 +550,8 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_SECOND_REMEDIATION_TREE,
         W02_PR21_THIRD_REMEDIATION_HEAD,
         W02_PR21_THIRD_REMEDIATION_TREE,
+        W02_PR21_FOURTH_REMEDIATION_HEAD,
+        W02_PR21_FOURTH_REMEDIATION_TREE,
         "也为 technical `fail` / `superseded`",
         "remediation technical candidate `not-run`",
         "W10/W11 保持 locked",
@@ -523,8 +564,10 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_SECOND_REMEDIATION_TREE,
         W02_PR21_THIRD_REMEDIATION_HEAD,
         W02_PR21_THIRD_REMEDIATION_TREE,
-        "three remediation attempts `fail` / `superseded`",
-        "next exact candidate `not-run`",
+        W02_PR21_FOURTH_REMEDIATION_HEAD,
+        W02_PR21_FOURTH_REMEDIATION_TREE,
+        "four remediation attempts `fail` / `superseded`",
+        "fifth exact candidate `not-run`",
         "W10/W11 locked",
         "public release NO-GO",
     },
@@ -532,9 +575,10 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "independent `NO-GO`",
-        W02_PR21_THIRD_REMEDIATION_HEAD,
-        W02_PR21_THIRD_REMEDIATION_TREE,
-        "next exact candidate `not-run`",
+        "first/second/third/fourth remediation technical attempts `fail` / `superseded`",
+        W02_PR21_FOURTH_REMEDIATION_HEAD,
+        W02_PR21_FOURTH_REMEDIATION_TREE,
+        "fifth exact candidate `not-run`",
         "W10/W11 locked",
     },
     "parent iteration": {
@@ -836,6 +880,10 @@ def validate_documents(
         errors.append(
             "W02 PR #21 remediation must contain the exact third-attempt authority marker once"
         )
+    if w02_remediation.count(W02_PR21_FOURTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact fourth-attempt authority marker once"
+        )
     if (
         hashlib.sha256(w02_remediation.encode("utf-8")).hexdigest()
         != W02_PR21_REMEDIATION_DOCUMENT_SHA256
@@ -910,6 +958,8 @@ def validate_documents(
     ):
         if re.search(r"(?:REQ|TODO|VAL|ITER)-W02A\b|\bW02A\b", text):
             errors.append(f"{label} must not create a W02A stable ID")
+        if re.search(r"\bW02-B\b|\bW02B\b", text):
+            errors.append(f"{label} must not introduce W02-B/W02B")
 
     authority_requirements = {
         "ADR-0016": (adr, {"VAL-RELEASE-CONTINUITY-001", "W13 checkpoint", "W16"}),

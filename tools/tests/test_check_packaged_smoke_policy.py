@@ -29,6 +29,13 @@ def changed(current: dict[str, object], key: str, old: str, new: str) -> None:
     current[key] = value.replace(old, new, 1)
 
 
+def changed_all(current: dict[str, object], key: str, old: str, new: str) -> None:
+    value = str(current[key])
+    if old not in value:
+        raise AssertionError(f"fixture marker missing: {old!r}")
+    current[key] = value.replace(old, new)
+
+
 def changed_last(current: dict[str, object], key: str, old: str, new: str) -> None:
     value = str(current[key])
     offset = value.rfind(old)
@@ -970,6 +977,18 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                     errors,
                 )
 
+        current = inputs()
+        bootstrap = str(current["python_bootstrap"])
+        prefix, separator, suffix = bootstrap.rpartition("signal.SIG_UNBLOCK")
+        self.assertEqual(separator, "signal.SIG_UNBLOCK")
+        current["python_bootstrap"] = prefix + "signal.SIG_BLOCK" + suffix
+        with synchronized_input_document_summaries(current, "python_bootstrap"):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact Python held-cwd launcher signal contract drifted",
+            errors,
+        )
+
         canonical_runner_mutations = (
             (
                 "source_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))",
@@ -1497,6 +1516,118 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                     errors,
                 )
 
+    def test_python_repository_gate_keeps_held_repository_bindings(self) -> None:
+        mutations = (
+            (
+                "                git_descriptor=git_descriptor,\n",
+                "                git_descriptor=None,\n",
+            ),
+            (
+                "            repository_descriptor=repository_descriptor,\n"
+                "            git_descriptor=git_descriptor,\n"
+                "        )\n"
+                "        _validate_git_info_overrides",
+                "            repository_descriptor=repository_descriptor,\n"
+                "            git_descriptor=None,\n"
+                "        )\n"
+                "        _validate_git_info_overrides",
+            ),
+            (
+                "            git_descriptor=git_descriptor,\n"
+                "        )\n"
+                "        _validate_tracked_worktree",
+                "            git_descriptor=None,\n"
+                "        )\n"
+                "        _validate_tracked_worktree",
+            ),
+            (
+                '            "--untracked-files=all",\n',
+                '            "--untracked-files=no",\n',
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "build_script", old, new)
+                with synchronized_input_document_summaries(current, "build_script"):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "Python sidecar exact repository gate is not descriptor-bound",
+                    errors,
+                )
+
+    def test_toolchain_children_keep_private_epoch_path_bindings(self) -> None:
+        mutations = (
+            (
+                "                    (cache_fd, str(cache_root), False),\n",
+                "                    # cache epoch binding removed\n",
+            ),
+            (
+                "                    path_capabilities=toolchain_path_capabilities,\n",
+                "                    path_capabilities=(),\n",
+            ),
+            (
+                "                        path_capabilities=installer_path_capabilities,\n",
+                "                        path_capabilities=(),\n",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact Python toolchain bootstrap/seal closure drifted",
+                    errors,
+                )
+
+    def test_frozen_sidecar_log_cannot_bypass_its_bounded_owner(self) -> None:
+        mutations = (
+            (
+                "                    stdout=subprocess.PIPE,\n"
+                "                    stderr=subprocess.STDOUT,\n",
+                "                    stdout=log_handle,\n"
+                "                    stderr=subprocess.STDOUT,\n",
+            ),
+            (
+                "            log_collector.start()\n",
+                "            # collector disabled\n",
+            ),
+            (
+                "            log_collector.finish()\n",
+                "            log_collector.assert_healthy()\n",
+            ),
+            (
+                "test_frozen_live_log_collector_bounds_output_before_owner_cleanup",
+                "test_frozen_log_is_not_bounded",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                key = (
+                    "python_packaging_tests"
+                    if old.startswith("test_frozen")
+                    else "build_script"
+                )
+                changed(current, key, old, new)
+                with synchronized_input_document_summaries(current, key):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(
+                    any(
+                        "bounded log owner" in error
+                        or "bounded log owner lifecycle" in error
+                        or "output bypasses" in error
+                        or "candidate capability tests" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
     def test_python_candidate_capability_spans_producer_consumers_and_publish(self) -> None:
         mutations = (
             (
@@ -1538,6 +1669,15 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "                candidate,\n",
                 "            result = audit.audit_bundle(\n"
                 "                bundle_capability.path,\n",
+            ),
+            (
+                "build_script",
+                "                native_scanner=lambda native_root: "
+                "audit.scan_macho_inventory(\n"
+                "                    native_root,\n"
+                "                    root_descriptor=bundle_capability.descriptor,\n"
+                "                ),\n",
+                "                native_scanner=audit.scan_macho_inventory,\n",
             ),
             (
                 "build_script",
@@ -1698,13 +1838,37 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "audit_script",
-                "        build._validate_local_git_configuration(repository_root=repository_root)\n",
-                "",
+                "            build._validate_local_git_configuration(\n"
+                "                repository_root=repository_root,\n"
+                "                repository_descriptor=repository_descriptor,\n"
+                "                git_descriptor=git_descriptor,\n"
+                "            )\n",
+                "            pass  # local Git validation removed\n",
             ),
             (
                 "audit_script",
-                "        build._validate_git_info_overrides(repository_root=repository_root)\n",
-                "",
+                "            build._validate_git_info_overrides(repository_root=repository_root)\n",
+                "            pass  # info override validation removed\n",
+            ),
+            (
+                "audit_script",
+                "        with _held_git_boundary(repository_root) as (\n",
+                "        with _unheld_git_boundary(repository_root) as (\n",
+            ),
+            (
+                "audit_script",
+                "                return build._git_bytes(\n"
+                "                    *arguments,\n"
+                "                    repository_root=repository_root,\n"
+                "                    repository_descriptor=repository_descriptor,\n"
+                "                    git_descriptor=git_descriptor,\n"
+                "                )\n",
+                "                return build._git_bytes(\n"
+                "                    *arguments,\n"
+                "                    repository_root=repository_root,\n"
+                "                    repository_descriptor=repository_descriptor,\n"
+                "                    git_descriptor=None,\n"
+                "                )\n",
             ),
             (
                 "audit_script",
@@ -1841,7 +2005,13 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         ):
             with self.subTest(key=key, old=old):
                 current = inputs()
-                changed(current, key, old, new)
+                if key == "remediation_evidence":
+                    # Append-only evidence can repeat a historical boundary.
+                    # Remove every copy so the mutation proves current
+                    # authority is not satisfied by a stale earlier section.
+                    changed_all(current, key, old, new)
+                else:
+                    changed(current, key, old, new)
                 with synchronized_input_document_summaries(current, key):
                     errors = CHECKER.validate_policy(current)
                 self.assertTrue(
@@ -1997,7 +2167,7 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "          true",
             ),
             (
-                "          ! compgen -G 'desktop/generated/python-sidecar-build-*' > /dev/null",
+                '          test "${#repo_random_residue[@]}" -eq 0',
                 "          true",
             ),
             (
@@ -2197,6 +2367,52 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                         errors,
                     )
 
+    def test_post_build_cleanup_fixed_sanitized_assertion_labels_are_locked(self) -> None:
+        labels = (
+            "runner-temp-present",
+            "runner-temp-absolute",
+            "runner-temp-directory",
+            "runner-temp-not-symlink",
+            "runner-temp-canonical",
+            "runner-temp-owner",
+            "runner-temp-mode",
+            "runner-toolchain-residue",
+            "runner-installer-residue",
+            "source-root-bound",
+            "repo-fixed-directory-residue",
+            "repo-fixed-symlink-residue",
+            "repo-random-directory-residue",
+        )
+        for key, summary in (
+            ("workflow", synchronized_workflow_summary),
+            ("formal_workflow", synchronized_formal_workflow_summary),
+        ):
+            for label in labels:
+                with self.subTest(key=key, label=label):
+                    current = inputs()
+                    changed(
+                        current,
+                        key,
+                        f'          cleanup_assertion="{label}"',
+                        '          cleanup_assertion="unreviewed"',
+                    )
+                    with summary(current):
+                        errors = CHECKER.validate_policy(current)
+                    self.assertTrue(
+                        any(
+                            "cleanup" in error.lower()
+                            or "critical step" in error.lower()
+                            or "run-step contract" in error.lower()
+                            for error in errors
+                        ),
+                        errors,
+                    )
+
+        cleanup = CHECKER.EXPECTED_POST_BUILD_CLEANUP_RUN
+        self.assertIn("lcf-scratch-cleanup: assertion=%s", cleanup)
+        for unsafe in ("find ", "ls ", "rm -rf", "chmod 777", "compgen"):
+            self.assertNotIn(unsafe, cleanup)
+
     def test_post_build_revalidates_all_five_fixed_provenance_keys(self) -> None:
 
         shape_lines = (
@@ -2221,16 +2437,16 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                     errors,
                 )
 
-        for scratch_pattern in (
-            '${RUNNER_TEMP}/python-sidecar-toolchain-*',
-            '${RUNNER_TEMP}/lcf-python-installer.*',
+        for residue_assertion in (
+            '          test "${#runner_toolchain_residue[@]}" -eq 0',
+            '          test "${#runner_installer_residue[@]}" -eq 0',
         ):
-            with self.subTest(scratch_pattern=scratch_pattern):
+            with self.subTest(residue_assertion=residue_assertion):
                 current = inputs()
                 changed(
                     current,
                     "workflow",
-                    f'          ! compgen -G "{scratch_pattern}" > /dev/null',
+                    residue_assertion,
                     "          true",
                 )
                 with synchronized_workflow_summary(current):

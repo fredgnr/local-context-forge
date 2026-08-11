@@ -42,13 +42,13 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "makefile": "3f6031722218b2d81094be3c488de17609abe07b34dd9f908bd7a2e1087b20ab",
     "build_script": "dd19982686d1dc6067797fe0e0a777d2576fed5c687522e600b206dd2fb59036",
     "audit_script": "d3b2d638e28981915f346ead114f86f8bc82ddbbfb91f15416bc3127866504c9",
-    "python_bootstrap": "87369520db59ba8a9f9e74adde937d17b52f4df25d62b0ad5d89982836f9fc7c",
+    "python_bootstrap": "c240c7dc0949e2d1cbd011292d1bd68054927186bc3b2c44aa452d9bef9a8b17",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "7282fee1da2117af7dbfae54382314eebddb1d12c2bd36f87ce21d763635d947",
+    "python_packaging_tests": "ae72f097278c4491099334d30427c220616851da1780a5039696cee39d224074",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "90379dfbe99a5fb8854c48f3b446611edd6fb1371f37420325069c175c33359a",
+    "remediation_evidence": "69e765d2c00ac98be017d43a2d02952b4e6d73b51fdf80949ff7486e79ef61f2",
     "package": "8572d59212b1233e701338d40bb3a47525db052a41b80b27e1a797d6e07fc712",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
@@ -81,10 +81,10 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
     "formal_workflow": "1fbf1f932b9d83e11ce4480c0e0a2cae100482b3d24db5f3f0a1fc23d5cbb509",
-    "status": "33f2f40dc2a86c1edd5ddf91fb8384a7e76aee279b91b3a130036f7aa8168310",
-    "todo": "a63542a471c5f569e64cdf67906755d795921c5461f4571df5e147d0af4b2a67",
-    "trace": "4c9268ee6ebff9337701bca043e600cb162e316043bf01d282becee7e45686fe",
-    "iteration": "dcd9ab2a88817a19a6c16e886c52b00bd8ee66f795bd5558be1b4fee12ad8c7c",
+    "status": "5fdc6c7bf999cfde3b5d4c2f68ecd8b3df7356a3bbd4a67fd9f36f42f2fc53a1",
+    "todo": "81b816935a5e65a243393fe96a2d83e070e7cbeef13a963f6284def8994a5959",
+    "trace": "b4d345f451a7bc9c73ce8fce4643a3cd62bed6ca7c24dcc90bda964526c1b428",
+    "iteration": "96d7bf9efbdd460635d223712309e565eced345e2e38f3b570f01501997bf63a",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -830,6 +830,622 @@ def _python_exec_runner_signal_contract_is_semantic(source: str) -> bool:
         if any(marker not in runner for marker in required_markers):
             return False
     return True
+
+
+def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
+    """Bind launcher-name replacement to the one reviewed installer producer."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    held = _python_function(tree, "_held_executable")
+    revalidate = _python_function(tree, "_revalidate_held_executable")
+    owned = _python_function(tree, "_run_owned_process")
+    reviewed_installer = _python_function(
+        tree,
+        "_run_reviewed_framework_installer",
+    )
+    install = _python_function(tree, "install_reviewed_python")
+    if any(
+        item is None
+        for item in (held, revalidate, owned, reviewed_installer, install)
+    ):
+        return False
+    assert held is not None
+    assert revalidate is not None
+    assert owned is not None
+    assert reviewed_installer is not None
+    assert install is not None
+
+    def exact_expression(node: ast.AST, expression: str) -> bool:
+        expected = ast.parse(expression, mode="eval").body
+        return ast.dump(node, include_attributes=False) == ast.dump(
+            expected,
+            include_attributes=False,
+        )
+
+    def direct_toolchain_raise(statement: ast.stmt) -> bool:
+        return (
+            isinstance(statement, ast.Raise)
+            and isinstance(statement.exc, ast.Call)
+            and _python_attribute_path(statement.exc.func)
+            == ("ToolchainBootstrapError",)
+        )
+
+    if (
+        source.count(
+            'LAUNCHER_NAME_INSTALLER_REBIND = "installer-producer-rebind"'
+        )
+        != 1
+        or source.count("with _held_executable(") != 2
+        or source.count(
+            "launcher_name_policy=LAUNCHER_NAME_INSTALLER_REBIND"
+        )
+        != 1
+        or source.count(
+            "launcher_rebind_authority="
+            "_REVIEWED_INSTALLER_REBIND_AUTHORITY"
+        )
+        != 1
+        or source.count("launcher_binding=") != 4
+        or not _python_exact_single_assignment(
+            install,
+            "active_launcher",
+            "Path(sys.executable).resolve(strict=True)",
+        )
+        or not _python_exact_single_assignment(
+            install,
+            "installer_path_capabilities",
+            "((capability.descriptor, str(capability.path), False), "
+            "(cache_fd, str(cache_root), False), "
+            "(package.descriptor, str(package_path), False))",
+        )
+        or not _python_exact_single_assignment(
+            owned,
+            "terminal_launcher_policy",
+            "LAUNCHER_NAME_INSTALLER_REBIND if "
+            "(launcher_name_policy == LAUNCHER_NAME_INSTALLER_REBIND "
+            "and process.returncode == 0 and check) else LAUNCHER_NAME_SAME",
+        )
+        or not _python_exact_single_assignment(
+            reviewed_installer,
+            "package_capabilities",
+            "tuple((descriptor, str(path), mutable) "
+            "for descriptor, path, mutable in path_capabilities "
+            "if descriptor == package.descriptor)",
+        )
+    ):
+        return False
+
+    owned_top_level_tries = [
+        statement for statement in owned.body if isinstance(statement, ast.Try)
+    ]
+    if (
+        len(owned_top_level_tries) != 1
+        or owned.body[-1] is not owned_top_level_tries[0]
+        or len(owned_top_level_tries[0].handlers) != 1
+    ):
+        return False
+    owned_try = owned_top_level_tries[0]
+    owned_handler = owned_try.handlers[0]
+    if (
+        _python_attribute_path(owned_handler.type) != ("BaseException",)
+        or owned_handler.name != "exc"
+        or tuple(type(statement) for statement in owned_handler.body)
+        != (
+            ast.AnnAssign,
+            ast.If,
+            ast.AnnAssign,
+            ast.If,
+            ast.If,
+            ast.If,
+            ast.If,
+            ast.Raise,
+        )
+    ):
+        return False
+    exception_binding_if = owned_handler.body[3]
+    if (
+        not isinstance(exception_binding_if, ast.If)
+        or not exact_expression(
+            exception_binding_if.test,
+            "process is not None",
+        )
+        or len(exception_binding_if.body) != 1
+        or exception_binding_if.orelse
+        or not isinstance(exception_binding_if.body[0], ast.Try)
+    ):
+        return False
+    exception_binding_try = exception_binding_if.body[0]
+    exception_binding_call = (
+        exception_binding_try.body[0].value
+        if len(exception_binding_try.body) == 1
+        and isinstance(exception_binding_try.body[0], ast.Expr)
+        and isinstance(exception_binding_try.body[0].value, ast.Call)
+        else None
+    )
+    if (
+        exception_binding_call is None
+        or _python_attribute_path(exception_binding_call.func)
+        != ("revalidate_owned_bindings",)
+        or exception_binding_call.args
+        or len(exception_binding_call.keywords) != 1
+        or exception_binding_call.keywords[0].arg != "name_policy"
+        or _python_attribute_path(exception_binding_call.keywords[0].value)
+        != ("LAUNCHER_NAME_SAME",)
+        or exception_binding_try.orelse
+        or exception_binding_try.finalbody
+        or len(exception_binding_try.handlers) != 1
+    ):
+        return False
+    exception_binding_handler = exception_binding_try.handlers[0]
+    expected_binding_assignment = ast.parse(
+        "binding_error = observed_error"
+    ).body[0]
+    if (
+        _python_attribute_path(exception_binding_handler.type)
+        != ("BaseException",)
+        or exception_binding_handler.name != "observed_error"
+        or len(exception_binding_handler.body) != 1
+        or ast.dump(
+            exception_binding_handler.body[0],
+            include_attributes=False,
+        )
+        != ast.dump(expected_binding_assignment, include_attributes=False)
+    ):
+        return False
+    exception_revalidations = [
+        node
+        for node in ast.walk(owned_handler)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func)
+        == ("revalidate_owned_bindings",)
+    ]
+    if exception_revalidations != [exception_binding_call]:
+        return False
+
+    held_body_types = (
+        ast.Expr,
+        ast.AnnAssign,
+        ast.AnnAssign,
+        ast.AnnAssign,
+        ast.Try,
+        ast.AnnAssign,
+        ast.If,
+        ast.AnnAssign,
+        ast.If,
+        ast.If,
+        ast.If,
+        ast.If,
+    )
+    if (
+        tuple(type(statement) for statement in held.body) != held_body_types
+        or len(held.decorator_list) != 1
+        or _python_attribute_path(held.decorator_list[0])
+        != ("contextlib", "contextmanager")
+    ):
+        return False
+    terminal_if = held.body[6]
+    assert isinstance(terminal_if, ast.If)
+    if (
+        not exact_expression(terminal_if.test, "binding is not None")
+        or len(terminal_if.body) != 1
+        or terminal_if.orelse
+        or not isinstance(terminal_if.body[0], ast.Try)
+    ):
+        return False
+    terminal_try = terminal_if.body[0]
+    assert isinstance(terminal_try, ast.Try)
+    terminal_call = (
+        terminal_try.body[0].value
+        if len(terminal_try.body) == 1
+        and isinstance(terminal_try.body[0], ast.Expr)
+        and isinstance(terminal_try.body[0].value, ast.Call)
+        else None
+    )
+    if (
+        terminal_call is None
+        or _python_attribute_path(terminal_call.func)
+        != ("_revalidate_held_executable",)
+        or len(terminal_call.args) != 1
+        or _python_attribute_path(terminal_call.args[0]) != ("binding",)
+        or {
+            keyword.arg: _python_attribute_path(keyword.value)
+            for keyword in terminal_call.keywords
+            if keyword.arg is not None
+        }
+        != {
+            "name_policy": ("terminal_name_policy",),
+            "error_message": ("error_message",),
+        }
+        or terminal_try.orelse
+        or terminal_try.finalbody
+        or len(terminal_try.handlers) != 1
+    ):
+        return False
+
+    if (
+        tuple(type(statement) for statement in revalidate.body)
+        != (ast.Expr, ast.Try)
+        or not isinstance(revalidate.body[1], ast.Try)
+    ):
+        return False
+    revalidate_try = revalidate.body[1]
+    assert isinstance(revalidate_try, ast.Try)
+    if tuple(type(statement) for statement in revalidate_try.body) != (
+        ast.Assign,
+        ast.Assign,
+        ast.Assign,
+        ast.If,
+        ast.Assign,
+        ast.If,
+    ):
+        return False
+    policy_if = revalidate_try.body[3]
+    hash_if = revalidate_try.body[5]
+    assert isinstance(policy_if, ast.If)
+    assert isinstance(hash_if, ast.If)
+    if (
+        not exact_expression(
+            policy_if.test,
+            "name_policy == LAUNCHER_NAME_SAME",
+        )
+        or len(policy_if.body) != 1
+        or not isinstance(policy_if.body[0], ast.If)
+        or not exact_expression(
+            policy_if.body[0].test,
+            "held_identity != binding.identity "
+            "or _identity(named) != binding.identity",
+        )
+        or len(policy_if.orelse) != 1
+        or not isinstance(policy_if.orelse[0], ast.If)
+    ):
+        return False
+    rebind_if = policy_if.orelse[0]
+    assert isinstance(rebind_if, ast.If)
+    if (
+        not exact_expression(
+            rebind_if.test,
+            "name_policy == LAUNCHER_NAME_INSTALLER_REBIND",
+        )
+        or tuple(type(statement) for statement in rebind_if.body)
+        != (ast.Assign, ast.If)
+        or len(rebind_if.orelse) != 1
+        or not direct_toolchain_raise(rebind_if.orelse[0])
+    ):
+        return False
+    named_if = rebind_if.body[1]
+    assert isinstance(named_if, ast.If)
+    if (
+        not exact_expression(
+            named_if.test,
+            "_identity(named) == binding.identity",
+        )
+        or len(named_if.body) != 1
+        or not isinstance(named_if.body[0], ast.If)
+        or not exact_expression(
+            named_if.body[0].test,
+            "held_identity != binding.identity",
+        )
+        or len(named_if.orelse) != 1
+        or not isinstance(named_if.orelse[0], ast.If)
+        or not exact_expression(
+            named_if.orelse[0].test,
+            "tuple(held_identity[index] for index in stable_indexes) != "
+            "tuple(binding.identity[index] for index in stable_indexes) "
+            "or held.st_nlink != 0 "
+            "or not stat.S_ISREG(named.st_mode) "
+            "or stat.S_ISLNK(named.st_mode) "
+            "or named.st_uid not in {0, os.geteuid()} "
+            "or named.st_nlink != 1 "
+            "or stat.S_IMODE(named.st_mode) & 0o7022 "
+            "or not stat.S_IMODE(named.st_mode) & 0o111",
+        )
+        or len(named_if.orelse[0].body) != 1
+        or not direct_toolchain_raise(named_if.orelse[0].body[0])
+        or not exact_expression(
+            hash_if.test,
+            "hashlib.sha256(payload).hexdigest() != binding.sha256",
+        )
+        or len(hash_if.body) != 1
+        or not direct_toolchain_raise(hash_if.body[0])
+    ):
+        return False
+
+    held_source = ast.get_source_segment(source, held) or ""
+    revalidate_source = ast.get_source_segment(source, revalidate) or ""
+    owned_source = ast.get_source_segment(source, owned) or ""
+    for marker in (
+        "os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC",
+        "_identity(held) != _identity(named)",
+        "held.st_uid not in {0, os.geteuid()}",
+        "held.st_nlink != 1",
+        "stat.S_IMODE(held.st_mode) & 0o7022",
+        "hashlib.sha256(payload).hexdigest()",
+        "terminal_name_policy: str = LAUNCHER_NAME_SAME",
+        "name_policy=terminal_name_policy",
+        "and its terminal capability could not be verified",
+    ):
+        if marker not in held_source:
+            return False
+    for marker in (
+        "stable_indexes = (0, 1, 2, 3, 4, 6, 7)",
+        "if _identity(named) == binding.identity:",
+        "held.st_nlink != 0",
+        "named.st_uid not in {0, os.geteuid()}",
+        "named.st_nlink != 1",
+        "stat.S_IMODE(named.st_mode) & 0o7022",
+        "hashlib.sha256(payload).hexdigest() != binding.sha256",
+    ):
+        if marker not in revalidate_source:
+            return False
+    for marker in (
+        "launcher_name_policy: str = LAUNCHER_NAME_SAME",
+        "launcher_rebind_authority: object | None = None",
+        "is not _REVIEWED_INSTALLER_REBIND_AUTHORITY",
+        "Path(str(arguments[4])) if len(arguments) == 7 else Path()",
+        "Path(str(raw_path)) == package_argument and mutable is False",
+        'label != "Python framework installation"',
+        'tuple(arguments[5:]) != ("-target", "/")',
+        "or not package_capability",
+        "revalidate_owned_bindings(name_policy=terminal_launcher_policy)",
+        "revalidate_owned_bindings(name_policy=LAUNCHER_NAME_SAME)",
+    ):
+        if marker not in owned_source:
+            return False
+
+    active_checks = [
+        node
+        for node in ast.walk(install)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "active_launcher"
+        and len(node.test.ops) == 1
+        and isinstance(node.test.ops[0], ast.NotEq)
+        and len(node.test.comparators) == 1
+        and isinstance(node.test.comparators[0], ast.Name)
+        and node.test.comparators[0].id == "interpreter"
+    ]
+    if len(active_checks) != 1 or not active_checks[0].body:
+        return False
+
+    def held_context(
+        node: ast.AST,
+        argument: str,
+        binding: str,
+    ) -> bool:
+        if not isinstance(node, ast.With) or len(node.items) != 1:
+            return False
+        item = node.items[0]
+        return (
+            isinstance(item.context_expr, ast.Call)
+            and _python_attribute_path(item.context_expr.func)
+            == ("_held_executable",)
+            and len(item.context_expr.args) == 1
+            and isinstance(item.context_expr.args[0], ast.Name)
+            and item.context_expr.args[0].id == argument
+            and isinstance(item.optional_vars, ast.Name)
+            and item.optional_vars.id == binding
+        )
+
+    old_contexts = [
+        node
+        for node in ast.walk(install)
+        if held_context(node, "active_launcher", "old_launcher")
+    ]
+    if len(old_contexts) != 1:
+        return False
+    old_context = old_contexts[0]
+    old_held_call = old_context.items[0].context_expr
+    assert isinstance(old_held_call, ast.Call)
+    old_held_keywords = {
+        keyword.arg: keyword.value
+        for keyword in old_held_call.keywords
+        if keyword.arg is not None
+    }
+    if (
+        len(old_held_keywords) != len(old_held_call.keywords)
+        or _python_attribute_path(
+            old_held_keywords.get("terminal_name_policy", ast.Constant(None))
+        )
+        != ("LAUNCHER_NAME_INSTALLER_REBIND",)
+    ):
+        return False
+    installed_contexts = [
+        node
+        for node in ast.walk(old_context)
+        if held_context(node, "interpreter", "installed_launcher")
+    ]
+    if len(installed_contexts) != 1:
+        return False
+    installed_context = installed_contexts[0]
+    installed_held_call = installed_context.items[0].context_expr
+    assert isinstance(installed_held_call, ast.Call)
+    if any(
+        keyword.arg == "terminal_name_policy"
+        for keyword in installed_held_call.keywords
+    ):
+        return False
+
+    install_run_calls = [
+        node
+        for node in ast.walk(install)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func) == ("_run_owned_process",)
+    ]
+    reviewed_calls = [
+        node
+        for node in ast.walk(old_context)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func)
+        == ("_run_reviewed_framework_installer",)
+    ]
+    if len(install_run_calls) != 2 or len(reviewed_calls) != 1:
+        return False
+    reviewed_call = reviewed_calls[0]
+    if reviewed_call.args or any(
+        keyword.arg is None for keyword in reviewed_call.keywords
+    ):
+        return False
+    reviewed_keywords = {
+        keyword.arg: keyword.value for keyword in reviewed_call.keywords
+    }
+    expected_reviewed_names = {
+        "package": ("package",),
+        "expected_package_sha256": ("package_sha256",),
+        "locked_interpreter": ("interpreter",),
+        "launcher_binding": ("old_launcher",),
+        "cwd": ("source", "root"),
+        "environment": ("sanitized",),
+        "pass_fds": ("source_child_fds",),
+        "build": ("build",),
+        "cwd_descriptor": ("source", "descriptor"),
+        "path_capabilities": ("installer_path_capabilities",),
+    }
+    if (
+        set(reviewed_keywords) != set(expected_reviewed_names)
+        or any(
+            _python_attribute_path(reviewed_keywords[key]) != expected
+            for key, expected in expected_reviewed_names.items()
+        )
+    ):
+        return False
+
+    rebind_calls = [
+        node
+        for node in ast.walk(reviewed_installer)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func) == ("_run_owned_process",)
+    ]
+    if len(rebind_calls) != 1:
+        return False
+    rebind_call = rebind_calls[0]
+    if any(keyword.arg is None for keyword in rebind_call.keywords):
+        return False
+    rebind_keywords = {
+        keyword.arg: keyword.value for keyword in rebind_call.keywords
+    }
+    expected_names = {
+        "cwd": ("cwd",),
+        "environment": ("environment",),
+        "pass_fds": ("pass_fds",),
+        "build": ("build",),
+        "cwd_descriptor": ("cwd_descriptor",),
+        "launcher_python": ("locked_interpreter",),
+        "launcher_binding": ("launcher_binding",),
+        "launcher_name_policy": ("LAUNCHER_NAME_INSTALLER_REBIND",),
+        "launcher_rebind_authority": (
+            "_REVIEWED_INSTALLER_REBIND_AUTHORITY",
+        ),
+        "path_capabilities": ("path_capabilities",),
+    }
+    expected_arguments = ast.parse(
+        "('/usr/bin/sudo', '--non-interactive', '/usr/sbin/installer', "
+        "'-pkg', str(package.path), '-target', '/')",
+        mode="eval",
+    ).body
+    if (
+        len(rebind_call.args) != 1
+        or ast.dump(rebind_call.args[0], include_attributes=False)
+        != ast.dump(expected_arguments, include_attributes=False)
+        or set(rebind_keywords)
+        != {
+            "cwd",
+            "environment",
+            "pass_fds",
+            "timeout",
+            "label",
+            "build",
+            "cwd_descriptor",
+            "launcher_python",
+            "launcher_binding",
+            "launcher_name_policy",
+            "launcher_rebind_authority",
+            "path_capabilities",
+        }
+        or any(
+            _python_attribute_path(rebind_keywords[key]) != expected
+            for key, expected in expected_names.items()
+        )
+        or not isinstance(rebind_keywords["timeout"], ast.Constant)
+        or rebind_keywords["timeout"].value != 900
+        or not isinstance(rebind_keywords["label"], ast.Constant)
+        or rebind_keywords["label"].value != "Python framework installation"
+    ):
+        return False
+
+    if tuple(type(statement) for statement in reviewed_installer.body) != (
+        ast.Expr,
+        ast.Assign,
+        ast.If,
+        ast.Expr,
+        ast.Expr,
+        ast.Assign,
+        ast.If,
+        ast.Return,
+    ):
+        return False
+    reviewed_contract_if = reviewed_installer.body[2]
+    assert isinstance(reviewed_contract_if, ast.If)
+    if (
+        not exact_expression(
+            reviewed_contract_if.test,
+            "not locked_interpreter.is_absolute() "
+            "or '..' in locked_interpreter.parts "
+            "or launcher_binding.path != locked_interpreter "
+            "or package.path != package.path.resolve(strict=True) "
+            "or package.sha256 != expected_package_sha256 "
+            "or package_capabilities != "
+            "((package.descriptor, str(package.path), False),)",
+        )
+        or len(reviewed_contract_if.body) != 1
+        or not direct_toolchain_raise(reviewed_contract_if.body[0])
+        or reviewed_contract_if.orelse
+    ):
+        return False
+
+    reviewed_source = ast.get_source_segment(source, reviewed_installer) or ""
+    for marker in (
+        "launcher_binding.path != locked_interpreter",
+        "package.path != package.path.resolve(strict=True)",
+        "package.sha256 != expected_package_sha256",
+        "((package.descriptor, str(package.path), False),)",
+        "_revalidate_held_executable(",
+        "name_policy=LAUNCHER_NAME_SAME",
+        "_revalidate_bound_file(",
+    ):
+        if marker not in reviewed_source:
+            return False
+
+    installed_nodes = set(ast.walk(installed_context))
+    observer_calls = [
+        call
+        for call in install_run_calls
+        if any(
+            keyword.arg == "launcher_binding"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "installed_launcher"
+            for keyword in call.keywords
+        )
+    ]
+    binding_verifiers = [
+        node
+        for node in installed_nodes
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func)
+        == ("build", "verify_python_install_binding")
+    ]
+    return (
+        len(observer_calls) == 1
+        and observer_calls[0] in installed_nodes
+        and not any(
+            keyword.arg == "launcher_name_policy"
+            for keyword in observer_calls[0].keywords
+        )
+        and len(binding_verifiers) == 1
+    )
 
 
 def _python_emitted_environment_keys(source: str) -> tuple[str, ...]:
@@ -3194,6 +3810,10 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "start_new_session=True",
         "build._terminate_owned_process_group(",
         "def _communicate_bounded(",
+        "def _held_executable(",
+        "def _revalidate_held_executable(",
+        "def _run_reviewed_framework_installer(",
+        'LAUNCHER_NAME_INSTALLER_REBIND = "installer-producer-rebind"',
         "selectors.DefaultSelector()",
         "inner_build_diagnostic=True",
         '"LCF_PYTHON_BUILD_VENV_FD"',
@@ -3222,6 +3842,10 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             errors.append(f"exact Python toolchain bootstrap missing {marker!r}")
     if not _python_exec_runner_signal_contract_is_semantic(python_bootstrap):
         errors.append("exact Python held-cwd launcher signal contract drifted")
+    if not _python_installer_launcher_transition_is_semantic(python_bootstrap):
+        errors.append(
+            "exact reviewed Python installer launcher transition drifted"
+        )
     if (
         python_bootstrap.count("subprocess.Popen(") != 1
         or build_script.count("subprocess.Popen(") != 2
@@ -3274,24 +3898,15 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "\ndef build_with_exact_toolchain(",
     )
     exact_installer_commands = (
-        '("/usr/sbin/pkgutil", "--check-signature", str(package_path))',
-        '''(
-                            "/usr/sbin/spctl",
-                            "--assess",
-                            "--type",
-                            "install",
-                            "--verbose=4",
-                            str(package_path),
-                        )''',
-        '''(
-                            "/usr/bin/sudo",
-                            "--non-interactive",
-                            "/usr/sbin/installer",
-                            "-pkg",
-                            str(package_path),
-                            "-target",
-                            "/",
-                        )''',
+        '''"/usr/sbin/pkgutil",
+                                "--check-signature",
+                                str(package_path),''',
+        '''"/usr/sbin/spctl",
+                                "--assess",
+                                "--type",
+                                "install",
+                                "--verbose=4",
+                                str(package_path),''',
     )
     if (
         "GITHUB_SHA" in _canonical_identifier_text(python_bootstrap)
@@ -3311,12 +3926,12 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         or exact_toolchain_build.count('label="Exact Python sidecar inner build"')
         != 1
         or reviewed_python_install.count("prefix=INSTALLER_ROOT_PREFIX") != 1
-        or reviewed_python_install.count("_revalidate_bound_file(") != 2
+        or reviewed_python_install.count("_revalidate_bound_file(") != 3
         or reviewed_python_install.count("_revalidate_source_seal(") < 3
         or reviewed_python_install.count(
             "path_capabilities=installer_path_capabilities"
         )
-        != 2
+        != 3
         or exact_toolchain_build.count(
             "path_capabilities=toolchain_path_capabilities"
         )
@@ -3428,6 +4043,15 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "test_path_capability_exec_runner_rejects_replaced_child_input",
         "test_owned_process_rejects_path_capability_without_held_cwd",
         "test_owned_process_rejects_regular_keep_fd_metadata_drift",
+        "test_held_executable_accepts_only_explicit_installer_name_rebind",
+        "test_held_executable_installer_rebind_rejects_old_inode_drift",
+        "test_held_executable_installer_rebind_rejects_hidden_old_hardlink",
+        "test_held_executable_terminal_revalidation_rejects_old_bytes_drift",
+        "test_held_executable_rejects_special_mode_replacement",
+        "test_held_executable_combines_primary_and_terminal_failure",
+        "test_owned_process_installer_rebind_requires_successful_exact_contract",
+        "test_reviewed_installer_rebind_requires_locked_launcher_and_package",
+        "test_owned_process_rejects_installer_rebind_for_other_commands",
         "test_inner_build_fixed_diagnostic_is_bounded_and_does_not_leak_stderr",
         "test_inner_build_rejects_unreviewed_diagnostic_enum_without_leaking",
         "test_inner_build_diagnostic_writer_emits_only_fixed_enums",
@@ -3458,7 +4082,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
                 f"exact Python held-cwd launcher retained {forbidden!r}"
             )
     if (
-        python_bootstrap.count("cwd_descriptor=source.descriptor") != 7
+        python_bootstrap.count("cwd_descriptor=source.descriptor") != 8
         or python_bootstrap.count("cwd_descriptor=backend_fd") != 1
         or python_bootstrap.count("inner_build_diagnostic=True") != 1
     ):
@@ -4629,6 +5253,26 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "`nlink == 1`",
         "group/world-writable hardlink",
         "technical result 在 fresh exact-head source/assembly 完成前仍是 `not-run`",
+        "<!-- w02-pr21-fifth-remediation-authority: "
+        "source=c04fe9fce2bc2f0f4350e080f7f02c44699c975d,"
+        "parent=c2be665f5832c15064cae87c694a782e51351e7c,"
+        "tree=2f8b3aceb4caa2d71537cd51c3b3b985c55a3db5,"
+        "assembly-run=31454826263,assembly-job=93666344718,"
+        "source-run=31454826261,source-job=93666344561,"
+        "container-run=31454826243,result=fail -->",
+        "## 第五次 remediation 技术执行：`fail` / `superseded`",
+        "## 第六次 remediation technical candidate：`not-run`",
+        "尚未调用被测\nproduct cleanup",
+        "这是高置信代码/时序归因，不是 raw log 直接输出的\n"
+        "binding root cause",
+        "rebind/fixture focused tests `18 passed`",
+        "packaging corpus `545 passed / 2 skipped`",
+        "backend source suite `809 passed / 3 skipped`",
+        "pre-1 policy/checker corpus `211 tests`",
+        "| local validation date | `2026-08-11` |",
+        "| local baseline | `HEAD c04fe9fce2bc2f0f4350e080f7f02c44699c975d` + 当前未提交的 `14` 个 tracked file bytes",
+        "| local environment | `Linux 6.18.35 x86_64`；CPython `3.12.13` |",
+        "不是 committed exact-head\nActions、macOS framework installer 或 packaged App launch/runtime evidence",
     ):
         if marker not in remediation_evidence:
             errors.append(f"PR #21 remediation evidence missing {marker!r}")
@@ -5990,6 +6634,47 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     todo = str(inputs["todo"])
     trace = str(inputs["trace"])
     iteration = str(inputs["iteration"])
+    governance_current_markers = (
+        (
+            "status",
+            status,
+            (
+                "five remediation attempts `fail` / `superseded`",
+                "sixth exact candidate `not-run`",
+            ),
+        ),
+        (
+            "todo",
+            todo,
+            (
+                "five remediation attempts `fail` / `superseded`",
+                "sixth exact candidate `not-run`",
+            ),
+        ),
+        (
+            "traceability",
+            trace,
+            (
+                "first through fifth remediations failed and superseded",
+                "sixth exact candidate not-run",
+            ),
+        ),
+        (
+            "iteration",
+            iteration,
+            (
+                "第一次至第五次 remediation technical attempts 均为 "
+                "`fail` / `superseded`",
+                "第六 exact candidate `not-run`",
+            ),
+        ),
+    )
+    for label, document, markers in governance_current_markers:
+        for marker in markers:
+            if marker not in document:
+                errors.append(
+                    f"W02 current governance {label} missing {marker!r}"
+                )
     if _table_status(todo, "TODO-PACKAGED-SMOKE-001") != "in-progress":
         errors.append("W02 TODO must remain in-progress across W02-A")
     if _table_status(trace, "TODO-PACKAGED-SMOKE-001") != "in-progress":

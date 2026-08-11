@@ -54,6 +54,9 @@ MAX_EVIDENCE_BYTES = 128 * 1024 * 1024
 MAX_SUBPROCESS_OUTPUT_BYTES = 32 * 1024 * 1024
 MAX_INNER_DIAGNOSTIC_BYTES = 128
 INNER_BUILD_DIAGNOSTIC_FD_ENV = "LCF_INNER_BUILD_DIAGNOSTIC_FD"
+LAUNCHER_NAME_SAME = "same-name"
+LAUNCHER_NAME_INSTALLER_REBIND = "installer-producer-rebind"
+_REVIEWED_INSTALLER_REBIND_AUTHORITY = object()
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 DEFAULT_REVIEWED_FRAMEWORK_ROOT = PurePosixPath(
@@ -464,6 +467,14 @@ class _BoundFile:
     descriptor: int
     identity: tuple[int, ...]
     size: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class _HeldExecutable:
+    path: Path
+    descriptor: int
+    identity: tuple[int, ...]
     sha256: str
 
 
@@ -1816,6 +1827,145 @@ def _sanitized_environment(
     }
 
 
+@contextlib.contextmanager
+def _held_executable(
+    path: Path,
+    *,
+    terminal_name_policy: str = LAUNCHER_NAME_SAME,
+    error_message: str,
+) -> Any:
+    """Hold one exact executable inode across an intentional name transition."""
+
+    descriptor: int | None = None
+    binding: _HeldExecutable | None = None
+    primary_error: BaseException | None = None
+    try:
+        if (
+            not path.is_absolute()
+            or ".." in path.parts
+            or path.resolve(strict=True) != path
+        ):
+            raise ToolchainBootstrapError(error_message)
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        held = os.fstat(descriptor)
+        named = path.lstat()
+        if (
+            not stat.S_ISREG(held.st_mode)
+            or stat.S_ISLNK(named.st_mode)
+            or _identity(held) != _identity(named)
+            or held.st_uid not in {0, os.geteuid()}
+            or held.st_nlink != 1
+            or stat.S_IMODE(held.st_mode) & 0o7022
+            or not stat.S_IMODE(held.st_mode) & 0o111
+        ):
+            raise ToolchainBootstrapError(error_message)
+        payload = _read_regular_descriptor(
+            descriptor,
+            expected_size=held.st_size,
+            maximum_size=MAX_TREE_FILE_BYTES,
+            error_message=error_message,
+        )
+        if _identity(os.fstat(descriptor)) != _identity(held):
+            raise ToolchainBootstrapError(error_message)
+        binding = _HeldExecutable(
+            path=path,
+            descriptor=descriptor,
+            identity=_identity(held),
+            sha256=hashlib.sha256(payload).hexdigest(),
+        )
+        yield binding
+    except BaseException as exc:
+        primary_error = exc
+
+    terminal_error: BaseException | None = None
+    if binding is not None:
+        try:
+            _revalidate_held_executable(
+                binding,
+                name_policy=terminal_name_policy,
+                error_message=error_message,
+            )
+        except BaseException as exc:
+            terminal_error = exc
+
+    close_error: BaseException | None = None
+    if descriptor is not None:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            close_error = exc
+    if primary_error is not None:
+        if terminal_error is not None or close_error is not None:
+            raise ToolchainBootstrapError(
+                f"{error_message} and its terminal capability could not be verified"
+            ) from primary_error
+        raise primary_error
+    if terminal_error is not None:
+        if close_error is not None:
+            raise ToolchainBootstrapError(
+                f"{error_message} and its held descriptor could not be closed"
+            ) from terminal_error
+        raise terminal_error
+    if close_error is not None:
+        raise ToolchainBootstrapError(
+            f"{error_message} descriptor could not be closed"
+        ) from close_error
+
+
+def _revalidate_held_executable(
+    binding: _HeldExecutable,
+    *,
+    name_policy: str,
+    error_message: str,
+) -> None:
+    """Revalidate the held launcher and its default or producer-rebound name."""
+
+    try:
+        held = os.fstat(binding.descriptor)
+        held_identity = _identity(held)
+        named = binding.path.lstat()
+        if name_policy == LAUNCHER_NAME_SAME:
+            if (
+                held_identity != binding.identity
+                or _identity(named) != binding.identity
+            ):
+                raise ToolchainBootstrapError(error_message)
+        elif name_policy == LAUNCHER_NAME_INSTALLER_REBIND:
+            stable_indexes = (0, 1, 2, 3, 4, 6, 7)
+            if _identity(named) == binding.identity:
+                if held_identity != binding.identity:
+                    raise ToolchainBootstrapError(error_message)
+            elif (
+                tuple(held_identity[index] for index in stable_indexes)
+                != tuple(binding.identity[index] for index in stable_indexes)
+                or held.st_nlink != 0
+                or not stat.S_ISREG(named.st_mode)
+                or stat.S_ISLNK(named.st_mode)
+                or named.st_uid not in {0, os.geteuid()}
+                or named.st_nlink != 1
+                or stat.S_IMODE(named.st_mode) & 0o7022
+                or not stat.S_IMODE(named.st_mode) & 0o111
+            ):
+                raise ToolchainBootstrapError(error_message)
+        else:
+            raise ToolchainBootstrapError(error_message)
+        payload = _read_regular_descriptor(
+            binding.descriptor,
+            expected_size=binding.identity[6],
+            maximum_size=MAX_TREE_FILE_BYTES,
+            error_message=error_message,
+        )
+        if hashlib.sha256(payload).hexdigest() != binding.sha256:
+            raise ToolchainBootstrapError(error_message)
+    except ToolchainBootstrapError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ToolchainBootstrapError(error_message) from exc
+
+
 def _exec_target_identity(path: Path) -> tuple[int, ...]:
     """Bind one absolute executable without resolving it into a PATH lookup."""
 
@@ -2053,6 +2203,9 @@ def _run_owned_process(
     build: Any,
     cwd_descriptor: int | None = None,
     launcher_python: Path | None = None,
+    launcher_binding: _HeldExecutable | None = None,
+    launcher_name_policy: str = LAUNCHER_NAME_SAME,
+    launcher_rebind_authority: object | None = None,
     inner_build_diagnostic: bool = False,
     check: bool = True,
     path_capabilities: Sequence[tuple[int, str, bool]] = (),
@@ -2087,7 +2240,7 @@ def _run_owned_process(
         reference = tuple(expected) if expected is not None else identity
         return identity[:5] if stat.S_ISDIR(reference[2]) else identity
 
-    def revalidate_owned_bindings() -> None:
+    def revalidate_owned_bindings(*, name_policy: str) -> None:
         if cwd_descriptor is None:
             return
         if cwd_identity != _identity(os.fstat(cwd_descriptor)):
@@ -2123,11 +2276,22 @@ def _run_owned_process(
                 raise ToolchainBootstrapError(
                     f"{label} path capability changed"
                 )
-        _revalidate_exec_identity(
-            launcher_python,
-            effective_arguments,
-            executable_identity,
-        )
+        if launcher_binding is not None:
+            _revalidate_held_executable(
+                launcher_binding,
+                name_policy=name_policy,
+                error_message=f"{label} launcher capability changed",
+            )
+        if name_policy == LAUNCHER_NAME_SAME:
+            _revalidate_exec_identity(
+                launcher_python,
+                effective_arguments,
+                executable_identity,
+            )
+        elif name_policy != LAUNCHER_NAME_INSTALLER_REBIND:
+            raise ToolchainBootstrapError(
+                f"{label} launcher name policy is invalid"
+            )
         if (
             actual_target_identity is not None
             and actual_target_identity
@@ -2136,6 +2300,66 @@ def _run_owned_process(
             raise ToolchainBootstrapError(f"{label} executable changed")
 
     try:
+        if launcher_name_policy not in {
+            LAUNCHER_NAME_SAME,
+            LAUNCHER_NAME_INSTALLER_REBIND,
+        }:
+            raise ToolchainBootstrapError(
+                "Owned process launcher name policy is invalid"
+            )
+        if (
+            launcher_name_policy == LAUNCHER_NAME_INSTALLER_REBIND
+            and launcher_rebind_authority
+            is not _REVIEWED_INSTALLER_REBIND_AUTHORITY
+        ) or (
+            launcher_name_policy == LAUNCHER_NAME_SAME
+            and launcher_rebind_authority is not None
+        ):
+            raise ToolchainBootstrapError(
+                "Owned process launcher rebind authority is invalid"
+            )
+        if launcher_binding is not None and (
+            launcher_python is None
+            or launcher_binding.path != launcher_python
+        ):
+            raise ToolchainBootstrapError(
+                "Owned process launcher capability is invalid"
+            )
+        if launcher_binding is not None:
+            _revalidate_held_executable(
+                launcher_binding,
+                name_policy=LAUNCHER_NAME_SAME,
+                error_message="Owned process launcher capability is invalid",
+            )
+        if launcher_name_policy == LAUNCHER_NAME_INSTALLER_REBIND:
+            package_argument = (
+                Path(str(arguments[4])) if len(arguments) == 7 else Path()
+            )
+            package_capability = any(
+                Path(str(raw_path)) == package_argument and mutable is False
+                for _descriptor, raw_path, mutable in path_capabilities
+            )
+            if (
+                launcher_binding is None
+                or not check
+                or inner_build_diagnostic
+                or cwd_descriptor is None
+                or label != "Python framework installation"
+                or tuple(arguments[:4])
+                != (
+                    "/usr/bin/sudo",
+                    "--non-interactive",
+                    "/usr/sbin/installer",
+                    "-pkg",
+                )
+                or tuple(arguments[5:]) != ("-target", "/")
+                or not package_argument.is_absolute()
+                or ".." in package_argument.parts
+                or not package_capability
+            ):
+                raise ToolchainBootstrapError(
+                    "Reviewed Python installer launcher transition is invalid"
+                )
         if path_capabilities and cwd_descriptor is None:
             raise ToolchainBootstrapError(
                 "Owned process path capability requires a held cwd"
@@ -2285,7 +2509,16 @@ def _run_owned_process(
                 )
         if descendants:
             raise ToolchainBootstrapError(f"{label} left a descendant process")
-        revalidate_owned_bindings()
+        terminal_launcher_policy = (
+            LAUNCHER_NAME_INSTALLER_REBIND
+            if (
+                launcher_name_policy == LAUNCHER_NAME_INSTALLER_REBIND
+                and process.returncode == 0
+                and check
+            )
+            else LAUNCHER_NAME_SAME
+        )
+        revalidate_owned_bindings(name_policy=terminal_launcher_policy)
         if process.returncode != 0 and check:
             if cwd_descriptor is not None:
                 category = _held_cwd_failure_category(stderr)
@@ -2321,10 +2554,11 @@ def _run_owned_process(
             except BaseException as observed_cleanup_error:
                 cleanup_error = observed_cleanup_error
         binding_error: BaseException | None = None
-        try:
-            revalidate_owned_bindings()
-        except BaseException as observed_error:
-            binding_error = observed_error
+        if process is not None:
+            try:
+                revalidate_owned_bindings(name_policy=LAUNCHER_NAME_SAME)
+            except BaseException as observed_error:
+                binding_error = observed_error
         if cleanup_error is not None or binding_error is not None:
             raise ToolchainBootstrapError(
                 f"{label} failed and its owned process state could not be verified"
@@ -2342,6 +2576,78 @@ def _run_owned_process(
                 os.close(descriptor)
             except OSError:
                 pass
+
+
+def _run_reviewed_framework_installer(
+    *,
+    package: _BoundFile,
+    expected_package_sha256: str,
+    locked_interpreter: Path,
+    launcher_binding: _HeldExecutable,
+    cwd: Path,
+    environment: Mapping[str, str],
+    pass_fds: Sequence[int],
+    build: Any,
+    cwd_descriptor: int,
+    path_capabilities: Sequence[tuple[int, str, bool]],
+) -> str:
+    """Run the one producer allowed to replace the locked launcher's name."""
+
+    package_capabilities = tuple(
+        (descriptor, str(path), mutable)
+        for descriptor, path, mutable in path_capabilities
+        if descriptor == package.descriptor
+    )
+    if (
+        not locked_interpreter.is_absolute()
+        or ".." in locked_interpreter.parts
+        or launcher_binding.path != locked_interpreter
+        or package.path != package.path.resolve(strict=True)
+        or package.sha256 != expected_package_sha256
+        or package_capabilities
+        != ((package.descriptor, str(package.path), False),)
+    ):
+        raise ToolchainBootstrapError(
+            "Reviewed Python installer launcher transition is invalid"
+        )
+    _revalidate_held_executable(
+        launcher_binding,
+        name_policy=LAUNCHER_NAME_SAME,
+        error_message="Reviewed Python installer launcher is unsafe",
+    )
+    _revalidate_bound_file(
+        package,
+        maximum_size=MAX_TREE_FILE_BYTES,
+        error_message="Reviewed Python installer package changed",
+    )
+    observed = _run_owned_process(
+        (
+            "/usr/bin/sudo",
+            "--non-interactive",
+            "/usr/sbin/installer",
+            "-pkg",
+            str(package.path),
+            "-target",
+            "/",
+        ),
+        cwd=cwd,
+        environment=environment,
+        pass_fds=pass_fds,
+        timeout=900,
+        label="Python framework installation",
+        build=build,
+        cwd_descriptor=cwd_descriptor,
+        launcher_python=locked_interpreter,
+        launcher_binding=launcher_binding,
+        launcher_name_policy=LAUNCHER_NAME_INSTALLER_REBIND,
+        launcher_rebind_authority=_REVIEWED_INSTALLER_REBIND_AUTHORITY,
+        path_capabilities=path_capabilities,
+    )
+    if not isinstance(observed, str):
+        raise ToolchainBootstrapError(
+            "Reviewed Python installer result is invalid"
+        )
+    return observed
 
 
 def _write_bound_file(
@@ -2777,136 +3083,185 @@ def install_reviewed_python(
                         source.descriptor,
                         capability.descriptor,
                         cache_fd,
+                        package.descriptor,
                     }
                 )
                 installer_path_capabilities = (
                     (capability.descriptor, str(capability.path), False),
                     (cache_fd, str(cache_root), False),
+                    (package.descriptor, str(package_path), False),
                 )
-                for arguments, label, timeout in (
-                    (
-                        ("/usr/sbin/pkgutil", "--check-signature", str(package_path)),
-                        "Python installer signature verification",
-                        120,
+                try:
+                    active_launcher = Path(sys.executable).resolve(strict=True)
+                except (OSError, RuntimeError) as exc:
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python installer launcher is unavailable"
+                    ) from exc
+                if active_launcher != interpreter:
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python installer launcher is not the locked interpreter"
+                    )
+                with _held_executable(
+                    active_launcher,
+                    terminal_name_policy=(
+                        LAUNCHER_NAME_INSTALLER_REBIND
                     ),
-                    (
+                    error_message="Reviewed Python installer launcher is unsafe",
+                ) as old_launcher:
+                    for arguments, label, timeout in (
                         (
-                            "/usr/sbin/spctl",
-                            "--assess",
-                            "--type",
-                            "install",
-                            "--verbose=4",
-                            str(package_path),
+                            (
+                                "/usr/sbin/pkgutil",
+                                "--check-signature",
+                                str(package_path),
+                            ),
+                            "Python installer signature verification",
+                            120,
                         ),
-                        "Python installer policy assessment",
-                        120,
-                    ),
-                    (
                         (
-                            "/usr/bin/sudo",
-                            "--non-interactive",
-                            "/usr/sbin/installer",
-                            "-pkg",
-                            str(package_path),
-                            "-target",
-                            "/",
+                            (
+                                "/usr/sbin/spctl",
+                                "--assess",
+                                "--type",
+                                "install",
+                                "--verbose=4",
+                                str(package_path),
+                            ),
+                            "Python installer policy assessment",
+                            120,
                         ),
-                        "Python framework installation",
-                        900,
-                    ),
-                ):
+                    ):
+                        _revalidate_source_seal(source, build)
+                        _revalidate_bound_file(
+                            package,
+                            maximum_size=MAX_TREE_FILE_BYTES,
+                            error_message=(
+                                "Reviewed Python installer package changed"
+                            ),
+                        )
+                        _run_owned_process(
+                            arguments,
+                            cwd=source.root,
+                            environment=sanitized,
+                            pass_fds=source_child_fds,
+                            timeout=timeout,
+                            label=label,
+                            build=build,
+                            cwd_descriptor=source.descriptor,
+                            launcher_python=active_launcher,
+                            launcher_binding=old_launcher,
+                            path_capabilities=installer_path_capabilities,
+                        )
                     _revalidate_source_seal(source, build)
                     _revalidate_bound_file(
                         package,
                         maximum_size=MAX_TREE_FILE_BYTES,
                         error_message="Reviewed Python installer package changed",
                     )
-                    _run_owned_process(
-                        arguments,
+                    _run_reviewed_framework_installer(
+                        package=package,
+                        expected_package_sha256=package_sha256,
+                        locked_interpreter=interpreter,
+                        launcher_binding=old_launcher,
                         cwd=source.root,
                         environment=sanitized,
                         pass_fds=source_child_fds,
-                        timeout=timeout,
-                        label=label,
                         build=build,
                         cwd_descriptor=source.descriptor,
-                        launcher_python=Path(sys.executable),
                         path_capabilities=installer_path_capabilities,
                     )
-                try:
-                    interpreter_info = interpreter.lstat()
-                    resolved_interpreter = interpreter.resolve(strict=True)
-                except (OSError, RuntimeError) as exc:
-                    raise ToolchainBootstrapError(
-                        "Installed framework interpreter is unavailable"
-                    ) from exc
-                if (
-                    not stat.S_ISREG(interpreter_info.st_mode)
-                    or stat.S_ISLNK(interpreter_info.st_mode)
-                    or resolved_interpreter != interpreter
-                    or not stat.S_IMODE(interpreter_info.st_mode) & 0o111
-                ):
-                    raise ToolchainBootstrapError(
-                        "Installed framework interpreter is unavailable"
+                    try:
+                        interpreter_info = interpreter.lstat()
+                        resolved_interpreter = interpreter.resolve(strict=True)
+                    except (OSError, RuntimeError) as exc:
+                        raise ToolchainBootstrapError(
+                            "Installed framework interpreter is unavailable"
+                        ) from exc
+                    if (
+                        not stat.S_ISREG(interpreter_info.st_mode)
+                        or stat.S_ISLNK(interpreter_info.st_mode)
+                        or resolved_interpreter != interpreter
+                        or not stat.S_IMODE(interpreter_info.st_mode) & 0o111
+                    ):
+                        raise ToolchainBootstrapError(
+                            "Installed framework interpreter is unavailable"
+                        )
+                    observer = (
+                        "import json,platform,sys,sysconfig;"
+                        "print(json.dumps({"
+                        "'implementation':platform.python_implementation(),"
+                        "'version':platform.python_version(),"
+                        "'system':platform.system(),"
+                        "'machine':platform.machine(),"
+                        "'basePrefix':sys.base_prefix,"
+                        "'baseExecutable':getattr(sys,'_base_executable',sys.executable),"
+                        "'executable':sys.executable,"
+                        "'cacheTag':sys.implementation.cache_tag,"
+                        "'gilDisabled':bool(sysconfig.get_config_var('Py_GIL_DISABLED'))"
+                        "},sort_keys=True,separators=(',',':')))"
                     )
-                observer = (
-                    "import json,platform,sys,sysconfig;"
-                    "print(json.dumps({"
-                    "'implementation':platform.python_implementation(),"
-                    "'version':platform.python_version(),"
-                    "'system':platform.system(),"
-                    "'machine':platform.machine(),"
-                    "'basePrefix':sys.base_prefix,"
-                    "'baseExecutable':getattr(sys,'_base_executable',sys.executable),"
-                    "'executable':sys.executable,"
-                    "'cacheTag':sys.implementation.cache_tag,"
-                    "'gilDisabled':bool(sysconfig.get_config_var('Py_GIL_DISABLED'))"
-                    "},sort_keys=True,separators=(',',':')))"
-                )
-                observed_text = _run_owned_process(
-                    (str(interpreter), "-I", "-c", observer),
-                    cwd=source.root,
-                    environment=sanitized,
-                    pass_fds=source_child_fds,
-                    timeout=120,
-                    label="Installed framework interpreter verification",
-                    build=build,
-                    cwd_descriptor=source.descriptor,
-                    launcher_python=interpreter,
-                    path_capabilities=installer_path_capabilities,
-                )
-                try:
-                    observed = json.loads(observed_text)
-                    if not isinstance(observed, dict):
-                        raise TypeError("observer")
-                    fingerprint = build.verify_python_install_binding(
-                        install_root,
-                        toolchain=toolchain_lock,
-                        implementation=str(observed["implementation"]),
-                        version=str(observed["version"]),
-                        system=str(observed["system"]),
-                        machine=str(observed["machine"]),
-                        base_prefix=Path(str(observed["basePrefix"])),
-                        base_executable=Path(str(observed["baseExecutable"])),
-                        executable=Path(str(observed["executable"])),
-                        cache_tag=str(observed["cacheTag"]),
-                        gil_disabled=bool(observed["gilDisabled"]),
-                    )
-                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                    raise ToolchainBootstrapError(
-                        "Installed framework interpreter evidence is malformed"
-                    ) from exc
-                except build.BuildError as exc:
-                    raise ToolchainBootstrapError(
-                        "Installed framework interpreter binding is invalid"
-                    ) from exc
-                _revalidate_bound_file(
-                    package,
-                    maximum_size=MAX_TREE_FILE_BYTES,
-                    error_message="Reviewed Python installer package changed",
-                )
-                _revalidate_source_seal(source, build)
-                result = fingerprint
+                    with _held_executable(
+                        interpreter,
+                        error_message=(
+                            "Installed framework interpreter is unsafe"
+                        ),
+                    ) as installed_launcher:
+                        observed_text = _run_owned_process(
+                            (str(interpreter), "-I", "-c", observer),
+                            cwd=source.root,
+                            environment=sanitized,
+                            pass_fds=source_child_fds,
+                            timeout=120,
+                            label=(
+                                "Installed framework interpreter verification"
+                            ),
+                            build=build,
+                            cwd_descriptor=source.descriptor,
+                            launcher_python=interpreter,
+                            launcher_binding=installed_launcher,
+                            path_capabilities=installer_path_capabilities,
+                        )
+                        try:
+                            observed = json.loads(observed_text)
+                            if not isinstance(observed, dict):
+                                raise TypeError("observer")
+                            fingerprint = build.verify_python_install_binding(
+                                install_root,
+                                toolchain=toolchain_lock,
+                                implementation=str(observed["implementation"]),
+                                version=str(observed["version"]),
+                                system=str(observed["system"]),
+                                machine=str(observed["machine"]),
+                                base_prefix=Path(str(observed["basePrefix"])),
+                                base_executable=Path(
+                                    str(observed["baseExecutable"])
+                                ),
+                                executable=Path(str(observed["executable"])),
+                                cache_tag=str(observed["cacheTag"]),
+                                gil_disabled=bool(observed["gilDisabled"]),
+                            )
+                        except (
+                            KeyError,
+                            TypeError,
+                            ValueError,
+                            json.JSONDecodeError,
+                        ) as exc:
+                            raise ToolchainBootstrapError(
+                                "Installed framework interpreter evidence is malformed"
+                            ) from exc
+                        except build.BuildError as exc:
+                            raise ToolchainBootstrapError(
+                                "Installed framework interpreter binding is invalid"
+                            ) from exc
+                        _revalidate_bound_file(
+                            package,
+                            maximum_size=MAX_TREE_FILE_BYTES,
+                            error_message=(
+                                "Reviewed Python installer package changed"
+                            ),
+                        )
+                        _revalidate_source_seal(source, build)
+                        result = fingerprint
         except BaseException as exc:
             primary_error = exc
         with build._defer_publish_signals(preserve_error=primary_error):

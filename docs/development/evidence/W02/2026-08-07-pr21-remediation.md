@@ -416,3 +416,97 @@ source 结果不替代真实 macOS arm64 Actions。
 
 第四次和本次 remediation 均未启动 assembled `.app`，未从 assembled bundle 启动 sidecar，未创建
 DMG/ZIP/tag/Draft Release/Release，未发布 GHCR，未读取或修改 production credentials/settings。
+
+## 第五次 remediation 技术执行：`fail` / `superseded`
+
+第五次 exact candidate 的 fresh Desktop source 与 Engineering 均失败，Containers 成功且
+PR 路径未 publish。因此该 candidate 必须作为 append-only 失败历史保留；不得用
+Containers success、cleanup success 或当前本地修复将其提升为 `pass`。
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `c04fe9fce2bc2f0f4350e080f7f02c44699c975d` |
+| exact parent | `c2be665f5832c15064cae87c694a782e51351e7c` |
+| exact tree | `2f8b3aceb4caa2d71537cd51c3b3b985c55a3db5` |
+| engineering-smoke run / job | [run `31454826263`](https://github.com/fredgnr/local-context-forge/actions/runs/31454826263) / job `93666344718` |
+| exact-head Desktop source run / Python job | [run `31454826261`](https://github.com/fredgnr/local-context-forge/actions/runs/31454826261) / job `93666344561` |
+| container run | [run `31454826243`](https://github.com/fredgnr/local-context-forge/actions/runs/31454826243) |
+| technical result | **`fail`**；第五次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-fifth-remediation-authority: source=c04fe9fce2bc2f0f4350e080f7f02c44699c975d,parent=c2be665f5832c15064cae87c694a782e51351e7c,tree=2f8b3aceb4caa2d71537cd51c3b3b985c55a3db5,assembly-run=31454826263,assembly-job=93666344718,source-run=31454826261,source-job=93666344561,container-run=31454826243,result=fail -->
+
+Desktop source run `31454826261` 的 Python job `93666344561` 在
+`test_remove_tree_restores_owner_write_before_directory_quarantine` fixture 准备期间触发
+`EACCES`：测试在 `0500` directory 中创建 `state` fixture 时已失败，尚未调用被测
+product cleanup。因此 raw log 直接证明的是 fixture-ordering 失败，不是 product cleanup
+regression。W01 exact-head evidence 随后按 fail-closed 合同 downstream 失败；它不能把该
+source run 洗绿。
+
+Engineering run `31454826263` / job `93666344718` 在 `Python framework installation`
+失败，后续 cleanup step 成功。Actions raw log 直接证明的边界只是该 stage 失败与
+cleanup success。exact code path 把当前 `sys.executable` 用作 held launcher，同时调用
+`/usr/sbin/installer` 替换同一 locked Python framework；结合运行时序，最强因果归因是
+installer 成功替换 launcher pathname 后，post-exit executable identity 复验把该预期
+self-update 视为 binding drift。这是高置信代码/时序归因，不是 raw log 直接输出的
+binding root cause；日志未记录 launcher 替换前后的 identity 或专用因果 enum。
+
+Containers run `31454826243` 成功，但 PR 路径没有 registry publication。该 success 只属于
+container continuity，不能抵消 Desktop source/Engineering failure，也不能提升 W02、
+packaged smoke 或 release gate。本记录不在未单独核验 artifact API 的情况下声称
+engineering product artifacts 列表。
+
+## 第六次 remediation technical candidate：`not-run`
+
+第六次 candidate 仍在同一 Draft PR #21 / branch 中修复第五次暴露的 fixture ordering
+与 installer-launcher transition。它尚未形成可绑定的 committed exact head/tree，也没有
+fresh exact-head Desktop source、Engineering 或 Containers Actions；因此不得为它伪造坐标
+marker，technical result 必须保持 `not-run`。本轮不创建新 W/Requirement/TODO/
+Validation ID。
+
+当前未提交工作树的本地 Linux 回归为：rebind/fixture focused tests `18 passed`；完整 Python
+packaging corpus `545 passed / 2 skipped`；完整 backend source suite `809 passed / 3 skipped`；
+pre-1 policy/checker corpus `211 tests`；host runner `8 tests`、demo SDK `3 passed`、Markdown links
+`89 files` 均通过。这些结果只证明当前本地 bytes 的回归状态，不是 committed exact-head
+Actions、macOS framework installer 或 packaged App launch/runtime evidence，不得将第六次
+technical result、`VAL-PACKAGED-SMOKE-001` 或 release gate 提升为 `pass`。
+
+本轮本地复核绑定如下；`HEAD` 只是工作树基线，不是第六候选的 committed exact head：
+
+| 字段 | 值 |
+| --- | --- |
+| local validation date | `2026-08-11` |
+| local baseline | `HEAD c04fe9fce2bc2f0f4350e080f7f02c44699c975d` + 当前未提交的 `14` 个 tracked file bytes；无 sixth candidate commit/tree |
+| local environment | `Linux 6.18.35 x86_64`；CPython `3.12.13` |
+| unavailable boundary | macOS arm64 framework package install、assembled `.app` launch/runtime、fresh exact-head Actions 均为 `not-run` |
+
+实际命令和结果为：
+
+| Gate | 实际命令 | 结果 |
+| --- | --- | --- |
+| focused fixture/rebind | `PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python -m pytest -q tests/backend/test_python_sidecar_packaging.py -k 'held_executable or installer_rebind or remove_tree_restores_owner_write_before_directory_quarantine or reviewed_python_installer'` | exit `0`；`18 passed / 529 deselected` |
+| Python sidecar packaging | `make python-sidecar-packaging-test` | exit `0`；`545 passed / 2 skipped` |
+| backend full | `cd backend && PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest` | exit `0`；`809 passed / 3 skipped / 2 warnings` |
+| pre-1 aggregate | `make pre1-work-plan-check` | exit `0`；四个 policy/governance checks pass；tools unittest `211/211` |
+| MCP compile/import | `PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python -m compileall -q mcp/mcp_server`；`PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python -c "import mcp_server.client; import mcp_server.server"` | exit `0`；import 产生既有 Pydantic incomplete forward-reference warning |
+| Host Runner | `PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python -m unittest discover -s host_runner/tests -t .` | exit `0`；`8/8` |
+| demo SDK | `cd examples/demo-python-sdk && PYTHONDONTWRITEBYTECODE=1 ../../backend/.venv/bin/python -m pytest` | exit `0`；`3/3` |
+| version / Markdown links | `PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python tools/check_version_sync.py`；`PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python tools/check_markdown_links.py` | exit `0`；version `0.3.0-alpha.1`、Desktop protocols `1.0/1.1`；links `89` files |
+| diff/status | `git diff --check`；`git status --short` | exit `0`；恰好上述 `14` 个 tracked modifications，无 staged/untracked files |
+
+| 项目 | 当前结论 |
+| --- | --- |
+| PR #21 fifth remediation technical attempt | `fail` / `superseded`（绑定 `c04fe9f…` / `2f8b3ace…` 与 `31454826261` / `31454826263` / `31454826243`） |
+| PR #21 sixth remediation technical candidate | `not-run`（无 committed exact head/tree；无 fresh exact-head Actions） |
+| latest independent acceptance | `NO-GO`（仍只绑定旧 `8c5fd…` / `785f46…`）；fifth/sixth candidates `pending` |
+| canonical activation | `blocked` |
+| W02 | `in-progress` |
+| `VAL-PACKAGED-SMOKE-001` | `not-run` |
+| W10/W11 | `locked` |
+| packaged App / bundle sidecar launch | `not-run` |
+| public release | `NO-GO` |
+
+第五次失败在 assembled App launch/runtime 之前，第六次尚未执行；两者都没有提供
+`VAL-PACKAGED-SMOKE-001` 要求的 bundle launch/runtime evidence。旧 independent `NO-GO`
+不得被仓库内文本自我提升，W10/W11 继续 locked，public release 继续 `NO-GO`。

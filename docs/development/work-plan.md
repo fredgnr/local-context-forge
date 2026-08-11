@@ -55,9 +55,14 @@
   Containers success；Engineering inner build 与 cleanup gate technical `fail`，exact tree、平台和
   当时实现把高置信根因分别归到 APFS/Darwin directory-link inventory 与 Darwin sealed-source
   cleanup ordering（raw log 未打印 inner stage、`st_nlink` 或 cleanup errno）。该 attempt 也已
-  `superseded`、independent `pending`。第五次
-  exact remediation technical candidate `not-run`（仅完成 local regression；fresh exact-head
-  Actions pending），assembled App 未启动，
+  `superseded`、independent `pending`。第五次 exact
+  `c04fe9f…` / parent `c2be665f…` / tree `2f8b3ace…` 的 Desktop source `31454826261`
+  因 Python fixture `EACCES` before product cleanup 失败，W01 evidence downstream fail closed；
+  Engineering `31454826263` / job `93666344718` 在 Python framework installation 失败但
+  cleanup success，launcher self-update collision 只是高置信代码/时序归因，不是 raw log
+  直接证明；Containers `31454826243` success/no publish。第五次已 technical `fail` /
+  `superseded`、independent `pending`。第六次 exact remediation technical candidate `not-run`（无
+  committed exact head/tree 或 fresh exact-head Actions），assembled App 未启动，
   packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限

@@ -568,6 +568,409 @@ def test_owned_process_rejects_regular_keep_fd_metadata_drift(
         os.close(cwd_descriptor)
 
 
+def test_held_executable_accepts_only_explicit_installer_name_rebind(
+    tmp_path: Path,
+) -> None:
+    executable_payload = Path(sys.executable).read_bytes()
+    launcher = tmp_path / "launcher"
+    replacement = tmp_path / "replacement"
+    launcher.write_bytes(executable_payload)
+    replacement.write_bytes(executable_payload)
+    launcher.chmod(0o700)
+    replacement.chmod(0o700)
+
+    with bootstrap._held_executable(
+        launcher,
+        terminal_name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
+        error_message="fixture launcher is unsafe",
+    ) as binding:
+        old_identity = bootstrap._identity(os.fstat(binding.descriptor))
+        bootstrap._revalidate_held_executable(
+            binding,
+            name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
+            error_message="fixture launcher changed",
+        )
+        os.replace(replacement, launcher)
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="fixture launcher changed",
+        ):
+            bootstrap._revalidate_held_executable(
+                binding,
+                name_policy=bootstrap.LAUNCHER_NAME_SAME,
+                error_message="fixture launcher changed",
+            )
+        bootstrap._revalidate_held_executable(
+            binding,
+            name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
+            error_message="fixture launcher changed",
+        )
+        held_after = bootstrap._identity(os.fstat(binding.descriptor))
+        stable_indexes = (0, 1, 2, 3, 4, 6, 7)
+        assert tuple(held_after[index] for index in stable_indexes) == tuple(
+            old_identity[index] for index in stable_indexes
+        )
+        assert held_after[5] == 0
+        assert launcher.stat().st_ino != old_identity[1]
+
+
+def test_held_executable_installer_rebind_rejects_old_inode_drift(
+    tmp_path: Path,
+) -> None:
+    executable_payload = Path(sys.executable).read_bytes()
+    launcher = tmp_path / "launcher"
+    replacement = tmp_path / "replacement"
+    launcher.write_bytes(executable_payload)
+    replacement.write_bytes(executable_payload)
+    launcher.chmod(0o700)
+    replacement.chmod(0o700)
+
+    with bootstrap._held_executable(
+        launcher,
+        terminal_name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
+        error_message="fixture launcher is unsafe",
+    ) as binding:
+        os.replace(replacement, launcher)
+        os.fchmod(binding.descriptor, 0o500)
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="fixture launcher changed",
+        ):
+            bootstrap._revalidate_held_executable(
+                binding,
+                name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
+                error_message="fixture launcher changed",
+            )
+        os.fchmod(binding.descriptor, 0o700)
+
+
+def test_held_executable_installer_rebind_rejects_hidden_old_hardlink(
+    tmp_path: Path,
+) -> None:
+    executable_payload = Path(sys.executable).read_bytes()
+    launcher = tmp_path / "launcher"
+    replacement = tmp_path / "replacement"
+    hidden = tmp_path / "hidden-old-launcher"
+    launcher.write_bytes(executable_payload)
+    replacement.write_bytes(executable_payload)
+    launcher.chmod(0o700)
+    replacement.chmod(0o700)
+
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="fixture launcher changed",
+    ):
+        with bootstrap._held_executable(
+            launcher,
+            terminal_name_policy=(
+                bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
+            ),
+            error_message="fixture launcher changed",
+        ):
+            os.link(launcher, hidden)
+            os.replace(replacement, launcher)
+
+
+def test_held_executable_terminal_revalidation_rejects_old_bytes_drift(
+    tmp_path: Path,
+) -> None:
+    executable_payload = Path(sys.executable).read_bytes()
+    launcher = tmp_path / "launcher"
+    replacement = tmp_path / "replacement"
+    launcher.write_bytes(executable_payload)
+    replacement.write_bytes(executable_payload)
+    launcher.chmod(0o700)
+    replacement.chmod(0o700)
+    writable = os.open(launcher, os.O_WRONLY | os.O_CLOEXEC)
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="fixture launcher changed",
+        ):
+            with bootstrap._held_executable(
+                launcher,
+                terminal_name_policy=(
+                    bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
+                ),
+                error_message="fixture launcher changed",
+            ):
+                os.replace(replacement, launcher)
+                os.pwrite(writable, b"X", 0)
+    finally:
+        os.close(writable)
+
+
+def test_held_executable_rejects_special_mode_replacement(
+    tmp_path: Path,
+) -> None:
+    executable_payload = Path(sys.executable).read_bytes()
+    launcher = tmp_path / "launcher"
+    replacement = tmp_path / "replacement"
+    launcher.write_bytes(executable_payload)
+    replacement.write_bytes(executable_payload)
+    launcher.chmod(0o700)
+    replacement.chmod(0o4700)
+
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="fixture launcher changed",
+    ):
+        with bootstrap._held_executable(
+            launcher,
+            terminal_name_policy=(
+                bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
+            ),
+            error_message="fixture launcher changed",
+        ):
+            os.replace(replacement, launcher)
+
+
+def test_held_executable_combines_primary_and_terminal_failure(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "launcher"
+    launcher.write_bytes(Path(sys.executable).read_bytes())
+    launcher.chmod(0o700)
+
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="terminal capability could not be verified",
+    ) as observed:
+        with bootstrap._held_executable(
+            launcher,
+            error_message="fixture launcher changed",
+        ) as binding:
+            os.fchmod(binding.descriptor, 0o500)
+            raise RuntimeError("primary fixture failure")
+    assert isinstance(observed.value.__cause__, RuntimeError)
+
+
+@pytest.mark.parametrize("returncode", [0, 9])
+def test_owned_process_installer_rebind_requires_successful_exact_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+) -> None:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir(mode=0o700)
+    package = tmp_path / "reviewed.pkg"
+    package.write_bytes(b"reviewed package")
+    package.chmod(0o600)
+    executable_payload = Path(sys.executable).read_bytes()
+    launcher = tmp_path / "launcher"
+    replacement = tmp_path / "replacement"
+    launcher.write_bytes(executable_payload)
+    replacement.write_bytes(executable_payload)
+    launcher.chmod(0o700)
+    replacement.chmod(0o700)
+    cwd_descriptor = os.open(
+        cwd,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    package_bound = bootstrap._open_bound_file(
+        package,
+        maximum_size=bootstrap.MAX_TREE_FILE_BYTES,
+        error_message="fixture package is unsafe",
+    )
+
+    class CompletedPopen:
+        pid = 424242
+
+        def __init__(self, arguments: list[str], **_kwargs: Any) -> None:
+            self.args = arguments
+            self.returncode = returncode
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return self.returncode
+
+    monkeypatch.setattr(bootstrap.subprocess, "Popen", CompletedPopen)
+
+    def replace_launcher(
+        _process: CompletedPopen,
+        **_kwargs: Any,
+    ) -> tuple[str, str]:
+        os.replace(replacement, launcher)
+        return "", ""
+
+    monkeypatch.setattr(bootstrap, "_communicate_bounded", replace_launcher)
+    monkeypatch.setattr(build, "_process_group_exists", lambda _pid: False)
+    monkeypatch.setattr(
+        build,
+        "_terminate_owned_process_group",
+        lambda _process, **_kwargs: None,
+    )
+    try:
+        with bootstrap._held_executable(
+            launcher,
+            terminal_name_policy=(
+                bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
+            ),
+            error_message="fixture launcher is unsafe",
+        ) as binding:
+            if returncode == 0:
+                assert bootstrap._run_reviewed_framework_installer(
+                    package=package_bound,
+                    expected_package_sha256=package_bound.sha256,
+                    locked_interpreter=launcher,
+                    launcher_binding=binding,
+                    cwd=cwd,
+                    environment={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+                    pass_fds=(),
+                    build=build,
+                    cwd_descriptor=cwd_descriptor,
+                    path_capabilities=(
+                        (package_bound.descriptor, str(package), False),
+                    ),
+                ) == ""
+            else:
+                with pytest.raises(
+                    bootstrap.ToolchainBootstrapError,
+                    match="owned process state could not be verified",
+                ):
+                    bootstrap._run_reviewed_framework_installer(
+                        package=package_bound,
+                        expected_package_sha256=package_bound.sha256,
+                        locked_interpreter=launcher,
+                        launcher_binding=binding,
+                        cwd=cwd,
+                        environment={
+                            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
+                        },
+                        pass_fds=(),
+                        build=build,
+                        cwd_descriptor=cwd_descriptor,
+                        path_capabilities=(
+                            (
+                                package_bound.descriptor,
+                                str(package),
+                                False,
+                            ),
+                        ),
+                    )
+    finally:
+        os.close(package_bound.descriptor)
+        os.close(cwd_descriptor)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("package-sha", "locked-launcher", "package-capability"),
+)
+def test_reviewed_installer_rebind_requires_locked_launcher_and_package(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    package = tmp_path / "reviewed.pkg"
+    package.write_bytes(b"reviewed package")
+    package.chmod(0o600)
+    package_bound = bootstrap._open_bound_file(
+        package,
+        maximum_size=bootstrap.MAX_TREE_FILE_BYTES,
+        error_message="fixture package is unsafe",
+    )
+    launcher = tmp_path / "launcher"
+    launcher.write_bytes(Path(sys.executable).read_bytes())
+    launcher.chmod(0o700)
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        with bootstrap._held_executable(
+            launcher,
+            error_message="fixture launcher is unsafe",
+        ) as binding:
+            expected_sha256 = package_bound.sha256
+            locked_interpreter = launcher
+            package_capability = (
+                package_bound.descriptor,
+                str(package),
+                False,
+            )
+            if mutation == "package-sha":
+                expected_sha256 = "0" * 64
+            elif mutation == "locked-launcher":
+                locked_interpreter = tmp_path / "other-launcher"
+            else:
+                package_capability = (
+                    package_bound.descriptor,
+                    str(tmp_path / "other.pkg"),
+                    False,
+                )
+            with pytest.raises(
+                bootstrap.ToolchainBootstrapError,
+                match="installer launcher transition is invalid",
+            ):
+                bootstrap._run_reviewed_framework_installer(
+                    package=package_bound,
+                    expected_package_sha256=expected_sha256,
+                    locked_interpreter=locked_interpreter,
+                    launcher_binding=binding,
+                    cwd=tmp_path,
+                    environment={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+                    pass_fds=(),
+                    build=build,
+                    cwd_descriptor=cwd_descriptor,
+                    path_capabilities=(package_capability,),
+                )
+    finally:
+        os.close(package_bound.descriptor)
+        os.close(cwd_descriptor)
+
+
+def test_owned_process_rejects_installer_rebind_for_other_commands(
+    tmp_path: Path,
+) -> None:
+    cwd_descriptor = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    package = tmp_path / "reviewed.pkg"
+    package.write_bytes(b"reviewed package")
+    package.chmod(0o600)
+    package_descriptor = os.open(
+        package,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    launcher = tmp_path / "launcher"
+    launcher.write_bytes(Path(sys.executable).read_bytes())
+    launcher.chmod(0o700)
+    try:
+        with bootstrap._held_executable(
+            launcher,
+            error_message="fixture launcher is unsafe",
+        ) as binding:
+            with pytest.raises(
+                bootstrap.ToolchainBootstrapError,
+                match="installer launcher transition is invalid",
+            ):
+                bootstrap._run_owned_process(
+                    (sys.executable, "-I", "-c", "pass"),
+                    cwd=tmp_path,
+                    environment={"PATH": "/usr/bin:/bin"},
+                    pass_fds=(),
+                    timeout=30,
+                    label="Python framework installation",
+                    build=build,
+                    cwd_descriptor=cwd_descriptor,
+                    launcher_python=launcher,
+                    launcher_binding=binding,
+                    launcher_name_policy=(
+                        bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
+                    ),
+                    launcher_rebind_authority=(
+                        bootstrap._REVIEWED_INSTALLER_REBIND_AUTHORITY
+                    ),
+                    path_capabilities=(
+                        (package_descriptor, str(package), False),
+                    ),
+                )
+    finally:
+        os.close(package_descriptor)
+        os.close(cwd_descriptor)
+
+
 def test_inner_build_fixed_diagnostic_is_bounded_and_does_not_leak_stderr(
     tmp_path: Path,
 ) -> None:
@@ -6453,9 +6856,11 @@ def test_remove_tree_restores_owner_write_before_directory_quarantine(
     root = tmp_path / "root"
     root.mkdir(mode=0o700)
     victim = root / "victim"
-    victim.mkdir(mode=0o500)
+    victim.mkdir(mode=0o700)
     (victim / "state").write_text("held", encoding="utf-8")
     (victim / "state").chmod(0o400)
+    victim.chmod(0o500)
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o500
     descriptor = os.open(
         root,
         os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -10151,6 +10556,7 @@ def _configure_reviewed_python_installer_fixture(
     interpreter.parent.mkdir(mode=0o700, parents=True)
     interpreter.write_bytes(b"#!/bin/sh\nexit 0\n")
     interpreter.chmod(0o700)
+    monkeypatch.setattr(bootstrap.sys, "executable", str(interpreter))
     package_payload = b"reviewed synthetic installer package\n"
     package_name = "python-3.13.14-macos11.pkg"
     lock_path.write_bytes(

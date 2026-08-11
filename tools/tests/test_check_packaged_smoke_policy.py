@@ -758,9 +758,9 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "python_bootstrap",
-                '"--non-interactive",\n                            "/usr/sbin/installer"',
+                '"--non-interactive",\n            "/usr/sbin/installer"',
                 '"/usr/sbin/installer"',
-                "exact Python toolchain bootstrap",
+                "exact reviewed Python installer launcher transition",
             ),
             (
                 "python_bootstrap",
@@ -1018,6 +1018,80 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                         "PyInstaller canonical capability runner" in error
                         for error in errors
                     ),
+                    errors,
+                )
+
+    def test_reviewed_installer_launcher_transition_mutations_are_rejected(
+        self,
+    ) -> None:
+        mutations = (
+            (
+                "held.st_nlink != 0",
+                "False and held.st_nlink != 0",
+            ),
+            (
+                "stat.S_IMODE(named.st_mode) & 0o7022",
+                "stat.S_IMODE(named.st_mode) & 0o022",
+            ),
+            (
+                "hashlib.sha256(payload).hexdigest() != binding.sha256",
+                "False and hashlib.sha256(payload).hexdigest() != binding.sha256",
+            ),
+            (
+                "name_policy=terminal_name_policy",
+                "name_policy=LAUNCHER_NAME_SAME",
+            ),
+            (
+                "and process.returncode == 0\n                and check",
+                "and process.returncode != 0\n                and check",
+            ),
+            (
+                "launcher_rebind_authority=_REVIEWED_INSTALLER_REBIND_AUTHORITY",
+                "launcher_rebind_authority=object()",
+            ),
+            (
+                "package.sha256 != expected_package_sha256",
+                "False and package.sha256 != expected_package_sha256",
+            ),
+            (
+                "if active_launcher != interpreter:",
+                "if active_launcher == interpreter:",
+            ),
+            (
+                "terminal_name_policy=(\n"
+                "                        LAUNCHER_NAME_INSTALLER_REBIND\n"
+                "                    )",
+                "terminal_name_policy=LAUNCHER_NAME_SAME",
+            ),
+            (
+                "        if process is not None:\n"
+                "            try:\n"
+                "                revalidate_owned_bindings("
+                "name_policy=LAUNCHER_NAME_SAME)\n"
+                "            except BaseException as observed_error:\n"
+                "                binding_error = observed_error",
+                "        if process is not None:\n"
+                "            try:\n"
+                "                revalidate_owned_bindings("
+                "name_policy=LAUNCHER_NAME_INSTALLER_REBIND)\n"
+                "            except BaseException as observed_error:\n"
+                "                binding_error = observed_error\n"
+                "        if False:\n"
+                "            revalidate_owned_bindings("
+                "name_policy=LAUNCHER_NAME_SAME)",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python installer launcher transition drifted",
                     errors,
                 )
 
@@ -1998,6 +2072,31 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "tests run before production build",
             ),
             (
+                "remediation_evidence",
+                "container-run=31454826243,result=fail -->",
+                "container-run=31454826243,result=pass -->",
+            ),
+            (
+                "remediation_evidence",
+                "## 第六次 remediation technical candidate：`not-run`",
+                "## 第六次 remediation technical candidate：`pass`",
+            ),
+            (
+                "remediation_evidence",
+                "这是高置信代码/时序归因，不是 raw log 直接输出的",
+                "这是 Actions raw log 直接证明的",
+            ),
+            (
+                "status",
+                "sixth exact candidate `not-run`",
+                "sixth exact candidate `pass`",
+            ),
+            (
+                "trace",
+                "first through fifth remediations failed and superseded",
+                "first through fourth remediations failed and superseded",
+            ),
+            (
                 "iteration",
                 "PYTHONDONTWRITEBYTECODE=1",
                 "PYTHONDONTWRITEBYTECODE=0",
@@ -2005,7 +2104,7 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         ):
             with self.subTest(key=key, old=old):
                 current = inputs()
-                if key == "remediation_evidence":
+                if key in {"remediation_evidence", "status"}:
                     # Append-only evidence can repeat a historical boundary.
                     # Remove every copy so the mutation proves current
                     # authority is not satisfied by a stale earlier section.

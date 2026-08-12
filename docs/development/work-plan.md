@@ -61,8 +61,20 @@
   Engineering `31454826263` / job `93666344718` 在 Python framework installation 失败但
   cleanup success，launcher self-update collision 只是高置信代码/时序归因，不是 raw log
   直接证明；Containers `31454826243` success/no publish。第五次已 technical `fail` /
-  `superseded`、independent `pending`。第六次 exact remediation technical candidate `not-run`（无
-  committed exact head/tree 或 fresh exact-head Actions），assembled App 未启动，
+  `superseded`、independent `pending`。第六次 exact
+  `cc6ade1…` / parent `c04fe9f…` / tree `911e91d…` 的 Desktop source `31460588210`
+  success；Engineering `31460588223` / job `93683139742` 在 policy `67/67` 与 exact-Git `1/1`
+  通过后以 `Reviewed Python installer launcher is unsafe` 失败，cleanup success、later stages
+  skipped、artifacts `[]`；Containers `31460588212` success/no publish。第六次已 technical `fail` /
+  `superseded`、independent `pending`。第七次 exact remediation technical candidate `not-run`（无
+  committed exact head/tree 或 fresh exact-head Actions）。其当前本地设计不使用
+  `actions/setup-python` / 原 full pkg；exact outer pkg 验签后只以唯一 17-byte no-op 重打并安装
+  `Python_Framework.pkg`，隔离旧 root/确认 target absent，再完成 non-symlink seal、大小写无关
+  cache cleanup 与 O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node
+  core/fresh-exclusion verification；之后才精确复验/清理
+  quarantine，首次 framework Python 位于该 cleanup 后；运行时 install-reviewed 仅验证
+  distribution/binding，不安装或 `sudo`。六次失败均
+  未启动 assembled App，
   packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限

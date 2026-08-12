@@ -42,6 +42,16 @@ BASE_ARCHIVE_PAYLOADS = {
     "build_output.txt": b"",
     INSTALLER_NAME: b"synthetic-python-installer-package",
 }
+FRAMEWORK_COMPONENT_FIXTURE = copy.deepcopy(
+    json.loads(
+        (
+            PROJECT_ROOT
+            / "backend"
+            / "packaging"
+            / "python-sidecar-toolchain.lock.json"
+        ).read_text(encoding="utf-8")
+    )["python"]["distribution"]["frameworkComponent"]
+)
 ArchiveEntry = tuple[str, bytes, str]
 
 
@@ -276,7 +286,7 @@ def test_held_cwd_exec_runner_rejects_bad_cwd_and_target_drift(
         keep_fds=(),
     )
     mismatched = list(command)
-    mismatched[6] = str(int(mismatched[6]) + 1)
+    mismatched[7] = str(int(mismatched[7]) + 1)
     mismatch_completed = subprocess.run(
         mismatched,
         cwd="/",
@@ -361,9 +371,10 @@ def test_run_owned_process_uses_fixed_held_cwd_spawn_contract(
     finally:
         os.close(cwd_descriptor)
 
-    assert observed["arguments"][:4] == [
+    assert observed["arguments"][:5] == [
         sys.executable,
         "-I",
+        "-S",
         "-c",
         bootstrap.HELD_CWD_EXEC_RUNNER,
     ]
@@ -568,89 +579,12 @@ def test_owned_process_rejects_regular_keep_fd_metadata_drift(
         os.close(cwd_descriptor)
 
 
-def test_held_executable_accepts_only_explicit_installer_name_rebind(
+def test_held_executable_rejects_launcher_name_replacement(
     tmp_path: Path,
 ) -> None:
     executable_payload = Path(sys.executable).read_bytes()
     launcher = tmp_path / "launcher"
     replacement = tmp_path / "replacement"
-    launcher.write_bytes(executable_payload)
-    replacement.write_bytes(executable_payload)
-    launcher.chmod(0o700)
-    replacement.chmod(0o700)
-
-    with bootstrap._held_executable(
-        launcher,
-        terminal_name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
-        error_message="fixture launcher is unsafe",
-    ) as binding:
-        old_identity = bootstrap._identity(os.fstat(binding.descriptor))
-        bootstrap._revalidate_held_executable(
-            binding,
-            name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
-            error_message="fixture launcher changed",
-        )
-        os.replace(replacement, launcher)
-        with pytest.raises(
-            bootstrap.ToolchainBootstrapError,
-            match="fixture launcher changed",
-        ):
-            bootstrap._revalidate_held_executable(
-                binding,
-                name_policy=bootstrap.LAUNCHER_NAME_SAME,
-                error_message="fixture launcher changed",
-            )
-        bootstrap._revalidate_held_executable(
-            binding,
-            name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
-            error_message="fixture launcher changed",
-        )
-        held_after = bootstrap._identity(os.fstat(binding.descriptor))
-        stable_indexes = (0, 1, 2, 3, 4, 6, 7)
-        assert tuple(held_after[index] for index in stable_indexes) == tuple(
-            old_identity[index] for index in stable_indexes
-        )
-        assert held_after[5] == 0
-        assert launcher.stat().st_ino != old_identity[1]
-
-
-def test_held_executable_installer_rebind_rejects_old_inode_drift(
-    tmp_path: Path,
-) -> None:
-    executable_payload = Path(sys.executable).read_bytes()
-    launcher = tmp_path / "launcher"
-    replacement = tmp_path / "replacement"
-    launcher.write_bytes(executable_payload)
-    replacement.write_bytes(executable_payload)
-    launcher.chmod(0o700)
-    replacement.chmod(0o700)
-
-    with bootstrap._held_executable(
-        launcher,
-        terminal_name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
-        error_message="fixture launcher is unsafe",
-    ) as binding:
-        os.replace(replacement, launcher)
-        os.fchmod(binding.descriptor, 0o500)
-        with pytest.raises(
-            bootstrap.ToolchainBootstrapError,
-            match="fixture launcher changed",
-        ):
-            bootstrap._revalidate_held_executable(
-                binding,
-                name_policy=bootstrap.LAUNCHER_NAME_INSTALLER_REBIND,
-                error_message="fixture launcher changed",
-            )
-        os.fchmod(binding.descriptor, 0o700)
-
-
-def test_held_executable_installer_rebind_rejects_hidden_old_hardlink(
-    tmp_path: Path,
-) -> None:
-    executable_payload = Path(sys.executable).read_bytes()
-    launcher = tmp_path / "launcher"
-    replacement = tmp_path / "replacement"
-    hidden = tmp_path / "hidden-old-launcher"
     launcher.write_bytes(executable_payload)
     replacement.write_bytes(executable_payload)
     launcher.chmod(0o700)
@@ -662,25 +596,56 @@ def test_held_executable_installer_rebind_rejects_hidden_old_hardlink(
     ):
         with bootstrap._held_executable(
             launcher,
-            terminal_name_policy=(
-                bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
-            ),
             error_message="fixture launcher changed",
         ):
-            os.link(launcher, hidden)
             os.replace(replacement, launcher)
 
 
-def test_held_executable_terminal_revalidation_rejects_old_bytes_drift(
+def test_held_executable_still_rejects_group_writable_framework_launcher(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "python3.13"
+    launcher.write_bytes(Path(sys.executable).read_bytes())
+    launcher.chmod(0o775)
+
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="fixture launcher is unsafe",
+    ):
+        with bootstrap._held_executable(
+            launcher,
+            error_message="fixture launcher is unsafe",
+        ):
+            raise AssertionError("group-writable launcher was entered")
+
+
+def test_held_executable_rejects_hardlink_count_drift(
     tmp_path: Path,
 ) -> None:
     executable_payload = Path(sys.executable).read_bytes()
     launcher = tmp_path / "launcher"
-    replacement = tmp_path / "replacement"
+    hidden = tmp_path / "hidden-launcher"
     launcher.write_bytes(executable_payload)
-    replacement.write_bytes(executable_payload)
     launcher.chmod(0o700)
-    replacement.chmod(0o700)
+
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="fixture launcher changed",
+    ):
+        with bootstrap._held_executable(
+            launcher,
+            error_message="fixture launcher changed",
+        ):
+            os.link(launcher, hidden)
+
+
+def test_held_executable_terminal_revalidation_rejects_bytes_drift(
+    tmp_path: Path,
+) -> None:
+    executable_payload = Path(sys.executable).read_bytes()
+    launcher = tmp_path / "launcher"
+    launcher.write_bytes(executable_payload)
+    launcher.chmod(0o700)
     writable = os.open(launcher, os.O_WRONLY | os.O_CLOEXEC)
     try:
         with pytest.raises(
@@ -689,27 +654,19 @@ def test_held_executable_terminal_revalidation_rejects_old_bytes_drift(
         ):
             with bootstrap._held_executable(
                 launcher,
-                terminal_name_policy=(
-                    bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
-                ),
                 error_message="fixture launcher changed",
             ):
-                os.replace(replacement, launcher)
                 os.pwrite(writable, b"X", 0)
     finally:
         os.close(writable)
 
 
-def test_held_executable_rejects_special_mode_replacement(
+def test_held_executable_rejects_privileged_mode_drift(
     tmp_path: Path,
 ) -> None:
-    executable_payload = Path(sys.executable).read_bytes()
     launcher = tmp_path / "launcher"
-    replacement = tmp_path / "replacement"
-    launcher.write_bytes(executable_payload)
-    replacement.write_bytes(executable_payload)
+    launcher.write_bytes(Path(sys.executable).read_bytes())
     launcher.chmod(0o700)
-    replacement.chmod(0o4700)
 
     with pytest.raises(
         bootstrap.ToolchainBootstrapError,
@@ -717,12 +674,9 @@ def test_held_executable_rejects_special_mode_replacement(
     ):
         with bootstrap._held_executable(
             launcher,
-            terminal_name_policy=(
-                bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
-            ),
             error_message="fixture launcher changed",
         ):
-            os.replace(replacement, launcher)
+            launcher.chmod(0o4700)
 
 
 def test_held_executable_combines_primary_and_terminal_failure(
@@ -743,232 +697,6 @@ def test_held_executable_combines_primary_and_terminal_failure(
             os.fchmod(binding.descriptor, 0o500)
             raise RuntimeError("primary fixture failure")
     assert isinstance(observed.value.__cause__, RuntimeError)
-
-
-@pytest.mark.parametrize("returncode", [0, 9])
-def test_owned_process_installer_rebind_requires_successful_exact_contract(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    returncode: int,
-) -> None:
-    cwd = tmp_path / "cwd"
-    cwd.mkdir(mode=0o700)
-    package = tmp_path / "reviewed.pkg"
-    package.write_bytes(b"reviewed package")
-    package.chmod(0o600)
-    executable_payload = Path(sys.executable).read_bytes()
-    launcher = tmp_path / "launcher"
-    replacement = tmp_path / "replacement"
-    launcher.write_bytes(executable_payload)
-    replacement.write_bytes(executable_payload)
-    launcher.chmod(0o700)
-    replacement.chmod(0o700)
-    cwd_descriptor = os.open(
-        cwd,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-    )
-    package_bound = bootstrap._open_bound_file(
-        package,
-        maximum_size=bootstrap.MAX_TREE_FILE_BYTES,
-        error_message="fixture package is unsafe",
-    )
-
-    class CompletedPopen:
-        pid = 424242
-
-        def __init__(self, arguments: list[str], **_kwargs: Any) -> None:
-            self.args = arguments
-            self.returncode = returncode
-
-        def wait(self, timeout: float | None = None) -> int:
-            del timeout
-            return self.returncode
-
-    monkeypatch.setattr(bootstrap.subprocess, "Popen", CompletedPopen)
-
-    def replace_launcher(
-        _process: CompletedPopen,
-        **_kwargs: Any,
-    ) -> tuple[str, str]:
-        os.replace(replacement, launcher)
-        return "", ""
-
-    monkeypatch.setattr(bootstrap, "_communicate_bounded", replace_launcher)
-    monkeypatch.setattr(build, "_process_group_exists", lambda _pid: False)
-    monkeypatch.setattr(
-        build,
-        "_terminate_owned_process_group",
-        lambda _process, **_kwargs: None,
-    )
-    try:
-        with bootstrap._held_executable(
-            launcher,
-            terminal_name_policy=(
-                bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
-            ),
-            error_message="fixture launcher is unsafe",
-        ) as binding:
-            if returncode == 0:
-                assert bootstrap._run_reviewed_framework_installer(
-                    package=package_bound,
-                    expected_package_sha256=package_bound.sha256,
-                    locked_interpreter=launcher,
-                    launcher_binding=binding,
-                    cwd=cwd,
-                    environment={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
-                    pass_fds=(),
-                    build=build,
-                    cwd_descriptor=cwd_descriptor,
-                    path_capabilities=(
-                        (package_bound.descriptor, str(package), False),
-                    ),
-                ) == ""
-            else:
-                with pytest.raises(
-                    bootstrap.ToolchainBootstrapError,
-                    match="owned process state could not be verified",
-                ):
-                    bootstrap._run_reviewed_framework_installer(
-                        package=package_bound,
-                        expected_package_sha256=package_bound.sha256,
-                        locked_interpreter=launcher,
-                        launcher_binding=binding,
-                        cwd=cwd,
-                        environment={
-                            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
-                        },
-                        pass_fds=(),
-                        build=build,
-                        cwd_descriptor=cwd_descriptor,
-                        path_capabilities=(
-                            (
-                                package_bound.descriptor,
-                                str(package),
-                                False,
-                            ),
-                        ),
-                    )
-    finally:
-        os.close(package_bound.descriptor)
-        os.close(cwd_descriptor)
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    ("package-sha", "locked-launcher", "package-capability"),
-)
-def test_reviewed_installer_rebind_requires_locked_launcher_and_package(
-    tmp_path: Path,
-    mutation: str,
-) -> None:
-    package = tmp_path / "reviewed.pkg"
-    package.write_bytes(b"reviewed package")
-    package.chmod(0o600)
-    package_bound = bootstrap._open_bound_file(
-        package,
-        maximum_size=bootstrap.MAX_TREE_FILE_BYTES,
-        error_message="fixture package is unsafe",
-    )
-    launcher = tmp_path / "launcher"
-    launcher.write_bytes(Path(sys.executable).read_bytes())
-    launcher.chmod(0o700)
-    cwd_descriptor = os.open(
-        tmp_path,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-    )
-    try:
-        with bootstrap._held_executable(
-            launcher,
-            error_message="fixture launcher is unsafe",
-        ) as binding:
-            expected_sha256 = package_bound.sha256
-            locked_interpreter = launcher
-            package_capability = (
-                package_bound.descriptor,
-                str(package),
-                False,
-            )
-            if mutation == "package-sha":
-                expected_sha256 = "0" * 64
-            elif mutation == "locked-launcher":
-                locked_interpreter = tmp_path / "other-launcher"
-            else:
-                package_capability = (
-                    package_bound.descriptor,
-                    str(tmp_path / "other.pkg"),
-                    False,
-                )
-            with pytest.raises(
-                bootstrap.ToolchainBootstrapError,
-                match="installer launcher transition is invalid",
-            ):
-                bootstrap._run_reviewed_framework_installer(
-                    package=package_bound,
-                    expected_package_sha256=expected_sha256,
-                    locked_interpreter=locked_interpreter,
-                    launcher_binding=binding,
-                    cwd=tmp_path,
-                    environment={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
-                    pass_fds=(),
-                    build=build,
-                    cwd_descriptor=cwd_descriptor,
-                    path_capabilities=(package_capability,),
-                )
-    finally:
-        os.close(package_bound.descriptor)
-        os.close(cwd_descriptor)
-
-
-def test_owned_process_rejects_installer_rebind_for_other_commands(
-    tmp_path: Path,
-) -> None:
-    cwd_descriptor = os.open(
-        tmp_path,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-    )
-    package = tmp_path / "reviewed.pkg"
-    package.write_bytes(b"reviewed package")
-    package.chmod(0o600)
-    package_descriptor = os.open(
-        package,
-        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
-    )
-    launcher = tmp_path / "launcher"
-    launcher.write_bytes(Path(sys.executable).read_bytes())
-    launcher.chmod(0o700)
-    try:
-        with bootstrap._held_executable(
-            launcher,
-            error_message="fixture launcher is unsafe",
-        ) as binding:
-            with pytest.raises(
-                bootstrap.ToolchainBootstrapError,
-                match="installer launcher transition is invalid",
-            ):
-                bootstrap._run_owned_process(
-                    (sys.executable, "-I", "-c", "pass"),
-                    cwd=tmp_path,
-                    environment={"PATH": "/usr/bin:/bin"},
-                    pass_fds=(),
-                    timeout=30,
-                    label="Python framework installation",
-                    build=build,
-                    cwd_descriptor=cwd_descriptor,
-                    launcher_python=launcher,
-                    launcher_binding=binding,
-                    launcher_name_policy=(
-                        bootstrap.LAUNCHER_NAME_INSTALLER_REBIND
-                    ),
-                    launcher_rebind_authority=(
-                        bootstrap._REVIEWED_INSTALLER_REBIND_AUTHORITY
-                    ),
-                    path_capabilities=(
-                        (package_descriptor, str(package), False),
-                    ),
-                )
-    finally:
-        os.close(package_descriptor)
-        os.close(cwd_descriptor)
 
 
 def test_inner_build_fixed_diagnostic_is_bounded_and_does_not_leak_stderr(
@@ -1361,7 +1089,8 @@ def _source_fixture(
         ],
         "installerPackageName": INSTALLER_NAME,
         "installerPackageSha256": _sha256_bytes(expected[INSTALLER_NAME]),
-        "installMethod": "macos-installer-pkg-direct",
+        "installMethod": "macos-installer-no-op-framework-component",
+        "frameworkComponent": copy.deepcopy(FRAMEWORK_COMPONENT_FIXTURE),
         "hashManifestName": "hashes.sha256",
         "hashManifestSource": "https://example.invalid/hashes.sha256",
         "hashManifestSha256": _sha256_bytes(hash_manifest_bytes),
@@ -5626,6 +5355,68 @@ def test_install_root_fingerprint_rejects_reviewed_broken_link_escape(
         )
 
 
+def test_install_root_fingerprint_excludes_only_exact_dynamic_paths(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "python-root"
+    (root / "bin").mkdir(parents=True)
+    stdlib = root / "lib" / "python3.13"
+    stdlib.mkdir(parents=True)
+    (stdlib / "json.py").write_text("reviewed = True\n", encoding="ascii")
+    baseline = build.fingerprint_install_root(root)
+
+    site_packages = stdlib / "site-packages"
+    site_packages.mkdir()
+    (site_packages / "unlocked.py").write_text("dynamic = True\n", encoding="ascii")
+    (root / "bin" / "pip").write_text("dynamic script\n", encoding="ascii")
+    exclusions = ("bin/pip", "lib/python3.13/site-packages")
+    assert build.fingerprint_install_root(
+        root,
+        excluded_paths=exclusions,
+    ) == baseline
+
+    (stdlib / "unexpected.py").write_text("drift = True\n", encoding="ascii")
+    assert build.fingerprint_install_root(
+        root,
+        excluded_paths=exclusions,
+    ) != baseline
+
+
+def test_install_root_fingerprint_ignores_casefolded_bytecode_caches(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "python-root"
+    stdlib = root / "lib" / "python3.13"
+    stdlib.mkdir(parents=True)
+    (stdlib / "json.py").write_text("reviewed = True\n", encoding="ascii")
+    baseline = build.fingerprint_install_root(root)
+
+    cache = stdlib / "__PYCACHE__"
+    cache.mkdir()
+    (cache / "JSON.CPYTHON-313.PYC").write_bytes(b"cached bytecode\n")
+    assert build.fingerprint_install_root(root) == baseline
+
+
+@pytest.mark.parametrize(
+    "excluded_paths",
+    (
+        ("../escape",),
+        ("z", "a"),
+        ("lib", "lib/python3.13"),
+    ),
+)
+def test_install_root_fingerprint_rejects_unsafe_dynamic_exclusions(
+    tmp_path: Path,
+    excluded_paths: tuple[str, ...],
+) -> None:
+    root = tmp_path / "python-root"
+    root.mkdir()
+    (root / "reviewed").write_text("payload\n", encoding="ascii")
+
+    with pytest.raises(build.BuildError, match="fingerprint exclusion"):
+        build.fingerprint_install_root(root, excluded_paths=excluded_paths)
+
+
 def test_install_root_binding_accepts_fully_injected_reviewed_interpreter(
     tmp_path: Path,
 ) -> None:
@@ -9441,6 +9232,12 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
     assert provenance["implementation"]["const"] == python_lock["implementation"]
     assert provenance["version"]["const"] == python_lock["version"] == "3.13.14"
     assert provenance["installRoot"]["const"] == python_lock["installRoot"]
+    assert python_lock["frameworkCoreFingerprintExcludedPaths"] == list(
+        bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS
+    )
+    assert python_lock["frameworkCoreFingerprintSha256"] == (
+        "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
+    )
     assert python_lock["reviewedBrokenSymlinks"] == [
         {
             "path": "Frameworks/Tcl.framework/PrivateHeaders",
@@ -10534,13 +10331,213 @@ print(json.dumps({{"error": error, "residue": sorted(p.name for p in runner.iter
     }
 
 
+def _synthetic_reviewed_framework(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, Any]]:
+    root = tmp_path / "Python.framework" / "Versions" / "3.13"
+    launcher = root / "bin" / "python3.13"
+    launcher.parent.mkdir(mode=0o700, parents=True)
+    launcher_payload = b"synthetic python launcher\n"
+    launcher.write_bytes(launcher_payload)
+    launcher.chmod(0o755)
+    framework_payload = b"synthetic framework dylib\n"
+    (root / "Python").write_bytes(framework_payload)
+    (root / "Python").chmod(0o644)
+    stdlib = root / "lib" / "python3.13"
+    stdlib.mkdir(mode=0o755, parents=True)
+    (stdlib / "json.py").write_text("reviewed = True\n", encoding="ascii")
+    (stdlib / "json.py").chmod(0o644)
+    python_lock = {
+        "interpreterRelativePath": "bin/python3.13",
+        "interpreterSize": len(launcher_payload),
+        "interpreterSha256": hashlib.sha256(launcher_payload).hexdigest(),
+        "frameworkBinaryRelativePath": "Python",
+        "frameworkBinarySize": len(framework_payload),
+        "frameworkBinarySha256": hashlib.sha256(framework_payload).hexdigest(),
+        "frameworkCoreFingerprintExcludedPaths": list(
+            bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS
+        ),
+        "frameworkCoreFingerprintSha256": build.fingerprint_install_root(
+            root,
+            excluded_paths=bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS,
+        ),
+        "reviewedBrokenSymlinks": [],
+    }
+    return root, python_lock
+
+
+def test_reviewed_framework_seal_accepts_real_python_org_modes_only_after_seal(
+    tmp_path: Path,
+) -> None:
+    root, python_lock = _synthetic_reviewed_framework(tmp_path)
+    (root / "bin" / "python3.13").chmod(0o775)
+    (root / "Python").chmod(0o664)
+    (root / "lib" / "python3.13" / "json.py").chmod(0o664)
+
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="writable or privileged|execution closure is unsafe",
+    ):
+        bootstrap._verify_reviewed_framework_seal(
+            root,
+            python_lock=python_lock,
+            expected_owner=os.geteuid(),
+        )
+
+    for path in (root, *root.rglob("*")):
+        if not path.is_symlink():
+            path.chmod(stat.S_IMODE(path.stat().st_mode) & ~0o022)
+    bootstrap._verify_reviewed_framework_seal(
+        root,
+        python_lock=python_lock,
+        expected_owner=os.geteuid(),
+    )
+
+
+def test_reviewed_framework_core_fingerprint_rejects_unlisted_stdlib_drift(
+    tmp_path: Path,
+) -> None:
+    root, python_lock = _synthetic_reviewed_framework(tmp_path)
+    bootstrap._verify_reviewed_framework_core(
+        root,
+        python_lock=python_lock,
+        build=build,
+    )
+    site_packages = root / "lib" / "python3.13" / "site-packages"
+    site_packages.mkdir()
+    (site_packages / "dynamic.py").write_text("dynamic = True\n", encoding="ascii")
+    bootstrap._verify_reviewed_framework_core(
+        root,
+        python_lock=python_lock,
+        build=build,
+    )
+
+    (root / "lib" / "python3.13" / "json.py").write_text(
+        "reviewed = False\n",
+        encoding="ascii",
+    )
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="core fingerprint changed",
+    ):
+        bootstrap._verify_reviewed_framework_core(
+            root,
+            python_lock=python_lock,
+            build=build,
+        )
+
+
+@pytest.mark.parametrize(
+    ("listing", "unsafe"),
+    (
+        (b"drwxr-xr-x@ 1 root wheel 0 Jan 1 00:00 reviewed\n", False),
+        (
+            b"drwxr-xr-x@ 1 root wheel 0 Jan 1 00:00 reviewed\n"
+            b" 0: group:everyone allow add_file\n",
+            True,
+        ),
+    ),
+)
+def test_reviewed_framework_acl_seal_reads_acl_entries_not_mode_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    listing: bytes,
+    unsafe: bool,
+) -> None:
+    root, _python_lock = _synthetic_reviewed_framework(tmp_path)
+    monkeypatch.setattr(bootstrap.sys, "platform", "darwin")
+    identity = (1, 2, stat.S_IFREG | 0o755, 0, 0, 1, 1, 1, 1)
+    monkeypatch.setattr(bootstrap, "_exec_target_identity", lambda _path: identity)
+    monkeypatch.setattr(
+        bootstrap.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=("/bin/ls",),
+            returncode=0,
+            stdout=listing,
+            stderr=b"",
+        ),
+    )
+
+    if unsafe:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="ACL seal is unsafe",
+        ):
+            bootstrap._verify_reviewed_framework_acl_seal(root)
+    else:
+        bootstrap._verify_reviewed_framework_acl_seal(root)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "group-write",
+        "hidden-hardlink",
+        "special",
+        "escaping-symlink",
+        "pyc",
+        "pyo",
+        "bare-pyc-directory",
+        "uppercase-bytecode-cache",
+        "bytecode-cache-directory",
+    ),
+)
+def test_reviewed_framework_seal_rejects_dependency_alias_and_layout_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    root, python_lock = _synthetic_reviewed_framework(tmp_path)
+    dependency = root / "lib" / "python3.13" / "json.py"
+    if mutation == "group-write":
+        dependency.chmod(0o664)
+    elif mutation == "hidden-hardlink":
+        os.link(dependency, tmp_path / "hidden-framework-alias")
+    elif mutation == "special":
+        os.mkfifo(root / "lib" / "python3.13" / "producer.pipe", 0o600)
+    elif mutation == "escaping-symlink":
+        (root / "lib" / "escape").symlink_to("../../../outside")
+    elif mutation in {"pyc", "pyo"}:
+        (root / "lib" / "python3.13" / f"legacy.{mutation}").write_bytes(
+            b"unreviewed executable bytecode\n"
+        )
+    elif mutation == "bare-pyc-directory":
+        (root / "lib" / "python3.13" / ".pyc").mkdir()
+    elif mutation == "uppercase-bytecode-cache":
+        cache = root / "lib" / "python3.13" / "__PYCACHE__"
+        cache.mkdir()
+        (cache / "JSON.CPYTHON-313.PYC").write_bytes(
+            b"unreviewed executable bytecode\n"
+        )
+    else:
+        cache = root / "lib" / "python3.13" / "__pycache__"
+        cache.mkdir()
+        (cache / "unexpected.txt").write_text("residue\n", encoding="ascii")
+
+    with pytest.raises(bootstrap.ToolchainBootstrapError):
+        bootstrap._verify_reviewed_framework_seal(
+            root,
+            python_lock=python_lock,
+            expected_owner=os.geteuid(),
+        )
+
+
 def _configure_reviewed_python_installer_fixture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
     failure_label: str | None = None,
-    signal_name: str | None = None,
-) -> tuple[dict[str, str], Path, Path, Path, list[tuple[str, ...]]]:
+    launcher_drift: str | None = None,
+    package_drift: bool = False,
+    source_drift: bool = False,
+) -> tuple[
+    dict[str, str],
+    Path,
+    Path,
+    Path,
+    list[tuple[str, ...]],
+    list[str],
+]:
     runner_temp = tmp_path / "runner-temp"
     runner_temp.mkdir(mode=0o700)
     source_root = tmp_path / "exact-source"
@@ -10552,11 +10549,30 @@ def _configure_reviewed_python_installer_fixture(
     )
     lock_path.parent.mkdir(mode=0o700, parents=True)
     framework_root = tmp_path / "Python.framework" / "Versions" / "3.13"
+    monkeypatch.setattr(
+        bootstrap,
+        "DEFAULT_REVIEWED_FRAMEWORK_ROOT",
+        PurePosixPath(framework_root.as_posix()),
+    )
     interpreter = framework_root / "bin" / "python3.13"
     interpreter.parent.mkdir(mode=0o700, parents=True)
-    interpreter.write_bytes(b"#!/bin/sh\nexit 0\n")
-    interpreter.chmod(0o700)
+    interpreter_payload = b"#!/bin/sh\nexit 0\n"
+    interpreter.write_bytes(interpreter_payload)
+    interpreter.chmod(0o755)
+    framework_binary = framework_root / "Python"
+    framework_payload = b"synthetic framework binary\n"
+    framework_binary.write_bytes(framework_payload)
+    framework_binary.chmod(0o644)
+    framework_core_fingerprint = build.fingerprint_install_root(
+        framework_root,
+        excluded_paths=bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS,
+    )
     monkeypatch.setattr(bootstrap.sys, "executable", str(interpreter))
+    monkeypatch.setattr(
+        bootstrap,
+        "_reviewed_framework_owner",
+        lambda: os.geteuid(),
+    )
     package_payload = b"reviewed synthetic installer package\n"
     package_name = "python-3.13.14-macos11.pkg"
     lock_path.write_bytes(
@@ -10565,11 +10581,33 @@ def _configure_reviewed_python_installer_fixture(
                 "python": {
                     "installRoot": str(framework_root),
                     "interpreterRelativePath": "bin/python3.13",
+                    "interpreterSize": len(interpreter_payload),
+                    "interpreterSha256": hashlib.sha256(
+                        interpreter_payload
+                    ).hexdigest(),
+                    "frameworkBinaryRelativePath": "Python",
+                    "frameworkBinarySize": len(framework_payload),
+                    "frameworkBinarySha256": hashlib.sha256(
+                        framework_payload
+                    ).hexdigest(),
+                    "frameworkCoreFingerprintExcludedPaths": list(
+                        bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS
+                    ),
+                    "frameworkCoreFingerprintSha256": (
+                        framework_core_fingerprint
+                    ),
+                    "reviewedBrokenSymlinks": [],
                     "distribution": {
                         "installerPackageName": package_name,
                         "installerPackageSha256": hashlib.sha256(
                             package_payload
                         ).hexdigest(),
+                        "installMethod": (
+                            "macos-installer-no-op-framework-component"
+                        ),
+                        "frameworkComponent": copy.deepcopy(
+                            FRAMEWORK_COMPONENT_FIXTURE
+                        ),
                     },
                 }
             }
@@ -10596,7 +10634,39 @@ def _configure_reviewed_python_installer_fixture(
         files=(bound_lock,),
     )
     monkeypatch.setattr(bootstrap, "_validate_source_root", lambda *_args: source)
-    monkeypatch.setattr(bootstrap, "_revalidate_source_seal", lambda *_args: None)
+    source_revalidations = 0
+
+    def revalidate_source(*_args: Any) -> None:
+        nonlocal source_revalidations
+        source_revalidations += 1
+        if source_drift and source_revalidations == 2:
+            raise bootstrap.ToolchainBootstrapError(
+                "Reviewed exact source input changed"
+            )
+
+    monkeypatch.setattr(bootstrap, "_revalidate_source_seal", revalidate_source)
+    events: list[str] = []
+    verify_seal = bootstrap._verify_reviewed_framework_seal
+    verify_core = bootstrap._verify_reviewed_framework_core
+
+    def observe_seal(*args: Any, **kwargs: Any) -> None:
+        events.append("seal")
+        verify_seal(*args, **kwargs)
+
+    def observe_core(*args: Any, **kwargs: Any) -> None:
+        events.append("core")
+        verify_core(*args, **kwargs)
+
+    monkeypatch.setattr(
+        bootstrap,
+        "_verify_reviewed_framework_seal",
+        observe_seal,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_verify_reviewed_framework_core",
+        observe_core,
+    )
 
     def extract_package(
         _archive: Path,
@@ -10608,7 +10678,16 @@ def _configure_reviewed_python_installer_fixture(
         assert toolchain["python"]["distribution"]["installerPackageName"] == (
             package_name
         )
-        output.write_bytes(package_payload)
+        assert toolchain["python"]["distribution"]["installMethod"] == (
+            "macos-installer-no-op-framework-component"
+        )
+        assert toolchain["python"]["distribution"]["frameworkComponent"] == (
+            FRAMEWORK_COMPONENT_FIXTURE
+        )
+        events.append("extract")
+        output.write_bytes(
+            package_payload + (b"package drift\n" if package_drift else b"")
+        )
         output.chmod(0o600)
         return output
 
@@ -10626,10 +10705,36 @@ def _configure_reviewed_python_installer_fixture(
         command = tuple(arguments)
         calls.append(command)
         label = str(kwargs["label"])
-        if signal_name is not None and label == "Python framework installation":
-            os.kill(os.getpid(), getattr(signal, signal_name))
+        event = {
+            "Python installer signature verification": "signature",
+            "Python installer policy assessment": "policy",
+            "Installed framework interpreter verification": "observer",
+        }[label]
+        events.append(event)
         if failure_label == label:
             raise bootstrap.ToolchainBootstrapError(f"{label} failed")
+        if (
+            launcher_drift is not None
+            and label == "Python installer signature verification"
+        ):
+            if launcher_drift == "name":
+                replacement = interpreter.with_name("python3.13.replacement")
+                replacement.write_bytes(interpreter_payload)
+                replacement.chmod(0o755)
+                os.replace(replacement, interpreter)
+            else:
+                descriptor = os.open(
+                    interpreter,
+                    os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                )
+                try:
+                    os.pwrite(descriptor, b"X", 0)
+                finally:
+                    os.close(descriptor)
+            bootstrap._revalidate_held_executable(
+                kwargs["launcher_binding"],
+                error_message="Reviewed Python installer launcher is unsafe",
+            )
         if label == "Installed framework interpreter verification":
             return json.dumps(
                 {
@@ -10652,18 +10757,25 @@ def _configure_reviewed_python_installer_fixture(
     monkeypatch.setattr(
         build,
         "verify_python_install_binding",
-        lambda *_args, **_kwargs: "f" * 64,
+        lambda *_args, **_kwargs: events.append("binding") or "f" * 64,
     )
     archive = tmp_path / "python.tar.gz"
     hashes = tmp_path / "hashes.sha256"
-    return {"RUNNER_TEMP": str(runner_temp)}, archive, hashes, runner_temp, calls
+    return (
+        {"RUNNER_TEMP": str(runner_temp)},
+        archive,
+        hashes,
+        runner_temp,
+        calls,
+        events,
+    )
 
 
-def test_reviewed_python_installer_success_uses_exact_commands_and_cleans_root(
+def test_reviewed_python_verification_uses_only_audit_commands_and_cleans_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    environment, archive, hashes, runner_temp, calls = (
+    environment, archive, hashes, runner_temp, calls, events = (
         _configure_reviewed_python_installer_fixture(tmp_path, monkeypatch)
     )
 
@@ -10673,38 +10785,81 @@ def test_reviewed_python_installer_success_uses_exact_commands_and_cleans_root(
         hash_manifest=hashes,
     ) == "f" * 64
 
-    assert [command[0] for command in calls] == [
+    interpreter = str(
+        tmp_path
+        / "Python.framework"
+        / "Versions"
+        / "3.13"
+        / "bin"
+        / "python3.13"
+    )
+    assert tuple(command[0] for command in calls) == (
         "/usr/sbin/pkgutil",
         "/usr/sbin/spctl",
-        "/usr/bin/sudo",
-        str(tmp_path / "Python.framework" / "Versions" / "3.13" / "bin" / "python3.13"),
-    ]
-    assert calls[2][:5] == (
-        "/usr/bin/sudo",
-        "--non-interactive",
-        "/usr/sbin/installer",
-        "-pkg",
-        calls[2][4],
+        interpreter,
     )
-    assert calls[2][-2:] == ("-target", "/")
+    package_path = calls[0][-1]
+    assert calls[0] == (
+        "/usr/sbin/pkgutil",
+        "--check-signature",
+        package_path,
+    )
+    assert calls[1] == (
+        "/usr/sbin/spctl",
+        "--assess",
+        "--type",
+        "install",
+        "--verbose=4",
+        package_path,
+    )
+    assert calls[2][:4] == (interpreter, "-I", "-S", "-c")
+    forbidden = {
+        "/usr/bin/sudo",
+        "/usr/sbin/installer",
+        "/usr/sbin/chown",
+        "/bin/chmod",
+        "/usr/bin/find",
+    }
+    assert not forbidden.intersection(
+        argument for command in calls for argument in command
+    )
+    assert events == [
+        "extract",
+        "seal",
+        "core",
+        "signature",
+        "policy",
+        "seal",
+        "core",
+        "observer",
+        "binding",
+    ]
     assert not list(runner_temp.glob(f"{bootstrap.INSTALLER_ROOT_PREFIX}*"))
 
 
-def test_reviewed_python_installer_failure_cleans_exact_root(
+@pytest.mark.parametrize(
+    "failure_label",
+    (
+        "Python installer signature verification",
+        "Python installer policy assessment",
+    ),
+)
+def test_reviewed_python_distribution_audit_failure_never_runs_observer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure_label: str,
 ) -> None:
-    environment, archive, hashes, runner_temp, _calls = (
+    environment, archive, hashes, runner_temp, calls, events = (
         _configure_reviewed_python_installer_fixture(
             tmp_path,
             monkeypatch,
-            failure_label="Python installer policy assessment",
+            failure_label=failure_label,
         )
     )
 
     with pytest.raises(
         bootstrap.ToolchainBootstrapError,
-        match="Python installer policy assessment failed",
+        match=f"{failure_label} failed",
     ):
         bootstrap.install_reviewed_python(
             environment,
@@ -10712,33 +10867,75 @@ def test_reviewed_python_installer_failure_cleans_exact_root(
             hash_manifest=hashes,
         )
 
+    assert "observer" not in events
+    assert all(command[0] != str(Path(sys.executable)) for command in calls)
     assert not list(runner_temp.glob(f"{bootstrap.INSTALLER_ROOT_PREFIX}*"))
 
 
 @pytest.mark.parametrize(
-    "signal_name",
-    ["SIGINT", "SIGTERM", *(["SIGHUP"] if hasattr(signal, "SIGHUP") else [])],
+    "launcher_drift",
+    ("name", "bytes"),
 )
-def test_reviewed_python_installer_signal_cleans_exact_root(
+def test_reviewed_python_launcher_drift_is_rejected_before_observer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    signal_name: str,
+    launcher_drift: str,
 ) -> None:
-    environment, archive, hashes, runner_temp, _calls = (
+    environment, archive, hashes, runner_temp, _calls, events = (
         _configure_reviewed_python_installer_fixture(
             tmp_path,
             monkeypatch,
-            signal_name=signal_name,
+            launcher_drift=launcher_drift,
         )
     )
 
-    with pytest.raises(build.BuildError, match=build._INTERRUPTED_ERROR):
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match="launcher is unsafe",
+    ):
         bootstrap.install_reviewed_python(
             environment,
             archive=archive,
             hash_manifest=hashes,
         )
 
+    assert "observer" not in events
+    assert not list(runner_temp.glob(f"{bootstrap.INSTALLER_ROOT_PREFIX}*"))
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ("package", "source"),
+)
+def test_reviewed_python_package_or_source_drift_cleans_private_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    environment, archive, hashes, runner_temp, _calls, events = (
+        _configure_reviewed_python_installer_fixture(
+            tmp_path,
+            monkeypatch,
+            package_drift=drift == "package",
+            source_drift=drift == "source",
+        )
+    )
+
+    with pytest.raises(
+        bootstrap.ToolchainBootstrapError,
+        match=(
+            "installer package changed"
+            if drift == "package"
+            else "source input changed"
+        ),
+    ):
+        bootstrap.install_reviewed_python(
+            environment,
+            archive=archive,
+            hash_manifest=hashes,
+        )
+
+    assert "observer" not in events
     assert not list(runner_temp.glob(f"{bootstrap.INSTALLER_ROOT_PREFIX}*"))
 
 
@@ -10755,10 +10952,23 @@ def _configure_exact_toolchain_build_fixture(
     packaging_root = source_root / "backend" / "packaging"
     packaging_root.mkdir(mode=0o700, parents=True)
     framework_root = tmp_path / "Python.framework" / "Versions" / "3.13"
+    monkeypatch.setattr(
+        bootstrap,
+        "DEFAULT_REVIEWED_FRAMEWORK_ROOT",
+        PurePosixPath(framework_root.as_posix()),
+    )
     framework_python = framework_root / "bin" / "python3.13"
     framework_python.parent.mkdir(mode=0o700, parents=True)
-    framework_python.write_bytes(b"#!/bin/sh\nexit 0\n")
-    framework_python.chmod(0o700)
+    framework_python_payload = b"#!/bin/sh\nexit 0\n"
+    framework_python.write_bytes(framework_python_payload)
+    framework_python.chmod(0o755)
+    framework_binary_payload = b"synthetic framework binary\n"
+    (framework_root / "Python").write_bytes(framework_binary_payload)
+    (framework_root / "Python").chmod(0o644)
+    framework_core_fingerprint = build.fingerprint_install_root(
+        framework_root,
+        excluded_paths=bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS,
+    )
     build_lock_path = packaging_root / "build-requirements.lock"
     build_lock_path.write_bytes(
         (PROJECT_ROOT / "backend" / "packaging" / "build-requirements.lock").read_bytes()
@@ -10772,6 +10982,22 @@ def _configure_exact_toolchain_build_fixture(
                 "python": {
                     "installRoot": str(framework_root),
                     "interpreterRelativePath": "bin/python3.13",
+                    "interpreterSize": len(framework_python_payload),
+                    "interpreterSha256": hashlib.sha256(
+                        framework_python_payload
+                    ).hexdigest(),
+                    "frameworkBinaryRelativePath": "Python",
+                    "frameworkBinarySize": len(framework_binary_payload),
+                    "frameworkBinarySha256": hashlib.sha256(
+                        framework_binary_payload
+                    ).hexdigest(),
+                    "frameworkCoreFingerprintExcludedPaths": list(
+                        bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS
+                    ),
+                    "frameworkCoreFingerprintSha256": (
+                        framework_core_fingerprint
+                    ),
+                    "reviewedBrokenSymlinks": [],
                 }
             }
         )
@@ -10808,6 +11034,11 @@ def _configure_exact_toolchain_build_fixture(
         lambda *_args, **_kwargs: "f" * 64,
     )
     monkeypatch.setattr(bootstrap.sys, "executable", str(framework_python))
+    monkeypatch.setattr(
+        bootstrap,
+        "_reviewed_framework_owner",
+        lambda: os.geteuid(),
+    )
     labels: list[str] = []
 
     def create_synthetic_venv(root: Path) -> None:
@@ -11186,5 +11417,5 @@ def test_make_uses_only_exact_bootstrap_without_repo_toolchain_scratch() -> None
     assert "python-sidecar-toolchain:" not in makefile
     assert ".python-sidecar-build-venv" not in makefile
     assert ".python-sidecar-build" not in makefile
-    assert '"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"' in makefile
+    assert '"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"' in makefile
     assert "--install-reviewed-python" in makefile

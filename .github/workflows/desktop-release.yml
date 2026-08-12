@@ -58,10 +58,681 @@ jobs:
         with:
           node-version: "22.23.2"
 
-      - name: Set up reviewed build Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.13.14"
+      - name: Bind locked framework verifier Node
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly node_command="$(command -v node)"
+          test "${node_command#/}" != "${node_command}"
+          node_executable="$(
+            /usr/bin/env -i \
+              HOME="${RUNNER_TEMP}" \
+              PATH="/usr/bin:/bin" \
+              NODE_OPTIONS= \
+              NODE_PATH= \
+              "${node_command}" -p 'process.execPath'
+          )"
+          readonly node_executable
+          test "${node_executable#/}" != "${node_executable}"
+          test -f "${node_executable}"
+          test ! -L "${node_executable}"
+          test -x "${node_executable}"
+          node_mode="$(/usr/bin/stat -f '%Lp' "${node_executable}")"
+          (( (8#${node_mode} & 07022) == 0 ))
+          node_owner="$(/usr/bin/stat -f '%u' "${node_executable}")"
+          test "${node_owner}" = "0" || test "${node_owner}" = "$(/usr/bin/id -u)"
+          test "$(/usr/bin/stat -f '%l' "${node_executable}")" = "1"
+          readonly node_identity="$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' "${node_executable}")"
+          readonly node_sha256="$(/usr/bin/shasum -a 256 "${node_executable}" | /usr/bin/awk '{print $1}')"
+          [[ "${node_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          {
+            printf 'LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE=%s\n' "${node_executable}"
+            printf 'LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY=%s\n' "${node_identity}"
+            printf 'LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256=%s\n' "${node_sha256}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Provision reviewed build Python without executing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          test -n "${RUNNER_TEMP}"
+          [[ "${RUNNER_TEMP}" = /* ]]
+          test -d "${RUNNER_TEMP}"
+          test ! -L "${RUNNER_TEMP}"
+          test "$(cd "${RUNNER_TEMP}" && /bin/pwd -P)" = "${RUNNER_TEMP}"
+          readonly producer_prefix="${RUNNER_TEMP}/lcf-python-producer."
+          producer_root="$(/usr/bin/mktemp -d "${producer_prefix}XXXXXXXXXX")"
+          readonly producer_root
+          /bin/chmod 0700 "${producer_root}"
+          test "${producer_root#${producer_prefix}}" != "${producer_root}"
+          test "$(cd "${producer_root}" && /bin/pwd -P)" = "${producer_root}"
+          test "$(/usr/bin/stat -f '%u' "${producer_root}")" = "$(/usr/bin/id -u)"
+          test "$(/usr/bin/stat -f '%Lp' "${producer_root}")" = "700"
+          cleanup_producer() {
+            readonly saved_status="$?"
+            trap - EXIT
+            cleanup_status=0
+            /usr/bin/find -x "${producer_root}" -depth -delete || cleanup_status="$?"
+            if test "${saved_status}" -ne 0; then
+              exit "${saved_status}"
+            fi
+            exit "${cleanup_status}"
+          }
+          trap cleanup_producer EXIT
+          readonly archive="${producer_root}/python-3.13.14-darwin-arm64.tar.gz"
+          readonly hashes="${producer_root}/hashes.sha256"
+          /usr/bin/curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${archive}" \
+            "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/python-3.13.14-darwin-arm64.tar.gz"
+          /usr/bin/curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${hashes}" \
+            "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/hashes.sha256"
+          test -f "${archive}"
+          test ! -L "${archive}"
+          test "$(/usr/bin/stat -f '%l' "${archive}")" = "1"
+          test "$(/usr/bin/stat -f '%z' "${archive}")" = "70956513"
+          test -f "${hashes}"
+          test ! -L "${hashes}"
+          test "$(/usr/bin/stat -f '%l' "${hashes}")" = "1"
+          test "$(/usr/bin/stat -f '%z' "${hashes}")" = "2775"
+          printf '%s  %s\n' \
+            "839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34" \
+            "${archive}" | /usr/bin/shasum -a 256 --check
+          printf '%s  %s\n' \
+            "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17" \
+            "${hashes}" | /usr/bin/shasum -a 256 --check
+          test "$(/usr/bin/grep -Fxc \
+            '839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34  python-3.13.14-darwin-arm64.tar.gz' \
+            "${hashes}")" = "1"
+          readonly archive_identity="$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' "${archive}")"
+          readonly expected_archive_members="$(
+            printf '%s\n' \
+              './' \
+              './setup.sh' \
+              './build_output.txt' \
+              './python-3.13.14-macos11.pkg'
+          )"
+          test "$(/usr/bin/tar -tzf "${archive}")" = "${expected_archive_members}"
+          /usr/bin/tar -xzf "${archive}" -C "${producer_root}" \
+            "./python-3.13.14-macos11.pkg"
+          readonly package="${producer_root}/python-3.13.14-macos11.pkg"
+          test -f "${package}"
+          test ! -L "${package}"
+          test "$(/usr/bin/stat -f '%l' "${package}")" = "1"
+          test "$(/usr/bin/stat -f '%z' "${package}")" = "71544771"
+          printf '%s  %s\n' \
+            "8e58affb218c155a1dfdc27b291f817129669f8760e7a297adb2e4439ba5d2e8" \
+            "${package}" | /usr/bin/shasum -a 256 --check
+          test "$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' \
+            "${archive}")" = "${archive_identity}"
+          printf '%s  %s\n' \
+            "839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34" \
+            "${archive}" | /usr/bin/shasum -a 256 --check
+          /usr/sbin/pkgutil --check-signature "${package}"
+          /usr/sbin/spctl --assess --type install --verbose=4 "${package}"
+          readonly expanded="${producer_root}/expanded"
+          test ! -e "${expanded}"
+          /usr/sbin/pkgutil --expand "${package}" "${expanded}"
+          test -d "${expanded}"
+          test ! -L "${expanded}"
+          test "$(cd "${expanded}" && /bin/pwd -P)" = "${expanded}"
+          readonly component="${expanded}/Python_Framework.pkg"
+          test -d "${component}"
+          test ! -L "${component}"
+          test "$(cd "${component}" && /bin/pwd -P)" = "${component}"
+          readonly expected_component_entries="$(
+            printf '%s\n' \
+              "${component}/Bom" \
+              "${component}/PackageInfo" \
+              "${component}/Payload" \
+              "${component}/Scripts"
+          )"
+          test "$(LC_ALL=C /usr/bin/find "${component}" \
+            -mindepth 1 -maxdepth 1 -print | LC_ALL=C /usr/bin/sort)" = \
+            "${expected_component_entries}"
+          for component_file in Bom PackageInfo Payload; do
+            test -f "${component}/${component_file}"
+            test ! -L "${component}/${component_file}"
+            test "$(/usr/bin/stat -f '%u' "${component}/${component_file}")" = \
+              "$(/usr/bin/id -u)"
+            test "$(/usr/bin/stat -f '%l' "${component}/${component_file}")" = "1"
+          done
+          test -d "${component}/Scripts"
+          test ! -L "${component}/Scripts"
+          test "$(cd "${component}/Scripts" && /bin/pwd -P)" = \
+            "${component}/Scripts"
+          readonly expected_script_entries="${component}/Scripts/postinstall"
+          test "$(LC_ALL=C /usr/bin/find "${component}/Scripts" \
+            -mindepth 1 -maxdepth 1 -print | LC_ALL=C /usr/bin/sort)" = \
+            "${expected_script_entries}"
+          readonly postinstall="${component}/Scripts/postinstall"
+          test -f "${postinstall}"
+          test ! -L "${postinstall}"
+          test "$(/usr/bin/stat -f '%u' "${postinstall}")" = "$(/usr/bin/id -u)"
+          test "$(/usr/bin/stat -f '%l' "${postinstall}")" = "1"
+          test "$(/usr/bin/stat -f '%Lp' "${postinstall}")" = "755"
+          test "$(/usr/bin/stat -f '%z' "${component}/Bom")" = "1404518"
+          test "$(/usr/bin/stat -f '%z' "${component}/PackageInfo")" = "947"
+          test "$(/usr/bin/stat -f '%z' "${component}/Payload")" = "32739568"
+          test "$(/usr/bin/stat -f '%z' "${postinstall}")" = "894"
+          printf '%s  %s\n' \
+            "4e49a4c96076a4855219461f721d510493c6d4f3a7a2a9ad7c981ced723d09bd" \
+            "${component}/Bom" | /usr/bin/shasum -a 256 --check
+          printf '%s  %s\n' \
+            "86938c44112e37c4791fdc15ee0d89777ed8b6d0a85bae37f7ebf09839072f5c" \
+            "${component}/PackageInfo" | /usr/bin/shasum -a 256 --check
+          printf '%s  %s\n' \
+            "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391" \
+            "${component}/Payload" | /usr/bin/shasum -a 256 --check
+          printf '%s  %s\n' \
+            "7821586a42b4d86b075ed2c87da0a5981e5372070b9c7f6141d09f77cb172417" \
+            "${postinstall}" | /usr/bin/shasum -a 256 --check
+          readonly no_op_postinstall="${component}/Scripts/postinstall.no-op"
+          test ! -e "${no_op_postinstall}"
+          printf '#!/bin/sh\nexit 0\n' > "${no_op_postinstall}"
+          /bin/chmod 0755 "${no_op_postinstall}"
+          test -f "${no_op_postinstall}"
+          test ! -L "${no_op_postinstall}"
+          test "$(/usr/bin/stat -f '%z' "${no_op_postinstall}")" = "17"
+          printf '%s  %s\n' \
+            "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb" \
+            "${no_op_postinstall}" | /usr/bin/shasum -a 256 --check
+          /bin/mv -f "${no_op_postinstall}" "${postinstall}"
+          test "$(LC_ALL=C /usr/bin/find "${component}/Scripts" \
+            -mindepth 1 -maxdepth 1 -print | LC_ALL=C /usr/bin/sort)" = \
+            "${expected_script_entries}"
+          test "$(/usr/bin/stat -f '%z' "${postinstall}")" = "17"
+          printf '%s  %s\n' \
+            "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb" \
+            "${postinstall}" | /usr/bin/shasum -a 256 --check
+          readonly no_op_package="${producer_root}/Python_Framework.no-op.pkg"
+          test ! -e "${no_op_package}"
+          /usr/sbin/pkgutil --flatten "${component}" "${no_op_package}"
+          test -f "${no_op_package}"
+          test ! -L "${no_op_package}"
+          test "$(/usr/bin/stat -f '%u' "${no_op_package}")" = "$(/usr/bin/id -u)"
+          test "$(/usr/bin/stat -f '%l' "${no_op_package}")" = "1"
+          no_op_mode="$(/usr/bin/stat -f '%Lp' "${no_op_package}")"
+          (( (8#${no_op_mode} & 07022) == 0 ))
+          no_op_size="$(/usr/bin/stat -f '%z' "${no_op_package}")"
+          test "${no_op_size}" -gt 30000000
+          test "${no_op_size}" -lt 100000000
+          readonly no_op_identity="$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' "${no_op_package}")"
+          readonly no_op_sha256="$(/usr/bin/shasum -a 256 "${no_op_package}" | /usr/bin/awk '{print $1}')"
+          [[ "${no_op_sha256}" =~ ^[0-9a-f]{64}$ ]]
+          readonly reviewed_no_op="${producer_root}/reviewed-no-op"
+          test ! -e "${reviewed_no_op}"
+          /usr/sbin/pkgutil --expand "${no_op_package}" "${reviewed_no_op}"
+          test -d "${reviewed_no_op}"
+          test ! -L "${reviewed_no_op}"
+          test "$(cd "${reviewed_no_op}" && /bin/pwd -P)" = "${reviewed_no_op}"
+          readonly expected_reviewed_entries="$(
+            printf '%s\n' \
+              "${reviewed_no_op}/Bom" \
+              "${reviewed_no_op}/PackageInfo" \
+              "${reviewed_no_op}/Payload" \
+              "${reviewed_no_op}/Scripts"
+          )"
+          test "$(LC_ALL=C /usr/bin/find "${reviewed_no_op}" \
+            -mindepth 1 -maxdepth 1 -print | LC_ALL=C /usr/bin/sort)" = \
+            "${expected_reviewed_entries}"
+          test -f "${reviewed_no_op}/Bom"
+          test ! -L "${reviewed_no_op}/Bom"
+          test -f "${reviewed_no_op}/PackageInfo"
+          test ! -L "${reviewed_no_op}/PackageInfo"
+          test -f "${reviewed_no_op}/Payload"
+          test ! -L "${reviewed_no_op}/Payload"
+          test -d "${reviewed_no_op}/Scripts"
+          test ! -L "${reviewed_no_op}/Scripts"
+          readonly reviewed_postinstall="${reviewed_no_op}/Scripts/postinstall"
+          test "$(LC_ALL=C /usr/bin/find "${reviewed_no_op}/Scripts" \
+            -mindepth 1 -maxdepth 1 -print | LC_ALL=C /usr/bin/sort)" = \
+            "${reviewed_postinstall}"
+          test -f "${reviewed_postinstall}"
+          test ! -L "${reviewed_postinstall}"
+          test "$(/usr/bin/stat -f '%Lp' "${reviewed_postinstall}")" = "755"
+          test "$(/usr/bin/stat -f '%z' "${reviewed_no_op}/Bom")" = "1404518"
+          test "$(/usr/bin/stat -f '%z' "${reviewed_no_op}/PackageInfo")" = "947"
+          test "$(/usr/bin/stat -f '%z' "${reviewed_no_op}/Payload")" = "32739568"
+          test "$(/usr/bin/stat -f '%z' "${reviewed_postinstall}")" = "17"
+          printf '%s  %s\n' \
+            "4e49a4c96076a4855219461f721d510493c6d4f3a7a2a9ad7c981ced723d09bd" \
+            "${reviewed_no_op}/Bom" | /usr/bin/shasum -a 256 --check
+          printf '%s  %s\n' \
+            "86938c44112e37c4791fdc15ee0d89777ed8b6d0a85bae37f7ebf09839072f5c" \
+            "${reviewed_no_op}/PackageInfo" | /usr/bin/shasum -a 256 --check
+          printf '%s  %s\n' \
+            "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391" \
+            "${reviewed_no_op}/Payload" | /usr/bin/shasum -a 256 --check
+          printf '%s  %s\n' \
+            "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb" \
+            "${reviewed_postinstall}" | /usr/bin/shasum -a 256 --check
+          readonly framework_root="/Library/Frameworks/Python.framework/Versions/3.13"
+          readonly framework_parent="${framework_root%/*}"
+          for existing_ancestor in \
+            "/Library" \
+            "/Library/Frameworks" \
+            "/Library/Frameworks/Python.framework" \
+            "/Library/Frameworks/Python.framework/Versions" \
+            "/Library/Frameworks/Python.framework/Versions/3.13"; do
+            if test ! -e "${existing_ancestor}" && \
+              test ! -L "${existing_ancestor}"; then
+              continue
+            fi
+            test -d "${existing_ancestor}"
+            test ! -L "${existing_ancestor}"
+            test "$(cd "${existing_ancestor}" && /bin/pwd -P)" = "${existing_ancestor}"
+            existing_identity="$(/usr/bin/stat -f '%d:%i' "${existing_ancestor}")"
+            /usr/bin/sudo --non-interactive /usr/sbin/chown -h 0:0 "${existing_ancestor}"
+            /usr/bin/sudo --non-interactive /bin/chmod -h -N "${existing_ancestor}"
+            /usr/bin/sudo --non-interactive /bin/chmod -h go-w "${existing_ancestor}"
+            test "$(/usr/bin/stat -f '%d:%i' "${existing_ancestor}")" = "${existing_identity}"
+          done
+          framework_quarantine="none"
+          framework_quarantine_identity="none"
+          if test -e "${framework_root}" || test -L "${framework_root}"; then
+            test -d "${framework_root}"
+            test ! -L "${framework_root}"
+            readonly previous_root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
+            framework_quarantine="$(
+              /usr/bin/sudo --non-interactive /usr/bin/mktemp -d \
+                "${framework_parent}/.lcf-python-quarantine.XXXXXXXXXX"
+            )"
+            test "${framework_quarantine#${framework_parent}/.lcf-python-quarantine.}" != \
+              "${framework_quarantine}"
+            test -d "${framework_quarantine}"
+            test ! -L "${framework_quarantine}"
+            test "$(cd "${framework_quarantine}" && /bin/pwd -P)" = \
+              "${framework_quarantine}"
+            test "$(/usr/bin/stat -f '%u' \
+              "${framework_quarantine}")" = "0"
+            /usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"
+            /usr/bin/sudo --non-interactive /bin/mv \
+              "${framework_root}" "${framework_quarantine}"
+            test ! -e "${framework_root}"
+            test ! -L "${framework_root}"
+            test -d "${framework_quarantine}"
+            test ! -L "${framework_quarantine}"
+            test "$(/usr/bin/stat -f '%d:%i' \
+              "${framework_quarantine}")" = "${previous_root_identity}"
+            framework_quarantine_identity="${previous_root_identity}"
+          fi
+          test ! -e "${framework_root}"
+          test ! -L "${framework_root}"
+          test "$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' \
+            "${no_op_package}")" = "${no_op_identity}"
+          printf '%s  %s\n' "${no_op_sha256}" "${no_op_package}" | \
+            /usr/bin/shasum -a 256 --check
+          /usr/bin/sudo --non-interactive /usr/sbin/installer \
+            -pkg "${no_op_package}" -target /
+          test "$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' \
+            "${no_op_package}")" = "${no_op_identity}"
+          printf '%s  %s\n' "${no_op_sha256}" "${no_op_package}" | \
+            /usr/bin/shasum -a 256 --check
+          test -d "/Library/Frameworks/Python.framework/Versions/3.13"
+          test ! -L "/Library/Frameworks/Python.framework/Versions/3.13"
+          if test "${framework_quarantine_identity}" != "none"; then
+            test "$(/usr/bin/stat -f '%d:%i' \
+              "${framework_root}")" != "${framework_quarantine_identity}"
+          fi
+          {
+            printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE=%s\n' \
+              "${framework_quarantine}"
+            printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY=%s\n' \
+              "${framework_quarantine_identity}"
+          } >> "${GITHUB_ENV}"
+          cleanup_producer
+
+      - name: Seal reviewed build Python framework
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly framework_root="/Library/Frameworks/Python.framework/Versions/3.13"
+          readonly framework_parent="${framework_root%/*}"
+          readonly framework_anchor="${framework_parent%/*}"
+          readonly framework_container="${framework_anchor%/*}"
+          readonly library_root="${framework_container%/*}"
+          readonly framework_python="${framework_root}/bin/python3.13"
+          readonly framework_binary="${framework_root}/Python"
+          test -d "${library_root}"
+          test ! -L "${library_root}"
+          test "$(cd "${library_root}" && /bin/pwd -P)" = "${library_root}"
+          test -d "${framework_container}"
+          test ! -L "${framework_container}"
+          test "$(cd "${framework_container}" && /bin/pwd -P)" = "${framework_container}"
+          test -d "${framework_anchor}"
+          test ! -L "${framework_anchor}"
+          test "$(cd "${framework_anchor}" && /bin/pwd -P)" = "${framework_anchor}"
+          test -d "${framework_parent}"
+          test ! -L "${framework_parent}"
+          test "$(cd "${framework_parent}" && /bin/pwd -P)" = "${framework_parent}"
+          test -d "${framework_root}"
+          test ! -L "${framework_root}"
+          test "$(cd "${framework_root}" && /bin/pwd -P)" = "${framework_root}"
+          readonly library_identity="$(/usr/bin/stat -f '%d:%i' "${library_root}")"
+          readonly container_identity="$(/usr/bin/stat -f '%d:%i' "${framework_container}")"
+          readonly anchor_identity="$(/usr/bin/stat -f '%d:%i' "${framework_anchor}")"
+          readonly parent_identity="$(/usr/bin/stat -f '%d:%i' "${framework_parent}")"
+          readonly root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
+          /usr/bin/sudo --non-interactive /usr/sbin/chown \
+            -h 0:0 "${library_root}"
+          /usr/bin/sudo --non-interactive /bin/chmod \
+            -h -N "${library_root}"
+          /usr/bin/sudo --non-interactive /bin/chmod \
+            -h go-w "${library_root}"
+          test "$(/usr/bin/stat -f '%d:%i' "${library_root}")" = "${library_identity}"
+          /usr/bin/sudo --non-interactive /usr/sbin/chown \
+            -h 0:0 "${framework_container}"
+          /usr/bin/sudo --non-interactive /bin/chmod \
+            -h -N "${framework_container}"
+          /usr/bin/sudo --non-interactive /bin/chmod \
+            -h go-w "${framework_container}"
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_container}")" = "${container_identity}"
+          /usr/bin/sudo --non-interactive /usr/sbin/chown \
+            -h 0:0 "${framework_anchor}"
+          /usr/bin/sudo --non-interactive /bin/chmod \
+            -h -N "${framework_anchor}"
+          /usr/bin/sudo --non-interactive /bin/chmod \
+            -h go-w "${framework_anchor}"
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_anchor}")" = "${anchor_identity}"
+          /usr/bin/sudo --non-interactive /usr/sbin/chown \
+            -h 0:0 "${framework_parent}"
+          /usr/bin/sudo --non-interactive /bin/chmod \
+            -h -N "${framework_parent}"
+          /usr/bin/sudo --non-interactive /bin/chmod \
+            -h go-w "${framework_parent}"
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_parent}")" = "${parent_identity}"
+          /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+            "${framework_root}" \( -type f -o -type d \) \
+            -exec /usr/sbin/chown 0:0 '{}' '+'
+          /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+            "${framework_root}" \( -type f -o -type d \) \
+            -exec /bin/chmod -N '{}' '+'
+          /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+            "${framework_root}" \( -type f -o -type d \) \
+            -exec /bin/chmod go-w '{}' '+'
+          /usr/bin/sudo --non-interactive /usr/bin/find -x \
+            "${framework_root}" -type f \
+            \( -iname '*.pyc' -o -iname '*.pyo' \) -delete
+          /usr/bin/sudo --non-interactive /usr/bin/find -x \
+            "${framework_root}" -depth -type d \
+            -iname '__pycache__' -delete
+          test "$(/usr/bin/stat -f '%d:%i' "${library_root}")" = "${library_identity}"
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_container}")" = "${container_identity}"
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_anchor}")" = "${anchor_identity}"
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_parent}")" = "${parent_identity}"
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = "${root_identity}"
+          test "$(/usr/bin/stat -f '%u' "${library_root}")" = "0"
+          library_mode="$(/usr/bin/stat -f '%Lp' "${library_root}")"
+          (( (8#${library_mode} & 07022) == 0 ))
+          test "$(/usr/bin/stat -f '%u' "${framework_container}")" = "0"
+          container_mode="$(/usr/bin/stat -f '%Lp' "${framework_container}")"
+          (( (8#${container_mode} & 07022) == 0 ))
+          test "$(/usr/bin/stat -f '%u' "${framework_anchor}")" = "0"
+          anchor_mode="$(/usr/bin/stat -f '%Lp' "${framework_anchor}")"
+          (( (8#${anchor_mode} & 07022) == 0 ))
+          test "$(/usr/bin/stat -f '%u' "${framework_parent}")" = "0"
+          parent_mode="$(/usr/bin/stat -f '%Lp' "${framework_parent}")"
+          (( (8#${parent_mode} & 07022) == 0 ))
+          for sealed_directory in \
+            "${library_root}" \
+            "${framework_container}" \
+            "${framework_anchor}" \
+            "${framework_parent}"; do
+            sealed_listing="$(/bin/ls -lde "${sealed_directory}")"
+            [[ "${sealed_listing}" != *$'\n'* ]]
+          done
+          framework_entries=0
+          shopt -s nocasematch
+          while IFS= read -r -d '' entry; do
+            framework_entries=$((framework_entries + 1))
+            test "${framework_entries}" -le 100000
+            test "$(/usr/bin/stat -f '%u' "${entry}")" = "0"
+            relative_entry="${entry#${framework_root}/}"
+            case "${relative_entry}" in
+              __pycache__|__pycache__/*|*/__pycache__|*/__pycache__/*|*.pyc|*.pyo)
+                exit 1
+                ;;
+            esac
+            entry_listing="$(/bin/ls -lde "${entry}")"
+            [[ "${entry_listing}" != *$'\n'* ]]
+            if test -L "${entry}"; then
+              test "$(/usr/bin/stat -f '%l' "${entry}")" = "1"
+              continue
+            fi
+            entry_mode="$(/usr/bin/stat -f '%Lp' "${entry}")"
+            (( (8#${entry_mode} & 07022) == 0 ))
+            if test -f "${entry}"; then
+              test "$(/usr/bin/stat -f '%l' "${entry}")" = "1"
+            else
+              test -d "${entry}"
+            fi
+          done < <(/usr/bin/find -x "${framework_root}" -print0)
+          shopt -u nocasematch
+          test "${framework_entries}" -gt 1
+          printf '%s  %s\n' \
+            "ee3c4103b97e32a98e98cfad7f6ca4d09b2ab2dc16f3d28e18b54a4a0244efe0" \
+            "${framework_python}" | /usr/bin/shasum -a 256 --check
+          printf '%s  %s\n' \
+            "db77544e7135af8478d62c7d1289581d83714a676c7d3f2b7a4b996bdfef5717" \
+            "${framework_binary}" | /usr/bin/shasum -a 256 --check
+          [[ "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test "$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"
+          printf '%s  %s\n' \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \
+            /usr/bin/shasum -a 256 --check
+          readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"
+          readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"
+          readonly framework_verifier_size="27853"
+          readonly framework_verifier_sha256="b3e2576fff416be2924adab5470004f5b52fd0eba342b522adad761fe9176c26"
+          readonly framework_lock_size="4198"
+          readonly framework_lock_sha256="db66ce92b38e83273bf9a089085e76309a1db15494371a4d5a338066b74a4e67"
+          /usr/bin/env -i \
+            HOME="${RUNNER_TEMP}" \
+            PATH="/usr/bin:/bin" \
+            NODE_OPTIONS= \
+            NODE_PATH= \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" \
+            -e '
+          "use strict";
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const Module = require("node:module");
+          const path = require("node:path");
+          const { TextDecoder } = require("node:util");
+          const decoder = new TextDecoder("utf-8", { fatal: true });
+          const expectedArgumentCount = 7;
+          const argumentsValue = process.argv.slice(1);
+          if (
+            argumentsValue.length !== expectedArgumentCount ||
+            typeof fs.constants.O_NOFOLLOW !== "number"
+          ) {
+            throw new Error("Reviewed framework loader contract is unavailable");
+          }
+          const [
+            verifierPath,
+            verifierSizeText,
+            verifierSha256,
+            lockPath,
+            lockSizeText,
+            lockSha256,
+            frameworkRoot,
+          ] = argumentsValue;
+          function identity(info) {
+            return [
+              info.dev,
+              info.ino,
+              info.mode,
+              info.nlink,
+              info.uid,
+              info.gid,
+              info.size,
+              info.mtimeNs,
+              info.ctimeNs,
+            ].map(String).join(":");
+          }
+          function openPinned(pathname, sizeText, expectedSha256) {
+            if (
+              typeof pathname !== "string" ||
+              !path.posix.isAbsolute(pathname) ||
+              pathname.includes("\0") ||
+              !/^[1-9][0-9]*$/.test(sizeText) ||
+              !/^[0-9a-f]{64}$/.test(expectedSha256)
+            ) {
+              throw new Error("Reviewed framework input contract is unsafe");
+            }
+            const expectedSize = BigInt(sizeText);
+            if (expectedSize > 1048576n) {
+              throw new Error("Reviewed framework input exceeds its size bound");
+            }
+            const namedBefore = fs.lstatSync(pathname, { bigint: true });
+            const unsafeMode = (namedBefore.mode & 0o7022n) !== 0n;
+            if (
+              !namedBefore.isFile() ||
+              namedBefore.isSymbolicLink() ||
+              namedBefore.uid !== BigInt(process.geteuid()) ||
+              namedBefore.nlink !== 1n ||
+              namedBefore.size !== expectedSize ||
+              unsafeMode
+            ) {
+              throw new Error("Reviewed framework input is unsafe");
+            }
+            const descriptor = fs.openSync(
+              pathname,
+              fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+            );
+            try {
+              const heldBefore = fs.fstatSync(descriptor, { bigint: true });
+              if (identity(heldBefore) !== identity(namedBefore)) {
+                throw new Error("Reviewed framework input changed before reading");
+              }
+              const content = Buffer.alloc(Number(expectedSize));
+              let offset = 0;
+              while (offset < content.length) {
+                const count = fs.readSync(
+                  descriptor,
+                  content,
+                  offset,
+                  content.length - offset,
+                  null,
+                );
+                if (count === 0) {
+                  throw new Error("Reviewed framework input was truncated");
+                }
+                offset += count;
+              }
+              const heldAfter = fs.fstatSync(descriptor, { bigint: true });
+              const namedAfter = fs.lstatSync(pathname, { bigint: true });
+              if (
+                identity(heldAfter) !== identity(heldBefore) ||
+                identity(namedAfter) !== identity(heldBefore) ||
+                crypto.createHash("sha256").update(content).digest("hex") !==
+                  expectedSha256
+              ) {
+                throw new Error("Reviewed framework input changed while reading");
+              }
+              return Object.freeze({
+                content,
+                descriptor,
+                identity: identity(heldBefore),
+                pathname,
+              });
+            } catch (error) {
+              fs.closeSync(descriptor);
+              throw error;
+            }
+          }
+          function revalidate(binding) {
+            const held = fs.fstatSync(binding.descriptor, { bigint: true });
+            const named = fs.lstatSync(binding.pathname, { bigint: true });
+            if (
+              identity(held) !== binding.identity ||
+              identity(named) !== binding.identity
+            ) {
+              throw new Error("Reviewed framework input changed during verification");
+            }
+          }
+          let verifierBinding;
+          let lockBinding;
+          try {
+            verifierBinding = openPinned(
+              verifierPath,
+              verifierSizeText,
+              verifierSha256,
+            );
+            lockBinding = openPinned(lockPath, lockSizeText, lockSha256);
+            const reviewedModule = new Module(verifierPath);
+            reviewedModule.filename = verifierPath;
+            reviewedModule.paths = [];
+            reviewedModule._compile(
+              decoder.decode(verifierBinding.content),
+              verifierPath,
+            );
+            const verifier = reviewedModule.exports;
+            verifier.verifyStartupEnvironment(process.env);
+            const lockValue = JSON.parse(decoder.decode(lockBinding.content));
+            const digest = verifier.verifyReviewedPythonFramework({
+              root: frameworkRoot,
+              lockValue,
+            });
+            if (!/^[0-9a-f]{64}$/.test(digest)) {
+              throw new Error("Reviewed framework result is malformed");
+            }
+            revalidate(verifierBinding);
+            revalidate(lockBinding);
+            process.stdout.write(`${digest}\n`);
+          } finally {
+            if (lockBinding !== undefined) {
+              fs.closeSync(lockBinding.descriptor);
+            }
+            if (verifierBinding !== undefined) {
+              fs.closeSync(verifierBinding.descriptor);
+            }
+          }
+          ' \
+            "${framework_verifier}" \
+            "${framework_verifier_size}" \
+            "${framework_verifier_sha256}" \
+            "${framework_lock}" \
+            "${framework_lock_size}" \
+            "${framework_lock_sha256}" \
+            "${framework_root}"
+          test "$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"
+          printf '%s  %s\n' \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \
+            /usr/bin/shasum -a 256 --check
+          test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+          test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
+          if test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" = "none"; then
+            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" = "none"
+          else
+            readonly quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
+            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE#${quarantine_prefix}}" != \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE%/*}" = \
+              "${framework_parent}"
+            [[ "${LCF_REVIEWED_FRAMEWORK_QUARANTINE##*/}" =~ \
+              ^\.lcf-python-quarantine\.[A-Za-z0-9]{10}$ ]]
+            test -d "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+            test ! -L "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+            test "$(cd "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" && /bin/pwd -P)" = \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+            test "$(/usr/bin/stat -f '%u' \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"
+            test "$(/usr/bin/stat -f '%d:%i' \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
+            /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete
+            test ! -e "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+          fi
 
       - name: Bind release provenance
         shell: bash
@@ -82,16 +753,17 @@ jobs:
           readonly reviewed_source
           chmod 0700 "${reviewed_source}"
           bootstrap_python="$(
-            python -I -c 'import os,sys; print(os.path.realpath(sys.executable))'
+            /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 \
+              -I -S -c 'import os,sys; print(os.path.realpath(sys.executable))'
           )"
           readonly bootstrap_python
           test "${bootstrap_python#/}" != "${bootstrap_python}"
           test -f "${bootstrap_python}"
           test ! -L "${bootstrap_python}"
           test -x "${bootstrap_python}"
-          test "$("${bootstrap_python}" -I -c 'import platform; print(platform.python_version())')" = \
+          test "$("${bootstrap_python}" -I -S -c 'import platform; print(platform.python_version())')" = \
             "3.13.14"
-          "${bootstrap_python}" -I - "${reviewed_source}" <<'PY'
+          "${bootstrap_python}" -I -S - "${reviewed_source}" <<'PY'
           import os
           import stat
           import sys
@@ -154,7 +826,7 @@ jobs:
           test ! -e "${provenance_env}"
           (
             cd "${reviewed_source}"
-            "${bootstrap_python}" -I tools/check_exact_git_provenance.py \
+            "${bootstrap_python}" -I -S tools/check_exact_git_provenance.py \
               --expected-tag "${GITHUB_REF_NAME}" \
               --emit-github-env > "${provenance_env}"
           )
@@ -303,9 +975,14 @@ jobs:
           cleanup_assertion="runner-toolchain-residue"
           runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)
           test "${#runner_toolchain_residue[@]}" -eq 0
-          cleanup_assertion="runner-installer-residue"
-          runner_installer_residue=("${RUNNER_TEMP}"/lcf-python-installer.*)
-          test "${#runner_installer_residue[@]}" -eq 0
+          cleanup_assertion="runner-producer-residue"
+          runner_producer_residue=("${RUNNER_TEMP}"/lcf-python-producer.*)
+          test "${#runner_producer_residue[@]}" -eq 0
+          cleanup_assertion="runner-distribution-binding-residue"
+          runner_distribution_binding_residue=(
+            "${RUNNER_TEMP}"/lcf-python-installer.*
+          )
+          test "${#runner_distribution_binding_residue[@]}" -eq 0
           cleanup_assertion="source-root-bound"
           cd "${LCF_REVIEWED_SOURCE_ROOT:?reviewed source root was not bound}"
           cleanup_assertion="repo-fixed-directory-residue"
@@ -332,10 +1009,10 @@ jobs:
           test -f "${LCF_REVIEWED_BUILD_PYTHON}"
           test ! -L "${LCF_REVIEWED_BUILD_PYTHON}"
           test -x "${LCF_REVIEWED_BUILD_PYTHON}"
-          test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -c \
+          test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -S -c \
             'import os,sys; print(os.path.realpath(sys.executable))')" = \
             "${LCF_REVIEWED_BUILD_PYTHON}"
-          test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -c \
+          test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -S -c \
             'import platform; print(platform.python_version())')" = "3.13.14"
 
       - name: Build locked QMD runtime
@@ -718,7 +1395,7 @@ jobs:
           [[ "${LCF_SOURCE_SNAPSHOT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${LCF_SOURCE_DATE_EPOCH}" =~ ^[0-9]+$ ]]
           [[ "${LCF_RENDERER_PACKAGE_LOCK_SHA256}" =~ ^[0-9a-f]{64}$ ]]
-          "${LCF_REVIEWED_BUILD_PYTHON}" -I \
+          "${LCF_REVIEWED_BUILD_PYTHON}" -I -S \
             tools/check_exact_git_provenance.py \
             --expected-tag "${GITHUB_REF_NAME}" > /dev/null
           printf 'LCF_RELEASE_ASSET_DIR=%s\n' "${release_assets}" >> "${GITHUB_ENV}"

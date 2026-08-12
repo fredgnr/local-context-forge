@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -145,10 +146,6 @@ def test_release_actions_are_immutable_and_checkout_drops_credentials() -> None:
             "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
         ),
         (
-            "actions/setup-python",
-            "a309ff8b426b58ec0e2a45f0f869d46889d02405",
-        ),
-        (
             "actions/upload-artifact",
             "ea165f8d65b6e75b540449e92b4886f43607fa02",
         ),
@@ -157,6 +154,8 @@ def test_release_actions_are_immutable_and_checkout_drops_credentials() -> None:
             "d3f86a106a0bac45b974a628896c90dbdf5c8093",
         ),
     }
+    assert "actions/setup-python@" not in workflow
+    assert all(action != "actions/setup-python" for action, _revision in uses)
     assert workflow.count("persist-credentials: false") == 3
     assert workflow.count(
         "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
@@ -318,20 +317,161 @@ def test_runtime_source_urls_and_hashes_are_exactly_locked() -> None:
     distribution = python_lock["python"]["distribution"]
     node = qmd_lock["node"]
     for value in (
+        distribution["archiveName"],
         distribution["archiveSource"],
         distribution["hashManifestSource"],
         distribution["archiveSha256"],
         distribution["hashManifestSha256"],
+        distribution["installerPackageName"],
+        distribution["installerPackageSha256"],
         node["archiveSource"],
         node["hashManifestSource"],
         node["archiveSha256"],
         node["hashManifestSha256"],
     ):
         assert value in workflow
-    assert "python-version: \"3.13.14\"" in workflow
+    assert "actions/setup-python@" not in workflow
+    assert "python-version:" not in workflow
     assert "node-version: \"22.23.2\"" in workflow
     assert "os.path.realpath(sys.executable)" in workflow
     assert "LCF_QMD_BUILD_PYTHON" in workflow
+
+
+def test_reviewed_framework_is_sealed_and_node_verified_before_first_python() -> None:
+    workflow = _workflow()
+    build_job = _job_slice(workflow, "build")
+    python_lock = json.loads(
+        (
+            PROJECT_ROOT
+            / "backend"
+            / "packaging"
+            / "python-sidecar-toolchain.lock.json"
+        ).read_text(encoding="utf-8")
+    )["python"]
+    distribution = python_lock["distribution"]
+    component = distribution["frameworkComponent"]
+
+    assert distribution["installMethod"] == (
+        "macos-installer-no-op-framework-component"
+    )
+    producer_start = build_job.index(
+        "- name: Provision reviewed build Python without executing it"
+    )
+    seal_start = build_job.index(
+        "- name: Seal reviewed build Python framework"
+    )
+    bind_start = build_job.index("- name: Bind release provenance")
+    producer = build_job[producer_start:seal_start]
+    seal = build_job[seal_start:bind_start]
+
+    no_op_write = producer.index(
+        "printf '#!/bin/sh\\nexit 0\\n' > \"${no_op_postinstall}\""
+    )
+    no_op_replace = producer.index(
+        '/bin/mv -f "${no_op_postinstall}" "${postinstall}"'
+    )
+    no_op_install = producer.index(
+        "/usr/bin/sudo --non-interactive /usr/sbin/installer"
+    )
+    assert no_op_write < no_op_replace < no_op_install
+    assert '-pkg "${no_op_package}" -target /' in producer
+    assert '-pkg "${package}" -target /' not in producer
+    assert component["packageName"] in producer
+    assert str(component["postinstallSize"]) in producer
+    assert component["postinstallSha256"] in producer
+    assert str(component["noOpPostinstallSize"]) in producer
+    assert component["noOpPostinstallSha256"] in producer
+    assert f'/bin/chmod {component["noOpPostinstallMode"]} ' in producer
+
+    verifier_payload = (
+        PROJECT_ROOT / "tools" / "verify_reviewed_python_framework.cjs"
+    ).read_bytes()
+    lock_payload = (
+        PROJECT_ROOT
+        / "backend"
+        / "packaging"
+        / "python-sidecar-toolchain.lock.json"
+    ).read_bytes()
+    for marker in (
+        f'readonly framework_verifier_size="{len(verifier_payload)}"',
+        'readonly framework_verifier_sha256="'
+        f'{hashlib.sha256(verifier_payload).hexdigest()}"',
+        f'readonly framework_lock_size="{len(lock_payload)}"',
+        'readonly framework_lock_sha256="'
+        f'{hashlib.sha256(lock_payload).hexdigest()}"',
+        'typeof fs.constants.O_NOFOLLOW !== "number"',
+        "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW",
+        "reviewedModule._compile(",
+        "decoder.decode(verifierBinding.content)",
+        "const lockValue = JSON.parse(decoder.decode(lockBinding.content));",
+        "const digest = verifier.verifyReviewedPythonFramework({",
+        "root: frameworkRoot,",
+        "lockValue,",
+        "revalidate(verifierBinding);",
+        "revalidate(lockBinding);",
+        "fs.closeSync(lockBinding.descriptor);",
+        "fs.closeSync(verifierBinding.descriptor);",
+    ):
+        assert marker in seal
+    assert (
+        '            "${framework_verifier}" \\\n'
+        '            "${framework_verifier_size}" \\\n'
+        '            "${framework_verifier_sha256}" \\\n'
+        '            "${framework_lock}" \\\n'
+        '            "${framework_lock_size}" \\\n'
+        '            "${framework_lock_sha256}" \\\n'
+        '            "${framework_root}"'
+        in seal
+    )
+    assert (
+        '"${framework_verifier}" \\\n'
+        '            --root "${framework_root}" \\\n'
+        '            --lock "${framework_lock}"'
+        not in seal
+    )
+    held_contract_order = [
+        seal.index("reviewedModule._compile("),
+        seal.index("decoder.decode(verifierBinding.content)"),
+        seal.index(
+            "const lockValue = JSON.parse(decoder.decode(lockBinding.content));"
+        ),
+        seal.index("const digest = verifier.verifyReviewedPythonFramework({"),
+        seal.index("revalidate(verifierBinding);"),
+        seal.index("revalidate(lockBinding);"),
+        seal.index("fs.closeSync(lockBinding.descriptor);"),
+        seal.index("fs.closeSync(verifierBinding.descriptor);"),
+    ]
+    assert held_contract_order == sorted(held_contract_order)
+
+    node_loader = build_job.index(
+        '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" \\\n'
+        "            -e '",
+        seal_start,
+        bind_start,
+    )
+    quarantine_cleanup = build_job.index(
+        "/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n"
+        '              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete',
+        node_loader,
+        bind_start,
+    )
+    first_framework_python = build_job.index(
+        "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 \\\n"
+        "              -I -S -c"
+    )
+    assert (
+        producer_start
+        < seal_start
+        < node_loader
+        < quarantine_cleanup
+        < bind_start
+        < first_framework_python
+    )
+    assert (
+        "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 \\\n"
+        "              -I -S -c"
+        not in build_job[:bind_start]
+    )
 
 
 def test_public_pins_default_fail_closed_without_breaking_source_ci() -> None:

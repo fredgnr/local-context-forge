@@ -193,6 +193,8 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "build_script",
                 "audit_script",
                 "python_bootstrap",
+                "framework_verifier",
+                "framework_verifier_tests",
                 "exact_git_checker",
                 "exact_git_checker_tests",
                 "exact_node_installer",
@@ -320,21 +322,26 @@ class PackagedSmokePolicyTests(unittest.TestCase):
     def test_unified_provenance_checker_is_the_only_workflow_git_gate(self) -> None:
         mutations = (
             (
-                '"${bootstrap_python}" -I tools/check_exact_git_provenance.py \\\n'
+                '"${bootstrap_python}" -I -S tools/check_exact_git_provenance.py \\\n'
                 '              --emit-github-env > "${provenance_env}"',
                 "git rev-parse --verify HEAD",
             ),
             (
-                '"${LCF_REVIEWED_BUILD_PYTHON}" -I \\\n'
+                '"${LCF_REVIEWED_BUILD_PYTHON}" -I -S \\\n'
                 "            tools/check_exact_git_provenance.py > /dev/null",
                 "true",
             ),
             (
-                '        run: cd "${LCF_REVIEWED_SOURCE_ROOT}" && make packaged-smoke-policy-check',
-                "        run: |\n"
-                '          cd "${LCF_REVIEWED_SOURCE_ROOT}"\n'
-                "          git status --porcelain=v1\n"
-                "          make packaged-smoke-policy-check",
+                textwrap.indent(CHECKER.EXPECTED_POLICY_RUN, "          "),
+                textwrap.indent(
+                    CHECKER.EXPECTED_POLICY_RUN.replace(
+                        'cd "${LCF_REVIEWED_SOURCE_ROOT}"\n',
+                        'cd "${LCF_REVIEWED_SOURCE_ROOT}"\n'
+                        "git status --porcelain=v1\n",
+                        1,
+                    ),
+                    "          ",
+                ),
             ),
         )
         for old, new in mutations:
@@ -358,8 +365,16 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         for key, old, new, expected in (
             (
                 "workflow",
-                '        run: cd "${LCF_REVIEWED_SOURCE_ROOT}" && make packaged-smoke-policy-check',
-                "        run: make packaged-smoke-policy-check",
+                "      - name: Enforce engineering-smoke packaging policy\n"
+                "        shell: bash\n"
+                "        run: |\n"
+                "          set -euo pipefail\n"
+                '          cd "${LCF_REVIEWED_SOURCE_ROOT}"',
+                "      - name: Enforce engineering-smoke packaging policy\n"
+                "        shell: bash\n"
+                "        run: |\n"
+                "          set -euo pipefail\n"
+                '          cd "${RUNNER_TEMP}"',
                 "workflow repo-owned command escaped",
             ),
             (
@@ -406,7 +421,9 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 'chmod 0755 "${reviewed_source}"',
             ),
             (
+                "          git_bootstrap() {\n"
                 "            /usr/bin/env -i \\\n",
+                "          git_bootstrap() {\n"
                 "            /usr/bin/env \\\n",
             ),
             (
@@ -722,12 +739,6 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "python_bootstrap",
-                "start_new_session=True",
-                "start_new_session=False",
-                "exact Python toolchain bootstrap",
-            ),
-            (
-                "python_bootstrap",
                 "_make_installed_tree_cleanup_writable(descriptor)",
                 "pass",
                 "exact Python toolchain bootstrap",
@@ -758,12 +769,6 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "python_bootstrap",
-                '"--non-interactive",\n            "/usr/sbin/installer"',
-                '"/usr/sbin/installer"',
-                "exact reviewed Python installer launcher transition",
-            ),
-            (
-                "python_bootstrap",
                 "build._exchange_at(",
                 "os.replace(",
                 "producer privatization",
@@ -788,8 +793,8 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "python_packaging_tests",
-                "test_reviewed_python_installer_signal_cleans_exact_root",
-                "removed_installer_signal_cleanup_fixture",
+                "test_reviewed_python_distribution_audit_failure_never_runs_observer",
+                "removed_distribution_audit_failure_fixture",
                 "exact Python toolchain tests",
             ),
             (
@@ -1021,64 +1026,270 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                     errors,
                 )
 
-    def test_reviewed_installer_launcher_transition_mutations_are_rejected(
+    def test_runtime_bootstrap_cannot_regain_installer_or_rebind_authority(
         self,
     ) -> None:
+        forbidden_markers = (
+            "/usr/sbin/installer",
+            "/usr/bin/sudo",
+            "_run_reviewed_framework_installer",
+            "_seal_reviewed_framework_permissions",
+            "LAUNCHER_NAME_INSTALLER_PENDING_SEAL",
+            "LAUNCHER_NAME_INSTALLER_REBIND",
+        )
+        for marker in forbidden_markers:
+            with self.subTest(marker=marker):
+                current = inputs()
+                current["python_bootstrap"] = (
+                    str(current["python_bootstrap"]) + f"\n# forbidden: {marker}\n"
+                )
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python framework security closure drifted",
+                    errors,
+                )
+
+    def test_locked_active_launcher_check_directly_dominates_observer_use(
+        self,
+    ) -> None:
+        active_guard = (
+            "                if active_launcher != interpreter:\n"
+            "                    raise ToolchainBootstrapError(\n"
+            '                        "Reviewed Python installer launcher is not the locked interpreter"\n'
+            "                    )\n"
+        )
+        for replacement in (
+            "                if active_launcher != interpreter:\n"
+            "                    pass\n",
+            "                if False:\n" + textwrap.indent(active_guard, "    "),
+        ):
+            with self.subTest(replacement=replacement):
+                current = inputs()
+                changed(
+                    current,
+                    "python_bootstrap",
+                    active_guard,
+                    replacement,
+                )
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python framework security closure drifted",
+                    errors,
+                )
+
+        current = inputs()
+        source = str(current["python_bootstrap"])
+        self.assertEqual(source.count(active_guard), 1)
+        source = source.replace(active_guard, "", 1)
+        held_body_marker = (
+            "                ) as old_launcher:\n"
+            "                    for arguments, label, timeout in (\n"
+        )
+        self.assertIn(held_body_marker, source)
+        nested_guard = textwrap.indent(active_guard, "    ")
+        current["python_bootstrap"] = source.replace(
+            held_body_marker,
+            "                ) as old_launcher:\n"
+            + nested_guard
+            + "                    for arguments, label, timeout in (\n",
+            1,
+        )
+        with synchronized_input_document_summaries(
+            current,
+            "python_bootstrap",
+        ):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact reviewed Python framework security closure drifted",
+            errors,
+        )
+
+    def test_reviewed_framework_lock_pins_execution_closure_and_core(self) -> None:
+        mutations = {
+            "interpreterRelativePath": "bin/python3",
+            "interpreterSize": 1,
+            "interpreterSha256": "0" * 64,
+            "frameworkBinaryRelativePath": "lib/libpython.dylib",
+            "frameworkBinarySize": 1,
+            "frameworkBinarySha256": "0" * 64,
+            "frameworkCoreFingerprintExcludedPaths": [
+                *CHECKER.PYTHON_FRAMEWORK_CORE_EXCLUDED_PATHS,
+                "unreviewed",
+            ],
+            "frameworkCoreFingerprintSha256": "0" * 64,
+        }
+        for field, replacement in mutations.items():
+            with self.subTest(field=field):
+                current = inputs()
+                toolchain = copy.deepcopy(current["python_toolchain_lock"])
+                toolchain["python"][field] = replacement
+                current["python_toolchain_lock"] = toolchain
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_toolchain_lock",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "reviewed Python framework security lock drifted",
+                    errors,
+                )
+
+        distribution_mutations = {
+            "installMethod": "macos-installer",
+            **{
+                field: (
+                    value + 1
+                    if isinstance(value, int)
+                    else "0" * 64
+                    if field.lower().endswith("sha256")
+                    else "0777"
+                    if field.lower().endswith("mode")
+                    else "Unreviewed.pkg"
+                )
+                for field, value in CHECKER.PYTHON_FRAMEWORK_COMPONENT_CONTRACT.items()
+            },
+        }
+        for field, replacement in distribution_mutations.items():
+            with self.subTest(distribution_field=field):
+                current = inputs()
+                toolchain = copy.deepcopy(current["python_toolchain_lock"])
+                distribution = toolchain["python"]["distribution"]
+                if field == "installMethod":
+                    distribution[field] = replacement
+                else:
+                    distribution["frameworkComponent"][field] = replacement
+                current["python_toolchain_lock"] = toolchain
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_toolchain_lock",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "reviewed Python framework security lock drifted",
+                    errors,
+                )
+
+    def obsolete_reviewed_framework_permission_and_core_mutations_are_rejected(
+        self,
+    ) -> None:
+        cache_file_arguments = (
+            '    (\n'
+            '        "-type",\n'
+            '        "f",\n'
+            '        "(",\n'
+            '        "-iname",\n'
+            '        "*.pyc",\n'
+            '        "-o",\n'
+            '        "-iname",\n'
+            '        "*.pyo",\n'
+            '        ")",\n'
+            '        "-delete",\n'
+            '    ),\n'
+        )
+        cache_directory_arguments = (
+            '    (\n'
+            '        "-depth",\n'
+            '        "-type",\n'
+            '        "d",\n'
+            '        "-iname",\n'
+            '        "__pycache__",\n'
+            '        "-delete",\n'
+            '    ),\n'
+        )
         mutations = (
             (
-                "held.st_nlink != 0",
-                "False and held.st_nlink != 0",
+                '"/bin/chmod",\n        "-h",\n        "-N",',
+                '"/bin/chmod",\n        "-N",',
             ),
             (
-                "stat.S_IMODE(named.st_mode) & 0o7022",
-                "stat.S_IMODE(named.st_mode) & 0o022",
+                "for prefix in REVIEWED_FRAMEWORK_PARENT_PERMISSION_COMMANDS",
+                "for prefix in ()",
+            ),
+            ("(*prefix, str(root.parents[3]))", "(*prefix, str(root.parents[2]))"),
+            ("(*prefix, str(root.parents[2]))", "(*prefix, str(root.parents[1]))"),
+            ("(*prefix, str(root.parents[1]))", "(*prefix, str(root.parent))"),
+            ("(*prefix, str(root.parent))", "(*prefix, str(root))"),
+            (
+                "os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC",
+                "os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC",
             ),
             (
-                "hashlib.sha256(payload).hexdigest() != binding.sha256",
-                "False and hashlib.sha256(payload).hexdigest() != binding.sha256",
+                "        verify_targets()\n    except ToolchainBootstrapError:",
+                "        pass\n    except ToolchainBootstrapError:",
             ),
             (
-                "name_policy=terminal_name_policy",
-                "name_policy=LAUNCHER_NAME_SAME",
+                "observed = _run_owned_process(\n            command,",
+                "observed = subprocess.run(\n            command,",
+            ),
+            ("cwd=Path(\"/\")", "cwd=root"),
+            ("pass_fds=()", "pass_fds=(3,)"),
+            (
+                "or expected_executables\n            != (",
+                "or False and expected_executables\n            != (",
             ),
             (
-                "and process.returncode == 0\n                and check",
-                "and process.returncode != 0\n                and check",
+                cache_file_arguments + cache_directory_arguments,
+                cache_directory_arguments + cache_file_arguments,
+            ),
+            ('        "*.pyc",', '        "*",'),
+            (
+                "for arguments in REVIEWED_FRAMEWORK_CACHE_REMOVAL_ARGUMENTS",
+                "for arguments in ()",
             ),
             (
-                "launcher_rebind_authority=_REVIEWED_INSTALLER_REBIND_AUTHORITY",
-                "launcher_rebind_authority=object()",
+                '                "-x",\n                str(root),',
+                '                "-x",\n                str(root.parent),',
             ),
             (
-                "package.sha256 != expected_package_sha256",
-                "False and package.sha256 != expected_package_sha256",
+                '                "/usr/bin/find",\n                "-x",',
+                '                "/usr/bin/true",\n                "-x",',
             ),
             (
-                "if active_launcher != interpreter:",
-                "if active_launcher == interpreter:",
+                '    "lib/python3.13/site-packages",\n',
+                '    "lib/python3.13",\n',
+            ),
+            ("if observed != expected:", "if observed == expected:"),
+            (
+                "root not in (resolved, *resolved.parents)",
+                "False and root not in (resolved, *resolved.parents)",
             ),
             (
-                "terminal_name_policy=(\n"
-                "                        LAUNCHER_NAME_INSTALLER_REBIND\n"
-                "                    )",
-                "terminal_name_policy=LAUNCHER_NAME_SAME",
+                "if not stat.S_ISREG(info.st_mode):",
+                "if False and not stat.S_ISREG(info.st_mode):",
             ),
             (
-                "        if process is not None:\n"
-                "            try:\n"
-                "                revalidate_owned_bindings("
-                "name_policy=LAUNCHER_NAME_SAME)\n"
-                "            except BaseException as observed_error:\n"
-                "                binding_error = observed_error",
-                "        if process is not None:\n"
-                "            try:\n"
-                "                revalidate_owned_bindings("
-                "name_policy=LAUNCHER_NAME_INSTALLER_REBIND)\n"
-                "            except BaseException as observed_error:\n"
-                "                binding_error = observed_error\n"
-                "        if False:\n"
-                "            revalidate_owned_bindings("
-                "name_policy=LAUNCHER_NAME_SAME)",
+                "if info.st_nlink != 1 or info.st_size > MAX_TREE_FILE_BYTES:",
+                "if False and (info.st_nlink != 1 or info.st_size > MAX_TREE_FILE_BYTES):",
+            ),
+            (
+                '"__pycache__" in folded_parts\n'
+                '                    or relative_path.name.casefold().endswith((".pyc", ".pyo"))',
+                'False and "__pycache__" in folded_parts\n'
+                '                    or False and relative_path.name.casefold().endswith((".pyc", ".pyo"))',
+            ),
+            (
+                "part.casefold() for part in relative_path.parts",
+                "part for part in relative_path.parts",
+            ),
+            (
+                "container_before = root.parents[2].lstat()",
+                "container_before = root.parents[1].lstat()",
+            ),
+            (
+                "_identity(root.parents[3].lstat()) != _identity(library_before)",
+                "False and _identity(root.parents[3].lstat()) != _identity(library_before)",
+            ),
+            (
+                "or PurePosixPath(root.as_posix()) != DEFAULT_REVIEWED_FRAMEWORK_ROOT",
+                "or False and PurePosixPath(root.as_posix()) != DEFAULT_REVIEWED_FRAMEWORK_ROOT",
             ),
         )
         for old, new in mutations:
@@ -1091,7 +1302,385 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 ):
                     errors = CHECKER.validate_policy(current)
                 self.assertIn(
-                    "exact reviewed Python installer launcher transition drifted",
+                    "exact reviewed Python framework security closure drifted",
+                    errors,
+                )
+
+        current = inputs()
+        wrap_python_statement_block(
+            current,
+            'if (\n                    "__pycache__" in folded_parts',
+            "if info.st_uid != expected_owner:",
+            "if False:",
+        )
+        with synchronized_input_document_summaries(
+            current,
+            "python_bootstrap",
+        ):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact reviewed Python framework security closure drifted",
+            errors,
+        )
+
+    def test_reviewed_framework_seal_and_core_mutations_are_rejected(
+        self,
+    ) -> None:
+        mutations = (
+            (
+                "stat.S_IMODE(held.st_mode) & 0o7022",
+                "stat.S_IMODE(held.st_mode) & 0o022",
+            ),
+            (
+                "part.casefold() for part in relative_path.parts",
+                "part for part in relative_path.parts",
+            ),
+            (
+                'relative_path.name.casefold().endswith((".pyc", ".pyo"))',
+                'relative_path.name.endswith((".pyc", ".pyo"))',
+            ),
+            (
+                "if observed != expected:\n",
+                "if False and observed != expected:\n",
+            ),
+            (
+                "_identity(root.parents[3].lstat()) != _identity(library_before)",
+                "False and _identity(root.parents[3].lstat()) != _identity(library_before)",
+            ),
+            (
+                "or PurePosixPath(install_root.as_posix())\n"
+                "                != DEFAULT_REVIEWED_FRAMEWORK_ROOT",
+                "or False and PurePosixPath(install_root.as_posix())\n"
+                "                != DEFAULT_REVIEWED_FRAMEWORK_ROOT",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python framework security closure drifted",
+                    errors,
+                )
+
+    def test_reviewed_framework_acl_verifier_cannot_be_weakened_or_bypassed(
+        self,
+    ) -> None:
+        mutations = (
+            ('"/bin/ls",\n            "-led",', '"/bin/ls",\n            "-ld",'),
+            ('("/bin/ls", "-leR", str(root))', '("/bin/ls", "-led", str(root))'),
+            (
+                'acl_entry = re.compile(rb"(?m)^[ \\t]+[0-9]+: ")',
+                'acl_entry = re.compile(rb"$^")',
+            ),
+            (
+                'env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}',
+                'env=dict(os.environ)',
+            ),
+            (
+                "or acl_entry.search(process.stdout) is not None",
+                "or False and acl_entry.search(process.stdout) is not None",
+            ),
+            (
+                "or expected != _exec_target_identity(Path(command[0]))",
+                "or False and expected != _exec_target_identity(Path(command[0]))",
+            ),
+            (
+                "        _verify_reviewed_framework_acl_seal(root)\n",
+                "        pass\n",
+            ),
+            (
+                "        _verify_reviewed_framework_acl_seal(root)\n",
+                "        if False:\n            _verify_reviewed_framework_acl_seal(root)\n",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old, new=new):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python framework security closure drifted",
+                    errors,
+                )
+
+        default_install_guard = (
+            "or PurePosixPath(install_root.as_posix())\n"
+            "                != DEFAULT_REVIEWED_FRAMEWORK_ROOT"
+        )
+        for replace_last in (False, True):
+            with self.subTest(default_root_guard=replace_last):
+                current = inputs()
+                replacement = "or False and " + default_install_guard[3:]
+                if replace_last:
+                    changed_last(
+                        current,
+                        "python_bootstrap",
+                        default_install_guard,
+                        replacement,
+                    )
+                else:
+                    changed(
+                        current,
+                        "python_bootstrap",
+                        default_install_guard,
+                        replacement,
+                    )
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python framework security closure drifted",
+                    errors,
+                )
+
+    def test_framework_fingerprint_exclusions_are_ordered_and_nonoverlapping(
+        self,
+    ) -> None:
+        mutations = (
+            ("for raw_path in excluded_paths:", "for raw_path in ():"),
+            (
+                "exclusion_names != sorted(exclusion_names)",
+                "exclusion_names == sorted(exclusion_names)",
+            ),
+            (
+                "candidate[: len(parent)] == parent",
+                "candidate[: len(parent)] != parent",
+            ),
+            (
+                "relative.parts[: len(excluded)] == excluded",
+                "False and relative.parts[: len(excluded)] == excluded",
+            ),
+            (
+                "folded_parts = tuple(part.casefold() for part in relative.parts)",
+                "folded_parts = relative.parts",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "build_script", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "build_script",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python framework fingerprint exclusion closure drifted",
+                    errors,
+                )
+
+    def test_reviewed_framework_node_verifier_semantics_are_mutation_closed(
+        self,
+    ) -> None:
+        cache_guard = (
+            "        const forbiddenCachePath = isForbiddenBytecodeCachePath(childParts);\n"
+            "        if (forbiddenCachePath && rejectBytecodeCaches) {\n"
+            '          fail("Framework tree contains executable bytecode cache");\n'
+            "        }\n"
+        )
+        source_mutations = (
+            (
+                "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
+                "0" * 64,
+            ),
+            (
+                "python.installRoot !== EXACT_ROOT",
+                "false && python.installRoot !== EXACT_ROOT",
+            ),
+            (
+                'environment.NODE_OPTIONS !== ""',
+                'false && environment.NODE_OPTIONS !== ""',
+            ),
+            (
+                "if (!Number.isInteger(value) || value === 0) {",
+                "if (false) {",
+            ),
+            (
+                'requiredOpenFlag("O_NOFOLLOW")',
+                'fs.constants.O_RDONLY',
+            ),
+            (
+                "if (root !== EXACT_ROOT) {",
+                "if (false && root !== EXACT_ROOT) {",
+            ),
+            (
+                "function verifyLockValue(lock) {",
+                "function ignoreHeldLockValue(lock) {",
+            ),
+            (
+                "return verifyLockValue(readLockFile(lockPath));",
+                "return readLockFile(lockPath);",
+            ),
+            (
+                "if (hasLockPath === hasLockValue) {",
+                "if (false) {",
+            ),
+            (
+                "verifyLockValue(options.lockValue);",
+                "void options.lockValue;",
+            ),
+            (
+                "scriptsSize: 380,",
+                "scriptsSize: 381,",
+            ),
+        )
+        for old, new in source_mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "framework_verifier", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "framework_verifier",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python framework Node verifier closure drifted",
+                    errors,
+                )
+
+        current = inputs()
+        verifier = str(current["framework_verifier"])
+        self.assertIn(cache_guard, verifier)
+        verifier = verifier.replace(cache_guard, "", 1)
+        exclusion_end = "        const item = { path: relative, mode: modeText(info) };\n"
+        self.assertIn(exclusion_end, verifier)
+        current["framework_verifier"] = verifier.replace(
+            exclusion_end,
+            cache_guard + exclusion_end,
+            1,
+        )
+        with synchronized_input_document_summaries(
+            current,
+            "framework_verifier",
+        ):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact reviewed Python framework Node verifier closure drifted",
+            errors,
+        )
+
+        current = inputs()
+        changed(
+            current,
+            "framework_verifier_tests",
+            'test("startup environment rejects Node preload controls", () => {',
+            'test("startup environment accepts Node preload controls", () => {',
+        )
+        with synchronized_input_document_summaries(
+            current,
+            "framework_verifier_tests",
+        ):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "exact reviewed Python framework Node verifier closure drifted",
+            errors,
+        )
+
+    def test_reviewed_framework_verifier_node_make_gate_cannot_be_removed(
+        self,
+    ) -> None:
+        current = inputs()
+        changed(
+            current,
+            "makefile",
+            "\t$(NODE) --test tools/tests/verify_reviewed_python_framework.test.cjs\n",
+            "",
+        )
+        with synchronized_input_document_summaries(current, "makefile"):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "packaged-smoke policy Make target dependency, command, or order drifted",
+            errors,
+        )
+
+    def obsolete_reviewed_framework_verifiers_cannot_be_noop_dead_or_reordered(
+        self,
+    ) -> None:
+        seal_call = (
+            "    _verify_reviewed_framework_seal(\n"
+            "        locked_framework_root,\n"
+            "        python_lock=python_lock,\n"
+            "    )\n"
+        )
+        core_call = (
+            "    _verify_reviewed_framework_core(\n"
+            "        locked_framework_root,\n"
+            "        python_lock=python_lock,\n"
+            "        build=build,\n"
+            "    )\n"
+        )
+        mutations = (
+            (seal_call, "    pass\n"),
+            (core_call, "    pass\n"),
+            (seal_call + core_call, core_call + seal_call),
+        )
+        for old, new in mutations:
+            with self.subTest(new=new):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(
+                    any(
+                        "reviewed Python framework security closure" in error
+                        or "installer launcher transition" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_reviewed_framework_verifiers_cannot_be_noop_dead_or_reordered(
+        self,
+    ) -> None:
+        seal_call = (
+            "                _verify_reviewed_framework_seal(\n"
+            "                    install_root,\n"
+            "                    python_lock=python_lock,\n"
+            "                )\n"
+        )
+        core_call = (
+            "                _verify_reviewed_framework_core(\n"
+            "                    install_root,\n"
+            "                    python_lock=python_lock,\n"
+            "                    build=build,\n"
+            "                )\n"
+        )
+        mutations = (
+            (seal_call, "                pass\n"),
+            (core_call, "                pass\n"),
+            (seal_call + core_call, core_call + seal_call),
+            (
+                seal_call + core_call,
+                "                if False:\n"
+                + textwrap.indent(seal_call + core_call, "    "),
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(new=new):
+                current = inputs()
+                changed(current, "python_bootstrap", old, new)
+                with synchronized_input_document_summaries(
+                    current,
+                    "python_bootstrap",
+                ):
+                    errors = CHECKER.validate_policy(current)
+                self.assertIn(
+                    "exact reviewed Python framework security closure drifted",
                     errors,
                 )
 
@@ -1227,6 +1816,31 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 'path.join(repositoryRoot, "backend", "unreviewed.lock")',
             ),
             (
+                "formal_before_pack",
+                "ee3c4103b97e32a98e98cfad7f6ca4d09b2ab2dc16f3d28e18b54a4a0244efe0",
+                "0" * 64,
+            ),
+            (
+                "formal_before_pack",
+                '"share/doc/python3.13/html"',
+                '"share/doc/python3.13"',
+            ),
+            (
+                "formal_before_pack",
+                '"macos-installer-no-op-framework-component"',
+                '"macos-installer-pkg-direct"',
+            ),
+            (
+                "formal_before_pack",
+                "payloadSize: 32739568",
+                "payloadSize: 1",
+            ),
+            (
+                "formal_before_pack",
+                'noOpPostinstallMode: "0755"',
+                'noOpPostinstallMode: "0700"',
+            ),
+            (
                 "common_audit",
                 '"pythonBuildToolchainPath",',
                 "",
@@ -1245,6 +1859,11 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "before_pack_tests",
                 "binds Python toolchain summary, source locks, and canonical artifact inventory",
                 "accepts unbound Python toolchain evidence",
+            ),
+            (
+                "before_pack_tests",
+                "rejects reviewed Python toolchain mutation: $name",
+                "accepts reviewed Python toolchain mutation: $name",
             ),
             (
                 "engineering_packaging_tests",
@@ -1309,7 +1928,7 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         changed(
             current,
             "makefile",
-            "\t$(PYTHON) -B -m unittest tools.tests.test_check_exact_git_provenance\n",
+                "\t$(PYTHON) -S -B -m unittest tools.tests.test_check_exact_git_provenance\n",
             "\t@true\n",
         )
         self.assertIn(
@@ -1641,7 +2260,7 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "                    path_capabilities=(),\n",
             ),
             (
-                "                        path_capabilities=installer_path_capabilities,\n",
+                "                        path_capabilities=distribution_path_capabilities,\n",
                 "                        path_capabilities=(),\n",
             ),
         )
@@ -2038,7 +2657,7 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "iteration",
-                "tools/{check_exact_git_provenance.py,exact_node_install.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}",
+                "tools/{check_exact_git_provenance.py,exact_node_install.cjs,verify_reviewed_python_framework.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}",
                 "tools/build_python_sidecar.py",
             ),
             (
@@ -2088,13 +2707,13 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "status",
-                "sixth exact candidate `not-run`",
-                "sixth exact candidate `pass`",
+                "seventh exact candidate `not-run`",
+                "seventh exact candidate `pass`",
             ),
             (
                 "trace",
+                "first through sixth remediations failed and superseded",
                 "first through fifth remediations failed and superseded",
-                "first through fourth remediations failed and superseded",
             ),
             (
                 "iteration",
@@ -2254,8 +2873,12 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "          export PYTHONDONTWRITEBYTECODE=0",
             ),
             (
-                "          python -B -m pip install --disable-pip-version-check uv==0.11.29",
-                "          python -m pip install --disable-pip-version-check uv==0.11.29",
+                '            "${LCF_REVIEWED_BUILD_PYTHON}" -I -S -m venv \\',
+                '            "${LCF_REVIEWED_BUILD_PYTHON}" -I -m venv \\',
+            ),
+            (
+                "            --require-hashes \\",
+                "            --no-warn-script-location \\",
             ),
             (
                 '        run: cd "${LCF_REVIEWED_SOURCE_ROOT}" && make python-sidecar-build',
@@ -2358,14 +2981,17 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         for control in controls:
             with self.subTest(control=control):
                 current = inputs()
+                original_run = CHECKER.EXPECTED_POLICY_RUN
+                mutated_run = original_run.replace(
+                    'cd "${LCF_REVIEWED_SOURCE_ROOT}"\n',
+                    'cd "${LCF_REVIEWED_SOURCE_ROOT}"\n' + control + "\n",
+                    1,
+                )
                 changed(
                     current,
                     "workflow",
-                    '        run: cd "${LCF_REVIEWED_SOURCE_ROOT}" && make packaged-smoke-policy-check',
-                    "        run: |\n"
-                    '          cd "${LCF_REVIEWED_SOURCE_ROOT}"\n'
-                    f"          {control}\n"
-                    "          make packaged-smoke-policy-check",
+                    textwrap.indent(original_run, "          "),
+                    textwrap.indent(mutated_run, "          "),
                 )
                 with synchronized_workflow_summary(current):
                     errors = CHECKER.validate_policy(current)
@@ -2385,6 +3011,440 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         with synchronized_workflow_summary(current):
             errors = CHECKER.validate_policy(current)
         self.assertTrue(any("continue-on-error" in error for error in errors), errors)
+
+    def test_reviewed_framework_workflow_producer_is_semantic(self) -> None:
+        current = inputs()
+        runs: list[str] = []
+        for key, job in (("workflow", "assemble"), ("formal_workflow", "build")):
+            run = next(
+                step["run"]
+                for step in CHECKER._workflow_steps(str(current[key]), job)
+                if step["name"]
+                == "Provision reviewed build Python without executing it"
+            )
+            self.assertTrue(CHECKER._workflow_python_producer_is_semantic(run))
+            runs.append(run)
+        self.assertEqual(runs[0], runs[1])
+        producer = runs[0]
+        mutations = (
+            (CHECKER.PYTHON_ARCHIVE_SHA256, "0" * 64),
+            ("'./setup.sh' \\", "'./setup.py' \\"),
+            (
+                'readonly component="${expanded}/Python_Framework.pkg"',
+                'readonly component="${expanded}/Other.pkg"',
+            ),
+            (
+                '"${component}/Bom")" = "1404518"',
+                '"${component}/Bom")" = "1"',
+            ),
+            (
+                "printf '#!/bin/sh\\nexit 0\\n'",
+                "printf '#!/bin/sh\\nexit 1\\n'",
+            ),
+            (
+                '/bin/chmod 0755 "${no_op_postinstall}"',
+                '/bin/chmod 0777 "${no_op_postinstall}"',
+            ),
+            (
+                '/bin/mv -f "${no_op_postinstall}" "${postinstall}"',
+                '/bin/cp "${no_op_postinstall}" "${postinstall}"',
+            ),
+            (
+                '/usr/sbin/pkgutil --flatten "${component}" "${no_op_package}"',
+                '/usr/sbin/pkgutil --expand "${component}" "${no_op_package}"',
+            ),
+            ('  "/Library" \\\n', ""),
+            (
+                'if test ! -e "${existing_ancestor}" && \\\n'
+                '    test ! -L "${existing_ancestor}"; then',
+                'if test ! -e "${existing_ancestor}"; then',
+            ),
+            (
+                '/usr/bin/sudo --non-interactive /usr/sbin/chown -h 0:0 "${existing_ancestor}"',
+                '/usr/bin/sudo --non-interactive /usr/sbin/chown -h 501:20 "${existing_ancestor}"',
+            ),
+            (
+                '/usr/bin/sudo --non-interactive /usr/sbin/installer \\\n'
+                '  -pkg "${no_op_package}" -target /',
+                '/usr/bin/sudo --non-interactive /usr/sbin/installer \\\n'
+                '  -pkg "${no_op_package}" -target "${framework_root}"',
+            ),
+            (
+                'if test -e "${framework_root}" || test -L "${framework_root}"; then',
+                'if test -e "${framework_root}"; then',
+            ),
+            (
+                ')" != "${framework_quarantine_identity}"',
+                ')" = "${framework_quarantine_identity}"',
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(old=old):
+                self.assertIn(old, producer)
+                self.assertFalse(
+                    CHECKER._workflow_python_producer_is_semantic(
+                        producer.replace(old, new, 1)
+                    )
+                )
+
+        final_absence = 'test ! -e "${framework_root}"'
+        offset = producer.rfind(final_absence)
+        self.assertGreaterEqual(offset, 0)
+        self.assertFalse(
+            CHECKER._workflow_python_producer_is_semantic(
+                producer[:offset]
+                + "true"
+                + producer[offset + len(final_absence) :]
+            )
+        )
+        final_symlink_absence = 'test ! -L "${framework_root}"'
+        offset = producer.rfind(final_symlink_absence)
+        self.assertGreaterEqual(offset, 0)
+        self.assertFalse(
+            CHECKER._workflow_python_producer_is_semantic(
+                producer[:offset]
+                + "true"
+                + producer[offset + len(final_symlink_absence) :]
+            )
+        )
+        for executable in ("python3 -c pass", '"./setup.sh"'):
+            with self.subTest(executable=executable):
+                self.assertFalse(
+                    CHECKER._workflow_python_producer_is_semantic(
+                        producer + "\n" + executable
+                    )
+                )
+
+    def test_no_setup_python_order_and_exact_policy_tool_bindings_are_locked(
+        self,
+    ) -> None:
+        for key, job, summary in (
+            ("workflow", "assemble", synchronized_workflow_summary),
+            ("formal_workflow", "build", synchronized_formal_workflow_summary),
+        ):
+            with self.subTest(key=key, mutation="setup-python"):
+                current = inputs()
+                changed(
+                    current,
+                    key,
+                    "uses: actions/setup-node@",
+                    "uses: actions/setup-python@",
+                )
+                with summary(current):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(
+                    any(
+                        "action" in error.lower()
+                        or "no-python" in error.lower()
+                        or "step" in error.lower()
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+            for first_name, second_name in (
+                (
+                    "Bind locked framework verifier Node",
+                    "Provision reviewed build Python without executing it",
+                ),
+                (
+                    "Provision reviewed build Python without executing it",
+                    "Seal reviewed build Python framework",
+                ),
+                (
+                    "Seal reviewed build Python framework",
+                    "Bind exact source provenance"
+                    if key == "workflow"
+                    else "Bind release provenance",
+                ),
+            ):
+                with self.subTest(
+                    key=key,
+                    mutation=f"{second_name}-before-{first_name}",
+                ):
+                    current = inputs()
+                    workflow = str(current[key])
+                    steps = CHECKER._workflow_steps(workflow, job)
+                    first = next(
+                        step["document"]
+                        for step in steps
+                        if step["name"] == first_name
+                    )
+                    second = next(
+                        step["document"]
+                        for step in steps
+                        if step["name"] == second_name
+                    )
+                    self.assertIn(first + second, workflow)
+                    current[key] = workflow.replace(
+                        first + second,
+                        second + first,
+                        1,
+                    )
+                    with summary(current):
+                        errors = CHECKER.validate_policy(current)
+                    self.assertTrue(
+                        any("order" in error.lower() or "step" in error.lower() for error in errors),
+                        errors,
+                    )
+
+        for binding in (
+            '  PYTHON="${LCF_REVIEWED_BUILD_PYTHON}" \\',
+            '  NODE="${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}"',
+        ):
+            with self.subTest(policy_binding=binding):
+                current = inputs()
+                changed(current, "workflow", binding, "  ")
+                with synchronized_workflow_summary(current):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(
+                    any(
+                        "critical step" in error.lower()
+                        or "policy" in error.lower()
+                        or "run-step" in error.lower()
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def obsolete_reviewed_framework_workflow_seal_is_exact_and_precedes_provenance(
+        self,
+    ) -> None:
+        cache_file_command = (
+            "          /usr/bin/sudo --non-interactive /usr/bin/find -x \\\n"
+            "            \"${framework_root}\" -type f \\\n"
+            "            \\( -iname '*.pyc' -o -iname '*.pyo' \\) -delete\n"
+        )
+        cache_directory_command = (
+            "          /usr/bin/sudo --non-interactive /usr/bin/find -x \\\n"
+            "            \"${framework_root}\" -depth -type d \\\n"
+            "            -iname '__pycache__' -delete\n"
+        )
+        workflows = (
+            ("workflow", "assemble", "Bind exact source provenance", synchronized_workflow_summary),
+            ("formal_workflow", "build", "Bind release provenance", synchronized_formal_workflow_summary),
+        )
+        for key, job, provenance_name, summary in workflows:
+            with self.subTest(key=key, mutation="missing"):
+                current = inputs()
+                changed(
+                    current,
+                    key,
+                    "      - name: Seal reviewed build Python framework",
+                    "      - name: Unreviewed framework setup",
+                )
+                with summary(current):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(any("seal" in error.lower() for error in errors), errors)
+
+            with self.subTest(key=key, mutation="reordered"):
+                current = inputs()
+                workflow = str(current[key])
+                steps = CHECKER._workflow_steps(workflow, job)
+                seal = next(
+                    step
+                    for step in steps
+                    if step["name"] == "Seal reviewed build Python framework"
+                )["document"]
+                provenance = next(
+                    step for step in steps if step["name"] == provenance_name
+                )["document"]
+                self.assertIn(seal + provenance, workflow)
+                current[key] = workflow.replace(
+                    seal + provenance,
+                    provenance + seal,
+                    1,
+                )
+                with summary(current):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(any("order" in error.lower() for error in errors), errors)
+
+            for old, new in (
+                (
+                    'readonly framework_anchor="${framework_parent%/*}"',
+                    'readonly framework_anchor="${framework_parent}"',
+                ),
+                (
+                    'test "$(cd "${library_root}" && /bin/pwd -P)" = "${library_root}"',
+                    "true",
+                ),
+                ('-h -N "${framework_anchor}"', '-N "${framework_anchor}"'),
+                ('-h 0:0 "${framework_parent}"', '0:0 "${framework_parent}"'),
+                ('-N "${framework_parent}"', 'go-w "${framework_parent}"'),
+                ('go-w "${framework_parent}"', 'go+r "${framework_parent}"'),
+                ("-R -P -h 0:0", "-R -h 0:0"),
+                ("-R -P -N", "-R -P"),
+                (cache_file_command + cache_directory_command, cache_directory_command + cache_file_command),
+                ("-type f \\\n            \\( -iname '*.pyc'", "-type d \\\n            \\( -iname '*.pyc'"),
+                ("-iname '*.pyc'", "-name '*.pyc'"),
+                ('"${framework_root}" -depth -type d', '"${framework_parent}" -depth -type d'),
+                ("-iname '__pycache__' -delete", "-name '__pycache__' -delete"),
+                ('case "${relative_entry}" in', 'case "__never__" in'),
+                ("(8#${entry_mode} & 07022)", "(8#${entry_mode} & 00022)"),
+                ("/usr/bin/find -x", "/usr/bin/find"),
+            ):
+                with self.subTest(key=key, mutation=old):
+                    current = inputs()
+                    changed(current, key, old, new)
+                    with summary(current):
+                        errors = CHECKER.validate_policy(current)
+                    self.assertTrue(any("seal" in error.lower() for error in errors), errors)
+
+    def test_reviewed_framework_workflow_seal_and_held_loader_are_semantic(
+        self,
+    ) -> None:
+        current = inputs()
+        seal_runs: list[str] = []
+        for key, job in (("workflow", "assemble"), ("formal_workflow", "build")):
+            run = next(
+                step["run"]
+                for step in CHECKER._workflow_steps(str(current[key]), job)
+                if step["name"] == "Seal reviewed build Python framework"
+            )
+            self.assertTrue(CHECKER._workflow_python_seal_is_semantic(run))
+            self.assertTrue(
+                CHECKER._workflow_held_framework_loader_is_semantic(run)
+            )
+            seal_runs.append(run)
+        self.assertEqual(seal_runs[0], seal_runs[1])
+        seal = seal_runs[0]
+
+        seal_mutations = (
+            (
+                'readonly library_identity="$(/usr/bin/stat -f \'%d:%i\' "${library_root}")"',
+                'readonly library_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_container}")"',
+            ),
+            ('-h -N "${library_root}"', '-N "${library_root}"'),
+            ('-h go-w "${framework_container}"', '-h go+r "${framework_container}"'),
+            ("/usr/bin/find -P -x", "/usr/bin/find -x"),
+            ("\\( -type f -o -type d \\)", "\\( -type f \\)"),
+            ("-exec /bin/chmod -N '{}' '+'", "-exec /bin/chmod -R -N '{}' '+'"),
+            ("-iname '*.pyc'", "-name '*.pyc'"),
+            ("-iname '__pycache__'", "-name '__pycache__'"),
+            ("shopt -s nocasematch", "true"),
+            ('[[ "${sealed_listing}" != *$\'\\n\'* ]]', "true"),
+            ('[[ "${entry_listing}" != *$\'\\n\'* ]]', "true"),
+            ('readonly framework_verifier_size="27853"', 'readonly framework_verifier_size="1"'),
+            (
+                'readonly framework_verifier_sha256="b3e2576fff416be2924adab5470004f5b52fd0eba342b522adad761fe9176c26"',
+                'readonly framework_verifier_sha256="' + "0" * 64 + '"',
+            ),
+            ('readonly framework_lock_size="4198"', 'readonly framework_lock_size="1"'),
+            (
+                'readonly framework_lock_sha256="db66ce92b38e83273bf9a089085e76309a1db15494371a4d5a338066b74a4e67"',
+                'readonly framework_lock_sha256="' + "0" * 64 + '"',
+            ),
+        )
+        for old, new in seal_mutations:
+            with self.subTest(seal_mutation=old):
+                self.assertIn(old, seal)
+                self.assertFalse(
+                    CHECKER._workflow_python_seal_is_semantic(
+                        seal.replace(old, new, 1)
+                    )
+                )
+
+        loader_mutations = (
+            (
+                "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW",
+                "fs.constants.O_RDONLY",
+            ),
+            (
+                "namedBefore.uid !== BigInt(process.geteuid())",
+                "false && namedBefore.uid !== BigInt(process.geteuid())",
+            ),
+            ("namedBefore.nlink !== 1n", "namedBefore.nlink < 1n"),
+            (
+                "const unsafeMode = (namedBefore.mode & 0o7022n) !== 0n;",
+                "const unsafeMode = (namedBefore.mode & 0o0022n) !== 0n;",
+            ),
+            ("namedBefore.size !== expectedSize", "false"),
+            ("expectedSize > 1048576n", "expectedSize > 10485760n"),
+            (
+                'crypto.createHash("sha256").update(content).digest("hex") !==',
+                "false &&",
+            ),
+            ("    info.ctimeNs,\n", ""),
+            ("  revalidate(lockBinding);\n", ""),
+            ("    lockValue,\n", "    lock: lockPath,\n"),
+            (
+                "  reviewedModule._compile(\n",
+                "  require(verifierPath);\n  reviewedModule._compile(\n",
+            ),
+            (
+                "  const lockValue = JSON.parse(decoder.decode(lockBinding.content));",
+                "  const lockValue = JSON.parse(fs.readFileSync(lockPath));",
+            ),
+        )
+        for old, new in loader_mutations:
+            with self.subTest(loader_mutation=old):
+                self.assertIn(old, seal)
+                self.assertFalse(
+                    CHECKER._workflow_held_framework_loader_is_semantic(
+                        seal.replace(old, new, 1)
+                    )
+                )
+
+        identity_check = (
+            'test "$(/usr/bin/stat -f \'%d:%i:%Lp:%u:%g:%l:%z:%m\' \\\n'
+            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \\\n'
+            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"'
+        )
+        hash_check = (
+            "printf '%s  %s\\n' \\\n"
+            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \\\n'
+            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \\\n'
+            "  /usr/bin/shasum -a 256 --check"
+        )
+        for check in (identity_check, hash_check):
+            self.assertEqual(seal.count(check), 2)
+            for offset in (seal.find(check), seal.rfind(check)):
+                with self.subTest(node_revalidation=check[:20], offset=offset):
+                    mutated = seal[:offset] + "true" + seal[offset + len(check) :]
+                    self.assertFalse(
+                        CHECKER._workflow_python_seal_is_semantic(mutated)
+                    )
+
+        loader_start = "/usr/bin/env -i \\\n"
+        self.assertIn(loader_start, seal)
+        for bypass in (
+            'test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"\n',
+            '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n'
+            '  "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete\n',
+        ):
+            with self.subTest(loader_order=bypass):
+                self.assertFalse(
+                    CHECKER._workflow_python_seal_is_semantic(
+                        seal.replace(loader_start, bypass + loader_start, 1)
+                    )
+                )
+
+    def test_workflow_reviewed_framework_python_cannot_drop_no_site_isolation(
+        self,
+    ) -> None:
+        for key, summary in (
+            ("workflow", synchronized_workflow_summary),
+            ("formal_workflow", synchronized_formal_workflow_summary),
+        ):
+            with self.subTest(key=key):
+                current = inputs()
+                changed(
+                    current,
+                    key,
+                    '"${bootstrap_python}" -I -S -c',
+                    '"${bootstrap_python}" -I -c',
+                )
+                with summary(current):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(
+                    any(
+                        "bootstrap" in error.lower()
+                        or "run-step" in error.lower()
+                        or "document contract" in error.lower()
+                        for error in errors
+                    ),
+                    errors,
+                )
 
     def test_post_build_cleanup_always_gate_precedes_provenance(self) -> None:
         current = inputs()
@@ -2476,7 +3536,8 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             "runner-temp-owner",
             "runner-temp-mode",
             "runner-toolchain-residue",
-            "runner-installer-residue",
+            "runner-producer-residue",
+            "runner-distribution-binding-residue",
             "source-root-bound",
             "repo-fixed-directory-residue",
             "repo-fixed-symlink-residue",
@@ -2538,7 +3599,8 @@ class PackagedSmokePolicyTests(unittest.TestCase):
 
         for residue_assertion in (
             '          test "${#runner_toolchain_residue[@]}" -eq 0',
-            '          test "${#runner_installer_residue[@]}" -eq 0',
+            '          test "${#runner_producer_residue[@]}" -eq 0',
+            '          test "${#runner_distribution_binding_residue[@]}" -eq 0',
         ):
             with self.subTest(residue_assertion=residue_assertion):
                 current = inputs()
@@ -2715,6 +3777,54 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             )
         )
 
+    def test_packaging_python_entrypoints_cannot_drop_no_site_isolation(
+        self,
+    ) -> None:
+        make_mutations = (
+            (
+                "$(PYTHON) -S -B tools/check_packaged_smoke_policy.py",
+                "$(PYTHON) -B tools/check_packaged_smoke_policy.py",
+                "policy Make target",
+            ),
+            (
+                '"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/build_python_sidecar.py" --verify-source-only',
+                '"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/build_python_sidecar.py" --verify-source-only',
+                "source-verify Make target",
+            ),
+            (
+                '"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py" \\\n\t\t--install-reviewed-python',
+                '"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py" \\\n\t\t--install-reviewed-python',
+                "installer Make target",
+            ),
+            (
+                '\tLCF_SOURCE_TREE="$(LCF_SOURCE_TREE)" \\\n\t"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"',
+                '\tLCF_SOURCE_TREE="$(LCF_SOURCE_TREE)" \\\n\t"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"',
+                "Python sidecar build Make target",
+            ),
+            (
+                '"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/audit_python_sidecar.py"',
+                '"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/audit_python_sidecar.py"',
+                "Python sidecar audit Make target",
+            ),
+        )
+        for old, new, expected in make_mutations:
+            with self.subTest(old=old):
+                current = inputs()
+                changed(current, "makefile", old, new)
+                with synchronized_input_document_summaries(current, "makefile"):
+                    errors = CHECKER.validate_policy(current)
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+        current = inputs()
+        package = copy.deepcopy(current["package"])
+        package["scripts"]["audit:python-sidecar"] = package["scripts"][
+            "audit:python-sidecar"
+        ].replace(" -I -S ", " -I ", 1)
+        current["package"] = package
+        with synchronized_input_document_summaries(current, "package"):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn("Desktop standalone Python auditor script drifted", errors)
+
         current = inputs()
         replace_make_target(
             current,
@@ -2755,8 +3865,9 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 '\tLCF_SOURCE_SHA="$(LCF_SOURCE_SHA)" \\\n',
             ),
             (
-                '"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"',
-                "true",
+                '\tLCF_SOURCE_TREE="$(LCF_SOURCE_TREE)" \\\n'
+                '\t"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"',
+                '\tLCF_SOURCE_TREE="$(LCF_SOURCE_TREE)" \\\n\ttrue',
             ),
         )
         for old, new in mutations:
@@ -2903,7 +4014,7 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "      LCF_SOURCE_SHA: deadbeef",
             ),
             (
-                '          "${LCF_REVIEWED_BUILD_PYTHON}" -I \\\n'
+                '          "${LCF_REVIEWED_BUILD_PYTHON}" -I -S \\\n'
                 "            tools/check_exact_git_provenance.py \\\n",
                 "          true # unified provenance checker removed \\\n",
             ),

@@ -47,7 +47,7 @@ help:
 	  'make ci-web      Install and run Web source tests, typecheck and build' \
 	  'make desktop-ci  Install and run desktop tests, typecheck and build' \
 	  'make python-sidecar-source-verify  Verify pinned Python archive/pkg bytes' \
-	  'make python-sidecar-install-python  Verify and install the locked Python.org pkg' \
+	  'make python-sidecar-install-python  Verify the locked pkg and sealed Framework binding' \
 	  'make python-sidecar-build  Build, smoke, audit and atomically stage sidecar' \
 	  'make python-sidecar-audit  Re-audit the current Python sidecar staging' \
 	  'make python-sidecar-packaging-test  Run portable packaging policy tests' \
@@ -169,9 +169,10 @@ pre1-work-plan-check:
 	$(PYTHON) -B -m unittest discover -s tools/tests -p 'test_*.py'
 
 packaged-smoke-policy-check:
-	$(PYTHON) -B tools/check_packaged_smoke_policy.py
-	$(PYTHON) -B -m unittest tools.tests.test_check_packaged_smoke_policy
-	$(PYTHON) -B -m unittest tools.tests.test_check_exact_git_provenance
+	$(NODE) --test tools/tests/verify_reviewed_python_framework.test.cjs
+	$(PYTHON) -S -B tools/check_packaged_smoke_policy.py
+	$(PYTHON) -S -B -m unittest tools.tests.test_check_packaged_smoke_policy
+	$(PYTHON) -S -B -m unittest tools.tests.test_check_exact_git_provenance
 
 engineering-smoke-assemble:
 	@test "$$(uname -s)" = Darwin || { printf '%s\n' 'Engineering-smoke assembly requires macOS'; exit 2; }
@@ -212,14 +213,16 @@ desktop-ci: web-install desktop-install
 
 python-sidecar-source-verify:
 	@test -n "$(LCF_REVIEWED_SOURCE_ROOT)" || { printf '%s\n' 'LCF_REVIEWED_SOURCE_ROOT is required'; exit 2; }
+	@test -n "$(LCF_REVIEWED_BUILD_PYTHON)" || { printf '%s\n' 'LCF_REVIEWED_BUILD_PYTHON is required'; exit 2; }
+	@test "$(LCF_REVIEWED_BUILD_PYTHON)" = "$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" || { printf '%s\n' 'Reviewed build Python differs from the locked framework'; exit 2; }
 	@test -n "$(PYTHON_SIDECAR_ARCHIVE)" || { printf '%s\n' 'PYTHON_SIDECAR_ARCHIVE is required'; exit 2; }
 	@test -n "$(PYTHON_SIDECAR_HASH_MANIFEST)" || { printf '%s\n' 'PYTHON_SIDECAR_HASH_MANIFEST is required'; exit 2; }
-	$(PYTHON) -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/build_python_sidecar.py" --verify-source-only \
+	"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/build_python_sidecar.py" --verify-source-only \
 		--archive "$(PYTHON_SIDECAR_ARCHIVE)" \
 		--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)"
 
 python-sidecar-install-python: python-sidecar-source-verify
-	$(PYTHON) -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py" \
+	"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py" \
 		--install-reviewed-python \
 		--archive "$(PYTHON_SIDECAR_ARCHIVE)" \
 		--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)"
@@ -235,12 +238,12 @@ python-sidecar-build: python-sidecar-install-python
 	LCF_REVIEWED_SOURCE_ROOT="$(LCF_REVIEWED_SOURCE_ROOT)" \
 	LCF_SOURCE_SHA="$(LCF_SOURCE_SHA)" \
 	LCF_SOURCE_TREE="$(LCF_SOURCE_TREE)" \
-	"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"
+	"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"
 
 python-sidecar-audit:
 	@test -n "$(LCF_REVIEWED_SOURCE_ROOT)" || { printf '%s\n' 'LCF_REVIEWED_SOURCE_ROOT is required'; exit 2; }
 	@test -n "$(LCF_REVIEWED_BUILD_PYTHON)" || { printf '%s\n' 'LCF_REVIEWED_BUILD_PYTHON is required'; exit 2; }
-	"$(LCF_REVIEWED_BUILD_PYTHON)" -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/audit_python_sidecar.py" \
+	"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S "$(LCF_REVIEWED_SOURCE_ROOT)/tools/audit_python_sidecar.py" \
 		--bundle "$(LCF_REVIEWED_SOURCE_ROOT)/desktop/generated/sidecar"
 
 python-sidecar-packaging-test:

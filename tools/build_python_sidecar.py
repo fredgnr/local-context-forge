@@ -1198,7 +1198,8 @@ def verify_distribution_files(
     if (
         expected_members.get(str(package_name), (None, None))[1]
         != distribution.get("installerPackageSha256")
-        or distribution.get("installMethod") != "macos-installer-pkg-direct"
+        or distribution.get("installMethod")
+        != "macos-installer-no-op-framework-component"
     ):
         raise BuildError("Python installer package evidence is inconsistent")
 
@@ -1863,6 +1864,7 @@ def fingerprint_install_root(
     root: Path,
     *,
     reviewed_broken_symlinks: Mapping[str, str] | None = None,
+    excluded_paths: Sequence[str] = (),
 ) -> str:
     """Fingerprint immutable framework content without runtime bytecode caches."""
 
@@ -1873,6 +1875,32 @@ def fingerprint_install_root(
     if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
         raise BuildError("Pinned Python install root must be a real directory")
     root = root.resolve(strict=True)
+    normalized_exclusions: list[tuple[str, ...]] = []
+    exclusion_names: list[str] = []
+    for raw_path in excluded_paths:
+        name = str(raw_path)
+        relative_path = PurePosixPath(name)
+        if (
+            not name
+            or relative_path.is_absolute()
+            or relative_path.as_posix() != name
+            or any(part in {"", ".", ".."} for part in relative_path.parts)
+            or "\\" in name
+            or "\x00" in name
+        ):
+            raise BuildError("Python install root fingerprint exclusion is unsafe")
+        exclusion_names.append(name)
+        normalized_exclusions.append(relative_path.parts)
+    if exclusion_names != sorted(exclusion_names) or len(
+        exclusion_names
+    ) != len(set(exclusion_names)):
+        raise BuildError("Python install root fingerprint exclusions are not ordered")
+    if any(
+        candidate[: len(parent)] == parent
+        for index, parent in enumerate(normalized_exclusions)
+        for candidate in normalized_exclusions[index + 1 :]
+    ):
+        raise BuildError("Python install root fingerprint exclusions overlap")
     reviewed_broken = dict(reviewed_broken_symlinks or {})
     observed_broken: dict[str, str] = {}
     inventory: list[dict[str, Any]] = []
@@ -1881,7 +1909,16 @@ def fingerprint_install_root(
         key=lambda candidate: candidate.relative_to(root).as_posix(),
     ):
         relative = path.relative_to(root)
-        if "__pycache__" in relative.parts or path.suffix in {".pyc", ".pyo"}:
+        if any(
+            relative.parts[: len(excluded)] == excluded
+            for excluded in normalized_exclusions
+        ):
+            continue
+        folded_parts = tuple(part.casefold() for part in relative.parts)
+        if (
+            "__pycache__" in folded_parts
+            or path.name.casefold().endswith((".pyc", ".pyo"))
+        ):
             continue
         try:
             item_info = path.lstat()

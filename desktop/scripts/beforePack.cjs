@@ -62,6 +62,54 @@ const EXPECTED_PYTHON_BUILD_TOOLS = Object.freeze({
   setuptoolsVersion: "83.0.0",
   uvVersion: "0.11.29"
 });
+const EXPECTED_PYTHON_EXECUTION_CLOSURE = Object.freeze({
+  interpreterRelativePath: "bin/python3.13",
+  interpreterSize: 119232,
+  interpreterSha256:
+    "ee3c4103b97e32a98e98cfad7f6ca4d09b2ab2dc16f3d28e18b54a4a0244efe0",
+  frameworkBinaryRelativePath: "Python",
+  frameworkBinarySize: 13633312,
+  frameworkBinarySha256:
+    "db77544e7135af8478d62c7d1289581d83714a676c7d3f2b7a4b996bdfef5717"
+});
+const EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS = Object.freeze([
+  "Resources/English.lproj/Documentation",
+  "bin/pip",
+  "bin/pip3",
+  "bin/pip3.13",
+  "bin/python",
+  "bin/python313",
+  "etc/openssl/cert.pem",
+  "lib/python3.13/site-packages",
+  "share/doc/python3.13/html"
+]);
+const EXPECTED_FRAMEWORK_CORE_SHA256 =
+  "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";
+const EXPECTED_PYTHON_INSTALL_METHOD =
+  "macos-installer-no-op-framework-component";
+const EXPECTED_FRAMEWORK_COMPONENT = Object.freeze({
+  packageName: "Python_Framework.pkg",
+  bomSize: 1404518,
+  bomSha256:
+    "4e49a4c96076a4855219461f721d510493c6d4f3a7a2a9ad7c981ced723d09bd",
+  packageInfoSize: 947,
+  packageInfoSha256:
+    "86938c44112e37c4791fdc15ee0d89777ed8b6d0a85bae37f7ebf09839072f5c",
+  payloadSize: 32739568,
+  payloadSha256:
+    "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
+  scriptsSize: 380,
+  scriptsSha256:
+    "84fb517c2da6089848bfb6a0ab0e6c508351546d1df9d31abcadd5de4cd42bac",
+  postinstallSize: 894,
+  postinstallSha256:
+    "7821586a42b4d86b075ed2c87da0a5981e5372070b9c7f6141d09f77cb172417",
+  postinstallMode: "0755",
+  noOpPostinstallSize: 17,
+  noOpPostinstallSha256:
+    "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+  noOpPostinstallMode: "0755"
+});
 const EXPECTED_FROZEN_CHECKS = Object.freeze([
   "version",
   "doctor",
@@ -670,24 +718,51 @@ function validateToolchainLock(toolchain) {
     [],
     "Toolchain target"
   );
-  assertExactKeys(
+  const python = assertExactKeys(
     toolchain.python,
     [
       "implementation",
       "version",
       "installRoot",
       "interpreterRelativePath",
+      "interpreterSize",
+      "interpreterSha256",
+      "frameworkBinaryRelativePath",
+      "frameworkBinarySize",
+      "frameworkBinarySha256",
+      "frameworkCoreFingerprintExcludedPaths",
+      "frameworkCoreFingerprintSha256",
       "reviewedBrokenSymlinks",
       "distribution"
     ],
     [],
     "Toolchain Python"
   );
-  if (!Array.isArray(toolchain.python.reviewedBrokenSymlinks)) {
+  const executionClosure = {
+    interpreterRelativePath: python.interpreterRelativePath,
+    interpreterSize: python.interpreterSize,
+    interpreterSha256: python.interpreterSha256,
+    frameworkBinaryRelativePath: python.frameworkBinaryRelativePath,
+    frameworkBinarySize: python.frameworkBinarySize,
+    frameworkBinarySha256: python.frameworkBinarySha256
+  };
+  if (!sameJson(executionClosure, EXPECTED_PYTHON_EXECUTION_CLOSURE)) {
+    fail("Python toolchain execution closure differs from the reviewed lock");
+  }
+  if (
+    !sameJson(
+      python.frameworkCoreFingerprintExcludedPaths,
+      EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS
+    ) ||
+    python.frameworkCoreFingerprintSha256 !== EXPECTED_FRAMEWORK_CORE_SHA256
+  ) {
+    fail("Python toolchain framework core differs from the reviewed lock");
+  }
+  if (!Array.isArray(python.reviewedBrokenSymlinks)) {
     fail("Toolchain reviewed broken symlinks are malformed");
   }
   const reviewedBrokenPaths = [];
-  for (const rawEntry of toolchain.python.reviewedBrokenSymlinks) {
+  for (const rawEntry of python.reviewedBrokenSymlinks) {
     const entry = assertExactKeys(
       rawEntry,
       ["path", "target"],
@@ -723,8 +798,8 @@ function validateToolchainLock(toolchain) {
   ) {
     fail("Toolchain reviewed broken symlinks are not ordered");
   }
-  assertExactKeys(
-    toolchain.python.distribution,
+  const distribution = assertExactKeys(
+    python.distribution,
     [
       "provider",
       "releaseTag",
@@ -737,6 +812,7 @@ function validateToolchainLock(toolchain) {
       "installerPackageName",
       "installerPackageSha256",
       "installMethod",
+      "frameworkComponent",
       "hashManifestName",
       "hashManifestSource",
       "hashManifestSha256",
@@ -745,6 +821,45 @@ function validateToolchainLock(toolchain) {
     [],
     "Toolchain Python distribution"
   );
+  const frameworkComponent = assertExactKeys(
+    distribution.frameworkComponent,
+    Object.keys(EXPECTED_FRAMEWORK_COMPONENT),
+    [],
+    "Toolchain Python framework component"
+  );
+  const componentSizeFields = [
+    "bomSize",
+    "packageInfoSize",
+    "payloadSize",
+    "scriptsSize",
+    "postinstallSize",
+    "noOpPostinstallSize"
+  ];
+  const componentHashFields = [
+    "bomSha256",
+    "packageInfoSha256",
+    "payloadSha256",
+    "scriptsSha256",
+    "postinstallSha256",
+    "noOpPostinstallSha256"
+  ];
+  if (
+    componentSizeFields.some(
+      (key) =>
+        !Number.isSafeInteger(frameworkComponent[key]) ||
+        frameworkComponent[key] <= 0
+    ) ||
+    componentHashFields.some(
+      (key) =>
+        typeof frameworkComponent[key] !== "string" ||
+        !SHA256_PATTERN.test(frameworkComponent[key])
+    ) ||
+    frameworkComponent.postinstallMode !== "0755" ||
+    frameworkComponent.noOpPostinstallMode !== "0755" ||
+    !sameJson(frameworkComponent, EXPECTED_FRAMEWORK_COMPONENT)
+  ) {
+    fail("Python framework component differs from the reviewed contract");
+  }
   assertExactKeys(
     toolchain.tools,
     ["uv", "pyinstaller", "pyinstallerHooksContrib"],
@@ -770,15 +885,13 @@ function validateToolchainLock(toolchain) {
   ) {
     fail("Python toolchain required runner inputs are incomplete");
   }
-  const distribution = toolchain.python.distribution;
   if (
-    toolchain.python.interpreterRelativePath !== "bin/python3.13" ||
     !COMMIT_PATTERN.test(distribution.releaseCommit) ||
     !Number.isSafeInteger(distribution.archiveSize) ||
     distribution.archiveSize <= 0 ||
     !Number.isSafeInteger(distribution.hashManifestSize) ||
     distribution.hashManifestSize <= 0 ||
-    distribution.installMethod !== "macos-installer-pkg-direct" ||
+    distribution.installMethod !== EXPECTED_PYTHON_INSTALL_METHOD ||
     !Array.isArray(distribution.archiveMembers) ||
     distribution.archiveMembers.length !== 3
   ) {

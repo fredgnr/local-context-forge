@@ -54,13 +54,21 @@ MAX_EVIDENCE_BYTES = 128 * 1024 * 1024
 MAX_SUBPROCESS_OUTPUT_BYTES = 32 * 1024 * 1024
 MAX_INNER_DIAGNOSTIC_BYTES = 128
 INNER_BUILD_DIAGNOSTIC_FD_ENV = "LCF_INNER_BUILD_DIAGNOSTIC_FD"
-LAUNCHER_NAME_SAME = "same-name"
-LAUNCHER_NAME_INSTALLER_REBIND = "installer-producer-rebind"
-_REVIEWED_INSTALLER_REBIND_AUTHORITY = object()
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 DEFAULT_REVIEWED_FRAMEWORK_ROOT = PurePosixPath(
     "/Library/Frameworks/Python.framework/Versions/3.13"
+)
+REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS = (
+    "Resources/English.lproj/Documentation",
+    "bin/pip",
+    "bin/pip3",
+    "bin/pip3.13",
+    "bin/python",
+    "bin/python313",
+    "etc/openssl/cert.pem",
+    "lib/python3.13/site-packages",
+    "share/doc/python3.13/html",
 )
 
 SOURCE_INPUTS = (
@@ -1827,14 +1835,408 @@ def _sanitized_environment(
     }
 
 
+def _reviewed_framework_security_contract(
+    python_lock: Mapping[str, Any],
+) -> tuple[tuple[Path, int, str], ...]:
+    """Return the two executable-closure files pinned by the reviewed lock."""
+
+    try:
+        interpreter_relative = Path(str(python_lock["interpreterRelativePath"]))
+        interpreter_size = int(python_lock["interpreterSize"])
+        interpreter_sha256 = str(python_lock["interpreterSha256"])
+        framework_relative = Path(str(python_lock["frameworkBinaryRelativePath"]))
+        framework_size = int(python_lock["frameworkBinarySize"])
+        framework_sha256 = str(python_lock["frameworkBinarySha256"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework security lock is malformed"
+        ) from exc
+    entries = (
+        (interpreter_relative, interpreter_size, interpreter_sha256),
+        (framework_relative, framework_size, framework_sha256),
+    )
+    if any(
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or size <= 0
+        or size > MAX_TREE_FILE_BYTES
+        or SHA256_PATTERN.fullmatch(digest) is None
+        for relative, size, digest in entries
+    ):
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework security lock is malformed"
+        )
+    return entries
+
+
+def _reviewed_framework_core_contract(
+    python_lock: Mapping[str, Any],
+) -> tuple[tuple[str, ...], str]:
+    """Return the exact dynamic exclusions and locked core payload digest."""
+
+    raw_exclusions = python_lock.get("frameworkCoreFingerprintExcludedPaths")
+    digest = str(python_lock.get("frameworkCoreFingerprintSha256", ""))
+    if (
+        raw_exclusions != list(REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS)
+        or SHA256_PATTERN.fullmatch(digest) is None
+    ):
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework core lock is malformed"
+        )
+    return REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS, digest
+
+
+def _reviewed_framework_owner() -> int:
+    """The Python.org framework producer and permission finalizer run as root."""
+
+    return 0
+
+
+def _reviewed_broken_framework_symlinks(
+    python_lock: Mapping[str, Any],
+) -> dict[str, str]:
+    raw_entries = python_lock.get("reviewedBrokenSymlinks")
+    if not isinstance(raw_entries, list):
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework symlink lock is malformed"
+        )
+    result: dict[str, str] = {}
+    for item in raw_entries:
+        if not isinstance(item, dict) or set(item) != {"path", "target"}:
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework symlink lock is malformed"
+            )
+        relative = PurePosixPath(str(item["path"]))
+        target = PurePosixPath(str(item["target"]))
+        relative_text = relative.as_posix()
+        target_text = target.as_posix()
+        if (
+            relative.is_absolute()
+            or target.is_absolute()
+            or not relative.parts
+            or not target.parts
+            or any(part in {"", ".", ".."} for part in relative.parts)
+            or any(part in {"", ".", ".."} for part in target.parts)
+            or relative_text in result
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework symlink lock is malformed"
+            )
+        result[relative_text] = target_text
+    if tuple(result) != tuple(sorted(result)):
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework symlink lock is malformed"
+        )
+    return result
+
+
+def _verify_locked_framework_regular(
+    path: Path,
+    *,
+    expected_owner: int,
+    expected_size: int,
+    expected_sha256: str,
+) -> None:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        held = os.fstat(descriptor)
+        named = path.lstat()
+        if (
+            not stat.S_ISREG(held.st_mode)
+            or stat.S_ISLNK(named.st_mode)
+            or _identity(held) != _identity(named)
+            or held.st_uid != expected_owner
+            or held.st_nlink != 1
+            or held.st_size != expected_size
+            or stat.S_IMODE(held.st_mode) & 0o7022
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework execution closure is unsafe"
+            )
+        payload = _read_regular_descriptor(
+            descriptor,
+            expected_size=expected_size,
+            maximum_size=MAX_TREE_FILE_BYTES,
+            error_message="Reviewed Python framework execution closure changed",
+        )
+        if (
+            hashlib.sha256(payload).hexdigest() != expected_sha256
+            or _identity(os.fstat(descriptor)) != _identity(held)
+            or _identity(path.lstat()) != _identity(held)
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework execution closure changed"
+            )
+    except ToolchainBootstrapError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework execution closure is unavailable"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _verify_reviewed_framework_acl_seal(root: Path) -> None:
+    """On macOS, reject every extended ACL without trusting the mode suffix."""
+
+    if sys.platform != "darwin":
+        return
+    commands = (
+        (
+            "/bin/ls",
+            "-led",
+            str(root.parents[3]),
+            str(root.parents[2]),
+            str(root.parents[1]),
+            str(root.parent),
+            str(root),
+        ),
+        ("/bin/ls", "-leR", str(root)),
+    )
+    acl_entry = re.compile(rb"(?m)^[ \t]+[0-9]+: ")
+    for command in commands:
+        expected = _exec_target_identity(Path(command[0]))
+        try:
+            process = subprocess.run(
+                command,
+                cwd=Path("/"),
+                env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=120,
+                check=False,
+                start_new_session=True,
+                umask=0o077,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework ACL seal is unavailable"
+            ) from exc
+        if (
+            process.returncode != 0
+            or not process.stdout
+            or process.stderr
+            or len(process.stdout) > MAX_SUBPROCESS_OUTPUT_BYTES
+            or acl_entry.search(process.stdout) is not None
+            or expected != _exec_target_identity(Path(command[0]))
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework ACL seal is unsafe"
+            )
+
+
+def _verify_reviewed_framework_seal(
+    root: Path,
+    *,
+    python_lock: Mapping[str, Any],
+    expected_owner: int | None = None,
+) -> None:
+    """Prove the installed framework is root-sealed before any code is used."""
+
+    if expected_owner is None:
+        expected_owner = _reviewed_framework_owner()
+    try:
+        if (
+            not root.is_absolute()
+            or ".." in root.parts
+            or root.resolve(strict=True) != root
+            or root.parent.resolve(strict=True) != root.parent
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework seal is unsafe"
+            )
+        root_before = root.lstat()
+        parent_before = root.parent.lstat()
+        anchor_before = root.parents[1].lstat()
+        container_before = root.parents[2].lstat()
+        library_before = root.parents[3].lstat()
+        if (
+            not stat.S_ISDIR(root_before.st_mode)
+            or stat.S_ISLNK(root_before.st_mode)
+            or root_before.st_uid != expected_owner
+            or stat.S_IMODE(root_before.st_mode) & 0o7022
+            or not stat.S_ISDIR(parent_before.st_mode)
+            or stat.S_ISLNK(parent_before.st_mode)
+            or parent_before.st_uid != expected_owner
+            or stat.S_IMODE(parent_before.st_mode) & 0o7022
+            or not stat.S_ISDIR(anchor_before.st_mode)
+            or stat.S_ISLNK(anchor_before.st_mode)
+            or anchor_before.st_uid != expected_owner
+            or stat.S_IMODE(anchor_before.st_mode) & 0o7022
+            or not stat.S_ISDIR(container_before.st_mode)
+            or stat.S_ISLNK(container_before.st_mode)
+            or container_before.st_uid != expected_owner
+            or stat.S_IMODE(container_before.st_mode) & 0o7022
+            or not stat.S_ISDIR(library_before.st_mode)
+            or stat.S_ISLNK(library_before.st_mode)
+            or library_before.st_uid != expected_owner
+            or stat.S_IMODE(library_before.st_mode) & 0o7022
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework seal is unsafe"
+            )
+        broken = _reviewed_broken_framework_symlinks(python_lock)
+        observed_broken: dict[str, str] = {}
+        entry_count = 0
+        total_size = 0
+        for directory, directory_names, file_names in os.walk(
+            root,
+            topdown=True,
+            followlinks=False,
+        ):
+            directory_names.sort()
+            file_names.sort()
+            for name in (*directory_names, *file_names):
+                path = Path(directory) / name
+                relative = path.relative_to(root).as_posix()
+                relative_path = PurePosixPath(relative)
+                folded_parts = tuple(
+                    part.casefold() for part in relative_path.parts
+                )
+                info = path.lstat()
+                entry_count += 1
+                if entry_count > MAX_TREE_ENTRIES:
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python framework seal exceeds its entry bound"
+                    )
+                if (
+                    "__pycache__" in folded_parts
+                    or relative_path.name.casefold().endswith((".pyc", ".pyo"))
+                ):
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python framework seal contains executable bytecode cache"
+                    )
+                if info.st_uid != expected_owner:
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python framework seal has unsafe ownership"
+                    )
+                if stat.S_ISLNK(info.st_mode):
+                    if info.st_nlink != 1:
+                        raise ToolchainBootstrapError(
+                            "Reviewed Python framework seal has an unsafe alias"
+                        )
+                    target = os.readlink(path)
+                    target_path = PurePosixPath(target)
+                    if (
+                        not target
+                        or target_path.is_absolute()
+                        or "\x00" in target
+                    ):
+                        raise ToolchainBootstrapError(
+                            "Reviewed Python framework seal has an unsafe symlink"
+                        )
+                    try:
+                        resolved = path.resolve(strict=True)
+                    except (OSError, RuntimeError) as exc:
+                        unresolved = path.parent.joinpath(target).resolve(strict=False)
+                        if (
+                            broken.get(relative) != target
+                            or root not in (unresolved, *unresolved.parents)
+                        ):
+                            raise ToolchainBootstrapError(
+                                "Reviewed Python framework seal has an unsafe broken symlink"
+                            ) from exc
+                        observed_broken[relative] = target
+                    else:
+                        if root not in (resolved, *resolved.parents):
+                            raise ToolchainBootstrapError(
+                                "Reviewed Python framework seal has an escaping symlink"
+                            )
+                    continue
+                mode = stat.S_IMODE(info.st_mode)
+                if mode & 0o7022:
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python framework seal is writable or privileged"
+                    )
+                if stat.S_ISDIR(info.st_mode):
+                    continue
+                if not stat.S_ISREG(info.st_mode):
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python framework seal contains a special file"
+                    )
+                if info.st_nlink != 1 or info.st_size > MAX_TREE_FILE_BYTES:
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python framework seal has an unsafe regular file"
+                    )
+                total_size += info.st_size
+                if total_size > MAX_TREE_TOTAL_BYTES:
+                    raise ToolchainBootstrapError(
+                        "Reviewed Python framework seal exceeds its byte bound"
+                    )
+        if observed_broken != broken:
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework broken symlink set changed"
+            )
+        if (
+            _identity(root.lstat()) != _identity(root_before)
+            or _identity(root.parent.lstat()) != _identity(parent_before)
+            or _identity(root.parents[1].lstat()) != _identity(anchor_before)
+            or _identity(root.parents[2].lstat()) != _identity(container_before)
+            or _identity(root.parents[3].lstat()) != _identity(library_before)
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework seal changed during verification"
+            )
+        _verify_reviewed_framework_acl_seal(root)
+        for relative, size, digest in _reviewed_framework_security_contract(
+            python_lock
+        ):
+            _verify_locked_framework_regular(
+                root / relative,
+                expected_owner=expected_owner,
+                expected_size=size,
+                expected_sha256=digest,
+            )
+    except ToolchainBootstrapError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework seal is unavailable"
+        ) from exc
+
+
+def _verify_reviewed_framework_core(
+    root: Path,
+    *,
+    python_lock: Mapping[str, Any],
+    build: Any,
+) -> None:
+    """Bind every non-dynamic framework byte to the reviewed pkg payload."""
+
+    exclusions, expected = _reviewed_framework_core_contract(python_lock)
+    try:
+        observed = build.fingerprint_install_root(
+            root,
+            reviewed_broken_symlinks=_reviewed_broken_framework_symlinks(
+                python_lock
+            ),
+            excluded_paths=exclusions,
+        )
+    except build.BuildError as exc:
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework core fingerprint failed"
+        ) from exc
+    if observed != expected:
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework core fingerprint changed"
+        )
+
+
 @contextlib.contextmanager
 def _held_executable(
     path: Path,
     *,
-    terminal_name_policy: str = LAUNCHER_NAME_SAME,
     error_message: str,
 ) -> Any:
-    """Hold one exact executable inode across an intentional name transition."""
+    """Hold one exact executable inode while its canonical name stays bound."""
 
     descriptor: int | None = None
     binding: _HeldExecutable | None = None
@@ -1885,7 +2287,6 @@ def _held_executable(
         try:
             _revalidate_held_executable(
                 binding,
-                name_policy=terminal_name_policy,
                 error_message=error_message,
             )
         except BaseException as exc:
@@ -1918,39 +2319,18 @@ def _held_executable(
 def _revalidate_held_executable(
     binding: _HeldExecutable,
     *,
-    name_policy: str,
     error_message: str,
 ) -> None:
-    """Revalidate the held launcher and its default or producer-rebound name."""
+    """Revalidate the held launcher and its unchanged canonical name."""
 
     try:
         held = os.fstat(binding.descriptor)
         held_identity = _identity(held)
         named = binding.path.lstat()
-        if name_policy == LAUNCHER_NAME_SAME:
-            if (
-                held_identity != binding.identity
-                or _identity(named) != binding.identity
-            ):
-                raise ToolchainBootstrapError(error_message)
-        elif name_policy == LAUNCHER_NAME_INSTALLER_REBIND:
-            stable_indexes = (0, 1, 2, 3, 4, 6, 7)
-            if _identity(named) == binding.identity:
-                if held_identity != binding.identity:
-                    raise ToolchainBootstrapError(error_message)
-            elif (
-                tuple(held_identity[index] for index in stable_indexes)
-                != tuple(binding.identity[index] for index in stable_indexes)
-                or held.st_nlink != 0
-                or not stat.S_ISREG(named.st_mode)
-                or stat.S_ISLNK(named.st_mode)
-                or named.st_uid not in {0, os.geteuid()}
-                or named.st_nlink != 1
-                or stat.S_IMODE(named.st_mode) & 0o7022
-                or not stat.S_IMODE(named.st_mode) & 0o111
-            ):
-                raise ToolchainBootstrapError(error_message)
-        else:
+        if (
+            held_identity != binding.identity
+            or _identity(named) != binding.identity
+        ):
             raise ToolchainBootstrapError(error_message)
         payload = _read_regular_descriptor(
             binding.descriptor,
@@ -2024,6 +2404,7 @@ def _held_cwd_exec_command(
     command = (
         str(launcher_python),
         "-I",
+        "-S",
         "-c",
         HELD_CWD_EXEC_RUNNER,
         str(cwd_descriptor),
@@ -2204,8 +2585,6 @@ def _run_owned_process(
     cwd_descriptor: int | None = None,
     launcher_python: Path | None = None,
     launcher_binding: _HeldExecutable | None = None,
-    launcher_name_policy: str = LAUNCHER_NAME_SAME,
-    launcher_rebind_authority: object | None = None,
     inner_build_diagnostic: bool = False,
     check: bool = True,
     path_capabilities: Sequence[tuple[int, str, bool]] = (),
@@ -2240,7 +2619,7 @@ def _run_owned_process(
         reference = tuple(expected) if expected is not None else identity
         return identity[:5] if stat.S_ISDIR(reference[2]) else identity
 
-    def revalidate_owned_bindings(*, name_policy: str) -> None:
+    def revalidate_owned_bindings() -> None:
         if cwd_descriptor is None:
             return
         if cwd_identity != _identity(os.fstat(cwd_descriptor)):
@@ -2279,19 +2658,13 @@ def _run_owned_process(
         if launcher_binding is not None:
             _revalidate_held_executable(
                 launcher_binding,
-                name_policy=name_policy,
                 error_message=f"{label} launcher capability changed",
             )
-        if name_policy == LAUNCHER_NAME_SAME:
-            _revalidate_exec_identity(
-                launcher_python,
-                effective_arguments,
-                executable_identity,
-            )
-        elif name_policy != LAUNCHER_NAME_INSTALLER_REBIND:
-            raise ToolchainBootstrapError(
-                f"{label} launcher name policy is invalid"
-            )
+        _revalidate_exec_identity(
+            launcher_python,
+            effective_arguments,
+            executable_identity,
+        )
         if (
             actual_target_identity is not None
             and actual_target_identity
@@ -2300,24 +2673,6 @@ def _run_owned_process(
             raise ToolchainBootstrapError(f"{label} executable changed")
 
     try:
-        if launcher_name_policy not in {
-            LAUNCHER_NAME_SAME,
-            LAUNCHER_NAME_INSTALLER_REBIND,
-        }:
-            raise ToolchainBootstrapError(
-                "Owned process launcher name policy is invalid"
-            )
-        if (
-            launcher_name_policy == LAUNCHER_NAME_INSTALLER_REBIND
-            and launcher_rebind_authority
-            is not _REVIEWED_INSTALLER_REBIND_AUTHORITY
-        ) or (
-            launcher_name_policy == LAUNCHER_NAME_SAME
-            and launcher_rebind_authority is not None
-        ):
-            raise ToolchainBootstrapError(
-                "Owned process launcher rebind authority is invalid"
-            )
         if launcher_binding is not None and (
             launcher_python is None
             or launcher_binding.path != launcher_python
@@ -2328,38 +2683,8 @@ def _run_owned_process(
         if launcher_binding is not None:
             _revalidate_held_executable(
                 launcher_binding,
-                name_policy=LAUNCHER_NAME_SAME,
                 error_message="Owned process launcher capability is invalid",
             )
-        if launcher_name_policy == LAUNCHER_NAME_INSTALLER_REBIND:
-            package_argument = (
-                Path(str(arguments[4])) if len(arguments) == 7 else Path()
-            )
-            package_capability = any(
-                Path(str(raw_path)) == package_argument and mutable is False
-                for _descriptor, raw_path, mutable in path_capabilities
-            )
-            if (
-                launcher_binding is None
-                or not check
-                or inner_build_diagnostic
-                or cwd_descriptor is None
-                or label != "Python framework installation"
-                or tuple(arguments[:4])
-                != (
-                    "/usr/bin/sudo",
-                    "--non-interactive",
-                    "/usr/sbin/installer",
-                    "-pkg",
-                )
-                or tuple(arguments[5:]) != ("-target", "/")
-                or not package_argument.is_absolute()
-                or ".." in package_argument.parts
-                or not package_capability
-            ):
-                raise ToolchainBootstrapError(
-                    "Reviewed Python installer launcher transition is invalid"
-                )
         if path_capabilities and cwd_descriptor is None:
             raise ToolchainBootstrapError(
                 "Owned process path capability requires a held cwd"
@@ -2441,6 +2766,7 @@ def _run_owned_process(
                 effective_arguments = (
                     str(launcher_python),
                     "-I",
+                    "-S",
                     "-c",
                     PATH_CAPABILITY_EXEC_RUNNER,
                     str(len(path_capability_bindings)),
@@ -2509,16 +2835,7 @@ def _run_owned_process(
                 )
         if descendants:
             raise ToolchainBootstrapError(f"{label} left a descendant process")
-        terminal_launcher_policy = (
-            LAUNCHER_NAME_INSTALLER_REBIND
-            if (
-                launcher_name_policy == LAUNCHER_NAME_INSTALLER_REBIND
-                and process.returncode == 0
-                and check
-            )
-            else LAUNCHER_NAME_SAME
-        )
-        revalidate_owned_bindings(name_policy=terminal_launcher_policy)
+        revalidate_owned_bindings()
         if process.returncode != 0 and check:
             if cwd_descriptor is not None:
                 category = _held_cwd_failure_category(stderr)
@@ -2556,7 +2873,7 @@ def _run_owned_process(
         binding_error: BaseException | None = None
         if process is not None:
             try:
-                revalidate_owned_bindings(name_policy=LAUNCHER_NAME_SAME)
+                revalidate_owned_bindings()
             except BaseException as observed_error:
                 binding_error = observed_error
         if cleanup_error is not None or binding_error is not None:
@@ -2576,78 +2893,6 @@ def _run_owned_process(
                 os.close(descriptor)
             except OSError:
                 pass
-
-
-def _run_reviewed_framework_installer(
-    *,
-    package: _BoundFile,
-    expected_package_sha256: str,
-    locked_interpreter: Path,
-    launcher_binding: _HeldExecutable,
-    cwd: Path,
-    environment: Mapping[str, str],
-    pass_fds: Sequence[int],
-    build: Any,
-    cwd_descriptor: int,
-    path_capabilities: Sequence[tuple[int, str, bool]],
-) -> str:
-    """Run the one producer allowed to replace the locked launcher's name."""
-
-    package_capabilities = tuple(
-        (descriptor, str(path), mutable)
-        for descriptor, path, mutable in path_capabilities
-        if descriptor == package.descriptor
-    )
-    if (
-        not locked_interpreter.is_absolute()
-        or ".." in locked_interpreter.parts
-        or launcher_binding.path != locked_interpreter
-        or package.path != package.path.resolve(strict=True)
-        or package.sha256 != expected_package_sha256
-        or package_capabilities
-        != ((package.descriptor, str(package.path), False),)
-    ):
-        raise ToolchainBootstrapError(
-            "Reviewed Python installer launcher transition is invalid"
-        )
-    _revalidate_held_executable(
-        launcher_binding,
-        name_policy=LAUNCHER_NAME_SAME,
-        error_message="Reviewed Python installer launcher is unsafe",
-    )
-    _revalidate_bound_file(
-        package,
-        maximum_size=MAX_TREE_FILE_BYTES,
-        error_message="Reviewed Python installer package changed",
-    )
-    observed = _run_owned_process(
-        (
-            "/usr/bin/sudo",
-            "--non-interactive",
-            "/usr/sbin/installer",
-            "-pkg",
-            str(package.path),
-            "-target",
-            "/",
-        ),
-        cwd=cwd,
-        environment=environment,
-        pass_fds=pass_fds,
-        timeout=900,
-        label="Python framework installation",
-        build=build,
-        cwd_descriptor=cwd_descriptor,
-        launcher_python=locked_interpreter,
-        launcher_binding=launcher_binding,
-        launcher_name_policy=LAUNCHER_NAME_INSTALLER_REBIND,
-        launcher_rebind_authority=_REVIEWED_INSTALLER_REBIND_AUTHORITY,
-        path_capabilities=path_capabilities,
-    )
-    if not isinstance(observed, str):
-        raise ToolchainBootstrapError(
-            "Reviewed Python installer result is invalid"
-        )
-    return observed
 
 
 def _write_bound_file(
@@ -2963,7 +3208,7 @@ def install_reviewed_python(
     archive: Path,
     hash_manifest: Path,
 ) -> str:
-    """Verify and install the locked framework from one held private root."""
+    """Bind the sealed framework to the locked, signed distribution bytes."""
 
     try:
         import build_python_sidecar as build
@@ -3001,6 +3246,9 @@ def install_reviewed_python(
             distribution = python_lock.get("distribution")
             if not isinstance(distribution, dict):
                 raise ToolchainBootstrapError("Python distribution lock is malformed")
+            _reviewed_framework_security_contract(python_lock)
+            _reviewed_framework_core_contract(python_lock)
+            _reviewed_broken_framework_symlinks(python_lock)
             install_root = Path(str(python_lock.get("installRoot", "")))
             interpreter = install_root / str(
                 python_lock.get("interpreterRelativePath", "")
@@ -3010,6 +3258,8 @@ def install_reviewed_python(
             if (
                 not install_root.is_absolute()
                 or ".." in install_root.parts
+                or PurePosixPath(install_root.as_posix())
+                != DEFAULT_REVIEWED_FRAMEWORK_ROOT
                 or not package_name
                 or Path(package_name).name != package_name
                 or SHA256_PATTERN.fullmatch(package_sha256) is None
@@ -3086,10 +3336,19 @@ def install_reviewed_python(
                         package.descriptor,
                     }
                 )
-                installer_path_capabilities = (
+                distribution_path_capabilities = (
                     (capability.descriptor, str(capability.path), False),
                     (cache_fd, str(cache_root), False),
                     (package.descriptor, str(package_path), False),
+                )
+                _verify_reviewed_framework_seal(
+                    install_root,
+                    python_lock=python_lock,
+                )
+                _verify_reviewed_framework_core(
+                    install_root,
+                    python_lock=python_lock,
+                    build=build,
                 )
                 try:
                     active_launcher = Path(sys.executable).resolve(strict=True)
@@ -3103,9 +3362,6 @@ def install_reviewed_python(
                     )
                 with _held_executable(
                     active_launcher,
-                    terminal_name_policy=(
-                        LAUNCHER_NAME_INSTALLER_REBIND
-                    ),
                     error_message="Reviewed Python installer launcher is unsafe",
                 ) as old_launcher:
                     for arguments, label, timeout in (
@@ -3150,7 +3406,7 @@ def install_reviewed_python(
                             cwd_descriptor=source.descriptor,
                             launcher_python=active_launcher,
                             launcher_binding=old_launcher,
-                            path_capabilities=installer_path_capabilities,
+                            path_capabilities=distribution_path_capabilities,
                         )
                     _revalidate_source_seal(source, build)
                     _revalidate_bound_file(
@@ -3158,17 +3414,20 @@ def install_reviewed_python(
                         maximum_size=MAX_TREE_FILE_BYTES,
                         error_message="Reviewed Python installer package changed",
                     )
-                    _run_reviewed_framework_installer(
-                        package=package,
-                        expected_package_sha256=package_sha256,
-                        locked_interpreter=interpreter,
-                        launcher_binding=old_launcher,
-                        cwd=source.root,
-                        environment=sanitized,
-                        pass_fds=source_child_fds,
+                    _verify_reviewed_framework_seal(
+                        install_root,
+                        python_lock=python_lock,
+                    )
+                    _verify_reviewed_framework_core(
+                        install_root,
+                        python_lock=python_lock,
                         build=build,
-                        cwd_descriptor=source.descriptor,
-                        path_capabilities=installer_path_capabilities,
+                    )
+                    _revalidate_held_executable(
+                        old_launcher,
+                        error_message=(
+                            "Reviewed Python installer launcher is unsafe"
+                        ),
                     )
                     try:
                         interpreter_info = interpreter.lstat()
@@ -3207,7 +3466,7 @@ def install_reviewed_python(
                         ),
                     ) as installed_launcher:
                         observed_text = _run_owned_process(
-                            (str(interpreter), "-I", "-c", observer),
+                            (str(interpreter), "-I", "-S", "-c", observer),
                             cwd=source.root,
                             environment=sanitized,
                             pass_fds=source_child_fds,
@@ -3219,7 +3478,7 @@ def install_reviewed_python(
                             cwd_descriptor=source.descriptor,
                             launcher_python=interpreter,
                             launcher_binding=installed_launcher,
-                            path_capabilities=installer_path_capabilities,
+                            path_capabilities=distribution_path_capabilities,
                         )
                         try:
                             observed = json.loads(observed_text)
@@ -3269,7 +3528,7 @@ def install_reviewed_python(
         if source_close_failed:
             if primary_error is not None:
                 raise ToolchainBootstrapError(
-                    "Python installation failed and source descriptors could not be closed"
+                    "Python distribution binding failed and source descriptors could not be closed"
                 ) from primary_error
             raise ToolchainBootstrapError(
                 "Reviewed exact source descriptors could not be closed"
@@ -3278,7 +3537,7 @@ def install_reviewed_python(
             raise primary_error
         if result is None:
             raise ToolchainBootstrapError(
-                "Python installation produced no framework fingerprint"
+                "Python distribution binding produced no framework fingerprint"
             )
         return result
 
@@ -3310,6 +3569,9 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
             python_lock = toolchain_lock["python"]
             if not isinstance(python_lock, dict):
                 raise TypeError("python lock")
+            _reviewed_framework_security_contract(python_lock)
+            _reviewed_framework_core_contract(python_lock)
+            _reviewed_broken_framework_symlinks(python_lock)
             install_root = Path(environment["LCF_PYTHON_INSTALL_ROOT"])
             locked_install_root = Path(str(python_lock["installRoot"]))
             interpreter_relative = Path(str(python_lock["interpreterRelativePath"]))
@@ -3318,12 +3580,23 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
             if (
                 install_root != locked_install_root
                 or framework_python != expected_python
+                or PurePosixPath(install_root.as_posix())
+                != DEFAULT_REVIEWED_FRAMEWORK_ROOT
                 or not framework_python.is_absolute()
                 or ".." in framework_python.parts
             ):
                 raise ToolchainBootstrapError(
                     "Reviewed build Python differs from the locked interpreter"
                 )
+            _verify_reviewed_framework_seal(
+                install_root,
+                python_lock=python_lock,
+            )
+            _verify_reviewed_framework_core(
+                install_root,
+                python_lock=python_lock,
+                build=build,
+            )
             framework_info = framework_python.lstat()
             resolved_python = framework_python.resolve(strict=True)
             resolved_info = resolved_python.lstat()
@@ -3421,6 +3694,7 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     (
                         str(framework_python),
                         "-I",
+                        "-S",
                         "-m",
                         "venv",
                         "--clear",
@@ -3575,6 +3849,7 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                     (
                         str(framework_python),
                         "-I",
+                        "-S",
                         "-m",
                         "venv",
                         "--clear",
@@ -3724,7 +3999,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--install-reviewed-python",
         action="store_true",
-        help="verify and install the locked framework through a held private root",
+        help=(
+            "bind the sealed framework to the locked signed distribution "
+            "through a held private root"
+        ),
     )
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--hash-manifest", type=Path)
@@ -3737,7 +4015,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.install_reviewed_python:
             if arguments.archive is None or arguments.hash_manifest is None:
                 raise ToolchainBootstrapError(
-                    "Python installation requires --archive and --hash-manifest"
+                    "Python distribution binding requires --archive and --hash-manifest"
                 )
             output = install_reviewed_python(
                 os.environ,
@@ -3747,7 +4025,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             if arguments.archive is not None or arguments.hash_manifest is not None:
                 raise ToolchainBootstrapError(
-                    "Build mode does not accept installer source arguments"
+                    "Build mode does not accept distribution source arguments"
                 )
             output = build_with_exact_toolchain(os.environ)
     except (ToolchainBootstrapError, RuntimeError) as exc:

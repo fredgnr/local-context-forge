@@ -14,12 +14,16 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
 EXPECTED_WORKFLOW_SHA256 = (
-    "c485d25d085d98dd7d5c88ae4ae9ec02c5dffd24819f44e9b8e18e67da448b53"
+    "d471aac6f17d26f0c4caf8588077c15dddfd4421011b1965ad0d39eac90424c0"
 )
 MAKEFILE = ROOT / "Makefile"
 BUILD_SCRIPT = ROOT / "tools" / "build_python_sidecar.py"
 AUDIT_SCRIPT = ROOT / "tools" / "audit_python_sidecar.py"
 PYTHON_BOOTSTRAP = ROOT / "tools" / "bootstrap_python_sidecar.py"
+FRAMEWORK_VERIFIER = ROOT / "tools" / "verify_reviewed_python_framework.cjs"
+FRAMEWORK_VERIFIER_TESTS = (
+    ROOT / "tools" / "tests" / "verify_reviewed_python_framework.test.cjs"
+)
 EXACT_GIT_CHECKER = ROOT / "tools" / "check_exact_git_provenance.py"
 EXACT_GIT_CHECKER_TESTS = (
     ROOT / "tools" / "tests" / "test_check_exact_git_provenance.py"
@@ -38,24 +42,26 @@ REMEDIATION_EVIDENCE = (
     / "2026-08-07-pr21-remediation.md"
 )
 EXPECTED_REVIEWED_INPUT_SHA256 = {
-    "workflow": "c485d25d085d98dd7d5c88ae4ae9ec02c5dffd24819f44e9b8e18e67da448b53",
-    "makefile": "3f6031722218b2d81094be3c488de17609abe07b34dd9f908bd7a2e1087b20ab",
-    "build_script": "dd19982686d1dc6067797fe0e0a777d2576fed5c687522e600b206dd2fb59036",
+    "workflow": "d471aac6f17d26f0c4caf8588077c15dddfd4421011b1965ad0d39eac90424c0",
+    "makefile": "0406bfd27e312250c48d27899ccff958f25b9fe347871e7643950c437f688977",
+    "build_script": "3cc787877d1fb65b8b551911a132400a0fd8e2d3eaf543975eceb88b131d1c19",
     "audit_script": "d3b2d638e28981915f346ead114f86f8bc82ddbbfb91f15416bc3127866504c9",
-    "python_bootstrap": "c240c7dc0949e2d1cbd011292d1bd68054927186bc3b2c44aa452d9bef9a8b17",
+    "python_bootstrap": "0a2e6671f7a765f09e31e20a306be48b3756f28b110ae7244a9eefa0ac4e45c4",
+    "framework_verifier": "b3e2576fff416be2924adab5470004f5b52fd0eba342b522adad761fe9176c26",
+    "framework_verifier_tests": "59f34be890573a0759519022f5dac39572d5330d1f5192a518aa362a6844a46d",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "ae72f097278c4491099334d30427c220616851da1780a5039696cee39d224074",
+    "python_packaging_tests": "5626799f953939294bc7aaf66e7bd976c063864c5068c6dae7df35a7e5f972d9",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "69e765d2c00ac98be017d43a2d02952b4e6d73b51fdf80949ff7486e79ef61f2",
-    "package": "8572d59212b1233e701338d40bb3a47525db052a41b80b27e1a797d6e07fc712",
+    "remediation_evidence": "eaa4d01a0644e4e7aeeac394ed532f05883a2d7be005844ed3db8d69b3208d09",
+    "package": "7d4a247182d89a83734e151df373215f30c3932c7cb99c295c48900baea6e1e7",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
     "web_package_lock": "ae4f9bdf4283763a980ee4b21f3fdd844d4de43a0b35fa7086406eddc2ab857f",
     "python_build_requirements_lock": "1e16e69c50364465e8587e58d4399c34146d11a91bfa3a2399e80e0741bf6342",
     "python_runtime_lock": "a961d5863a346c820cfdfa9daae0223672e761302b5f5aea92ef779c1b69f121",
-    "python_toolchain_lock": "e409f11775f39d5da4c3b5df56ee147c54cd815c6b7cdba45c14b212c056b89d",
+    "python_toolchain_lock": "5388627f89b43ab4e30ac8c0089d3d2ec2c18928515152f9975ce0fe4e89f3be",
     "pyinstaller_spec": "e61b437496bd243f1fcbf73fae3faae911199f4d5d0f352f6365d7828928289d",
     "smoke_config": "b7b9dedb2fbe15cf5682ddd8255286feb799cc28eb2454c0ceaf4b5ec201b448",
     "common_audit": "1e754dc8f4d2e76f3a28a71f86622e6b0338feaf2ad4112fe6666d108c969398",
@@ -65,7 +71,7 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "stage_renderer": "853820c64eecd8c5126a0bb9cfded3b85f5be34fa3011f092cc0c73e7cf7fd9c",
     "audit_renderer": "d52fc0ba5feddd39311f800ad8d9a014695b0b45939d66a932e4c1e6ffe65d36",
     "engineering_packaging_tests": "af45aee101092d8eed9c91037b61db6499a156c9ec4a86232ff734faaac13354",
-    "before_pack_tests": "34d06a8aaf729df7687bcc0f68eb895b79a35be332047c361f04bce84660b572",
+    "before_pack_tests": "911301ab98467b9f502ebd97c319fc12720acd0590b1e09673e46f689992ac30",
     "renderer_packaging_tests": "4122f11a3bdfffd0b350aea7cd8027c8363527afb7fe3f61b3011d3c7b7df6ce",
     "before_pack": "526b7a4bf8af1c68a94ebfdf0ac624771719d2b1974c3ac0246022ccc3af1882",
     "after_pack": "d513011fcbc5252665f8ab73ae24bea36448821bffb3fbf9aa888b6a1f836d93",
@@ -75,16 +81,16 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "python_sidecar_schema": "6c5c4fb707d29c02676a34c76f00c2e0eec509df2500be6d73b5f6aa8d97cb1c",
     "formal_base_config": "cede533e71bdfb00401451e3016b7c7032b5867b5ba0147682d72029d08cafb4",
     "formal_release_config": "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd",
-    "formal_before_pack": "73a3bb2021dca4785fe2ca9ca23d6b693a6965351f0f4e8fa223c5afedb5fa16",
+    "formal_before_pack": "5b2a6d63327f7bef575ec0b7d03512912e7f07ba3b287e071de5d7721dd776e1",
     "formal_after_pack": "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5",
     "formal_prepare_release": "86f42e539c4c9825760de56ccd07409b1cec07ac588380f4e64da41612df3311",
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
-    "formal_workflow": "1fbf1f932b9d83e11ce4480c0e0a2cae100482b3d24db5f3f0a1fc23d5cbb509",
-    "status": "5fdc6c7bf999cfde3b5d4c2f68ecd8b3df7356a3bbd4a67fd9f36f42f2fc53a1",
-    "todo": "81b816935a5e65a243393fe96a2d83e070e7cbeef13a963f6284def8994a5959",
-    "trace": "b4d345f451a7bc9c73ce8fce4643a3cd62bed6ca7c24dcc90bda964526c1b428",
-    "iteration": "96d7bf9efbdd460635d223712309e565eced345e2e38f3b570f01501997bf63a",
+    "formal_workflow": "1ab2d14b74dc4d24745bd8f76b0e0e80da4ba39ee796966523ff3dd40077c495",
+    "status": "eb84249ee5e39baa61ea6e33fb9b8cca5ffb9a9ea042a9860ba13188ee0ab9e4",
+    "todo": "6b10fb0f1f09c3a84c40334fc7c73c048d1da96dac368424f145fb2327933e9e",
+    "trace": "f588982b4826c81659a2d5aecd933318deea99796309cec7a103b55f082aa6bd",
+    "iteration": "9fe28af6c3ddf68ba8046b796e71bbe3472ff4c9ff797a5dcf8e9c4726d762c4",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -312,13 +318,13 @@ EXPECTED_FORMAL_BOUNDARY_SHA256 = {
         "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd"
     ),
     "formal beforePack": (
-        "73a3bb2021dca4785fe2ca9ca23d6b693a6965351f0f4e8fa223c5afedb5fa16"
+        "5b2a6d63327f7bef575ec0b7d03512912e7f07ba3b287e071de5d7721dd776e1"
     ),
     "formal afterPack": (
         "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5"
     ),
     "formal workflow": (
-        "1fbf1f932b9d83e11ce4480c0e0a2cae100482b3d24db5f3f0a1fc23d5cbb509"
+        "1ab2d14b74dc4d24745bd8f76b0e0e80da4ba39ee796966523ff3dd40077c495"
     ),
 }
 STATUS = ROOT / "docs" / "development" / "status.md"
@@ -341,9 +347,11 @@ EXPECTED_JOB_ENV = (
 )
 EXPECTED_WORKFLOW_STEPS = (
     "Check out exact source commit",
-    "Set up reviewed build Python",
-    "Bind exact source provenance",
     "Set up locked Node",
+    "Bind locked framework verifier Node",
+    "Provision reviewed build Python without executing it",
+    "Seal reviewed build Python framework",
+    "Bind exact source provenance",
     "Enforce engineering-smoke packaging policy",
     "Download locked Python runtime sources",
     "Build and audit locked Python sidecar",
@@ -353,6 +361,104 @@ EXPECTED_WORKFLOW_STEPS = (
     "Build and test engineering-smoke Desktop profile",
     "Assemble and statically audit app directory",
     "Run focused Python sidecar lifecycle tests",
+)
+EXPECTED_FRAMEWORK_SEAL_RUN = r'''set -euo pipefail
+readonly framework_root="/Library/Frameworks/Python.framework/Versions/3.13"
+readonly framework_parent="${framework_root%/*}"
+readonly framework_anchor="${framework_parent%/*}"
+readonly framework_container="${framework_anchor%/*}"
+readonly library_root="${framework_container%/*}"
+readonly framework_python="${framework_root}/bin/python3.13"
+readonly framework_binary="${framework_root}/Python"
+test -d "${library_root}"
+test ! -L "${library_root}"
+test "$(cd "${library_root}" && /bin/pwd -P)" = "${library_root}"
+test -d "${framework_container}"
+test ! -L "${framework_container}"
+test "$(cd "${framework_container}" && /bin/pwd -P)" = "${framework_container}"
+test -d "${framework_anchor}"
+test ! -L "${framework_anchor}"
+test "$(cd "${framework_anchor}" && /bin/pwd -P)" = "${framework_anchor}"
+test -d "${framework_parent}"
+test ! -L "${framework_parent}"
+test "$(cd "${framework_parent}" && /bin/pwd -P)" = "${framework_parent}"
+test -d "${framework_root}"
+test ! -L "${framework_root}"
+test "$(cd "${framework_root}" && /bin/pwd -P)" = "${framework_root}"
+/usr/bin/sudo --non-interactive /usr/sbin/chown \
+  -h 0:0 "${framework_anchor}"
+/usr/bin/sudo --non-interactive /bin/chmod \
+  -h -N "${framework_anchor}"
+/usr/bin/sudo --non-interactive /bin/chmod \
+  -h go-w "${framework_anchor}"
+/usr/bin/sudo --non-interactive /usr/sbin/chown \
+  -h 0:0 "${framework_parent}"
+/usr/bin/sudo --non-interactive /bin/chmod \
+  -h -N "${framework_parent}"
+/usr/bin/sudo --non-interactive /bin/chmod \
+  -h go-w "${framework_parent}"
+/usr/bin/sudo --non-interactive /usr/sbin/chown \
+  -R -P -h 0:0 "${framework_root}"
+/usr/bin/sudo --non-interactive /bin/chmod \
+  -R -P -N "${framework_root}"
+/usr/bin/sudo --non-interactive /bin/chmod \
+  -R -P go-w "${framework_root}"
+/usr/bin/sudo --non-interactive /usr/bin/find -x \
+  "${framework_root}" -type f \
+  \( -name '*.pyc' -o -name '*.pyo' \) -delete
+/usr/bin/sudo --non-interactive /usr/bin/find -x \
+  "${framework_root}" -depth -type d \
+  -name '__pycache__' -delete
+test "$(/usr/bin/stat -f '%u' "${library_root}")" = "0"
+library_mode="$(/usr/bin/stat -f '%Lp' "${library_root}")"
+(( (8#${library_mode} & 07022) == 0 ))
+test "$(/usr/bin/stat -f '%u' "${framework_container}")" = "0"
+container_mode="$(/usr/bin/stat -f '%Lp' "${framework_container}")"
+(( (8#${container_mode} & 07022) == 0 ))
+test "$(/usr/bin/stat -f '%u' "${framework_anchor}")" = "0"
+anchor_mode="$(/usr/bin/stat -f '%Lp' "${framework_anchor}")"
+(( (8#${anchor_mode} & 07022) == 0 ))
+test "$(/usr/bin/stat -f '%u' "${framework_parent}")" = "0"
+parent_mode="$(/usr/bin/stat -f '%Lp' "${framework_parent}")"
+(( (8#${parent_mode} & 07022) == 0 ))
+framework_entries=0
+while IFS= read -r -d '' entry; do
+  framework_entries=$((framework_entries + 1))
+  test "${framework_entries}" -le 100000
+  test "$(/usr/bin/stat -f '%u' "${entry}")" = "0"
+  relative_entry="${entry#${framework_root}/}"
+  case "${relative_entry}" in
+    __pycache__|__pycache__/*|*/__pycache__|*/__pycache__/*|*.pyc|*.pyo)
+      exit 1
+      ;;
+  esac
+  if test -L "${entry}"; then
+    test "$(/usr/bin/stat -f '%l' "${entry}")" = "1"
+    continue
+  fi
+  entry_mode="$(/usr/bin/stat -f '%Lp' "${entry}")"
+  (( (8#${entry_mode} & 07022) == 0 ))
+  if test -f "${entry}"; then
+    test "$(/usr/bin/stat -f '%l' "${entry}")" = "1"
+  else
+    test -d "${entry}"
+  fi
+done < <(/usr/bin/find -x "${framework_root}" -print0)
+test "${framework_entries}" -gt 1
+printf '%s  %s\n' \
+  "ee3c4103b97e32a98e98cfad7f6ca4d09b2ab2dc16f3d28e18b54a4a0244efe0" \
+  "${framework_python}" | /usr/bin/shasum -a 256 --check
+printf '%s  %s\n' \
+  "db77544e7135af8478d62c7d1289581d83714a676c7d3f2b7a4b996bdfef5717" \
+  "${framework_binary}" | /usr/bin/shasum -a 256 --check'''
+EXPECTED_FRAMEWORK_NODE_BIND_RUN_SHA256 = (
+    "37b18d403af947f37679119bdec8309417ea7363139cd3db602d162b217da689"
+)
+EXPECTED_FRAMEWORK_PROVISION_RUN_SHA256 = (
+    "a5f9f62ccf7d4d76a612a00f80a855c350bd55336acdbe4b000d02e4df0129b5"
+)
+EXPECTED_FRAMEWORK_SEAL_RUN_SHA256 = (
+    "b577ba78a526768e4a16d33b23d6bbc5ab8e871c5f25340193b8c40e9001ec72"
 )
 EXACT_PROVENANCE_ENV_KEYS = (
     "LCF_SOURCE_SHA",
@@ -370,9 +476,14 @@ EXPECTED_LIFECYCLE_TEST_RUN = (
     'backend/.venv/bin/python -B -m pytest -q \\\n'
     '  tests/backend/test_python_sidecar_packaging.py'
 )
-EXPECTED_POLICY_RUN = (
-    'cd "${LCF_REVIEWED_SOURCE_ROOT}" && make packaged-smoke-policy-check'
+EXPECTED_LIFECYCLE_TEST_RUN_SHA256 = (
+    "b34dd22c51da9281dc85c2e6fadbf0810582a7c4bb5965643c57d9c306423beb"
 )
+EXPECTED_POLICY_RUN = '''set -euo pipefail
+cd "${LCF_REVIEWED_SOURCE_ROOT}"
+make packaged-smoke-policy-check \\
+  PYTHON="${LCF_REVIEWED_BUILD_PYTHON}" \\
+  NODE="${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}"'''
 EXPECTED_PYTHON_BUILD_RUN = (
     'cd "${LCF_REVIEWED_SOURCE_ROOT}" && make python-sidecar-build'
 )
@@ -398,9 +509,14 @@ shopt -s nullglob
 cleanup_assertion="runner-toolchain-residue"
 runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)
 test "${#runner_toolchain_residue[@]}" -eq 0
-cleanup_assertion="runner-installer-residue"
-runner_installer_residue=("${RUNNER_TEMP}"/lcf-python-installer.*)
-test "${#runner_installer_residue[@]}" -eq 0
+cleanup_assertion="runner-producer-residue"
+runner_producer_residue=("${RUNNER_TEMP}"/lcf-python-producer.*)
+test "${#runner_producer_residue[@]}" -eq 0
+cleanup_assertion="runner-distribution-binding-residue"
+runner_distribution_binding_residue=(
+  "${RUNNER_TEMP}"/lcf-python-installer.*
+)
+test "${#runner_distribution_binding_residue[@]}" -eq 0
 cleanup_assertion="source-root-bound"
 cd "${LCF_REVIEWED_SOURCE_ROOT:?reviewed source root was not bound}"
 cleanup_assertion="repo-fixed-directory-residue"
@@ -423,17 +539,17 @@ test "${LCF_REVIEWED_BUILD_PYTHON}" = \
 test -f "${LCF_REVIEWED_BUILD_PYTHON}"
 test ! -L "${LCF_REVIEWED_BUILD_PYTHON}"
 test -x "${LCF_REVIEWED_BUILD_PYTHON}"
-test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -c \
+test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -S -c \
   'import os,sys; print(os.path.realpath(sys.executable))')" = \
   "${LCF_REVIEWED_BUILD_PYTHON}"
-test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -c \
+test "$("${LCF_REVIEWED_BUILD_PYTHON}" -I -S -c \
   'import platform; print(platform.python_version())')" = "3.13.14"'''
 EXPECTED_FORMAL_JOB_ENV = (
     '      CI: "true"\n'
     '      LCF_FORMAL_RELEASE: "true"\n'
     "      LCF_SOURCE_SHA: ${{ github.sha }}\n"
 )
-EXPECTED_FORMAL_PROVENANCE_EXPORT = r'''"${bootstrap_python}" -I tools/check_exact_git_provenance.py \
+EXPECTED_FORMAL_PROVENANCE_EXPORT = r'''"${bootstrap_python}" -I -S tools/check_exact_git_provenance.py \
     --expected-tag "${GITHUB_REF_NAME}" \
     --emit-github-env > "${provenance_env}"'''
 EXPECTED_FORMAL_ANCESTRY_REPOSITORY = r'''readonly ancestry_prefix="${RUNNER_TEMP}/lcf-main-ancestry."
@@ -494,11 +610,9 @@ EXPECTED_FORMAL_QMD_EXPORT = '''{
 } >> "${GITHUB_ENV}"'''
 CHECKOUT_SHA = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
 SETUP_NODE_SHA = "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e"
-SETUP_PYTHON_SHA = "a309ff8b426b58ec0e2a45f0f869d46889d02405"
 ACTION_ALLOWLIST = {
     ("actions/checkout", CHECKOUT_SHA),
     ("actions/setup-node", SETUP_NODE_SHA),
-    ("actions/setup-python", SETUP_PYTHON_SHA),
 }
 PYTHON_ARCHIVE_URL = (
     "https://github.com/actions/python-versions/releases/download/"
@@ -515,6 +629,70 @@ PYTHON_HASHES_SHA256 = (
     "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17"
 )
 PYTHON_INSTALL_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13"
+PYTHON_INTERPRETER_RELATIVE_PATH = "bin/python3.13"
+PYTHON_INTERPRETER_SIZE = 119232
+PYTHON_INTERPRETER_SHA256 = (
+    "ee3c4103b97e32a98e98cfad7f6ca4d09b2ab2dc16f3d28e18b54a4a0244efe0"
+)
+PYTHON_FRAMEWORK_BINARY_RELATIVE_PATH = "Python"
+PYTHON_FRAMEWORK_BINARY_SIZE = 13633312
+PYTHON_FRAMEWORK_BINARY_SHA256 = (
+    "db77544e7135af8478d62c7d1289581d83714a676c7d3f2b7a4b996bdfef5717"
+)
+PYTHON_FRAMEWORK_CORE_EXCLUDED_PATHS = (
+    "Resources/English.lproj/Documentation",
+    "bin/pip",
+    "bin/pip3",
+    "bin/pip3.13",
+    "bin/python",
+    "bin/python313",
+    "etc/openssl/cert.pem",
+    "lib/python3.13/site-packages",
+    "share/doc/python3.13/html",
+)
+PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256 = (
+    "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
+)
+PYTHON_REVIEWED_BROKEN_SYMLINKS = (
+    {
+        "path": "Frameworks/Tcl.framework/PrivateHeaders",
+        "target": "Versions/Current/PrivateHeaders",
+    },
+    {
+        "path": "Frameworks/Tk.framework/PrivateHeaders",
+        "target": "Versions/Current/PrivateHeaders",
+    },
+)
+PYTHON_DISTRIBUTION_INSTALL_METHOD = (
+    "macos-installer-no-op-framework-component"
+)
+PYTHON_FRAMEWORK_COMPONENT_CONTRACT = {
+    "packageName": "Python_Framework.pkg",
+    "bomSize": 1404518,
+    "bomSha256": "4e49a4c96076a4855219461f721d510493c6d4f3a7a2a9ad7c981ced723d09bd",
+    "packageInfoSize": 947,
+    "packageInfoSha256": (
+        "86938c44112e37c4791fdc15ee0d89777ed8b6d0a85bae37f7ebf09839072f5c"
+    ),
+    "payloadSize": 32739568,
+    "payloadSha256": (
+        "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391"
+    ),
+    "scriptsSize": 380,
+    "scriptsSha256": (
+        "84fb517c2da6089848bfb6a0ab0e6c508351546d1df9d31abcadd5de4cd42bac"
+    ),
+    "postinstallSize": 894,
+    "postinstallSha256": (
+        "7821586a42b4d86b075ed2c87da0a5981e5372070b9c7f6141d09f77cb172417"
+    ),
+    "postinstallMode": "0755",
+    "noOpPostinstallSize": 17,
+    "noOpPostinstallSha256": (
+        "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb"
+    ),
+    "noOpPostinstallMode": "0755",
+}
 PYTHON_RUNNER_INPUTS = (
     "LCF_PYTHON_DISTRIBUTION_ARCHIVE",
     "LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST",
@@ -523,9 +701,10 @@ PYTHON_RUNNER_INPUTS = (
 EXPECTED_POLICY_TARGET = (
     (),
     (
-        "$(PYTHON) -B tools/check_packaged_smoke_policy.py",
-        "$(PYTHON) -B -m unittest tools.tests.test_check_packaged_smoke_policy",
-        "$(PYTHON) -B -m unittest tools.tests.test_check_exact_git_provenance",
+        "$(NODE) --test tools/tests/verify_reviewed_python_framework.test.cjs",
+        "$(PYTHON) -S -B tools/check_packaged_smoke_policy.py",
+        "$(PYTHON) -S -B -m unittest tools.tests.test_check_packaged_smoke_policy",
+        "$(PYTHON) -S -B -m unittest tools.tests.test_check_exact_git_provenance",
     ),
 )
 EXPECTED_PYTHON_SOURCE_VERIFY_TARGET = (
@@ -533,11 +712,17 @@ EXPECTED_PYTHON_SOURCE_VERIFY_TARGET = (
     (
         '@test -n "$(LCF_REVIEWED_SOURCE_ROOT)" || { printf \'%s\\n\' '
         "'LCF_REVIEWED_SOURCE_ROOT is required'; exit 2; }",
+        '@test -n "$(LCF_REVIEWED_BUILD_PYTHON)" || { printf \'%s\\n\' '
+        "'LCF_REVIEWED_BUILD_PYTHON is required'; exit 2; }",
+        '@test "$(LCF_REVIEWED_BUILD_PYTHON)" = '
+        '"$(PYTHON_SIDECAR_FRAMEWORK_PYTHON)" || { printf \'%s\\n\' '
+        "'Reviewed build Python differs from the locked framework'; exit 2; }",
         '@test -n "$(PYTHON_SIDECAR_ARCHIVE)" || { printf \'%s\\n\' '
         "'PYTHON_SIDECAR_ARCHIVE is required'; exit 2; }",
         '@test -n "$(PYTHON_SIDECAR_HASH_MANIFEST)" || { printf \'%s\\n\' '
         "'PYTHON_SIDECAR_HASH_MANIFEST is required'; exit 2; }",
-        '$(PYTHON) -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/build_python_sidecar.py" '
+        '"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S '
+        '"$(LCF_REVIEWED_SOURCE_ROOT)/tools/build_python_sidecar.py" '
         '--verify-source-only --archive "$(PYTHON_SIDECAR_ARCHIVE)" '
         '--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)"',
     ),
@@ -545,7 +730,8 @@ EXPECTED_PYTHON_SOURCE_VERIFY_TARGET = (
 EXPECTED_PYTHON_INSTALL_TARGET = (
     ("python-sidecar-source-verify",),
     (
-        '$(PYTHON) -I "$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py" '
+        '"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S '
+        '"$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py" '
         '--install-reviewed-python --archive "$(PYTHON_SIDECAR_ARCHIVE)" '
         '--hash-manifest "$(PYTHON_SIDECAR_HASH_MANIFEST)"',
     ),
@@ -567,7 +753,7 @@ EXPECTED_PYTHON_BUILD_TARGET = (
         'LCF_REVIEWED_SOURCE_ROOT="$(LCF_REVIEWED_SOURCE_ROOT)" '
         'LCF_SOURCE_SHA="$(LCF_SOURCE_SHA)" '
         'LCF_SOURCE_TREE="$(LCF_SOURCE_TREE)" '
-        '"$(LCF_REVIEWED_BUILD_PYTHON)" -I '
+        '"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S '
         '"$(LCF_REVIEWED_SOURCE_ROOT)/tools/bootstrap_python_sidecar.py"',
     ),
 )
@@ -578,7 +764,7 @@ EXPECTED_PYTHON_AUDIT_TARGET = (
         "'LCF_REVIEWED_SOURCE_ROOT is required'; exit 2; }",
         '@test -n "$(LCF_REVIEWED_BUILD_PYTHON)" || { printf \'%s\\n\' '
         "'LCF_REVIEWED_BUILD_PYTHON is required'; exit 2; }",
-        '"$(LCF_REVIEWED_BUILD_PYTHON)" -I '
+        '"$(LCF_REVIEWED_BUILD_PYTHON)" -I -S '
         '"$(LCF_REVIEWED_SOURCE_ROOT)/tools/audit_python_sidecar.py" '
         '--bundle "$(LCF_REVIEWED_SOURCE_ROOT)/desktop/generated/sidecar"',
     ),
@@ -676,7 +862,7 @@ EXPECTED_PACKAGE_SCRIPTS = {
     ),
 }
 EXPECTED_STANDALONE_AUDIT_SCRIPT = (
-    '"$LCF_REVIEWED_BUILD_PYTHON" -I '
+    '"$LCF_REVIEWED_BUILD_PYTHON" -I -S '
     '"$LCF_REVIEWED_SOURCE_ROOT/tools/audit_python_sidecar.py" --bundle '
     '"$LCF_REVIEWED_SOURCE_ROOT/desktop/generated/sidecar"'
 )
@@ -704,16 +890,19 @@ npm --prefix desktop run audit:python-sidecar
 make qmd-runtime-audit
 make renderer-audit'''
 EXPECTED_RUN_BLOCK_SHA256 = (
-    ("exact provenance", "bdebfc8cc27ee93996a431bcbbb0687e77c097c396f45b4020866824a9899f4f"),
-    ("policy", "dde289c56ef0fd9f70601af44d49578dddaddec8639538f89c33943aa073ca7d"),
+    ("framework verifier Node", "6af8ddd6ea4c0c6de9bf63ec4a69b3365f6aa417d2b332748f80d192bd9897b5"),
+    ("framework producer", "7580abcd21cf88016a6ef789370f2d6804d1b0abd971514f01c25589c3c4523c"),
+    ("framework seal", "322c765ee6d92008dbef90f26c4e37f253e617c6cec78099cab8fbe73a9a2e3a"),
+    ("exact provenance", "9ea36480b4f4ff8d721fcd2c64cc1a2173a94c8185c3ee6a5e69a8fcf51b596f"),
+    ("policy", "285e761f042ad2c44db94e38730f1d19c30c1db0851dc81539083cb6df5fc32b"),
     ("Python sources", "f01e0ddbe2fd917eb765723935eaceb7a606db3350a9ee059402032ff89789a7"),
     ("Python sidecar", "af4ac525fb69726e592d6b743fd4951b5c61b3ad611d4be1f9099aac362c1579"),
-    ("Python cleanup", "af8a6c1386e3e3654367192deb80067733ee0138974ff0177299f86ac2ec9439"),
-    ("Python provenance", "42242bf20c667175068a3e140aba6ed1947e69286cab3b9efedf1f9aca91fff0"),
+    ("Python cleanup", "1cec5a9cfba98dbb686332f9fdc1456cce785406dbc5438f349bbd37a1882a4f"),
+    ("Python provenance", "54db56d05ec592311d5245a8f6d0f4679838249bed827133567d1e9bfa920b40"),
     ("renderer", "2db53fd812c47c613361413200bfadec046be100dbb598a19c665d293bb6c024"),
     ("Desktop", "00cfc4213532da6e78034d720cb79f76a9e232c5f7dfa7f9262314f4e79478e2"),
-    ("assembly audit", "771a55fcbac90395a359ea2d5f7e1836c9d2cbc591069dd3242dc168fc0b6fa1"),
-    ("focused lifecycle tests", "0f0128a3ebe571e121a664b14311e7e98df6ef8dd8215dc960d70595de4af892"),
+    ("assembly audit", "4789375f1a2cd2cd87d579b69a5ac9883077f6aba79faf75c3cc9db27e4bee61"),
+    ("focused lifecycle tests", "b34dd22c51da9281dc85c2e6fadbf0810582a7c4bb5965643c57d9c306423beb"),
 )
 ENGINEERING_ADHOC_PACK_COMMAND = (
     "CSC_FOR_PULL_REQUEST=true \\\n"
@@ -878,9 +1067,14 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
             'LAUNCHER_NAME_INSTALLER_REBIND = "installer-producer-rebind"'
         )
         != 1
+        or source.count(
+            'LAUNCHER_NAME_INSTALLER_PENDING_SEAL = '
+            '"installer-produced-pending-seal"'
+        )
+        != 1
         or source.count("with _held_executable(") != 2
         or source.count(
-            "launcher_name_policy=LAUNCHER_NAME_INSTALLER_REBIND"
+            "launcher_name_policy=LAUNCHER_NAME_INSTALLER_PENDING_SEAL"
         )
         != 1
         or source.count(
@@ -889,6 +1083,7 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
         )
         != 1
         or source.count("launcher_binding=") != 4
+        or source.count("0o7002") != 1
         or not _python_exact_single_assignment(
             install,
             "active_launcher",
@@ -904,8 +1099,10 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
         or not _python_exact_single_assignment(
             owned,
             "terminal_launcher_policy",
-            "LAUNCHER_NAME_INSTALLER_REBIND if "
-            "(launcher_name_policy == LAUNCHER_NAME_INSTALLER_REBIND "
+            "launcher_name_policy if "
+            "(launcher_name_policy in "
+            "{LAUNCHER_NAME_INSTALLER_REBIND, "
+            "LAUNCHER_NAME_INSTALLER_PENDING_SEAL} "
             "and process.returncode == 0 and check) else LAUNCHER_NAME_SAME",
         )
         or not _python_exact_single_assignment(
@@ -1003,6 +1200,29 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
         == ("revalidate_owned_bindings",)
     ]
     if exception_revalidations != [exception_binding_call]:
+        return False
+
+    authority_guards = [
+        node
+        for node in ast.walk(owned)
+        if isinstance(node, ast.If)
+        and exact_expression(
+            node.test,
+            "(launcher_name_policy in "
+            "{LAUNCHER_NAME_INSTALLER_REBIND, "
+            "LAUNCHER_NAME_INSTALLER_PENDING_SEAL} "
+            "and launcher_rebind_authority is not "
+            "_REVIEWED_INSTALLER_REBIND_AUTHORITY) or "
+            "(launcher_name_policy == LAUNCHER_NAME_SAME "
+            "and launcher_rebind_authority is not None)",
+        )
+    ]
+    if (
+        len(authority_guards) != 1
+        or len(authority_guards[0].body) != 1
+        or not direct_toolchain_raise(authority_guards[0].body[0])
+        or authority_guards[0].orelse
+    ):
         return False
 
     held_body_types = (
@@ -1107,7 +1327,8 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
     if (
         not exact_expression(
             rebind_if.test,
-            "name_policy == LAUNCHER_NAME_INSTALLER_REBIND",
+            "name_policy in {LAUNCHER_NAME_INSTALLER_REBIND, "
+            "LAUNCHER_NAME_INSTALLER_PENDING_SEAL}",
         )
         or tuple(type(statement) for statement in rebind_if.body)
         != (ast.Assign, ast.If)
@@ -1128,22 +1349,31 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
             named_if.body[0].test,
             "held_identity != binding.identity",
         )
-        or len(named_if.orelse) != 1
-        or not isinstance(named_if.orelse[0], ast.If)
+        or len(named_if.orelse) != 2
+        or not isinstance(named_if.orelse[0], ast.Assign)
+        or not isinstance(named_if.orelse[1], ast.If)
+        or not _python_exact_single_assignment(
+            revalidate,
+            "unsafe_mode_mask",
+            "0o7022 if name_policy == LAUNCHER_NAME_INSTALLER_REBIND "
+            "else 0o7002",
+        )
         or not exact_expression(
-            named_if.orelse[0].test,
+            named_if.orelse[1].test,
             "tuple(held_identity[index] for index in stable_indexes) != "
             "tuple(binding.identity[index] for index in stable_indexes) "
             "or held.st_nlink != 0 "
             "or not stat.S_ISREG(named.st_mode) "
             "or stat.S_ISLNK(named.st_mode) "
-            "or named.st_uid not in {0, os.geteuid()} "
+            "or (named.st_uid != _reviewed_framework_owner() "
+            "if name_policy == LAUNCHER_NAME_INSTALLER_PENDING_SEAL "
+            "else named.st_uid not in {0, os.geteuid()}) "
             "or named.st_nlink != 1 "
-            "or stat.S_IMODE(named.st_mode) & 0o7022 "
+            "or stat.S_IMODE(named.st_mode) & unsafe_mode_mask "
             "or not stat.S_IMODE(named.st_mode) & 0o111",
         )
-        or len(named_if.orelse[0].body) != 1
-        or not direct_toolchain_raise(named_if.orelse[0].body[0])
+        or len(named_if.orelse[1].body) != 1
+        or not direct_toolchain_raise(named_if.orelse[1].body[0])
         or not exact_expression(
             hash_if.test,
             "hashlib.sha256(payload).hexdigest() != binding.sha256",
@@ -1173,9 +1403,13 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
         "stable_indexes = (0, 1, 2, 3, 4, 6, 7)",
         "if _identity(named) == binding.identity:",
         "held.st_nlink != 0",
-        "named.st_uid not in {0, os.geteuid()}",
+        "named.st_uid != _reviewed_framework_owner()",
+        "name_policy == LAUNCHER_NAME_INSTALLER_PENDING_SEAL",
+        "else named.st_uid not in {0, os.geteuid()}",
         "named.st_nlink != 1",
-        "stat.S_IMODE(named.st_mode) & 0o7022",
+        "0o7022",
+        "else 0o7002",
+        "stat.S_IMODE(named.st_mode) & unsafe_mode_mask",
         "hashlib.sha256(payload).hexdigest() != binding.sha256",
     ):
         if marker not in revalidate_source:
@@ -1184,6 +1418,7 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
         "launcher_name_policy: str = LAUNCHER_NAME_SAME",
         "launcher_rebind_authority: object | None = None",
         "is not _REVIEWED_INSTALLER_REBIND_AUTHORITY",
+        "LAUNCHER_NAME_INSTALLER_PENDING_SEAL",
         "Path(str(arguments[4])) if len(arguments) == 7 else Path()",
         "Path(str(raw_path)) == package_argument and mutable is False",
         'label != "Python framework installation"',
@@ -1208,7 +1443,12 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
         and isinstance(node.test.comparators[0], ast.Name)
         and node.test.comparators[0].id == "interpreter"
     ]
-    if len(active_checks) != 1 or not active_checks[0].body:
+    if (
+        len(active_checks) != 1
+        or len(active_checks[0].body) != 1
+        or not direct_toolchain_raise(active_checks[0].body[0])
+        or active_checks[0].orelse
+    ):
         return False
 
     def held_context(
@@ -1238,6 +1478,25 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
     if len(old_contexts) != 1:
         return False
     old_context = old_contexts[0]
+    parents = {
+        child: parent
+        for parent in ast.walk(install)
+        for child in ast.iter_child_nodes(parent)
+    }
+    active_check = active_checks[0]
+    active_parent = parents.get(active_check)
+    if (
+        active_parent is None
+        or active_parent is not parents.get(old_context)
+        or not hasattr(active_parent, "body")
+        or active_check not in active_parent.body
+        or old_context not in active_parent.body
+        or active_parent.body.index(active_check)
+        >= active_parent.body.index(old_context)
+        or _python_has_constant_false_ancestor(active_check, parents)
+        or _python_has_constant_false_ancestor(old_context, parents)
+    ):
+        return False
     old_held_call = old_context.items[0].context_expr
     assert isinstance(old_held_call, ast.Call)
     old_held_keywords = {
@@ -1295,6 +1554,8 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
     expected_reviewed_names = {
         "package": ("package",),
         "expected_package_sha256": ("package_sha256",),
+        "locked_framework_root": ("install_root",),
+        "python_lock": ("python_lock",),
         "locked_interpreter": ("interpreter",),
         "launcher_binding": ("old_launcher",),
         "cwd": ("source", "root"),
@@ -1335,7 +1596,9 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
         "cwd_descriptor": ("cwd_descriptor",),
         "launcher_python": ("locked_interpreter",),
         "launcher_binding": ("launcher_binding",),
-        "launcher_name_policy": ("LAUNCHER_NAME_INSTALLER_REBIND",),
+        "launcher_name_policy": (
+            "LAUNCHER_NAME_INSTALLER_PENDING_SEAL",
+        ),
         "launcher_rebind_authority": (
             "_REVIEWED_INSTALLER_REBIND_AUTHORITY",
         ),
@@ -1382,7 +1645,16 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
         ast.If,
         ast.Expr,
         ast.Expr,
-        ast.Assign,
+        ast.AnnAssign,
+        ast.AnnAssign,
+        ast.Try,
+        ast.AnnAssign,
+        ast.With,
+        ast.If,
+        ast.If,
+        ast.Expr,
+        ast.Expr,
+        ast.Expr,
         ast.If,
         ast.Return,
     ):
@@ -1394,6 +1666,7 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
             reviewed_contract_if.test,
             "not locked_interpreter.is_absolute() "
             "or '..' in locked_interpreter.parts "
+            "or locked_framework_root != locked_interpreter.parents[1] "
             "or launcher_binding.path != locked_interpreter "
             "or package.path != package.path.resolve(strict=True) "
             "or package.sha256 != expected_package_sha256 "
@@ -1409,15 +1682,145 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
     reviewed_source = ast.get_source_segment(source, reviewed_installer) or ""
     for marker in (
         "launcher_binding.path != locked_interpreter",
+        "locked_framework_root != locked_interpreter.parents[1]",
         "package.path != package.path.resolve(strict=True)",
         "package.sha256 != expected_package_sha256",
         "((package.descriptor, str(package.path), False),)",
         "_revalidate_held_executable(",
-        "name_policy=LAUNCHER_NAME_SAME",
+        "launcher_name_policy=LAUNCHER_NAME_INSTALLER_PENDING_SEAL",
+        "_seal_reviewed_framework_permissions(",
+        "_verify_reviewed_framework_seal(",
+        "_verify_reviewed_framework_core(",
+        "name_policy=LAUNCHER_NAME_INSTALLER_REBIND",
         "_revalidate_bound_file(",
     ):
         if marker not in reviewed_source:
             return False
+
+    reviewed_parents = {
+        child: parent
+        for parent in ast.walk(reviewed_installer)
+        for child in ast.iter_child_nodes(parent)
+    }
+    seal_calls = [
+        (node, node.value)
+        for node in ast.walk(reviewed_installer)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and _python_attribute_path(node.value.func)
+        == ("_seal_reviewed_framework_permissions",)
+    ]
+    framework_verifiers = [
+        (node, node.value)
+        for node in ast.walk(reviewed_installer)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and _python_attribute_path(node.value.func)
+        == ("_verify_reviewed_framework_seal",)
+    ]
+    core_verifiers = [
+        (node, node.value)
+        for node in ast.walk(reviewed_installer)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and _python_attribute_path(node.value.func)
+        == ("_verify_reviewed_framework_core",)
+    ]
+    strict_rebinds = [
+        (node, node.value)
+        for node in ast.walk(reviewed_installer)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and _python_attribute_path(node.value.func)
+        == ("_revalidate_held_executable",)
+        and any(
+            keyword.arg == "name_policy"
+            and _python_attribute_path(keyword.value)
+            == ("LAUNCHER_NAME_INSTALLER_REBIND",)
+            for keyword in node.value.keywords
+        )
+    ]
+    if (
+        len(seal_calls) != 1
+        or len(framework_verifiers) != 1
+        or len(core_verifiers) != 1
+        or len(strict_rebinds) != 1
+    ):
+        return False
+    seal_statement, seal_call = seal_calls[0]
+    verify_statement, verify_call = framework_verifiers[0]
+    core_statement, core_call = core_verifiers[0]
+    strict_statement, strict_call = strict_rebinds[0]
+    seal_try = reviewed_parents.get(seal_statement)
+    seal_with = reviewed_parents.get(seal_try)
+    if (
+        not isinstance(seal_try, ast.Try)
+        or not isinstance(seal_with, ast.With)
+        or seal_try.body != [seal_statement]
+        or seal_with.body != [seal_try]
+        or seal_with not in reviewed_installer.body
+        or not isinstance(reviewed_installer.body[7], ast.Try)
+        or rebind_call not in set(ast.walk(reviewed_installer.body[7]))
+        or reviewed_installer.body.index(seal_with) <= 7
+        or verify_statement not in reviewed_installer.body
+        or core_statement not in reviewed_installer.body
+        or strict_statement not in reviewed_installer.body
+        or reviewed_installer.body.index(verify_statement)
+        >= reviewed_installer.body.index(core_statement)
+        or reviewed_installer.body.index(core_statement)
+        >= reviewed_installer.body.index(strict_statement)
+        or reviewed_installer.body.index(strict_statement)
+        >= len(reviewed_installer.body) - 1
+        or _python_has_constant_false_ancestor(seal_statement, reviewed_parents)
+        or _python_has_constant_false_ancestor(verify_statement, reviewed_parents)
+        or _python_has_constant_false_ancestor(core_statement, reviewed_parents)
+        or _python_has_constant_false_ancestor(strict_statement, reviewed_parents)
+    ):
+        return False
+    seal_with_call = seal_with.items[0].context_expr
+    if (
+        len(seal_with.items) != 1
+        or not isinstance(seal_with_call, ast.Call)
+        or _python_attribute_path(seal_with_call.func)
+        != ("build", "_defer_publish_signals")
+        or seal_with_call.args
+        or {
+            keyword.arg: _python_attribute_path(keyword.value)
+            for keyword in seal_with_call.keywords
+            if keyword.arg is not None
+        }
+        != {"preserve_error": ("installer_error",)}
+        or len(seal_call.args) != 1
+        or _python_attribute_path(seal_call.args[0])
+        != ("locked_framework_root",)
+        or {
+            keyword.arg: _python_attribute_path(keyword.value)
+            for keyword in seal_call.keywords
+            if keyword.arg is not None
+        }
+        != {"environment": ("environment",), "build": ("build",)}
+        or len(verify_call.args) != 1
+        or _python_attribute_path(verify_call.args[0])
+        != ("locked_framework_root",)
+        or {
+            keyword.arg: _python_attribute_path(keyword.value)
+            for keyword in verify_call.keywords
+            if keyword.arg is not None
+        }
+        != {"python_lock": ("python_lock",)}
+        or len(core_call.args) != 1
+        or _python_attribute_path(core_call.args[0])
+        != ("locked_framework_root",)
+        or {
+            keyword.arg: _python_attribute_path(keyword.value)
+            for keyword in core_call.keywords
+            if keyword.arg is not None
+        }
+        != {"python_lock": ("python_lock",), "build": ("build",)}
+        or len(strict_call.args) != 1
+        or _python_attribute_path(strict_call.args[0]) != ("launcher_binding",)
+    ):
+        return False
 
     installed_nodes = set(ast.walk(installed_context))
     observer_calls = [
@@ -1445,6 +1848,1593 @@ def _python_installer_launcher_transition_is_semantic(source: str) -> bool:
             for keyword in observer_calls[0].keywords
         )
         and len(binding_verifiers) == 1
+    )
+
+
+def _legacy_python_reviewed_framework_security_is_semantic(source: str) -> bool:
+    """Bind ACL/mode sealing and the complete reviewed framework byte closure."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+
+    function_names = (
+        "_reviewed_framework_security_contract",
+        "_reviewed_framework_core_contract",
+        "_reviewed_framework_owner",
+        "_verify_locked_framework_regular",
+        "_verify_reviewed_framework_acl_seal",
+        "_verify_reviewed_framework_seal",
+        "_verify_reviewed_framework_core",
+        "_seal_reviewed_framework_permissions",
+        "_run_reviewed_framework_installer",
+        "install_reviewed_python",
+        "build_with_exact_toolchain",
+    )
+    functions = {name: _python_function(tree, name) for name in function_names}
+    if any(function is None for function in functions.values()):
+        return False
+
+    def exact_expression(node: ast.AST, expression: str) -> bool:
+        expected = ast.parse(expression, mode="eval").body
+        return ast.dump(node, include_attributes=False) == ast.dump(
+            expected,
+            include_attributes=False,
+        )
+
+    def direct_toolchain_raise(statement: ast.stmt) -> bool:
+        return (
+            isinstance(statement, ast.Raise)
+            and isinstance(statement.exc, ast.Call)
+            and _python_attribute_path(statement.exc.func)
+            == ("ToolchainBootstrapError",)
+        )
+
+    def exact_direct_guard(
+        function: ast.FunctionDef,
+        expression: str,
+    ) -> bool:
+        parents = {
+            child: parent
+            for parent in ast.walk(function)
+            for child in ast.iter_child_nodes(parent)
+        }
+        matches = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.If) and exact_expression(node.test, expression)
+        ]
+        return (
+            len(matches) == 1
+            and len(matches[0].body) == 1
+            and direct_toolchain_raise(matches[0].body[0])
+            and not matches[0].orelse
+            and not _python_has_constant_false_ancestor(matches[0], parents)
+        )
+
+    def module_literal(name: str) -> Any:
+        assignments = [
+            statement
+            for statement in tree.body
+            if isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == name
+        ]
+        if len(assignments) != 1:
+            return None
+        try:
+            return ast.literal_eval(assignments[0].value)
+        except (TypeError, ValueError):
+            return None
+
+    default_root_assignments = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "DEFAULT_REVIEWED_FRAMEWORK_ROOT"
+    ]
+    if (
+        len(default_root_assignments) != 1
+        or not exact_expression(
+            default_root_assignments[0].value,
+            "PurePosixPath('/Library/Frameworks/Python.framework/Versions/3.13')",
+        )
+    ):
+        return False
+
+    expected_parent_commands = (
+        (
+            "/usr/bin/sudo",
+            "--non-interactive",
+            "/usr/sbin/chown",
+            "-h",
+            "0:0",
+        ),
+        (
+            "/usr/bin/sudo",
+            "--non-interactive",
+            "/bin/chmod",
+            "-h",
+            "-N",
+        ),
+        (
+            "/usr/bin/sudo",
+            "--non-interactive",
+            "/bin/chmod",
+            "-h",
+            "go-w",
+        ),
+    )
+    expected_root_commands = (
+        (
+            "/usr/bin/sudo",
+            "--non-interactive",
+            "/usr/sbin/chown",
+            "-R",
+            "-P",
+            "-h",
+            "0:0",
+        ),
+        (
+            "/usr/bin/sudo",
+            "--non-interactive",
+            "/bin/chmod",
+            "-R",
+            "-P",
+            "-N",
+        ),
+        (
+            "/usr/bin/sudo",
+            "--non-interactive",
+            "/bin/chmod",
+            "-R",
+            "-P",
+            "go-w",
+        ),
+    )
+    expected_cache_arguments = (
+        (
+            "-type",
+            "f",
+            "(",
+            "-iname",
+            "*.pyc",
+            "-o",
+            "-iname",
+            "*.pyo",
+            ")",
+            "-delete",
+        ),
+        (
+            "-depth",
+            "-type",
+            "d",
+            "-iname",
+            "__pycache__",
+            "-delete",
+        ),
+    )
+    if (
+        module_literal("REVIEWED_FRAMEWORK_PARENT_PERMISSION_COMMANDS")
+        != expected_parent_commands
+        or module_literal("REVIEWED_FRAMEWORK_PERMISSION_COMMANDS")
+        != expected_root_commands
+        or module_literal("REVIEWED_FRAMEWORK_CACHE_REMOVAL_ARGUMENTS")
+        != expected_cache_arguments
+        or module_literal("REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS")
+        != PYTHON_FRAMEWORK_CORE_EXCLUDED_PATHS
+        or source.count("REVIEWED_FRAMEWORK_PARENT_PERMISSION_COMMANDS") != 5
+        or source.count("REVIEWED_FRAMEWORK_PERMISSION_COMMANDS") != 2
+        or source.count("REVIEWED_FRAMEWORK_CACHE_REMOVAL_ARGUMENTS") != 2
+        or source.count("REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS") != 3
+        or source.count("_verify_reviewed_framework_seal(") != 4
+        or source.count("_verify_reviewed_framework_core(") != 4
+        or source.count(
+            "PurePosixPath(root.as_posix()) != DEFAULT_REVIEWED_FRAMEWORK_ROOT"
+        )
+        != 1
+        or source.count(
+            "PurePosixPath(install_root.as_posix())\n"
+            "                != DEFAULT_REVIEWED_FRAMEWORK_ROOT"
+        )
+        != 2
+    ):
+        return False
+
+    owner = functions["_reviewed_framework_owner"]
+    assert owner is not None
+    owner_statements = [
+        statement
+        for statement in owner.body
+        if not (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        )
+    ]
+    if (
+        len(owner_statements) != 1
+        or not isinstance(owner_statements[0], ast.Return)
+        or not isinstance(owner_statements[0].value, ast.Constant)
+        or owner_statements[0].value.value != 0
+    ):
+        return False
+
+    security_contract = functions["_reviewed_framework_security_contract"]
+    core_contract = functions["_reviewed_framework_core_contract"]
+    locked_regular = functions["_verify_locked_framework_regular"]
+    acl_verifier = functions["_verify_reviewed_framework_acl_seal"]
+    framework_seal = functions["_verify_reviewed_framework_seal"]
+    core_verifier = functions["_verify_reviewed_framework_core"]
+    permission_seal = functions["_seal_reviewed_framework_permissions"]
+    reviewed_installer = functions["_run_reviewed_framework_installer"]
+    install = functions["install_reviewed_python"]
+    build_exact = functions["build_with_exact_toolchain"]
+    assert security_contract is not None
+    assert core_contract is not None
+    assert locked_regular is not None
+    assert acl_verifier is not None
+    assert framework_seal is not None
+    assert core_verifier is not None
+    assert permission_seal is not None
+    assert reviewed_installer is not None
+    assert install is not None
+    assert build_exact is not None
+
+    security_assignments = {
+        "interpreter_relative": "Path(str(python_lock['interpreterRelativePath']))",
+        "interpreter_size": "int(python_lock['interpreterSize'])",
+        "interpreter_sha256": "str(python_lock['interpreterSha256'])",
+        "framework_relative": "Path(str(python_lock['frameworkBinaryRelativePath']))",
+        "framework_size": "int(python_lock['frameworkBinarySize'])",
+        "framework_sha256": "str(python_lock['frameworkBinarySha256'])",
+        "entries": "((interpreter_relative, interpreter_size, interpreter_sha256), "
+        "(framework_relative, framework_size, framework_sha256))",
+    }
+    if any(
+        not _python_exact_single_assignment(security_contract, name, expression)
+        for name, expression in security_assignments.items()
+    ):
+        return False
+    security_source = ast.get_source_segment(source, security_contract) or ""
+    for marker in (
+        "relative.is_absolute()",
+        'any(part in {"", ".", ".."} for part in relative.parts)',
+        "size <= 0",
+        "size > MAX_TREE_FILE_BYTES",
+        "SHA256_PATTERN.fullmatch(digest) is None",
+        "return entries",
+    ):
+        if marker not in security_source:
+            return False
+
+    if (
+        tuple(type(statement) for statement in core_contract.body)
+        != (ast.Expr, ast.Assign, ast.Assign, ast.If, ast.Return)
+        or not _python_exact_single_assignment(
+            core_contract,
+            "raw_exclusions",
+            "python_lock.get('frameworkCoreFingerprintExcludedPaths')",
+        )
+        or not _python_exact_single_assignment(
+            core_contract,
+            "digest",
+            "str(python_lock.get('frameworkCoreFingerprintSha256', ''))",
+        )
+    ):
+        return False
+    core_guard = core_contract.body[3]
+    core_return = core_contract.body[4]
+    if (
+        not isinstance(core_guard, ast.If)
+        or not exact_expression(
+            core_guard.test,
+            "raw_exclusions != list(REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS) "
+            "or SHA256_PATTERN.fullmatch(digest) is None",
+        )
+        or len(core_guard.body) != 1
+        or not direct_toolchain_raise(core_guard.body[0])
+        or core_guard.orelse
+        or not isinstance(core_return, ast.Return)
+        or core_return.value is None
+        or not exact_expression(
+            core_return.value,
+            "(REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS, digest)",
+        )
+    ):
+        return False
+
+    locked_source = ast.get_source_segment(source, locked_regular) or ""
+    locked_markers = (
+        "os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC",
+        "not stat.S_ISREG(held.st_mode)",
+        "stat.S_ISLNK(named.st_mode)",
+        "_identity(held) != _identity(named)",
+        "held.st_uid != expected_owner",
+        "held.st_nlink != 1",
+        "held.st_size != expected_size",
+        "stat.S_IMODE(held.st_mode) & 0o7022",
+        "hashlib.sha256(payload).hexdigest() != expected_sha256",
+        "_identity(os.fstat(descriptor)) != _identity(held)",
+        "_identity(path.lstat()) != _identity(held)",
+    )
+    if any(marker not in locked_source for marker in locked_markers):
+        return False
+
+    if tuple(type(statement) for statement in acl_verifier.body) != (
+        ast.Expr,
+        ast.If,
+        ast.Assign,
+        ast.Assign,
+        ast.For,
+    ):
+        return False
+    acl_platform_guard = acl_verifier.body[1]
+    acl_loop = acl_verifier.body[4]
+    assert isinstance(acl_platform_guard, ast.If)
+    assert isinstance(acl_loop, ast.For)
+    if (
+        not exact_expression(acl_platform_guard.test, "sys.platform != 'darwin'")
+        or tuple(type(statement) for statement in acl_platform_guard.body)
+        != (ast.Return,)
+        or acl_platform_guard.orelse
+        or not _python_exact_single_assignment(
+            acl_verifier,
+            "commands",
+            "(('/bin/ls', '-led', str(root.parents[3]), "
+            "str(root.parents[2]), str(root.parents[1]), str(root.parent), "
+            "str(root)), ('/bin/ls', '-leR', str(root)))",
+        )
+        or not _python_exact_single_assignment(
+            acl_verifier,
+            "acl_entry",
+            "re.compile(rb'(?m)^[ \\t]+[0-9]+: ')",
+        )
+        or not isinstance(acl_loop.target, ast.Name)
+        or acl_loop.target.id != "command"
+        or not isinstance(acl_loop.iter, ast.Name)
+        or acl_loop.iter.id != "commands"
+        or acl_loop.orelse
+        or tuple(type(statement) for statement in acl_loop.body)
+        != (ast.Assign, ast.Try, ast.If)
+        or not _python_exact_single_assignment(
+            acl_loop,
+            "expected",
+            "_exec_target_identity(Path(command[0]))",
+        )
+    ):
+        return False
+    acl_process_try = acl_loop.body[1]
+    acl_mismatch = acl_loop.body[2]
+    assert isinstance(acl_process_try, ast.Try)
+    assert isinstance(acl_mismatch, ast.If)
+    acl_process_assignment = (
+        acl_process_try.body[0]
+        if len(acl_process_try.body) == 1
+        else None
+    )
+    acl_process_call = (
+        acl_process_assignment.value
+        if isinstance(acl_process_assignment, ast.Assign)
+        and len(acl_process_assignment.targets) == 1
+        and isinstance(acl_process_assignment.targets[0], ast.Name)
+        and acl_process_assignment.targets[0].id == "process"
+        and isinstance(acl_process_assignment.value, ast.Call)
+        else None
+    )
+    if (
+        acl_process_call is None
+        or _python_attribute_path(acl_process_call.func)
+        != ("subprocess", "run")
+        or len(acl_process_call.args) != 1
+        or _python_attribute_path(acl_process_call.args[0]) != ("command",)
+        or {
+            keyword.arg: ast.dump(keyword.value, include_attributes=False)
+            for keyword in acl_process_call.keywords
+            if keyword.arg is not None
+        }
+        != {
+            "cwd": ast.dump(ast.parse("Path('/')", mode="eval").body, include_attributes=False),
+            "env": ast.dump(ast.parse("{'LC_ALL': 'C', 'PATH': '/usr/bin:/bin'}", mode="eval").body, include_attributes=False),
+            "stdin": ast.dump(ast.parse("subprocess.DEVNULL", mode="eval").body, include_attributes=False),
+            "stdout": ast.dump(ast.parse("subprocess.PIPE", mode="eval").body, include_attributes=False),
+            "stderr": ast.dump(ast.parse("subprocess.PIPE", mode="eval").body, include_attributes=False),
+            "timeout": ast.dump(ast.Constant(value=120), include_attributes=False),
+            "check": ast.dump(ast.Constant(value=False), include_attributes=False),
+            "start_new_session": ast.dump(ast.Constant(value=True), include_attributes=False),
+            "umask": ast.dump(ast.Constant(value=0o077), include_attributes=False),
+        }
+        or len(acl_process_try.handlers) != 1
+        or acl_process_try.orelse
+        or acl_process_try.finalbody
+        or not exact_expression(
+            acl_mismatch.test,
+            "process.returncode != 0 or not process.stdout "
+            "or process.stderr "
+            "or len(process.stdout) > MAX_SUBPROCESS_OUTPUT_BYTES "
+            "or acl_entry.search(process.stdout) is not None "
+            "or expected != _exec_target_identity(Path(command[0]))",
+        )
+        or len(acl_mismatch.body) != 1
+        or not direct_toolchain_raise(acl_mismatch.body[0])
+        or acl_mismatch.orelse
+        or any(
+            isinstance(node, ast.keyword) and node.arg == "shell"
+            for node in ast.walk(acl_verifier)
+        )
+    ):
+        return False
+
+    seal_source = ast.get_source_segment(source, framework_seal) or ""
+    seal_markers = (
+        "root.resolve(strict=True) != root",
+        "root.parent.resolve(strict=True) != root.parent",
+        "root_before = root.lstat()",
+        "parent_before = root.parent.lstat()",
+        "anchor_before = root.parents[1].lstat()",
+        "container_before = root.parents[2].lstat()",
+        "library_before = root.parents[3].lstat()",
+        "root_before.st_uid != expected_owner",
+        "parent_before.st_uid != expected_owner",
+        "anchor_before.st_uid != expected_owner",
+        "container_before.st_uid != expected_owner",
+        "library_before.st_uid != expected_owner",
+        "stat.S_IMODE(root_before.st_mode) & 0o7022",
+        "stat.S_IMODE(parent_before.st_mode) & 0o7022",
+        "stat.S_IMODE(anchor_before.st_mode) & 0o7022",
+        "stat.S_IMODE(container_before.st_mode) & 0o7022",
+        "stat.S_IMODE(library_before.st_mode) & 0o7022",
+        "followlinks=False",
+        "entry_count > MAX_TREE_ENTRIES",
+        "info.st_uid != expected_owner",
+        'part.casefold() for part in relative_path.parts',
+        '"__pycache__" in folded_parts',
+        'relative_path.name.casefold().endswith((".pyc", ".pyo"))',
+        "info.st_nlink != 1",
+        "target_path.is_absolute()",
+        '"\\x00" in target',
+        "root not in (unresolved, *unresolved.parents)",
+        "root not in (resolved, *resolved.parents)",
+        "mode & 0o7022",
+        "not stat.S_ISREG(info.st_mode)",
+        "info.st_nlink != 1 or info.st_size > MAX_TREE_FILE_BYTES",
+        "total_size > MAX_TREE_TOTAL_BYTES",
+        "observed_broken != broken",
+        "_identity(root.lstat()) != _identity(root_before)",
+        "_identity(root.parent.lstat()) != _identity(parent_before)",
+        "_identity(root.parents[1].lstat()) != _identity(anchor_before)",
+        "_identity(root.parents[2].lstat()) != _identity(container_before)",
+        "_identity(root.parents[3].lstat()) != _identity(library_before)",
+        "_reviewed_framework_security_contract(",
+        "_verify_locked_framework_regular(",
+    )
+    if any(marker not in seal_source for marker in seal_markers):
+        return False
+    seal_parents = {
+        child: parent
+        for parent in ast.walk(framework_seal)
+        for child in ast.iter_child_nodes(parent)
+    }
+    walks = [
+        node
+        for node in ast.walk(framework_seal)
+        if isinstance(node, ast.For)
+        and isinstance(node.iter, ast.Call)
+        and _python_attribute_path(node.iter.func) == ("os", "walk")
+        and len(node.iter.args) == 1
+        and _python_attribute_path(node.iter.args[0]) == ("root",)
+        and {
+            keyword.arg: (
+                keyword.value.value
+                if isinstance(keyword.value, ast.Constant)
+                else None
+            )
+            for keyword in node.iter.keywords
+        }
+        == {"topdown": True, "followlinks": False}
+    ]
+    locked_calls = [
+        node
+        for node in ast.walk(framework_seal)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func)
+        == ("_verify_locked_framework_regular",)
+    ]
+    acl_calls = [
+        node
+        for node in ast.walk(framework_seal)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func)
+        == ("_verify_reviewed_framework_acl_seal",)
+    ]
+    if (
+        len(walks) != 1
+        or len(locked_calls) != 1
+        or len(acl_calls) != 1
+        or not _python_exact_single_assignment(
+            framework_seal,
+            "relative_path",
+            "PurePosixPath(relative)",
+        )
+        or not _python_exact_single_assignment(
+            framework_seal,
+            "folded_parts",
+            "tuple(part.casefold() for part in relative_path.parts)",
+        )
+        or _python_has_constant_false_ancestor(walks[0], seal_parents)
+        or _python_has_constant_false_ancestor(locked_calls[0], seal_parents)
+        or _python_has_constant_false_ancestor(acl_calls[0], seal_parents)
+        or acl_calls[0].lineno >= locked_calls[0].lineno
+        or not exact_direct_guard(
+            framework_seal,
+            "root not in (resolved, *resolved.parents)",
+        )
+        or not exact_direct_guard(
+            framework_seal,
+            "not stat.S_ISREG(info.st_mode)",
+        )
+        or not exact_direct_guard(
+            framework_seal,
+            "'__pycache__' in folded_parts "
+            "or relative_path.name.casefold().endswith(('.pyc', '.pyo'))",
+        )
+        or not exact_direct_guard(
+            framework_seal,
+            "info.st_nlink != 1 or info.st_size > MAX_TREE_FILE_BYTES",
+        )
+        or not exact_direct_guard(
+            framework_seal,
+            "_identity(root.lstat()) != _identity(root_before) "
+            "or _identity(root.parent.lstat()) != _identity(parent_before) "
+            "or _identity(root.parents[1].lstat()) != _identity(anchor_before) "
+            "or _identity(root.parents[2].lstat()) != _identity(container_before) "
+            "or _identity(root.parents[3].lstat()) != _identity(library_before)",
+        )
+    ):
+        return False
+
+    if tuple(type(statement) for statement in core_verifier.body) != (
+        ast.Expr,
+        ast.Assign,
+        ast.Try,
+        ast.If,
+    ):
+        return False
+    core_binding = core_verifier.body[1]
+    core_try = core_verifier.body[2]
+    core_mismatch = core_verifier.body[3]
+    if (
+        not isinstance(core_binding, ast.Assign)
+        or len(core_binding.targets) != 1
+        or ast.unparse(core_binding.targets[0]) != "(exclusions, expected)"
+        or not exact_expression(
+            core_binding.value,
+            "_reviewed_framework_core_contract(python_lock)",
+        )
+        or not isinstance(core_try, ast.Try)
+        or len(core_try.body) != 1
+        or not isinstance(core_try.body[0], ast.Assign)
+        or not exact_expression(
+            core_try.body[0].value,
+            "build.fingerprint_install_root("
+            "root, reviewed_broken_symlinks="
+            "_reviewed_broken_framework_symlinks(python_lock), "
+            "excluded_paths=exclusions)",
+        )
+        or len(core_try.handlers) != 1
+        or _python_attribute_path(core_try.handlers[0].type)
+        != ("build", "BuildError")
+        or core_try.orelse
+        or core_try.finalbody
+        or not isinstance(core_mismatch, ast.If)
+        or not exact_expression(core_mismatch.test, "observed != expected")
+        or len(core_mismatch.body) != 1
+        or not direct_toolchain_raise(core_mismatch.body[0])
+        or core_mismatch.orelse
+    ):
+        return False
+
+    if tuple(type(statement) for statement in permission_seal.body) != (
+        ast.Expr,
+        ast.If,
+        ast.Assign,
+        ast.AnnAssign,
+        ast.AnnAssign,
+        ast.FunctionDef,
+        ast.FunctionDef,
+        ast.Try,
+        ast.Assign,
+        ast.Assign,
+        ast.Try,
+    ):
+        return False
+    permission_guard = permission_seal.body[1]
+    directory_binding = permission_seal.body[5]
+    verify_targets = permission_seal.body[6]
+    binding_try = permission_seal.body[7]
+    command_try = permission_seal.body[10]
+    assert isinstance(directory_binding, ast.FunctionDef)
+    assert isinstance(verify_targets, ast.FunctionDef)
+    assert isinstance(binding_try, ast.Try)
+    assert isinstance(command_try, ast.Try)
+    if (
+        not isinstance(permission_guard, ast.If)
+        or not exact_expression(
+            permission_guard.test,
+            "not root.is_absolute() or '..' in root.parts "
+            "or PurePosixPath(root.as_posix()) "
+            "!= DEFAULT_REVIEWED_FRAMEWORK_ROOT "
+            "or root.resolve(strict=True) != root "
+            "or root.parent.resolve(strict=True) != root.parent "
+            "or root.parents[1].resolve(strict=True) != root.parents[1] "
+            "or root.parents[2].resolve(strict=True) != root.parents[2] "
+            "or root.parents[3].resolve(strict=True) != root.parents[3]",
+        )
+        or len(permission_guard.body) != 1
+        or not direct_toolchain_raise(permission_guard.body[0])
+        or permission_guard.orelse
+        or not _python_exact_single_assignment(
+            permission_seal,
+            "targets",
+            "(root.parents[3], root.parents[2], root.parents[1], "
+            "root.parent, root)",
+        )
+        or directory_binding.name != "directory_binding"
+        or tuple(type(statement) for statement in directory_binding.body)
+        != (ast.Return,)
+        or not isinstance(directory_binding.body[0], ast.Return)
+        or directory_binding.body[0].value is None
+        or not exact_expression(
+            directory_binding.body[0].value,
+            "(info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode))",
+        )
+        or verify_targets.name != "verify_targets"
+        or tuple(type(statement) for statement in verify_targets.body)
+        != (ast.For,)
+    ):
+        return False
+
+    verify_loop = verify_targets.body[0]
+    assert isinstance(verify_loop, ast.For)
+    if (
+        ast.unparse(verify_loop.target) != "(target, descriptor, expected)"
+        or not exact_expression(
+            verify_loop.iter,
+            "zip(targets, target_descriptors, target_bindings, strict=True)",
+        )
+        or verify_loop.orelse
+        or tuple(type(statement) for statement in verify_loop.body)
+        != (ast.Assign, ast.Assign, ast.If)
+        or not _python_exact_single_assignment(
+            verify_targets,
+            "held",
+            "os.fstat(descriptor)",
+        )
+        or not _python_exact_single_assignment(
+            verify_targets,
+            "named",
+            "target.lstat()",
+        )
+        or not exact_direct_guard(
+            verify_targets,
+            "directory_binding(held) != expected "
+            "or directory_binding(named) != expected "
+            "or not stat.S_ISDIR(held.st_mode) "
+            "or stat.S_ISLNK(named.st_mode) "
+            "or target.resolve(strict=True) != target",
+        )
+    ):
+        return False
+
+    if (
+        tuple(type(statement) for statement in binding_try.body)
+        != (ast.For, ast.Expr)
+        or binding_try.orelse
+        or binding_try.finalbody
+        or len(binding_try.handlers) != 2
+    ):
+        return False
+    binding_loop = binding_try.body[0]
+    binding_verify = binding_try.body[1]
+    assert isinstance(binding_loop, ast.For)
+    if (
+        not isinstance(binding_loop.target, ast.Name)
+        or binding_loop.target.id != "target"
+        or not isinstance(binding_loop.iter, ast.Name)
+        or binding_loop.iter.id != "targets"
+        or binding_loop.orelse
+        or tuple(type(statement) for statement in binding_loop.body)
+        != (ast.Assign, ast.Expr, ast.Assign, ast.Assign, ast.If, ast.Expr)
+        or not _python_exact_single_assignment(
+            binding_loop,
+            "descriptor",
+            "os.open(target, os.O_RDONLY | os.O_DIRECTORY | "
+            "os.O_NOFOLLOW | os.O_CLOEXEC)",
+        )
+        or not _python_exact_single_assignment(
+            binding_loop,
+            "held",
+            "os.fstat(descriptor)",
+        )
+        or not _python_exact_single_assignment(
+            binding_loop,
+            "named",
+            "target.lstat()",
+        )
+        or not exact_direct_guard(
+            binding_loop,
+            "not stat.S_ISDIR(held.st_mode) "
+            "or stat.S_ISLNK(named.st_mode) "
+            "or directory_binding(held) != directory_binding(named)",
+        )
+        or not isinstance(binding_verify, ast.Expr)
+        or not isinstance(binding_verify.value, ast.Call)
+        or _python_attribute_path(binding_verify.value.func)
+        != ("verify_targets",)
+        or binding_verify.value.args
+        or binding_verify.value.keywords
+        or _python_has_constant_false_ancestor(
+            binding_loop,
+            {
+                child: parent
+                for parent in ast.walk(permission_seal)
+                for child in ast.iter_child_nodes(parent)
+            },
+        )
+    ):
+        return False
+
+    if not _python_exact_single_assignment(
+        permission_seal,
+        "commands",
+        "(*((*prefix, str(root.parents[3])) for prefix in "
+        "REVIEWED_FRAMEWORK_PARENT_PERMISSION_COMMANDS), "
+        "*((*prefix, str(root.parents[2])) for prefix in "
+        "REVIEWED_FRAMEWORK_PARENT_PERMISSION_COMMANDS), "
+        "*((*prefix, str(root.parents[1])) for prefix in "
+        "REVIEWED_FRAMEWORK_PARENT_PERMISSION_COMMANDS), "
+        "*((*prefix, str(root.parent)) for prefix in "
+        "REVIEWED_FRAMEWORK_PARENT_PERMISSION_COMMANDS), "
+        "*((*prefix, str(root)) for prefix in "
+        "REVIEWED_FRAMEWORK_PERMISSION_COMMANDS), "
+        "*((('/usr/bin/sudo', '--non-interactive', '/usr/bin/find', "
+        "'-x', str(root), *arguments) for arguments in "
+        "REVIEWED_FRAMEWORK_CACHE_REMOVAL_ARGUMENTS)))",
+    ):
+        return False
+    expected_labels = (
+        "Python framework library ownership normalization",
+        "Python framework library ACL sealing",
+        "Python framework library permission sealing",
+        "Python framework container ownership normalization",
+        "Python framework container ACL sealing",
+        "Python framework container permission sealing",
+        "Python framework anchor ownership normalization",
+        "Python framework anchor ACL sealing",
+        "Python framework anchor permission sealing",
+        "Python framework parent ownership normalization",
+        "Python framework parent ACL sealing",
+        "Python framework parent permission sealing",
+        "Python framework ownership normalization",
+        "Python framework ACL sealing",
+        "Python framework permission sealing",
+        "Python framework bytecode cache file removal",
+        "Python framework bytecode cache directory removal",
+    )
+    label_assignments = [
+        statement
+        for statement in permission_seal.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "labels"
+    ]
+    try:
+        observed_labels = ast.literal_eval(label_assignments[0].value)
+    except (IndexError, TypeError, ValueError):
+        return False
+    if observed_labels != expected_labels:
+        return False
+    if (
+        tuple(type(statement) for statement in command_try.body) != (ast.For,)
+        or command_try.handlers
+        or command_try.orelse
+        or tuple(type(statement) for statement in command_try.finalbody)
+        != (ast.For,)
+    ):
+        return False
+    permission_loop = command_try.body[0]
+    assert isinstance(permission_loop, ast.For)
+    if (
+        ast.unparse(permission_loop.target) != "(command, label)"
+        or not exact_expression(
+            permission_loop.iter,
+            "zip(commands, labels, strict=True)",
+        )
+        or permission_loop.orelse
+        or tuple(type(statement) for statement in permission_loop.body)
+        != (ast.Expr, ast.Assign, ast.Assign, ast.If, ast.Expr)
+    ):
+        return False
+    verify_before = permission_loop.body[0]
+    verify_after = permission_loop.body[4]
+    if any(
+        not isinstance(statement, ast.Expr)
+        or not isinstance(statement.value, ast.Call)
+        or _python_attribute_path(statement.value.func) != ("verify_targets",)
+        or statement.value.args
+        or statement.value.keywords
+        for statement in (verify_before, verify_after)
+    ):
+        return False
+    observed_assignment = permission_loop.body[2]
+    if (
+        not isinstance(observed_assignment, ast.Assign)
+        or len(observed_assignment.targets) != 1
+        or not isinstance(observed_assignment.targets[0], ast.Name)
+        or observed_assignment.targets[0].id != "observed"
+        or not isinstance(observed_assignment.value, ast.Call)
+        or _python_attribute_path(observed_assignment.value.func)
+        != ("_run_owned_process",)
+        or len(observed_assignment.value.args) != 1
+        or _python_attribute_path(observed_assignment.value.args[0])
+        != ("command",)
+        or {
+            keyword.arg: ast.dump(keyword.value, include_attributes=False)
+            for keyword in observed_assignment.value.keywords
+            if keyword.arg is not None
+        }
+        != {
+            "cwd": ast.dump(ast.parse("Path('/')", mode="eval").body, include_attributes=False),
+            "environment": ast.dump(ast.Name(id="environment", ctx=ast.Load()), include_attributes=False),
+            "pass_fds": ast.dump(ast.Tuple(elts=[], ctx=ast.Load()), include_attributes=False),
+            "timeout": ast.dump(ast.Constant(value=300), include_attributes=False),
+            "label": ast.dump(ast.Name(id="label", ctx=ast.Load()), include_attributes=False),
+            "build": ast.dump(ast.Name(id="build", ctx=ast.Load()), include_attributes=False),
+        }
+    ):
+        return False
+    identity_calls = sorted(
+        [
+        node
+        for node in ast.walk(permission_seal)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func) == ("_exec_target_identity",)
+        ],
+        key=lambda call: (call.lineno, call.col_offset),
+    )
+    if (
+        len(identity_calls) != 4
+        or not all(call.lineno < observed_assignment.lineno for call in identity_calls[:2])
+        or not all(call.lineno > observed_assignment.lineno for call in identity_calls[2:])
+        or not exact_direct_guard(
+            permission_seal,
+            "not isinstance(observed, str) or expected_executables != ("
+            "*_exec_target_identity(Path(command[0])), "
+            "*_exec_target_identity(Path(command[2])))",
+        )
+        or len(
+            [
+                node
+                for node in ast.walk(permission_seal)
+                if isinstance(node, ast.Call)
+                and _python_attribute_path(node.func) == ("verify_targets",)
+            ]
+        )
+        != 3
+        or not isinstance(command_try.finalbody[0], ast.For)
+        or not isinstance(command_try.finalbody[0].target, ast.Name)
+        or command_try.finalbody[0].target.id != "descriptor"
+        or not isinstance(command_try.finalbody[0].iter, ast.Name)
+        or command_try.finalbody[0].iter.id != "target_descriptors"
+        or command_try.finalbody[0].orelse
+        or any(
+            isinstance(node, ast.Call)
+            and _python_attribute_path(node.func)
+            in {("subprocess", "Popen"), ("subprocess", "run")}
+            for node in ast.walk(permission_seal)
+        )
+    ):
+        return False
+
+    def ordered_direct_pair(function: ast.FunctionDef) -> bool:
+        parents = {
+            child: parent
+            for parent in ast.walk(function)
+            for child in ast.iter_child_nodes(parent)
+        }
+        seals = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and _python_attribute_path(node.value.func)
+            == ("_verify_reviewed_framework_seal",)
+        ]
+        cores = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and _python_attribute_path(node.value.func)
+            == ("_verify_reviewed_framework_core",)
+        ]
+        return (
+            len(seals) == 1
+            and len(cores) == 1
+            and parents.get(seals[0]) is parents.get(cores[0])
+            and hasattr(parents.get(seals[0]), "body")
+            and parents[seals[0]].body.index(seals[0])
+            < parents[cores[0]].body.index(cores[0])
+            and not _python_has_constant_false_ancestor(seals[0], parents)
+            and not _python_has_constant_false_ancestor(cores[0], parents)
+        )
+
+    def exact_default_root_guard(function: ast.FunctionDef) -> bool:
+        parents = {
+            child: parent
+            for parent in ast.walk(function)
+            for child in ast.iter_child_nodes(parent)
+        }
+        comparisons = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Compare)
+            and exact_expression(
+                node,
+                "PurePosixPath(install_root.as_posix()) "
+                "!= DEFAULT_REVIEWED_FRAMEWORK_ROOT",
+            )
+        ]
+        if len(comparisons) != 1:
+            return False
+        comparison = comparisons[0]
+        child: ast.AST = comparison
+        guard: ast.If | None = None
+        while child in parents:
+            parent = parents[child]
+            if isinstance(parent, ast.If) and child in ast.walk(parent.test):
+                guard = parent
+                break
+            child = parent
+        return (
+            guard is not None
+            and isinstance(guard.test, ast.BoolOp)
+            and isinstance(guard.test.op, ast.Or)
+            and comparison in guard.test.values
+            and len(guard.body) == 1
+            and direct_toolchain_raise(guard.body[0])
+            and not guard.orelse
+            and not _python_has_constant_false_ancestor(guard, parents)
+        )
+
+    return (
+        ordered_direct_pair(reviewed_installer)
+        and ordered_direct_pair(install)
+        and ordered_direct_pair(build_exact)
+        and exact_default_root_guard(install)
+        and exact_default_root_guard(build_exact)
+    )
+
+
+def _python_reviewed_framework_security_is_semantic(source: str) -> bool:
+    """Require the post-provision framework proof without installer authority."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+
+    forbidden = (
+        "/usr/sbin/installer",
+        "/usr/bin/sudo",
+        "LAUNCHER_NAME_INSTALLER_REBIND",
+        "LAUNCHER_NAME_INSTALLER_PENDING_SEAL",
+        "installer-producer-rebind",
+        "installer-produced-pending-seal",
+        "_run_reviewed_framework_installer",
+        "_seal_reviewed_framework_permissions",
+        "REVIEWED_FRAMEWORK_PARENT_PERMISSION_COMMANDS",
+        "REVIEWED_FRAMEWORK_PERMISSION_COMMANDS",
+    )
+    if any(marker in source for marker in forbidden):
+        return False
+
+    function_names = (
+        "_reviewed_framework_security_contract",
+        "_reviewed_framework_core_contract",
+        "_reviewed_framework_owner",
+        "_verify_locked_framework_regular",
+        "_verify_reviewed_framework_acl_seal",
+        "_verify_reviewed_framework_seal",
+        "_verify_reviewed_framework_core",
+        "install_reviewed_python",
+        "build_with_exact_toolchain",
+    )
+    functions = {name: _python_function(tree, name) for name in function_names}
+    if any(function is None for function in functions.values()):
+        return False
+
+    def exact_expression(node: ast.AST, expression: str) -> bool:
+        expected = ast.parse(expression, mode="eval").body
+        return ast.dump(node, include_attributes=False) == ast.dump(
+            expected,
+            include_attributes=False,
+        )
+
+    def direct_raise(statement: ast.stmt) -> bool:
+        return (
+            isinstance(statement, ast.Raise)
+            and isinstance(statement.exc, ast.Call)
+            and _python_attribute_path(statement.exc.func)
+            == ("ToolchainBootstrapError",)
+        )
+
+    def exact_direct_guard_node(
+        function: ast.FunctionDef,
+        expression: str,
+    ) -> ast.If | None:
+        parents = {
+            child: parent
+            for parent in ast.walk(function)
+            for child in ast.iter_child_nodes(parent)
+        }
+        guards = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.If) and exact_expression(node.test, expression)
+        ]
+        if (
+            len(guards) == 1
+            and len(guards[0].body) == 1
+            and direct_raise(guards[0].body[0])
+            and not guards[0].orelse
+            and not _python_has_constant_false_ancestor(guards[0], parents)
+        ):
+            return guards[0]
+        return None
+
+    def exact_direct_guard(function: ast.FunctionDef, expression: str) -> bool:
+        return exact_direct_guard_node(function, expression) is not None
+
+    def exact_default_root_guard(function: ast.FunctionDef) -> bool:
+        parents = {
+            child: parent
+            for parent in ast.walk(function)
+            for child in ast.iter_child_nodes(parent)
+        }
+        comparisons = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Compare)
+            and exact_expression(
+                node,
+                "PurePosixPath(install_root.as_posix()) "
+                "!= DEFAULT_REVIEWED_FRAMEWORK_ROOT",
+            )
+        ]
+        if len(comparisons) != 1:
+            return False
+        comparison = comparisons[0]
+        child: ast.AST = comparison
+        guard: ast.If | None = None
+        while child in parents:
+            parent = parents[child]
+            if isinstance(parent, ast.If) and any(
+                descendant is child for descendant in ast.walk(parent.test)
+            ):
+                guard = parent
+                break
+            child = parent
+        return (
+            guard is not None
+            and isinstance(guard.test, ast.BoolOp)
+            and isinstance(guard.test.op, ast.Or)
+            and comparison in guard.test.values
+            and len(guard.body) == 1
+            and direct_raise(guard.body[0])
+            and not guard.orelse
+            and not _python_has_constant_false_ancestor(guard, parents)
+        )
+
+    default_roots = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "DEFAULT_REVIEWED_FRAMEWORK_ROOT"
+    ]
+    if (
+        len(default_roots) != 1
+        or not exact_expression(
+            default_roots[0].value,
+            "PurePosixPath('/Library/Frameworks/Python.framework/Versions/3.13')",
+        )
+        or source.count("_verify_reviewed_framework_seal(") != 4
+        or source.count("_verify_reviewed_framework_core(") != 4
+        or source.count("subprocess.run(") != 1
+    ):
+        return False
+
+    owner = functions["_reviewed_framework_owner"]
+    locked = functions["_verify_locked_framework_regular"]
+    acl = functions["_verify_reviewed_framework_acl_seal"]
+    seal = functions["_verify_reviewed_framework_seal"]
+    core = functions["_verify_reviewed_framework_core"]
+    install = functions["install_reviewed_python"]
+    build_exact = functions["build_with_exact_toolchain"]
+    assert owner is not None
+    assert locked is not None
+    assert acl is not None
+    assert seal is not None
+    assert core is not None
+    assert install is not None
+    assert build_exact is not None
+
+    owner_body = [
+        statement
+        for statement in owner.body
+        if not (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        )
+    ]
+    if (
+        len(owner_body) != 1
+        or not isinstance(owner_body[0], ast.Return)
+        or not isinstance(owner_body[0].value, ast.Constant)
+        or owner_body[0].value.value != 0
+    ):
+        return False
+
+    locked_source = ast.get_source_segment(source, locked) or ""
+    if any(
+        marker not in locked_source
+        for marker in (
+            "os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC",
+            "not stat.S_ISREG(held.st_mode)",
+            "stat.S_ISLNK(named.st_mode)",
+            "_identity(held) != _identity(named)",
+            "held.st_uid != expected_owner",
+            "held.st_nlink != 1",
+            "held.st_size != expected_size",
+            "stat.S_IMODE(held.st_mode) & 0o7022",
+            "hashlib.sha256(payload).hexdigest() != expected_sha256",
+            "_identity(os.fstat(descriptor)) != _identity(held)",
+            "_identity(path.lstat()) != _identity(held)",
+        )
+    ):
+        return False
+
+    acl_source = ast.get_source_segment(source, acl) or ""
+    acl_guard_expression = (
+        "process.returncode != 0 or not process.stdout or process.stderr "
+        "or len(process.stdout) > MAX_SUBPROCESS_OUTPUT_BYTES "
+        "or acl_entry.search(process.stdout) is not None "
+        "or expected != _exec_target_identity(Path(command[0]))"
+    )
+    if any(
+        marker not in acl_source
+        for marker in (
+            "if sys.platform != \"darwin\":\n        return",
+            '"/bin/ls",\n            "-led",',
+            '("/bin/ls", "-leR", str(root))',
+            're.compile(rb"(?m)^[ \\t]+[0-9]+: ")',
+            "process = subprocess.run(",
+            'cwd=Path("/")',
+            'env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"}',
+            "stdin=subprocess.DEVNULL",
+            "stdout=subprocess.PIPE",
+            "stderr=subprocess.PIPE",
+            "timeout=120",
+            "check=False",
+            "start_new_session=True",
+            "umask=0o077",
+            "process.returncode != 0",
+            "or not process.stdout",
+            "or process.stderr",
+            "len(process.stdout) > MAX_SUBPROCESS_OUTPUT_BYTES",
+            "acl_entry.search(process.stdout) is not None",
+            "expected != _exec_target_identity(Path(command[0]))",
+        )
+    ) or "shell=" in acl_source or not exact_direct_guard(
+        acl,
+        acl_guard_expression,
+    ):
+        return False
+
+    seal_source = ast.get_source_segment(source, seal) or ""
+    seal_markers = (
+        "root_before = root.lstat()",
+        "parent_before = root.parent.lstat()",
+        "anchor_before = root.parents[1].lstat()",
+        "container_before = root.parents[2].lstat()",
+        "library_before = root.parents[3].lstat()",
+        "stat.S_IMODE(root_before.st_mode) & 0o7022",
+        "stat.S_IMODE(parent_before.st_mode) & 0o7022",
+        "stat.S_IMODE(anchor_before.st_mode) & 0o7022",
+        "stat.S_IMODE(container_before.st_mode) & 0o7022",
+        "stat.S_IMODE(library_before.st_mode) & 0o7022",
+        "followlinks=False",
+        "part.casefold() for part in relative_path.parts",
+        '"__pycache__" in folded_parts',
+        'relative_path.name.casefold().endswith((".pyc", ".pyo"))',
+        "root not in (unresolved, *unresolved.parents)",
+        "root not in (resolved, *resolved.parents)",
+        "mode & 0o7022",
+        "not stat.S_ISREG(info.st_mode)",
+        "info.st_nlink != 1 or info.st_size > MAX_TREE_FILE_BYTES",
+        "total_size > MAX_TREE_TOTAL_BYTES",
+        "observed_broken != broken",
+        "_identity(root.lstat()) != _identity(root_before)",
+        "_identity(root.parents[3].lstat()) != _identity(library_before)",
+        "_verify_reviewed_framework_acl_seal(root)",
+        "_verify_locked_framework_regular(",
+    )
+    if any(marker not in seal_source for marker in seal_markers):
+        return False
+    seal_parents = {
+        child: parent
+        for parent in ast.walk(seal)
+        for child in ast.iter_child_nodes(parent)
+    }
+    acl_calls = [
+        node
+        for node in ast.walk(seal)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func)
+        == ("_verify_reviewed_framework_acl_seal",)
+    ]
+    locked_calls = [
+        node
+        for node in ast.walk(seal)
+        if isinstance(node, ast.Call)
+        and _python_attribute_path(node.func)
+        == ("_verify_locked_framework_regular",)
+    ]
+    if (
+        len(acl_calls) != 1
+        or len(locked_calls) != 1
+        or acl_calls[0].lineno >= locked_calls[0].lineno
+        or _python_has_constant_false_ancestor(acl_calls[0], seal_parents)
+        or _python_has_constant_false_ancestor(locked_calls[0], seal_parents)
+        or not exact_direct_guard(
+            seal,
+            "'__pycache__' in folded_parts "
+            "or relative_path.name.casefold().endswith(('.pyc', '.pyo'))",
+        )
+        or not exact_direct_guard(
+            seal,
+            "root not in (resolved, *resolved.parents)",
+        )
+        or not exact_direct_guard(
+            seal,
+            "not stat.S_ISREG(info.st_mode)",
+        )
+        or not exact_direct_guard(
+            seal,
+            "info.st_nlink != 1 or info.st_size > MAX_TREE_FILE_BYTES",
+        )
+        or not exact_direct_guard(
+            seal,
+            "_identity(root.lstat()) != _identity(root_before) "
+            "or _identity(root.parent.lstat()) != _identity(parent_before) "
+            "or _identity(root.parents[1].lstat()) != _identity(anchor_before) "
+            "or _identity(root.parents[2].lstat()) != _identity(container_before) "
+            "or _identity(root.parents[3].lstat()) != _identity(library_before)",
+        )
+    ):
+        return False
+
+    core_source = ast.get_source_segment(source, core) or ""
+    if any(
+        marker not in core_source
+        for marker in (
+            "exclusions, expected = _reviewed_framework_core_contract(python_lock)",
+            "observed = build.fingerprint_install_root(",
+            "reviewed_broken_symlinks=_reviewed_broken_framework_symlinks(",
+            "excluded_paths=exclusions",
+            "if observed != expected:",
+        )
+    ) or not exact_direct_guard(core, "observed != expected"):
+        return False
+
+    def relevant_call_sequence(function: ast.FunctionDef) -> list[str]:
+        calls = sorted(
+            (
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and _python_attribute_path(node.func)
+                in {
+                    ("_verify_reviewed_framework_seal",),
+                    ("_verify_reviewed_framework_core",),
+                    ("_run_owned_process",),
+                }
+            ),
+            key=lambda node: (node.lineno, node.col_offset),
+        )
+        return [_python_attribute_path(node.func)[0] for node in calls]
+
+    def verifier_pairs_are_direct(
+        function: ast.FunctionDef,
+        expected_pairs: int,
+    ) -> bool:
+        parents = {
+            child: parent
+            for parent in ast.walk(function)
+            for child in ast.iter_child_nodes(parent)
+        }
+        calls = sorted(
+            (
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and _python_attribute_path(node.value.func)
+                in {
+                    ("_verify_reviewed_framework_seal",),
+                    ("_verify_reviewed_framework_core",),
+                }
+            ),
+            key=lambda node: (node.lineno, node.col_offset),
+        )
+        if len(calls) != expected_pairs * 2:
+            return False
+        for index in range(0, len(calls), 2):
+            seal_statement, core_statement = calls[index : index + 2]
+            parent = parents.get(seal_statement)
+            if (
+                _python_attribute_path(seal_statement.value.func)
+                != ("_verify_reviewed_framework_seal",)
+                or _python_attribute_path(core_statement.value.func)
+                != ("_verify_reviewed_framework_core",)
+                or parent is not parents.get(core_statement)
+                or not hasattr(parent, "body")
+                or parent.body.index(core_statement)
+                != parent.body.index(seal_statement) + 1
+                or _python_has_constant_false_ancestor(seal_statement, parents)
+                or _python_has_constant_false_ancestor(core_statement, parents)
+            ):
+                return False
+        return True
+
+    install_source = ast.get_source_segment(source, install) or ""
+    active_guard = exact_direct_guard_node(install, "active_launcher != interpreter")
+    install_parents = {
+        child: parent
+        for parent in ast.walk(install)
+        for child in ast.iter_child_nodes(parent)
+    }
+    active_guard_parent = install_parents.get(active_guard) if active_guard else None
+    active_guard_following: ast.stmt | None = None
+    if active_guard is not None and hasattr(active_guard_parent, "body"):
+        parent_body = active_guard_parent.body
+        guard_index = parent_body.index(active_guard)
+        if guard_index + 1 < len(parent_body):
+            active_guard_following = parent_body[guard_index + 1]
+    held_launcher_call = (
+        active_guard_following.items[0].context_expr
+        if isinstance(active_guard_following, ast.With)
+        and len(active_guard_following.items) == 1
+        and isinstance(active_guard_following.items[0].context_expr, ast.Call)
+        else None
+    )
+    if (
+        relevant_call_sequence(install)
+        != [
+            "_verify_reviewed_framework_seal",
+            "_verify_reviewed_framework_core",
+            "_run_owned_process",
+            "_verify_reviewed_framework_seal",
+            "_verify_reviewed_framework_core",
+            "_run_owned_process",
+        ]
+        or not verifier_pairs_are_direct(install, 2)
+        or active_guard is None
+        or held_launcher_call is None
+        or _python_attribute_path(held_launcher_call.func) != ("_held_executable",)
+        or len(held_launcher_call.args) != 1
+        or not isinstance(held_launcher_call.args[0], ast.Name)
+        or held_launcher_call.args[0].id != "active_launcher"
+        or not exact_default_root_guard(install)
+        or any(
+            marker not in install_source
+            for marker in (
+                "build.extract_reviewed_installer_package(",
+                "if package.sha256 != package_sha256:",
+                '"/usr/sbin/pkgutil",\n                                "--check-signature",',
+                '"/usr/sbin/spctl",\n                                "--assess",',
+                "with _held_executable(\n                    active_launcher,",
+                "_revalidate_held_executable(\n                        old_launcher,",
+                "with _held_executable(\n                        interpreter,",
+                '(str(interpreter), "-I", "-S", "-c", observer)',
+                "build.verify_python_install_binding(",
+                "result = fingerprint",
+                "PurePosixPath(install_root.as_posix())\n                != DEFAULT_REVIEWED_FRAMEWORK_ROOT",
+            )
+        )
+    ):
+        return False
+
+    build_source = ast.get_source_segment(source, build_exact) or ""
+    if (
+        relevant_call_sequence(build_exact)[:2]
+        != [
+            "_verify_reviewed_framework_seal",
+            "_verify_reviewed_framework_core",
+        ]
+        or not verifier_pairs_are_direct(build_exact, 1)
+        or build_source.find("_verify_reviewed_framework_core(")
+        >= build_source.find("active_python = Path(sys.executable).resolve(strict=True)")
+        or "active_python != framework_python" not in build_source
+        or not exact_default_root_guard(build_exact)
+    ):
+        return False
+    return True
+
+
+def _python_framework_fingerprint_exclusions_are_semantic(source: str) -> bool:
+    """Require exact, ordered, non-overlapping framework fingerprint exclusions."""
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    fingerprint = _python_function(tree, "fingerprint_install_root")
+    if fingerprint is None:
+        return False
+
+    def exact_expression(node: ast.AST, expression: str) -> bool:
+        expected = ast.parse(expression, mode="eval").body
+        return ast.dump(node, include_attributes=False) == ast.dump(
+            expected,
+            include_attributes=False,
+        )
+
+    def direct_build_raise(statement: ast.stmt, message: str) -> bool:
+        return (
+            isinstance(statement, ast.Raise)
+            and isinstance(statement.exc, ast.Call)
+            and _python_attribute_path(statement.exc.func) == ("BuildError",)
+            and len(statement.exc.args) == 1
+            and not statement.exc.keywords
+            and isinstance(statement.exc.args[0], ast.Constant)
+            and statement.exc.args[0].value == message
+        )
+
+    parents = {
+        child: parent
+        for parent in ast.walk(fingerprint)
+        for child in ast.iter_child_nodes(parent)
+    }
+    exclusion_loops = [
+        node
+        for node in ast.walk(fingerprint)
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "raw_path"
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "excluded_paths"
+        and not node.orelse
+    ]
+    order_guards = [
+        node
+        for node in ast.walk(fingerprint)
+        if isinstance(node, ast.If)
+        and exact_expression(
+            node.test,
+            "exclusion_names != sorted(exclusion_names) "
+            "or len(exclusion_names) != len(set(exclusion_names))",
+        )
+    ]
+    overlap_guards = [
+        node
+        for node in ast.walk(fingerprint)
+        if isinstance(node, ast.If)
+        and exact_expression(
+            node.test,
+            "any(candidate[:len(parent)] == parent "
+            "for index, parent in enumerate(normalized_exclusions) "
+            "for candidate in normalized_exclusions[index + 1:])",
+        )
+    ]
+    applications = [
+        node
+        for node in ast.walk(fingerprint)
+        if isinstance(node, ast.If)
+        and exact_expression(
+            node.test,
+            "any(relative.parts[:len(excluded)] == excluded "
+            "for excluded in normalized_exclusions)",
+        )
+        and len(node.body) == 1
+        and isinstance(node.body[0], ast.Continue)
+        and not node.orelse
+    ]
+    cache_applications = [
+        node
+        for node in ast.walk(fingerprint)
+        if isinstance(node, ast.If)
+        and exact_expression(
+            node.test,
+            "'__pycache__' in folded_parts "
+            "or path.name.casefold().endswith(('.pyc', '.pyo'))",
+        )
+        and len(node.body) == 1
+        and isinstance(node.body[0], ast.Continue)
+        and not node.orelse
+    ]
+    selected = (
+        *exclusion_loops,
+        *order_guards,
+        *overlap_guards,
+        *applications,
+        *cache_applications,
+    )
+    if (
+        len(exclusion_loops) != 1
+        or len(order_guards) != 1
+        or len(overlap_guards) != 1
+        or len(applications) != 1
+        or len(cache_applications) != 1
+        or not _python_exact_single_assignment(
+            fingerprint,
+            "folded_parts",
+            "tuple(part.casefold() for part in relative.parts)",
+        )
+        or any(_python_has_constant_false_ancestor(node, parents) for node in selected)
+        or any(
+            len(node.body) != 1
+            or not direct_build_raise(
+                node.body[0],
+                message,
+            )
+            or node.orelse
+            for node, message in (
+                (
+                    order_guards[0],
+                    "Python install root fingerprint exclusions are not ordered",
+                ),
+                (
+                    overlap_guards[0],
+                    "Python install root fingerprint exclusions overlap",
+                ),
+            )
+        )
+    ):
+        return False
+    source_block = ast.get_source_segment(source, fingerprint) or ""
+    for marker in (
+        "relative_path.is_absolute()",
+        "relative_path.as_posix() != name",
+        'any(part in {"", ".", ".."} for part in relative_path.parts)',
+        '"\\\\" in name',
+        '"\\x00" in name',
+        "exclusion_names.append(name)",
+        "normalized_exclusions.append(relative_path.parts)",
+        'raise BuildError("Python install root fingerprint exclusion is unsafe")',
+    ):
+        if marker not in source_block:
+            return False
+    item_info_line = next(
+        node.lineno
+        for node in ast.walk(fingerprint)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "item_info"
+            for target in node.targets
+        )
+    )
+    return (
+        applications[0].lineno < cache_applications[0].lineno < item_info_line
+        and parents.get(applications[0]) is parents.get(cache_applications[0])
     )
 
 
@@ -2667,6 +4657,240 @@ def _python_producer_privatization_is_semantic(source: str) -> bool:
     return True
 
 
+def _reviewed_framework_node_verifier_is_semantic(
+    source: str,
+    tests: str,
+) -> bool:
+    exact_exclusions = (
+        "Resources/English.lproj/Documentation",
+        "bin/pip",
+        "bin/pip3",
+        "bin/pip3.13",
+        "bin/python",
+        "bin/python313",
+        "etc/openssl/cert.pem",
+        "lib/python3.13/site-packages",
+        "share/doc/python3.13/html",
+    )
+    required_source_markers = (
+        'const EXACT_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13";',
+        '  "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";',
+        "const CORE_EXCLUDED_PATHS = Object.freeze([",
+        'const SITE_PACKAGES_PATH = "lib/python3.13/site-packages";',
+        "const ABSENT_PRODUCTION_EXCLUSIONS = Object.freeze(",
+        "const SITE_PACKAGES_README = Object.freeze({",
+        "  size: 119,",
+        '  sha256: "cba8fece8f62c36306ba27a128f124a257710e41fc619301ee97be93586917cb",',
+        "const REVIEWED_BROKEN_SYMLINKS = Object.freeze([",
+        '    path: "Frameworks/Tcl.framework/PrivateHeaders",',
+        '    target: "Versions/Current/PrivateHeaders",',
+        '    path: "Frameworks/Tk.framework/PrivateHeaders",',
+        'const PRODUCER_INSTALL_METHOD = "macos-installer-no-op-framework-component";',
+        "const FRAMEWORK_COMPONENT_CONTRACT = Object.freeze({",
+        '  packageName: "Python_Framework.pkg",',
+        "  noOpPostinstallSize: 17,",
+        '    "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",',
+        '  noOpPostinstallMode: "0755",',
+        "function canonicalJsonBytes(value) {",
+        "function normalizeExclusions(excludedPaths) {",
+        "function requiredOpenFlag(name) {",
+        "function openDirectoryNoFollow(pathname, before) {",
+        "function hashRegularFile(pathname, before) {",
+        "function fingerprintInstallRoot(",
+        "function verifyProductionExclusionClosure(",
+        "function verifyLockValue(lock) {",
+        "function verifyLockContract(lockPath) {",
+        "function verifyStartupEnvironment(environment) {",
+        "function verifyReviewedPythonFramework(options) {",
+        "if (require.main === module) {\n  main();\n}",
+    )
+    if any(marker not in source for marker in required_source_markers):
+        return False
+
+    component_contract = _source_block(
+        source,
+        "const FRAMEWORK_COMPONENT_CONTRACT = Object.freeze({",
+        "\n\nconst MAX_LOCK_BYTES",
+    )
+    normalized_component_contract = re.sub(r"\s+", "", component_contract)
+    expected_component_contract = (
+        "constFRAMEWORK_COMPONENT_CONTRACT=Object.freeze({"
+        + "".join(
+            f"{name}:{json.dumps(value, ensure_ascii=False, separators=(',', ':'))},"
+            for name, value in PYTHON_FRAMEWORK_COMPONENT_CONTRACT.items()
+        )
+        + "});"
+    )
+    if normalized_component_contract != expected_component_contract:
+        return False
+    if any(source.count(f'  "{path}",') != 1 for path in exact_exclusions):
+        return False
+    if (
+        source.count('requiredOpenFlag("O_NOFOLLOW")') != 3
+        or source.count('requiredOpenFlag("O_DIRECTORY")') != 1
+        or source.count("openDirectoryNoFollow(") != 2
+        or source.count("hashRegularFile(") != 3
+        or source.count("isForbiddenBytecodeCachePath(") != 2
+        or source.count("verifyStartupEnvironment(") != 2
+    ):
+        return False
+
+    required_open_flag = _source_block(
+        source,
+        "function requiredOpenFlag(name) {",
+        "\nfunction openDirectoryNoFollow(pathname, before) {",
+    )
+    if (
+        "  const value = fs.constants[name];\n" not in required_open_flag
+        or "  if (!Number.isInteger(value) || value === 0) {\n"
+        not in required_open_flag
+        or '    fail(`Required filesystem flag ${name} is unavailable`);\n'
+        not in required_open_flag
+        or "  return value;\n" not in required_open_flag
+    ):
+        return False
+
+    lock_value_contract = _source_block(
+        source,
+        "function verifyLockValue(lock) {",
+        "\nfunction verifyLockContract(lockPath) {",
+    )
+    if any(
+        marker not in lock_value_contract
+        for marker in (
+            "python.installRoot !== EXACT_ROOT",
+            "python.frameworkCoreFingerprintSha256 !== CORE_DIGEST",
+            "!sameJson(python.frameworkCoreFingerprintExcludedPaths, CORE_EXCLUDED_PATHS)",
+            "!sameJson(python.reviewedBrokenSymlinks, REVIEWED_BROKEN_SYMLINKS)",
+            "distribution.installMethod !== PRODUCER_INSTALL_METHOD",
+            "!sameJson(distribution.frameworkComponent, FRAMEWORK_COMPONENT_CONTRACT)",
+            'fail("Reviewed Python lock differs from the hard-coded framework contract");',
+            "return lock;",
+        )
+    ) or re.search(r"\bfalse\b", lock_value_contract):
+        return False
+    path_lock_contract = _source_block(
+        source,
+        "function verifyLockContract(lockPath) {",
+        "\nfunction parseCliArguments(argv) {",
+    )
+    if re.sub(r"\s+", "", path_lock_contract) != (
+        "functionverifyLockContract(lockPath){"
+        "returnverifyLockValue(readLockFile(lockPath));}"
+    ):
+        return False
+
+    startup_environment = _source_block(
+        source,
+        "function verifyStartupEnvironment(environment) {",
+        "\nfunction verifyReviewedPythonFramework(options) {",
+    )
+    exact_startup_guard = (
+        "  if (\n"
+        '    (environment.NODE_OPTIONS !== undefined && environment.NODE_OPTIONS !== "") ||\n'
+        '    (environment.NODE_PATH !== undefined && environment.NODE_PATH !== "")\n'
+        "  ) {\n"
+        '    fail("Node verifier must be started without NODE_OPTIONS or NODE_PATH");\n'
+        "  }\n"
+        "}"
+    )
+    if startup_environment.rstrip() != (
+        "function verifyStartupEnvironment(environment) {\n" + exact_startup_guard
+    ):
+        return False
+
+    fingerprint = _source_block(
+        source,
+        "function fingerprintInstallRoot(",
+        "\nfunction readLockFile(lockPath) {",
+    )
+    cache_guard = (
+        "        const forbiddenCachePath = isForbiddenBytecodeCachePath(childParts);\n"
+        "        if (forbiddenCachePath && rejectBytecodeCaches) {\n"
+        '          fail("Framework tree contains executable bytecode cache");\n'
+        "        }\n"
+    )
+    cache_offset = fingerprint.find(cache_guard)
+    exclusion_offset = fingerprint.find("        const excluded =\n")
+    lstat_offset = fingerprint.find(
+        '        const info = lstat(child, "Framework entry changed during traversal");'
+    )
+    if not (0 <= lstat_offset < cache_offset < exclusion_offset):
+        return False
+    if any(
+        marker not in fingerprint
+        for marker in (
+            "const descriptor = openDirectoryNoFollow(directory, before);",
+            "item.sha256 = reviewedDigest ?? hashRegularFile(child, info);",
+            "!sameIdentity(before, heldAfter)",
+            "!sameIdentity(before, namedAfter)",
+            "inventory.sort((left, right) => comparePythonStrings(left.path, right.path));",
+            'crypto.createHash("sha256").update(canonicalJsonBytes(inventory)).digest("hex")',
+            "requireProductionExclusionClosure &&",
+            "!observedSitePackages || !observedSitePackagesReadme",
+            "relative === SITE_PACKAGES_README.path",
+            "info.size !== BigInt(SITE_PACKAGES_README.size)",
+            "reviewedDigest !== SITE_PACKAGES_README.sha256",
+        )
+    ):
+        return False
+
+    reviewed_verifier = _source_block(
+        source,
+        "function verifyReviewedPythonFramework(options) {",
+        "\nfunction main() {",
+    )
+    if any(
+        marker not in reviewed_verifier
+        for marker in (
+            'Object.hasOwn(options, "root")',
+            'const hasLockPath = Object.hasOwn(options, "lock");',
+            'const hasLockValue = Object.hasOwn(options, "lockValue");',
+            "if (hasLockPath === hasLockValue) {",
+            'fail("Provide exactly one of lock or lockValue");',
+            'hasLockPath ? "lock" : "lockValue"',
+            "if (root !== EXACT_ROOT) {",
+            "verifyLockContract(options.lock);",
+            "verifyLockValue(options.lockValue);",
+            "const observed = verifyProductionExclusionClosure(root);",
+            "if (observed !== CORE_DIGEST) {",
+        )
+    ) or re.search(r"\bfalse\b", reviewed_verifier):
+        return False
+    main = _source_block(source, "function main() {", "\nmodule.exports =")
+    startup_offset = main.find("    verifyStartupEnvironment(process.env);")
+    argv_offset = main.find(
+        "    const argumentsValue = parseCliArguments(process.argv.slice(2));"
+    )
+    verify_offset = main.find(
+        "    const digest = verifyReviewedPythonFramework(argumentsValue);"
+    )
+    if not (0 <= startup_offset < argv_offset < verify_offset):
+        return False
+
+    required_test_markers = (
+        'test("hard-coded constants exactly match the repository lock", () => {',
+        'test("a held parsed lock value satisfies the same hard-coded contract", () => {',
+        'test("framework verification requires exactly one lock path or held value", () => {',
+        'test("a mutable lock cannot override the hard-coded contract", () => {',
+        'test("every producer-contract field is sealed against lock mutation", async (t) => {',
+        'test("CLI parsing rejects duplicate, missing, and surplus arguments", () => {',
+        'test("startup environment rejects Node preload controls", () => {',
+        'test("known canonical inventory digest matches Python fingerprinting", () => {',
+        'test("excluded subtree contents do not affect the digest", () => {',
+        'test("escaping and absolute symlinks are rejected", () => {',
+        'test("only the exact reviewed broken symlink set is accepted", () => {',
+        'test("cache names are rejected case-insensitively for every file type", async (t) => {',
+        'test("Python-compatible fingerprint mode skips casefolded caches", () => {',
+        'test("production exclusion closure accepts only the reviewed site-packages README", (t) => {',
+        'test("production exclusion closure rejects stale sitecustomize code", (t) => {',
+        'test("production exclusion closure rejects README content tampering", (t) => {',
+        'test("production exclusion closure rejects every other excluded path", (t) => {',
+        'test("filesystem special entries are rejected", () => {',
+    )
+    return all(marker in tests for marker in required_test_markers)
+
+
 def load_inputs() -> dict[str, Any]:
     return {
         "workflow": read(WORKFLOW),
@@ -2674,6 +4898,8 @@ def load_inputs() -> dict[str, Any]:
         "build_script": read(BUILD_SCRIPT),
         "audit_script": read(AUDIT_SCRIPT),
         "python_bootstrap": read(PYTHON_BOOTSTRAP),
+        "framework_verifier": read(FRAMEWORK_VERIFIER),
+        "framework_verifier_tests": read(FRAMEWORK_VERIFIER_TESTS),
         "exact_git_checker": read(EXACT_GIT_CHECKER),
         "exact_git_checker_tests": read(EXACT_GIT_CHECKER_TESTS),
         "exact_node_installer": read(EXACT_NODE_INSTALLER),
@@ -2810,6 +5036,347 @@ def _workflow_steps(workflow: str, job_name: str) -> list[dict[str, str]]:
     return steps
 
 
+def _workflow_python_producer_is_semantic(run: str) -> bool:
+    """Require the exact no-Python framework component producer boundary."""
+
+    markers = (
+        'readonly producer_prefix="${RUNNER_TEMP}/lcf-python-producer."',
+        '/usr/bin/mktemp -d "${producer_prefix}XXXXXXXXXX"',
+        '/bin/chmod 0700 "${producer_root}"',
+        "trap cleanup_producer EXIT",
+        'readonly archive="${producer_root}/python-3.13.14-darwin-arm64.tar.gz"',
+        'readonly hashes="${producer_root}/hashes.sha256"',
+        PYTHON_ARCHIVE_URL,
+        PYTHON_HASHES_URL,
+        'test "$(/usr/bin/stat -f \'%z\' "${archive}")" = "70956513"',
+        'test "$(/usr/bin/stat -f \'%z\' "${hashes}")" = "2775"',
+        PYTHON_ARCHIVE_SHA256,
+        PYTHON_HASHES_SHA256,
+        "'./setup.sh' \\",
+        "'./build_output.txt' \\",
+        "'./python-3.13.14-macos11.pkg'",
+        '/usr/bin/tar -xzf "${archive}" -C "${producer_root}" \\\n  "./python-3.13.14-macos11.pkg"',
+        'test "$(/usr/bin/stat -f \'%z\' "${package}")" = "71544771"',
+        "8e58affb218c155a1dfdc27b291f817129669f8760e7a297adb2e4439ba5d2e8",
+        '/usr/sbin/pkgutil --check-signature "${package}"',
+        '/usr/sbin/spctl --assess --type install --verbose=4 "${package}"',
+        '/usr/sbin/pkgutil --expand "${package}" "${expanded}"',
+        'readonly component="${expanded}/Python_Framework.pkg"',
+        '"${component}/Bom" \\\n    "${component}/PackageInfo" \\\n    "${component}/Payload" \\\n    "${component}/Scripts"',
+        'readonly postinstall="${component}/Scripts/postinstall"',
+        'test "$(/usr/bin/stat -f \'%z\' "${component}/Bom")" = "1404518"',
+        'test "$(/usr/bin/stat -f \'%z\' "${component}/PackageInfo")" = "947"',
+        'test "$(/usr/bin/stat -f \'%z\' "${component}/Payload")" = "32739568"',
+        'test "$(/usr/bin/stat -f \'%z\' "${postinstall}")" = "894"',
+        'test "$(/usr/bin/stat -f \'%Lp\' "${postinstall}")" = "755"',
+        "4e49a4c96076a4855219461f721d510493c6d4f3a7a2a9ad7c981ced723d09bd",
+        "86938c44112e37c4791fdc15ee0d89777ed8b6d0a85bae37f7ebf09839072f5c",
+        "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
+        "7821586a42b4d86b075ed2c87da0a5981e5372070b9c7f6141d09f77cb172417",
+        "printf '#!/bin/sh\\nexit 0\\n' > \"${no_op_postinstall}\"",
+        '/bin/chmod 0755 "${no_op_postinstall}"',
+        'test "$(/usr/bin/stat -f \'%z\' "${no_op_postinstall}")" = "17"',
+        "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+        '/bin/mv -f "${no_op_postinstall}" "${postinstall}"',
+        '/usr/sbin/pkgutil --flatten "${component}" "${no_op_package}"',
+        'readonly no_op_identity="$(/usr/bin/stat -f \'%d:%i:%Lp:%u:%g:%l:%z:%m\' "${no_op_package}")"',
+        'readonly no_op_sha256="$(/usr/bin/shasum -a 256 "${no_op_package}" | /usr/bin/awk \'{print $1}\')"',
+        '/usr/sbin/pkgutil --expand "${no_op_package}" "${reviewed_no_op}"',
+        'readonly reviewed_postinstall="${reviewed_no_op}/Scripts/postinstall"',
+        'for existing_ancestor in \\\n  "/Library" \\\n  "/Library/Frameworks" \\\n  "/Library/Frameworks/Python.framework" \\\n  "/Library/Frameworks/Python.framework/Versions" \\\n  "/Library/Frameworks/Python.framework/Versions/3.13"; do',
+        'if test ! -e "${existing_ancestor}" && \\\n    test ! -L "${existing_ancestor}"; then',
+        '/usr/bin/sudo --non-interactive /usr/sbin/chown -h 0:0 "${existing_ancestor}"',
+        '/usr/bin/sudo --non-interactive /bin/chmod -h -N "${existing_ancestor}"',
+        '/usr/bin/sudo --non-interactive /bin/chmod -h go-w "${existing_ancestor}"',
+        'readonly previous_root_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")"',
+        '"${framework_parent}/.lcf-python-quarantine.XXXXXXXXXX"',
+        '/usr/bin/sudo --non-interactive /bin/mv \\\n    "${framework_root}" "${framework_quarantine}"',
+        'test ! -e "${framework_root}"',
+        'test ! -L "${framework_root}"',
+        '/usr/bin/sudo --non-interactive /usr/sbin/installer \\\n  -pkg "${no_op_package}" -target /',
+        '"${framework_root}")" != "${framework_quarantine_identity}"',
+        "printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE=%s\\n' \\",
+        "printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY=%s\\n' \\",
+        "cleanup_producer",
+    )
+    if any(marker not in run for marker in markers):
+        return False
+    order = (
+        'printf \'%s  %s\\n\' \\\n  "839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34"',
+        '/usr/bin/tar -tzf "${archive}"',
+        '/usr/bin/tar -xzf "${archive}"',
+        '/usr/sbin/pkgutil --check-signature "${package}"',
+        '/usr/sbin/spctl --assess --type install --verbose=4 "${package}"',
+        '/usr/sbin/pkgutil --expand "${package}" "${expanded}"',
+        '/bin/mv -f "${no_op_postinstall}" "${postinstall}"',
+        '/usr/sbin/pkgutil --flatten "${component}" "${no_op_package}"',
+        '/usr/sbin/pkgutil --expand "${no_op_package}" "${reviewed_no_op}"',
+        'for existing_ancestor in \\',
+        'if test -e "${framework_root}" || test -L "${framework_root}"; then',
+        'test ! -e "${framework_root}"',
+        '/usr/bin/sudo --non-interactive /usr/sbin/installer \\',
+        'test -d "/Library/Frameworks/Python.framework/Versions/3.13"',
+    )
+    offsets = [run.find(marker) for marker in order]
+    return (
+        all(offset >= 0 for offset in offsets)
+        and offsets == sorted(offsets)
+        and run.count("/usr/sbin/installer") == 1
+        and run.count("/usr/sbin/pkgutil --flatten") == 1
+        and run.count('/usr/sbin/pkgutil --expand "${no_op_package}"') == 1
+        and run.count(PYTHON_ARCHIVE_URL) == 1
+        and run.count(PYTHON_HASHES_URL) == 1
+        and run.count("1404518") == 2
+        and run.count("32739568") == 2
+        and run.count("4e49a4c96076a4855219461f721d510493c6d4f3a7a2a9ad7c981ced723d09bd") == 2
+        and run.count("86938c44112e37c4791fdc15ee0d89777ed8b6d0a85bae37f7ebf09839072f5c") == 2
+        and run.count("f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391") == 2
+        and run.count("7821586a42b4d86b075ed2c87da0a5981e5372070b9c7f6141d09f77cb172417") == 1
+        and run.count("306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb") == 3
+        and run.count("%d:%i:%Lp:%u:%g:%l:%z:%m") == 5
+        and run.count('"${no_op_sha256}" "${no_op_package}"') == 2
+        and run.count('test ! -e "${framework_root}"') == 2
+        and run.count('test ! -L "${framework_root}"') == 3
+        and run.count(
+            'test "$(/usr/bin/stat -f \'%d:%i:%Lp:%u:%g:%l:%z:%m\' \\\n'
+            '  "${no_op_package}")" = "${no_op_identity}"'
+        ) == 2
+        and "actions/setup-python" not in run
+        and not re.search(r"(?m)^\s*(?:python|python3)(?:\s|$)", run)
+        and "./setup.sh" not in run.replace("'./setup.sh'", "")
+    )
+
+
+def _workflow_held_framework_loader_is_semantic(run: str) -> bool:
+    """Require verifier and lock bytes to remain held across Node verification."""
+
+    loader_prefix = (
+        "/usr/bin/env -i \\\n"
+        '  HOME="${RUNNER_TEMP}" \\\n'
+        '  PATH="/usr/bin:/bin" \\\n'
+        "  NODE_OPTIONS= \\\n"
+        "  NODE_PATH= \\\n"
+        '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" \\\n'
+        "  -e '\n"
+    )
+    loader_suffix = (
+        "\n' \\\n"
+        '  "${framework_verifier}" \\\n'
+        '  "${framework_verifier_size}" \\\n'
+        '  "${framework_verifier_sha256}" \\\n'
+        '  "${framework_lock}" \\\n'
+        '  "${framework_lock_size}" \\\n'
+        '  "${framework_lock_sha256}" \\\n'
+        '  "${framework_root}"'
+    )
+    if run.count(loader_prefix) != 1 or run.count(loader_suffix) != 1:
+        return False
+    loader = run.split(loader_prefix, 1)[1].split(loader_suffix, 1)[0]
+    markers = (
+        '"use strict";',
+        "const expectedArgumentCount = 7;",
+        "const argumentsValue = process.argv.slice(1);",
+        'typeof fs.constants.O_NOFOLLOW !== "number"',
+        "function identity(info) {",
+        "info.dev,\n    info.ino,\n    info.mode,\n    info.nlink,\n"
+        "    info.uid,\n    info.gid,\n    info.size,\n    info.mtimeNs,\n"
+        "    info.ctimeNs,",
+        "function openPinned(pathname, sizeText, expectedSha256) {",
+        "!path.posix.isAbsolute(pathname)",
+        'pathname.includes("\\0")',
+        "!/^[1-9][0-9]*$/.test(sizeText)",
+        "!/^[0-9a-f]{64}$/.test(expectedSha256)",
+        "const expectedSize = BigInt(sizeText);",
+        "if (expectedSize > 1048576n) {",
+        "const namedBefore = fs.lstatSync(pathname, { bigint: true });",
+        "const unsafeMode = (namedBefore.mode & 0o7022n) !== 0n;",
+        "!namedBefore.isFile()",
+        "namedBefore.isSymbolicLink()",
+        "namedBefore.uid !== BigInt(process.geteuid())",
+        "namedBefore.nlink !== 1n",
+        "namedBefore.size !== expectedSize",
+        "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW",
+        "const heldBefore = fs.fstatSync(descriptor, { bigint: true });",
+        "identity(heldBefore) !== identity(namedBefore)",
+        "const content = Buffer.alloc(Number(expectedSize));",
+        "while (offset < content.length) {",
+        "const count = fs.readSync(",
+        "if (count === 0) {",
+        "const heldAfter = fs.fstatSync(descriptor, { bigint: true });",
+        "const namedAfter = fs.lstatSync(pathname, { bigint: true });",
+        "identity(heldAfter) !== identity(heldBefore)",
+        "identity(namedAfter) !== identity(heldBefore)",
+        'crypto.createHash("sha256").update(content).digest("hex") !==\n'
+        "        expectedSha256",
+        "function revalidate(binding) {",
+        "identity(held) !== binding.identity",
+        "identity(named) !== binding.identity",
+        "verifierBinding = openPinned(",
+        "lockBinding = openPinned(lockPath, lockSizeText, lockSha256);",
+        "const reviewedModule = new Module(verifierPath);",
+        "reviewedModule.filename = verifierPath;",
+        "reviewedModule.paths = [];",
+        "reviewedModule._compile(",
+        "decoder.decode(verifierBinding.content)",
+        "verifier.verifyStartupEnvironment(process.env);",
+        "const lockValue = JSON.parse(decoder.decode(lockBinding.content));",
+        "const digest = verifier.verifyReviewedPythonFramework({\n"
+        "    root: frameworkRoot,\n    lockValue,\n  });",
+        "revalidate(verifierBinding);",
+        "revalidate(lockBinding);",
+        "fs.closeSync(lockBinding.descriptor);",
+        "fs.closeSync(verifierBinding.descriptor);",
+    )
+    if any(marker not in loader for marker in markers):
+        return False
+    verification_order = (
+        "verifierBinding = openPinned(",
+        "lockBinding = openPinned(lockPath, lockSizeText, lockSha256);",
+        "const reviewedModule = new Module(verifierPath);",
+        "reviewedModule._compile(",
+        "const lockValue = JSON.parse(decoder.decode(lockBinding.content));",
+        "const digest = verifier.verifyReviewedPythonFramework({",
+        "revalidate(verifierBinding);",
+        "revalidate(lockBinding);",
+        "process.stdout.write(`${digest}\\n`);",
+        "fs.closeSync(lockBinding.descriptor);",
+        "fs.closeSync(verifierBinding.descriptor);",
+    )
+    offsets = [loader.find(marker) for marker in verification_order]
+    return (
+        all(offset >= 0 for offset in offsets)
+        and offsets == sorted(offsets)
+        and loader.count("openPinned(") == 3
+        and loader.count("revalidate(") == 3
+        and loader.count("fs.closeSync(") == 3
+        and not re.search(r"false\s*&&|\|\|\s*true|if\s*\(\s*false", loader)
+        and "require(verifierPath)" not in loader
+        and "fs.readFileSync" not in loader
+        and "child_process" not in loader
+        and "lock: lockPath" not in loader
+    )
+
+
+def _workflow_python_seal_is_semantic(run: str) -> bool:
+    """Require no-follow tree sealing, cache removal, and Node verification."""
+
+    ancestor_targets = (
+        ("library_root", "library_identity"),
+        ("framework_container", "container_identity"),
+        ("framework_anchor", "anchor_identity"),
+        ("framework_parent", "parent_identity"),
+    )
+    ancestor_seal_commands = tuple(
+        command
+        for target, identity_name in ancestor_targets
+        for command in (
+            '/usr/bin/sudo --non-interactive /usr/sbin/chown \\\n'
+            f'  -h 0:0 "${{{target}}}"',
+            '/usr/bin/sudo --non-interactive /bin/chmod \\\n'
+            f'  -h -N "${{{target}}}"',
+            '/usr/bin/sudo --non-interactive /bin/chmod \\\n'
+            f'  -h go-w "${{{target}}}"',
+            'test "$(/usr/bin/stat -f \'%d:%i\' '
+            f'"${{{target}}}")" = "${{{identity_name}}}"',
+        )
+    )
+    root_find_commands = (
+        '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n  "${framework_root}" \\( -type f -o -type d \\) \\\n  -exec /usr/sbin/chown 0:0 \'{}\' \'+\'',
+        '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n  "${framework_root}" \\( -type f -o -type d \\) \\\n  -exec /bin/chmod -N \'{}\' \'+\'',
+        '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n  "${framework_root}" \\( -type f -o -type d \\) \\\n  -exec /bin/chmod go-w \'{}\' \'+\'',
+    )
+    markers = (
+        'readonly library_identity="$(/usr/bin/stat -f \'%d:%i\' "${library_root}")"',
+        'readonly container_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_container}")"',
+        'readonly anchor_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_anchor}")"',
+        'readonly parent_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_parent}")"',
+        'readonly root_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")"',
+        *ancestor_seal_commands,
+        *root_find_commands,
+        '/usr/bin/sudo --non-interactive /usr/bin/find -x \\\n  "${framework_root}" -type f \\\n  \\( -iname \'*.pyc\' -o -iname \'*.pyo\' \\) -delete',
+        '/usr/bin/sudo --non-interactive /usr/bin/find -x \\\n  "${framework_root}" -depth -type d \\\n  -iname \'__pycache__\' -delete',
+        "shopt -s nocasematch",
+        "shopt -u nocasematch",
+        "sealed_listing=\"$(/bin/ls -lde \"${sealed_directory}\")\"",
+        "[[ \"${sealed_listing}\" != *$'\\n'* ]]",
+        "entry_listing=\"$(/bin/ls -lde \"${entry}\")\"",
+        "[[ \"${entry_listing}\" != *$'\\n'* ]]",
+        'readonly quarantine_prefix="${framework_parent}/.lcf-python-quarantine."',
+        '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete',
+        'readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"',
+        'readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"',
+        'readonly framework_verifier_size="27853"',
+        'readonly framework_verifier_sha256="b3e2576fff416be2924adab5470004f5b52fd0eba342b522adad761fe9176c26"',
+        'readonly framework_lock_size="4198"',
+        'readonly framework_lock_sha256="db66ce92b38e83273bf9a089085e76309a1db15494371a4d5a338066b74a4e67"',
+        '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"',
+        '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}"',
+    )
+    if any(marker not in run for marker in markers):
+        return False
+    ancestor_offsets = [run.find(command) for command in ancestor_seal_commands]
+    offsets = [run.find(command) for command in root_find_commands]
+    cache_offset = run.find("\\( -iname '*.pyc' -o -iname '*.pyo' \\) -delete")
+    verifier_offset = run.find("  -e '\n")
+    verifier_success_offset = run.find(
+        'test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"'
+    )
+    quarantine_validation_offset = run.find(
+        'test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"'
+    )
+    quarantine_cleanup_offset = run.find(
+        '"${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete'
+    )
+    node_identity_check = (
+        'test "$(/usr/bin/stat -f \'%d:%i:%Lp:%u:%g:%l:%z:%m\' \\\n'
+        '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \\\n'
+        '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"'
+    )
+    node_hash_check = (
+        "printf '%s  %s\\n' \\\n"
+        '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \\\n'
+        '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \\\n'
+        "  /usr/bin/shasum -a 256 --check"
+    )
+    first_identity = run.find(node_identity_check)
+    last_identity = run.rfind(node_identity_check)
+    first_hash = run.find(node_hash_check)
+    last_hash = run.rfind(node_hash_check)
+    return (
+        offsets == sorted(offsets)
+        and all(offset >= 0 for offset in offsets)
+        and ancestor_offsets == sorted(ancestor_offsets)
+        and all(offset >= 0 for offset in ancestor_offsets)
+        and ancestor_offsets[-1] < offsets[0]
+        and all(
+            run.count(
+                'test "$(/usr/bin/stat -f \'%d:%i\' '
+                f'"${{{target}}}")" = "${{{identity_name}}}"'
+            )
+            == 2
+            for target, identity_name in ancestor_targets
+        )
+        and run.count(
+            'test "$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")" = '
+            '"${root_identity}"'
+        ) == 1
+        and offsets[-1] < cache_offset < verifier_offset
+        < verifier_success_offset
+        <= quarantine_validation_offset < quarantine_cleanup_offset
+        and first_identity < first_hash < verifier_offset
+        < last_identity < last_hash < quarantine_validation_offset
+        and run.count(node_identity_check) == 2
+        and run.count(node_hash_check) == 2
+        and run.count("-exec /usr/sbin/chown 0:0 '{}' '+'") == 1
+        and run.count("-exec /bin/chmod -N '{}' '+'") == 1
+        and run.count("-exec /bin/chmod go-w '{}' '+'") == 1
+        and "-R -P" not in run
+        and "actions/setup-python" not in run
+        and not re.search(r"(?m)^\s*(?:python|python3)(?:\s|$)", run)
+        and _workflow_held_framework_loader_is_semantic(run)
+    )
+
+
 def _canonical_signing_control_text(document: str) -> str:
     continued = re.sub(r"\\\r?\n[ \t]*", "", document)
     yaml_escape = re.compile(
@@ -2908,7 +5475,16 @@ def _canonical_identifier_text(document: str) -> str:
 
 
 def _run_block_has_bypass(block: str) -> bool:
+    held_loader = _workflow_held_framework_loader_is_semantic(block)
+    inside_held_loader = False
     for raw_line in block.splitlines():
+        if held_loader and raw_line == "  -e '":
+            inside_held_loader = True
+            continue
+        if held_loader and inside_held_loader:
+            if raw_line == "' \\":
+                inside_held_loader = False
+            continue
         line = raw_line.strip()
         if not line:
             continue
@@ -3659,6 +6235,8 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "build_script",
         "audit_script",
         "python_bootstrap",
+        "framework_verifier",
+        "framework_verifier_tests",
         "exact_git_checker",
         "exact_git_checker_tests",
         "exact_node_installer",
@@ -3710,10 +6288,13 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     build_script = str(inputs["build_script"])
     audit_script = str(inputs["audit_script"])
     python_bootstrap = str(inputs["python_bootstrap"])
+    framework_verifier = str(inputs["framework_verifier"])
+    framework_verifier_tests = str(inputs["framework_verifier_tests"])
     exact_git_checker = str(inputs["exact_git_checker"])
     exact_git_checker_tests = str(inputs["exact_git_checker_tests"])
     exact_node_installer = str(inputs["exact_node_installer"])
     python_packaging_tests = str(inputs["python_packaging_tests"])
+    python_toolchain_lock = inputs["python_toolchain_lock"]
     gitignore = str(inputs["gitignore"])
     remediation_evidence = str(inputs["remediation_evidence"])
     package = inputs["package"]
@@ -3736,6 +6317,46 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     formal_prepare_release = str(inputs["formal_prepare_release"])
     formal_reseal = str(inputs["formal_reseal"])
     formal_release_policy_tests = str(inputs["formal_release_policy_tests"])
+
+    python_lock = (
+        python_toolchain_lock.get("python")
+        if isinstance(python_toolchain_lock, Mapping)
+        else None
+    )
+    expected_framework_security_lock = {
+        "installRoot": PYTHON_INSTALL_ROOT,
+        "interpreterRelativePath": PYTHON_INTERPRETER_RELATIVE_PATH,
+        "interpreterSize": PYTHON_INTERPRETER_SIZE,
+        "interpreterSha256": PYTHON_INTERPRETER_SHA256,
+        "frameworkBinaryRelativePath": PYTHON_FRAMEWORK_BINARY_RELATIVE_PATH,
+        "frameworkBinarySize": PYTHON_FRAMEWORK_BINARY_SIZE,
+        "frameworkBinarySha256": PYTHON_FRAMEWORK_BINARY_SHA256,
+        "frameworkCoreFingerprintExcludedPaths": list(
+            PYTHON_FRAMEWORK_CORE_EXCLUDED_PATHS
+        ),
+        "frameworkCoreFingerprintSha256": (
+            PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256
+        ),
+        "reviewedBrokenSymlinks": list(PYTHON_REVIEWED_BROKEN_SYMLINKS),
+    }
+    distribution_lock = (
+        python_lock.get("distribution")
+        if isinstance(python_lock, Mapping)
+        else None
+    )
+    if (
+        not isinstance(python_lock, Mapping)
+        or any(
+            python_lock.get(key) != expected
+            for key, expected in expected_framework_security_lock.items()
+        )
+        or not isinstance(distribution_lock, Mapping)
+        or distribution_lock.get("installMethod")
+        != PYTHON_DISTRIBUTION_INSTALL_METHOD
+        or distribution_lock.get("frameworkComponent")
+        != PYTHON_FRAMEWORK_COMPONENT_CONTRACT
+    ):
+        errors.append("reviewed Python framework security lock drifted")
 
     # These source/test/document bindings do not prove that a pathname race is
     # impossible. They make the reviewed implementation, adversarial test corpus,
@@ -3812,8 +6433,18 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "def _communicate_bounded(",
         "def _held_executable(",
         "def _revalidate_held_executable(",
-        "def _run_reviewed_framework_installer(",
-        'LAUNCHER_NAME_INSTALLER_REBIND = "installer-producer-rebind"',
+        "REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS = (",
+        "def _reviewed_framework_security_contract(",
+        "def _reviewed_framework_core_contract(",
+        "def _verify_reviewed_framework_acl_seal(",
+        "def _verify_reviewed_framework_seal(",
+        "def _verify_reviewed_framework_core(",
+        'python_lock["interpreterSize"]',
+        'python_lock["interpreterSha256"]',
+        'python_lock["frameworkBinarySize"]',
+        'python_lock["frameworkBinarySha256"]',
+        'python_lock.get("frameworkCoreFingerprintExcludedPaths")',
+        'python_lock.get("frameworkCoreFingerprintSha256", "")',
         "selectors.DefaultSelector()",
         "inner_build_diagnostic=True",
         '"LCF_PYTHON_BUILD_VENV_FD"',
@@ -3832,9 +6463,6 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "prefix=INSTALLER_ROOT_PREFIX",
         '"/usr/sbin/pkgutil"',
         '"/usr/sbin/spctl"',
-        '"/usr/bin/sudo"',
-        '"--non-interactive"',
-        '"/usr/sbin/installer"',
         '"--install-reviewed-python"',
     )
     for marker in python_bootstrap_markers:
@@ -3842,14 +6470,21 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             errors.append(f"exact Python toolchain bootstrap missing {marker!r}")
     if not _python_exec_runner_signal_contract_is_semantic(python_bootstrap):
         errors.append("exact Python held-cwd launcher signal contract drifted")
-    if not _python_installer_launcher_transition_is_semantic(python_bootstrap):
+    if not _python_reviewed_framework_security_is_semantic(python_bootstrap):
+        errors.append("exact reviewed Python framework security closure drifted")
+    if not _python_framework_fingerprint_exclusions_are_semantic(build_script):
         errors.append(
-            "exact reviewed Python installer launcher transition drifted"
+            "exact reviewed Python framework fingerprint exclusion closure drifted"
         )
+    if not _reviewed_framework_node_verifier_is_semantic(
+        framework_verifier,
+        framework_verifier_tests,
+    ):
+        errors.append("exact reviewed Python framework Node verifier closure drifted")
     if (
         python_bootstrap.count("subprocess.Popen(") != 1
+        or python_bootstrap.count("subprocess.run(") != 1
         or build_script.count("subprocess.Popen(") != 2
-        or "subprocess.run(" in python_bootstrap
         or "subprocess.run(" in build_script
         or "subprocess.run(" in audit_script
         or "subprocess.Popen(" in audit_script
@@ -3929,9 +6564,9 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         or reviewed_python_install.count("_revalidate_bound_file(") != 3
         or reviewed_python_install.count("_revalidate_source_seal(") < 3
         or reviewed_python_install.count(
-            "path_capabilities=installer_path_capabilities"
+            "path_capabilities=distribution_path_capabilities"
         )
-        != 3
+        != 2
         or exact_toolchain_build.count(
             "path_capabilities=toolchain_path_capabilities"
         )
@@ -3949,6 +6584,10 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             for command in exact_installer_commands
         )
         or python_bootstrap.count('"/usr/sbin/spctl"') != 1
+        or '"/usr/sbin/installer"' in python_bootstrap
+        or '"/usr/bin/sudo"' in python_bootstrap
+        or "LAUNCHER_NAME_INSTALLER_REBIND" in python_bootstrap
+        or "LAUNCHER_NAME_INSTALLER_PENDING_SEAL" in python_bootstrap
         or "setup.sh" in reviewed_python_install
     ):
         errors.append("exact Python toolchain bootstrap/seal closure drifted")
@@ -4021,9 +6660,16 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "test_held_toolchain_root_restores_seal_and_has_no_residue",
         "test_held_toolchain_root_replacement_is_preserved_and_cleanup_fails_closed",
         "test_held_toolchain_root_signal_cleanup_has_no_residue",
-        "test_reviewed_python_installer_success_uses_exact_commands_and_cleans_root",
-        "test_reviewed_python_installer_failure_cleans_exact_root",
-        "test_reviewed_python_installer_signal_cleans_exact_root",
+        "test_reviewed_framework_seal_accepts_real_python_org_modes_only_after_seal",
+        "test_reviewed_framework_core_fingerprint_rejects_unlisted_stdlib_drift",
+        "test_reviewed_framework_acl_seal_reads_acl_entries_not_mode_suffix",
+        "test_reviewed_framework_seal_rejects_dependency_alias_and_layout_drift",
+        "test_install_root_fingerprint_excludes_only_exact_dynamic_paths",
+        "test_install_root_fingerprint_rejects_unsafe_dynamic_exclusions",
+        "test_reviewed_python_verification_uses_only_audit_commands_and_cleans_root",
+        "test_reviewed_python_distribution_audit_failure_never_runs_observer",
+        "test_reviewed_python_launcher_drift_is_rejected_before_observer",
+        "test_reviewed_python_package_or_source_drift_cleans_private_root",
         "test_exact_toolchain_build_success_seals_and_cleans_root",
         "test_exact_toolchain_build_failure_cleans_root",
         "test_exact_toolchain_build_signal_cleans_root",
@@ -4043,15 +6689,12 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "test_path_capability_exec_runner_rejects_replaced_child_input",
         "test_owned_process_rejects_path_capability_without_held_cwd",
         "test_owned_process_rejects_regular_keep_fd_metadata_drift",
-        "test_held_executable_accepts_only_explicit_installer_name_rebind",
-        "test_held_executable_installer_rebind_rejects_old_inode_drift",
-        "test_held_executable_installer_rebind_rejects_hidden_old_hardlink",
-        "test_held_executable_terminal_revalidation_rejects_old_bytes_drift",
-        "test_held_executable_rejects_special_mode_replacement",
+        "test_held_executable_rejects_launcher_name_replacement",
+        "test_held_executable_still_rejects_group_writable_framework_launcher",
+        "test_held_executable_rejects_hardlink_count_drift",
+        "test_held_executable_terminal_revalidation_rejects_bytes_drift",
+        "test_held_executable_rejects_privileged_mode_drift",
         "test_held_executable_combines_primary_and_terminal_failure",
-        "test_owned_process_installer_rebind_requires_successful_exact_contract",
-        "test_reviewed_installer_rebind_requires_locked_launcher_and_package",
-        "test_owned_process_rejects_installer_rebind_for_other_commands",
         "test_inner_build_fixed_diagnostic_is_bounded_and_does_not_leak_stderr",
         "test_inner_build_rejects_unreviewed_diagnostic_enum_without_leaking",
         "test_inner_build_diagnostic_writer_emits_only_fixed_enums",
@@ -4082,7 +6725,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
                 f"exact Python held-cwd launcher retained {forbidden!r}"
             )
     if (
-        python_bootstrap.count("cwd_descriptor=source.descriptor") != 8
+        python_bootstrap.count("cwd_descriptor=source.descriptor") != 7
         or python_bootstrap.count("cwd_descriptor=backend_fd") != 1
         or python_bootstrap.count("inner_build_diagnostic=True") != 1
     ):
@@ -4127,6 +6770,24 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
                 'path.join(repositoryRoot, "backend", "uv.lock")',
                 "function validateInstalledToolchainInventory(",
                 "function validatePythonToolchainArtifact(root, manifest, repositoryRoot)",
+                "const EXPECTED_PYTHON_EXECUTION_CLOSURE = Object.freeze({",
+                "const EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS = Object.freeze([",
+                "const EXPECTED_FRAMEWORK_CORE_SHA256 =",
+                "const EXPECTED_PYTHON_INSTALL_METHOD =",
+                "const EXPECTED_FRAMEWORK_COMPONENT = Object.freeze({",
+                "const executionClosure = {",
+                "!sameJson(executionClosure, EXPECTED_PYTHON_EXECUTION_CLOSURE)",
+                "python.frameworkCoreFingerprintExcludedPaths,",
+                "EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS",
+                "python.frameworkCoreFingerprintSha256 !== EXPECTED_FRAMEWORK_CORE_SHA256",
+                "const distribution = assertExactKeys(",
+                '"frameworkComponent",',
+                "const frameworkComponent = assertExactKeys(",
+                "Object.keys(EXPECTED_FRAMEWORK_COMPONENT)",
+                "const componentSizeFields = [",
+                "const componentHashFields = [",
+                "!sameJson(frameworkComponent, EXPECTED_FRAMEWORK_COMPONENT)",
+                "distribution.installMethod !== EXPECTED_PYTHON_INSTALL_METHOD",
                 'manifest.artifacts.pythonBuildToolchain !== TOOLCHAIN_EVIDENCE_NAME',
                 "loadCanonicalJsonAttestation(",
                 "canonicalJson({ schemaVersion: 1, entries: value })",
@@ -4177,6 +6838,92 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
                 errors.append(
                     f"{label} Python toolchain consumer contract missing {marker!r}"
                 )
+    expected_execution_closure = {
+        "interpreterRelativePath": PYTHON_INTERPRETER_RELATIVE_PATH,
+        "interpreterSize": PYTHON_INTERPRETER_SIZE,
+        "interpreterSha256": PYTHON_INTERPRETER_SHA256,
+        "frameworkBinaryRelativePath": PYTHON_FRAMEWORK_BINARY_RELATIVE_PATH,
+        "frameworkBinarySize": PYTHON_FRAMEWORK_BINARY_SIZE,
+        "frameworkBinarySha256": PYTHON_FRAMEWORK_BINARY_SHA256,
+    }
+
+    def compact_javascript(document: str) -> str:
+        return re.sub(r"\s+", "", document)
+
+    def expected_frozen_object(name: str, values: Mapping[str, Any]) -> str:
+        return (
+            f"const{name}=Object.freeze({{"
+            + ",".join(
+                f"{key}:{json.dumps(value, ensure_ascii=False, separators=(',', ':'))}"
+                for key, value in values.items()
+            )
+            + "});"
+        )
+
+    reviewed_before_pack_constants = (
+        (
+            _source_block(
+                formal_before_pack,
+                "const EXPECTED_PYTHON_EXECUTION_CLOSURE = Object.freeze({",
+                "\nconst EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS",
+            ),
+            expected_frozen_object(
+                "EXPECTED_PYTHON_EXECUTION_CLOSURE",
+                expected_execution_closure,
+            ),
+        ),
+        (
+            _source_block(
+                formal_before_pack,
+                "const EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS = Object.freeze([",
+                "\nconst EXPECTED_FRAMEWORK_CORE_SHA256",
+            ),
+            "constEXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS=Object.freeze(["
+            + ",".join(
+                json.dumps(path, separators=(",", ":"))
+                for path in PYTHON_FRAMEWORK_CORE_EXCLUDED_PATHS
+            )
+            + "]);",
+        ),
+        (
+            _source_block(
+                formal_before_pack,
+                "const EXPECTED_FRAMEWORK_CORE_SHA256 =",
+                "\nconst EXPECTED_PYTHON_INSTALL_METHOD",
+            ),
+            "constEXPECTED_FRAMEWORK_CORE_SHA256="
+            + json.dumps(PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256)
+            + ";",
+        ),
+        (
+            _source_block(
+                formal_before_pack,
+                "const EXPECTED_PYTHON_INSTALL_METHOD =",
+                "\nconst EXPECTED_FRAMEWORK_COMPONENT",
+            ),
+            "constEXPECTED_PYTHON_INSTALL_METHOD="
+            + json.dumps(PYTHON_DISTRIBUTION_INSTALL_METHOD)
+            + ";",
+        ),
+        (
+            _source_block(
+                formal_before_pack,
+                "const EXPECTED_FRAMEWORK_COMPONENT = Object.freeze({",
+                "\nconst EXPECTED_FROZEN_CHECKS",
+            ),
+            expected_frozen_object(
+                "EXPECTED_FRAMEWORK_COMPONENT",
+                PYTHON_FRAMEWORK_COMPONENT_CONTRACT,
+            ),
+        ),
+    )
+    if any(
+        compact_javascript(observed) != expected
+        for observed, expected in reviewed_before_pack_constants
+    ):
+        errors.append(
+            "formal/engineering beforePack Python toolchain reviewed constants drifted"
+        )
     if formal_before_pack.count('"pythonToolchain",\n      "inputDigests"') != 2:
         errors.append(
             "formal/engineering beforePack Python toolchain closed build-key "
@@ -4187,6 +6934,16 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "toolchain artifact differs from the manifest",
         "toolchain entry is malformed",
         "toolchain differs from reviewed source locks",
+        "toolchainMutationCases",
+        "rejects reviewed Python toolchain mutation: $name",
+        "missing Python field",
+        "framework core exclusions",
+        "install method",
+        "missing framework component field",
+        "framework component size",
+        "framework component hash",
+        "framework component mode",
+        "framework component package",
     ):
         if marker not in before_pack_tests:
             errors.append(f"beforePack Python toolchain integration tests missing {marker!r}")
@@ -5389,7 +8146,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             "workflow must contain only the repository guard and final cleanup always gate"
         )
     shell_values = re.findall(r"^\s+shell:\s*(\S+)\s*$", workflow, re.MULTILINE)
-    if shell_values != ["bash"] * 8:
+    if shell_values != ["bash"] * 12:
         errors.append("workflow shell selection drifted")
     permission_blocks = re.findall(r"^\s*permissions:\s*$", workflow, re.MULTILINE)
     permission_section = re.search(
@@ -5427,7 +8184,6 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     }
     expected_step_runs = {
         "Enforce engineering-smoke packaging policy": EXPECTED_POLICY_RUN,
-        "Run focused Python sidecar lifecycle tests": EXPECTED_LIFECYCLE_TEST_RUN,
         "Build and audit locked Python sidecar": EXPECTED_PYTHON_BUILD_RUN,
         "Validate Python scratch cleanup": EXPECTED_POST_BUILD_CLEANUP_RUN,
         "Validate Python sidecar provenance": EXPECTED_POST_BUILD_PROVENANCE_RUN,
@@ -5435,6 +8191,69 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     for step_name, expected_run in expected_step_runs.items():
         if steps_by_name.get(step_name, {}).get("run") != expected_run:
             errors.append(f"workflow critical step {step_name!r} drifted")
+    expected_step_run_sha256 = {
+        "Bind locked framework verifier Node": (
+            EXPECTED_FRAMEWORK_NODE_BIND_RUN_SHA256
+        ),
+        "Provision reviewed build Python without executing it": (
+            EXPECTED_FRAMEWORK_PROVISION_RUN_SHA256
+        ),
+        "Seal reviewed build Python framework": (
+            EXPECTED_FRAMEWORK_SEAL_RUN_SHA256
+        ),
+        "Run focused Python sidecar lifecycle tests": (
+            EXPECTED_LIFECYCLE_TEST_RUN_SHA256
+        ),
+    }
+    for step_name, expected_digest in expected_step_run_sha256.items():
+        run = steps_by_name.get(step_name, {}).get("run", "")
+        if hashlib.sha256(run.encode("utf-8")).hexdigest() != expected_digest:
+            errors.append(f"workflow critical step {step_name!r} drifted")
+    framework_setup_order = (
+        "Set up locked Node",
+        "Bind locked framework verifier Node",
+        "Provision reviewed build Python without executing it",
+        "Seal reviewed build Python framework",
+        "Bind exact source provenance",
+    )
+    framework_setup_offsets = [
+        next(
+            (
+                index
+                for index, step in enumerate(workflow_steps)
+                if step.get("name") == name
+            ),
+            -1,
+        )
+        for name in framework_setup_order
+    ]
+    framework_seal_step = steps_by_name.get(
+        "Seal reviewed build Python framework",
+        {},
+    )
+    framework_provision_step = steps_by_name.get(
+        "Provision reviewed build Python without executing it",
+        {},
+    )
+    if (
+        framework_setup_offsets != sorted(framework_setup_offsets)
+        or any(offset < 0 for offset in framework_setup_offsets)
+        or hashlib.sha256(
+            framework_seal_step.get("run", "").encode("utf-8")
+        ).hexdigest()
+        != EXPECTED_FRAMEWORK_SEAL_RUN_SHA256
+        or framework_seal_step.get("document", "").count("        shell: bash")
+        != 1
+    ):
+        errors.append("workflow reviewed Python setup/seal/provenance order drifted")
+    if not _workflow_python_producer_is_semantic(
+        framework_provision_step.get("run", "")
+    ):
+        errors.append("workflow reviewed Python no-exec producer closure drifted")
+    if not _workflow_python_seal_is_semantic(
+        framework_seal_step.get("run", "")
+    ):
+        errors.append("workflow reviewed Python no-follow seal closure drifted")
     focused_step_name = "Run focused Python sidecar lifecycle tests"
     focused_run = steps_by_name.get(focused_step_name, {}).get("run", "")
     if (
@@ -5444,11 +8263,26 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             marker not in focused_run
             for marker in (
                 "export PYTHONDONTWRITEBYTECODE=1",
-                "python -B -m pip install",
+                'readonly lifecycle_prefix="${RUNNER_TEMP}/lcf-python-lifecycle."',
+                '/usr/bin/mktemp -d "${lifecycle_prefix}XXXXXXXXXX"',
+                'chmod 0700 "${lifecycle_root}"',
+                "trap cleanup_lifecycle_root EXIT",
+                "/usr/bin/env -i \\",
+                '"${LCF_REVIEWED_BUILD_PYTHON}" -I -S -m venv \\',
+                '"${lifecycle_root}/venv/bin/python" -I -m pip \\',
+                "--isolated install \\",
+                "--no-deps \\",
+                "--no-compile \\",
+                "--only-binary=:all: \\",
+                "--require-hashes \\",
+                "-r backend/packaging/build-requirements.lock",
+                'UV="${lifecycle_root}/venv/bin/uv"',
+                "/usr/bin/make ci-python-install \\",
                 "backend/.venv/bin/python -B -m pytest -q",
                 "tests/backend/test_python_sidecar_packaging.py",
             )
         )
+        or "python -B -m pip install" in focused_run
     ):
         errors.append(
             "workflow focused lifecycle tests must be the final repo-code step "
@@ -5494,8 +8328,12 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         '"+${LCF_SOURCE_SHA}:${reviewed_source_ref}"',
         'git_private checkout --quiet --detach "${reviewed_source_ref}"',
         'test "$(git_private rev-parse HEAD)" = "${LCF_SOURCE_SHA}"',
+        "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 \\\n    -I -S -c 'import os,sys; print(os.path.realpath(sys.executable))'",
+        '"${bootstrap_python}" -I -S -c '
+        "'import platform; print(platform.python_version())'",
+        '"${bootstrap_python}" -I -S - "${reviewed_source}" <<\'PY\'',
         'cd "${reviewed_source}"',
-        '"${bootstrap_python}" -I tools/check_exact_git_provenance.py \\',
+        '"${bootstrap_python}" -I -S tools/check_exact_git_provenance.py \\',
         "--emit-github-env > \"${provenance_env}\"",
         'test "$(wc -l < "${provenance_env}")" -eq 5',
         'cat "${provenance_env}" >> "${GITHUB_ENV}"',
@@ -5701,13 +8539,17 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         f"LCF_SOURCE_SHA: {SOURCE_EXPRESSION}",
         "LCF_GITHUB_CONTEXT_SHA: ${{ github.sha }}",
         'runs-on: macos-15',
-        'test "$(uname -m)" = "arm64"',
         "node-version: \"22.23.2\"",
-        "python-version: \"3.13.14\"",
         "if: github.repository == 'fredgnr/local-context-forge'",
     ):
         if workflow.count(marker) != 1:
             errors.append(f"workflow exact-source/tool contract missing {marker!r}")
+    if (
+        workflow.count('test "$(uname -m)" = "arm64"') != 2
+        or "actions/setup-python@" in workflow
+        or "python-version:" in workflow
+    ):
+        errors.append("workflow no-Python producer action boundary drifted")
     if workflow.count("tools/check_exact_git_provenance.py") != 2:
         errors.append("workflow exact Git provenance checker call closure drifted")
     for marker in (
@@ -5748,9 +8590,9 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         errors.append("workflow executable run steps contain a fail-open control")
     canonical_workflow_identifiers = _canonical_identifier_text(workflow)
     if (
-        workflow.count('${GITHUB_ENV}') != 6
-        or workflow.count('>> "${GITHUB_ENV}"') != 6
-        or canonical_workflow_identifiers.count("GITHUB_ENV") != 6
+        workflow.count('${GITHUB_ENV}') != 8
+        or workflow.count('>> "${GITHUB_ENV}"') != 8
+        or canonical_workflow_identifiers.count("GITHUB_ENV") != 8
     ):
         errors.append("workflow GITHUB_ENV export surface drifted")
     canonical_signing_controls = _canonical_signing_control_text(workflow)
@@ -5784,17 +8626,19 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         errors.append("workflow must not use the live-source generic renderer build script")
     if "build:companion" in workflow or "audit:companion" in workflow:
         errors.append("workflow must not build or audit the MCP companion")
-    for value in (
-        PYTHON_ARCHIVE_URL,
-        PYTHON_HASHES_URL,
-        PYTHON_ARCHIVE_SHA256,
-        PYTHON_HASHES_SHA256,
+    for value, expected_count in (
+        (PYTHON_ARCHIVE_URL, 2),
+        (PYTHON_HASHES_URL, 2),
+        (PYTHON_ARCHIVE_SHA256, 4),
+        (PYTHON_HASHES_SHA256, 2),
     ):
-        if "\n".join(run_blocks).count(value) != 1:
+        if "\n".join(run_blocks).count(value) != expected_count:
             errors.append("workflow Python source lock drifted")
 
     python_source_blocks = [
-        block for block in run_blocks if PYTHON_ARCHIVE_URL in block
+        block
+        for block in run_blocks
+        if EXPECTED_PYTHON_RUNNER_BINDING in block
     ]
     runner_binding_markers = (
         "printf 'LCF_PYTHON_DISTRIBUTION_ARCHIVE=%s\\n' \"${python_archive}\"",
@@ -5805,6 +8649,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "printf 'LCF_PYTHON_INSTALL_ROOT=%s\\n' \\",
         f'    "{PYTHON_INSTALL_ROOT}"',
     )
+    python_source_block = ""
     if len(python_source_blocks) != 1:
         errors.append("workflow Python runner input binding drifted")
     else:
@@ -5823,7 +8668,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         ):
             errors.append("workflow Python runner input binding drifted")
     for marker in runner_binding_markers:
-        if workflow.count(marker) != 1:
+        if python_source_block.count(marker) != 1:
             errors.append("workflow Python runner input binding drifted")
     for input_name in PYTHON_RUNNER_INPUTS:
         if workflow.count(input_name) != 1:
@@ -6024,6 +8869,11 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     }
     formal_workflow = formal_documents["formal workflow"]
     formal_build = _workflow_job_slice(formal_workflow, "build")
+    if (
+        "actions/setup-python@" in formal_build
+        or "python-version:" in formal_build
+    ):
+        errors.append("formal workflow no-Python producer action boundary drifted")
     formal_build_env = re.search(
         r"^    env:\n(?P<body>(?:      [^\n]+\n)+)\n    steps:\n",
         formal_build,
@@ -6037,14 +8887,18 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         errors.append("formal workflow source provenance environment drifted")
     formal_build_run_blocks = _run_blocks(formal_build)
     if (
-        formal_build.count('${GITHUB_ENV}') != 8
-        or formal_build.count('>> "${GITHUB_ENV}"') != 8
-        or _canonical_identifier_text(formal_build).count("GITHUB_ENV") != 8
+        formal_build.count('${GITHUB_ENV}') != 10
+        or formal_build.count('>> "${GITHUB_ENV}"') != 10
+        or _canonical_identifier_text(formal_build).count("GITHUB_ENV") != 10
     ):
         errors.append("formal workflow GITHUB_ENV provenance export surface drifted")
     formal_steps = _workflow_steps(formal_workflow, "build")
     formal_step_names = [step.get("name", "") for step in formal_steps]
     formal_critical_steps = (
+        "Set up locked Node",
+        "Bind locked framework verifier Node",
+        "Provision reviewed build Python without executing it",
+        "Seal reviewed build Python framework",
         "Bind release provenance",
         "Build locked Python sidecar",
         "Validate Python scratch cleanup",
@@ -6068,6 +8922,54 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         for step in formal_steps
         if step.get("name", "")
     }
+    formal_node_bind_step = formal_steps_by_name.get(
+        "Bind locked framework verifier Node",
+        {},
+    )
+    if (
+        hashlib.sha256(
+            formal_node_bind_step.get("run", "").encode("utf-8")
+        ).hexdigest()
+        != EXPECTED_FRAMEWORK_NODE_BIND_RUN_SHA256
+        or formal_node_bind_step.get("document", "").count(
+            "        shell: bash"
+        )
+        != 1
+    ):
+        errors.append("formal workflow reviewed framework verifier Node step drifted")
+    formal_provision_step = formal_steps_by_name.get(
+        "Provision reviewed build Python without executing it",
+        {},
+    )
+    if (
+        hashlib.sha256(
+            formal_provision_step.get("run", "").encode("utf-8")
+        ).hexdigest()
+        != EXPECTED_FRAMEWORK_PROVISION_RUN_SHA256
+        or formal_provision_step.get("document", "").count(
+            "        shell: bash"
+        )
+        != 1
+        or not _workflow_python_producer_is_semantic(
+            formal_provision_step.get("run", "")
+        )
+    ):
+        errors.append("formal workflow reviewed Python no-exec producer step drifted")
+    formal_seal_step = formal_steps_by_name.get(
+        "Seal reviewed build Python framework",
+        {},
+    )
+    if (
+        hashlib.sha256(
+            formal_seal_step.get("run", "").encode("utf-8")
+        ).hexdigest()
+        != EXPECTED_FRAMEWORK_SEAL_RUN_SHA256
+        or formal_seal_step.get("document", "").count("        shell: bash") != 1
+        or not _workflow_python_seal_is_semantic(
+            formal_seal_step.get("run", "")
+        )
+    ):
+        errors.append("formal workflow reviewed Python framework seal step drifted")
     if (
         formal_steps_by_name.get("Build locked Python sidecar", {}).get("run")
         != EXPECTED_PYTHON_BUILD_RUN
@@ -6151,8 +9053,12 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         'git_private checkout --quiet --detach "${reviewed_source_ref}"',
         'test "$(git_private rev-parse HEAD)" = "${LCF_SOURCE_SHA}"',
         'test "$(git_private rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")" = \\',
+        "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 \\\n    -I -S -c 'import os,sys; print(os.path.realpath(sys.executable))'",
+        '"${bootstrap_python}" -I -S -c '
+        "'import platform; print(platform.python_version())'",
+        '"${bootstrap_python}" -I -S - "${reviewed_source}" <<\'PY\'',
         'cd "${reviewed_source}"',
-        '"${bootstrap_python}" -I tools/check_exact_git_provenance.py \\',
+        '"${bootstrap_python}" -I -S tools/check_exact_git_provenance.py \\',
         '--expected-tag "${GITHUB_REF_NAME}" \\',
         '--emit-github-env > "${provenance_env}"',
         'test "$(wc -l < "${provenance_env}")" -eq 5',
@@ -6602,8 +9508,14 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     engineering_package_scripts = "\n".join(
         str(scripts.get(name, "")) for name in EXPECTED_PACKAGE_SCRIPTS
     )
+    producer_document = framework_provision_step.get("document", "")
+    workflow_launch_surface = (
+        workflow.replace(producer_document, "", 1)
+        if producer_document and workflow.count(producer_document) == 1
+        else workflow
+    )
     launch_surface = (
-        workflow
+        workflow_launch_surface
         + prepare
         + before_pack
         + after_pack
@@ -6639,33 +9551,33 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             "status",
             status,
             (
-                "five remediation attempts `fail` / `superseded`",
-                "sixth exact candidate `not-run`",
+                "six remediation attempts `fail` / `superseded`",
+                "seventh exact candidate `not-run`",
             ),
         ),
         (
             "todo",
             todo,
             (
-                "five remediation attempts `fail` / `superseded`",
-                "sixth exact candidate `not-run`",
+                "six remediation attempts `fail` / `superseded`",
+                "seventh exact candidate `not-run`",
             ),
         ),
         (
             "traceability",
             trace,
             (
-                "first through fifth remediations failed and superseded",
-                "sixth exact candidate not-run",
+                "first through sixth remediations failed and superseded",
+                "seventh exact candidate not-run",
             ),
         ),
         (
             "iteration",
             iteration,
             (
-                "第一次至第五次 remediation technical attempts 均为 "
+                "第一次至第六次 remediation technical attempts 均为 "
                 "`fail` / `superseded`",
-                "第六 exact candidate `not-run`",
+                "第七 exact candidate `not-run`",
             ),
         ),
     )
@@ -6701,7 +9613,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     for marker in (
         "shared exact provenance/build boundary",
         ".github/workflows/desktop-release.yml",
-        "tools/{check_exact_git_provenance.py,exact_node_install.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}",
+        "tools/{check_exact_git_provenance.py,exact_node_install.cjs,verify_reviewed_python_framework.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}",
         "desktop/scripts/buildEngineeringSmokeEntrypoints.cjs",
         "web/scripts/buildEngineeringRenderer.cjs",
         "runtime/{engineering-smoke,renderer-build,python-sidecar-build-manifest}.schema.json",

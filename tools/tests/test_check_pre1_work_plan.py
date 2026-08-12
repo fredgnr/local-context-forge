@@ -258,7 +258,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "(evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging "
             "smoke 不替代 packaged launch/runtime gate；[current PR #21 record]"
             "(evidence/W02/2026-08-07-pr21-remediation.md) binds latest independent `NO-GO`、"
-            "five remediation technical failures / superseded states and sixth exact "
+            "six remediation technical failures / superseded states and seventh exact "
             "candidate execution pending |"
         )
         self.assertIn(original, docs[2])
@@ -295,7 +295,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
     def test_w02_launch_phase_must_remain_not_run(self) -> None:
         docs = documents()
         marker = (
-            "packaged App launch/runtime smoke：五次 remediation 均未启动 bundle，第六 candidate 也尚未运行，\n"
+            "packaged App launch/runtime smoke：六次 remediation 均未启动 bundle，第七 candidate 也尚未运行，\n"
             "    当前 `not-run`"
         )
         docs[3] = replace_once(self, docs[3], marker, marker.replace("`not-run`", "`pass`"))
@@ -312,13 +312,13 @@ class Pre1WorkPlanTests(unittest.TestCase):
     def test_w02_static_assembly_phase_marker_is_required(self) -> None:
         docs = documents()
         marker = (
-            "acceptance `NO-GO`；第一次至第五次 remediation technical attempts 均为 `fail` / `superseded`"
+            "acceptance `NO-GO`；第一次至第六次 remediation technical attempts 均为 `fail` / `superseded`"
         )
         docs[3] = replace_once(
             self,
             docs[3],
             marker,
-            "acceptance `pass`；五次 remediation technical attempts `pass`",
+            "acceptance `pass`；六次 remediation technical attempts `pass`",
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
@@ -545,9 +545,91 @@ class Pre1WorkPlanTests(unittest.TestCase):
         docs[12] += f"\n{CHECKER.W02_PR21_FIFTH_REMEDIATION_AUTHORITY_MARKER}\n"
         self.assertIn(expected, CHECKER.validate_documents(*docs))
 
-    def test_w02_pr21_sixth_candidate_must_remain_not_run(self) -> None:
+    def test_w02_pr21_sixth_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (
+                CHECKER.W02_PR21_SIXTH_REMEDIATION_HEAD,
+                "0000000000000000000000000000000000000000",
+            ),
+            (
+                CHECKER.W02_PR21_SIXTH_REMEDIATION_PARENT,
+                "1111111111111111111111111111111111111111",
+            ),
+            (
+                CHECKER.W02_PR21_SIXTH_REMEDIATION_TREE,
+                "2222222222222222222222222222222222222222",
+            ),
+            (CHECKER.W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_RUN, "31460588224"),
+            (CHECKER.W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_JOB, "93683139743"),
+            (CHECKER.W02_PR21_SIXTH_REMEDIATION_SOURCE_RUN, "31460588211"),
+            (CHECKER.W02_PR21_SIXTH_REMEDIATION_CONTAINER_RUN, "31460588213"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact sixth-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original,
+                    replacement,
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
         docs = documents()
-        marker = CHECKER.W02_PR21_SIXTH_NOT_RUN_MARKER
+        docs[12] += f"\n{CHECKER.W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+    def test_w02_pr21_sixth_context_and_snapshot_coordinates_are_required(self) -> None:
+        mutations = (
+            (
+                f"| synthetic PR context SHA | `{CHECKER.W02_PR21_SIXTH_REMEDIATION_CONTEXT}` |",
+                "| synthetic PR context SHA | `0000000000000000000000000000000000000000` |",
+            ),
+            (
+                "| committed-source snapshot SHA-256 | "
+                f"`{CHECKER.W02_PR21_SIXTH_REMEDIATION_SOURCE_SNAPSHOT_SHA256}` |",
+                f"| committed-source snapshot SHA-256 | `{'0' * 64}` |",
+            ),
+        )
+        for marker, replacement in mutations:
+            with self.subTest(marker=marker):
+                docs = documents()
+                docs[12] = replace_once(self, docs[12], marker, replacement)
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn(
+                    f"W02 PR #21 remediation missing required marker: {marker}",
+                    errors,
+                )
+
+    def test_w02_pr21_historical_sixth_precommit_state_is_preserved(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_SIXTH_PRECOMMIT_NOT_RUN_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+
+    def test_w02_pr21_seventh_candidate_must_remain_not_run(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_SEVENTH_NOT_RUN_MARKER
         docs[12] = replace_once(
             self,
             docs[12],
@@ -561,7 +643,37 @@ class Pre1WorkPlanTests(unittest.TestCase):
         )
         self.assertIn(
             "W02 PR #21 remediation contains forbidden claim: "
-            "| PR #21 sixth remediation technical candidate | `pass`",
+            "| PR #21 seventh remediation technical candidate | `pass`",
+            errors,
+        )
+
+    def test_current_summary_cannot_regress_six_failures_to_five(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
+        docs[6] = replace_once(
+            self,
+            docs[6],
+            marker,
+            marker.replace("six remediation attempts", "five remediation attempts"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "status must contain the exact six-failure/seventh-candidate summary once",
+            errors,
+        )
+
+    def test_current_summary_cannot_regress_seventh_candidate_to_sixth(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
+        docs[6] = replace_once(
+            self,
+            docs[6],
+            marker,
+            marker.replace("seventh exact candidate", "sixth exact candidate"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "status must contain the exact six-failure/seventh-candidate summary once",
             errors,
         )
 

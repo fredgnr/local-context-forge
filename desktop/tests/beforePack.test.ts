@@ -114,6 +114,124 @@ interface Fixture {
   toolchain: JsonObject;
 }
 
+interface ToolchainMutationCase {
+  name: string;
+  mutate: (toolchain: JsonObject) => void;
+  expected: RegExp;
+}
+
+const toolchainMutationCases: ToolchainMutationCase[] = [
+  {
+    name: "missing Python field",
+    mutate: (toolchain) => {
+      delete toolchain.python.interpreterSize;
+    },
+    expected: /Toolchain Python does not match the reviewed schema/
+  },
+  {
+    name: "extra Python field",
+    mutate: (toolchain) => {
+      toolchain.python.unreviewed = true;
+    },
+    expected: /Toolchain Python does not match the reviewed schema/
+  },
+  {
+    name: "interpreter size",
+    mutate: (toolchain) => {
+      toolchain.python.interpreterSize += 1;
+    },
+    expected: /execution closure differs from the reviewed lock/
+  },
+  {
+    name: "interpreter hash",
+    mutate: (toolchain) => {
+      toolchain.python.interpreterSha256 = "0".repeat(64);
+    },
+    expected: /execution closure differs from the reviewed lock/
+  },
+  {
+    name: "framework binary size",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkBinarySize += 1;
+    },
+    expected: /execution closure differs from the reviewed lock/
+  },
+  {
+    name: "framework binary hash",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkBinarySha256 = "0".repeat(64);
+    },
+    expected: /execution closure differs from the reviewed lock/
+  },
+  {
+    name: "framework core exclusions",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkCoreFingerprintExcludedPaths.pop();
+    },
+    expected: /framework core differs from the reviewed lock/
+  },
+  {
+    name: "framework core hash",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkCoreFingerprintSha256 = "0".repeat(64);
+    },
+    expected: /framework core differs from the reviewed lock/
+  },
+  {
+    name: "install method",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.installMethod =
+        "macos-installer-pkg-direct";
+    },
+    expected: /distribution evidence is incomplete/
+  },
+  {
+    name: "missing framework component field",
+    mutate: (toolchain) => {
+      delete toolchain.python.distribution.frameworkComponent.payloadSize;
+    },
+    expected: /framework component does not match the reviewed schema/
+  },
+  {
+    name: "extra framework component field",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.unreviewed = true;
+    },
+    expected: /framework component does not match the reviewed schema/
+  },
+  {
+    name: "framework component size",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.payloadSize += 1;
+    },
+    expected: /framework component differs from the reviewed contract/
+  },
+  {
+    name: "framework component hash",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.payloadSha256 =
+        "0".repeat(64);
+    },
+    expected: /framework component differs from the reviewed contract/
+  },
+  {
+    name: "framework component mode",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.noOpPostinstallMode =
+        "0700";
+    },
+    expected: /framework component differs from the reviewed contract/
+  },
+  {
+    name: "framework component package",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.packageName =
+        "Unreviewed_Framework.pkg";
+    },
+    expected: /framework component differs from the reviewed contract/
+  }
+];
+
 async function writeFixtureFile(
   root: string,
   relative: string,
@@ -536,6 +654,25 @@ describe("Python sidecar beforePack gate", () => {
     expect(summary.files).toBeGreaterThan(5);
     expect(inspected).toEqual(["lcf-service"]);
   });
+
+  it.each(toolchainMutationCases)(
+    "rejects reviewed Python toolchain mutation: $name",
+    async ({ mutate, expected }) => {
+      const fixture = await createFixture();
+      mutate(fixture.toolchain);
+      await writeJson(
+        path.join(
+          fixture.root,
+          "backend",
+          "packaging",
+          "python-sidecar-toolchain.lock.json"
+        ),
+        fixture.toolchain
+      );
+
+      expect(() => auditFixture(fixture)).toThrow(expected);
+    }
+  );
 
   it("rejects hostile local Git config before provenance commands can use it", async () => {
     const canonicalTemporaryParent = await realpath(os.tmpdir());

@@ -510,3 +510,128 @@ technical result、`VAL-PACKAGED-SMOKE-001` 或 release gate 提升为 `pass`。
 第五次失败在 assembled App launch/runtime 之前，第六次尚未执行；两者都没有提供
 `VAL-PACKAGED-SMOKE-001` 要求的 bundle launch/runtime evidence。旧 independent `NO-GO`
 不得被仓库内文本自我提升，W10/W11 继续 locked，public release 继续 `NO-GO`。
+
+## 第六次 remediation 技术执行：`fail` / `superseded`
+
+上一节保留了第六次 candidate 在 commit 之前的 `not-run` 与本地回归计数；这是当时
+bytes 的真实历史，本节不回写或删除它。后续 fresh exact-head Actions 已经执行，
+Engineering 在 reviewed Python installer launcher 的固定安全校验处 fail closed，所以第六次必须
+追加为失败历史，不得用成功的 source/container 子路或之前的 local pass 提升。
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` |
+| exact parent | `c04fe9fce2bc2f0f4350e080f7f02c44699c975d` |
+| exact tree | `911e91d6849266fa75b0efde794ae9b5236f5504` |
+| synthetic PR context SHA | `d01c1b4d9ea2c5f77605859a9af8137580b52d8e` |
+| committed-source snapshot SHA-256 | `dfed1f824a60ebcfb0e8e9facfb46e5552f412b273cb58979596eb3c26d97884` |
+| engineering-smoke run / job | [run `31460588223`](https://github.com/fredgnr/local-context-forge/actions/runs/31460588223) / job `93683139742` |
+| exact-head Desktop source run | [run `31460588210`](https://github.com/fredgnr/local-context-forge/actions/runs/31460588210) |
+| container run | [run `31460588212`](https://github.com/fredgnr/local-context-forge/actions/runs/31460588212) |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第六次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-sixth-remediation-authority: source=cc6ade1113d4753cc6094c5ee23a588dbbe8c18e,parent=c04fe9fce2bc2f0f4350e080f7f02c44699c975d,tree=911e91d6849266fa75b0efde794ae9b5236f5504,assembly-run=31460588223,assembly-job=93683139742,source-run=31460588210,container-run=31460588212,result=fail -->
+
+Engineering run `31460588223` / job `93683139742` 的 packaged-smoke policy `67/67` 与
+exact-Git test `1/1` 均成功，然后在 `Python framework installation` 以固定错误
+`Reviewed Python installer launcher is unsafe` 失败。紧接的 cleanup-only `always()` step
+成功；后续 success-only provenance、renderer、Desktop profile、static assembly/bundle audit 与
+focused lifecycle tests 全部 skipped，remote engineering product artifacts 为 `[]`。该边界直接
+证明的是 fixed launcher 安全检查失败、cleanup success 和 later stages skipped；没有
+assembled App launch/runtime evidence。
+
+Desktop source run `31460588210` 的预期 jobs 全部 success。Containers run
+`31460588212` 也成功，但 PR 路径保持 no publish；成功的 source/container 子路不能
+抵消 Engineering failure。上述 snapshot digest 只密封该 exact source，不是 package digest。
+
+## 第七次 remediation technical candidate：`not-run`
+
+当前修复仍在同一 Draft PR #21 / branch 上处理第六次暴露的 installer framework
+permission/sealing 边界。它还没有 committed exact head/tree，也没有 fresh exact-head
+Desktop source、Engineering 或 Containers Actions；因此不为它伪造 authority marker，technical
+result 保持 `not-run`。本轮不创建新 W/Requirement/TODO/Validation ID。
+
+对 locked `actions/python-versions` archive 内 exact Python.org pkg 的只读解析已把第六次失败
+收窄为真实 payload/postinstall 权限边界；`Versions/3.13/bin/python3.13` 是 `nlink=1` 的 regular
+Mach-O，原 component postinstall 会在启动 framework Python 后执行 recursive group/mode
+变更。第七候选不放宽 `_held_executable` guard，也不再把 `actions/setup-python` 或原完整
+product pkg 当作 reviewed framework producer。当前本地设计先在私有 producer root 中校验
+archive/hash manifest/member、exact outer pkg byte digest、Apple installer signature 与 policy；
+只有原 signed outer pkg 承担签名来源证明。随后只用系统 `pkgutil --expand` 读取
+`Python_Framework.pkg`，逐项绑定 `Bom`、`PackageInfo`、`Payload` 及原 `Scripts/postinstall`
+的 locked size/SHA-256/mode，并把唯一 script entry 原子替换为 exact 17-byte
+`#!/bin/sh\nexit 0\n`、mode `0755`、SHA-256
+`306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb`。只 flatten 该 component，
+再 re-expand 复验三份未变 payload metadata/content 与唯一 no-op postinstall；component installer
+不执行原 full pkg 的其他 components，也没有 package Python 启动。
+
+安装前以 `-e` / `-L` 双重存在性检查绑定并收紧既有 canonical ancestors，使 dangling
+symlink 也在任何 privileged mutation 前 fail closed；若 exact `Versions/3.13` 已存在，则把旧 root
+移动到 root-owned 同 parent quarantine，并确认 target absent，避免 installer merge 把旧的
+excluded/dynamic 内容带入新树。只安装上述 component 后，installer success 仍不授权运行
+framework Python。固定 privileged seal 对 exact root 使用 physical、same-device、no-follow
+遍历，只对 regular file/directory 执行 root ownership、ACL removal 与 group/other-write removal，
+不通过 symlink 改目标或因两条 reviewed broken links 失败；canonical ancestors 另行绑定 identity、
+owner、mode 与无 ACL。随后以大小写无关规则删除任一 component 名为 `__pycache__` 的树和任一
+basename 以 `.pyc` / `.pyo` 结尾的文件，并以同样大小写无关的残留检查 fail closed。
+
+在首次 framework Python 启动前，已绑定 identity/SHA-256 的 Node executable 只执行
+server-reviewed inline loader；该 loader 以 `O_NOFOLLOW` 同时持有 verifier JS 与 toolchain lock，
+逐项校验 owner、mode、`nlink=1`、exact size/SHA-256 与九字段 identity，再从 held verifier bytes
+编译、从 held lock bytes 解析，且在关闭 descriptors 前做终态 identity 复验。随后 verifier 以
+physical/no-follow 遍历验证 owner/mode/type/link、contained relative symlink、exact 两条 reviewed
+broken links 与 cache absence，并按 canonical JSON 重算 core payload digest
+`863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d`。它只排除九个 exact
+dynamic roots；fresh payload 中 `lib/python3.13/site-packages` 只允许 locked `README.txt`，其余
+八个 exclusion roots 必须 absent，故旧安装或任何未列出的额外 path 不能躲进 exclusion。只有
+Node core/fresh-exclusion verifier 成功后，才精确复验并删除同 parent quarantine；该 cleanup
+成功后才允许首次启动 exact framework Python。运行时命名为
+`--install-reviewed-python` 的模式不再安装 package，也不调用 `sudo` / `installer`；它只从私有
+root 重验 locked signed distribution bytes、framework seal/core 与 interpreter binding，然后
+sidecar build 才能继续。这些当前未提交的第七候选设计与本地 bytes 仍不是 fresh macOS
+exact-head Actions authority，也不构成 packaged smoke evidence。
+
+### 第七候选 pre-commit local validation
+
+该记录只绑定 2026-08-11 的本地工作树 bytes。它不是 committed exact-head、macOS Framework
+安装、assembled App launch/runtime 或 Actions authority，因此第七候选 technical result 仍为
+`not-run`，不能提升 `VAL-PACKAGED-SMOKE-001`、W02、W10/W11 或 release 状态。
+
+| 字段 | 值 |
+| --- | --- |
+| local baseline | `HEAD cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` + 未提交 `25`-file bytes；无 seventh candidate commit/tree |
+| local environment | `Linux 6.18.35 x86_64`；CPython `3.12.13`；Node `v24.14.0`；npm `11.9.0` |
+| unavailable boundary | macOS arm64 component install/root seal/pre-Python verifier、assembled `.app` launch/runtime、fresh exact-head Actions 均为 `not-run` |
+
+| Gate | 实际命令 | 结果 |
+| --- | --- | --- |
+| packaged policy / verifier | `PYTHONDONTWRITEBYTECODE=1 make packaged-smoke-policy-check` | exit `0`；Node verifier `42/42`、policy mutation `80/80`、exact-Git `1/1` |
+| Python packaging | `PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' make python-sidecar-packaging-test` | exit `0`；`559 passed / 2 skipped` |
+| formal workflow policy | `PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python -m pytest -q -p no:cacheprovider tests/backend/test_desktop_release_workflow_policy.py` | exit `0`；`11/11` |
+| backend full | `cd backend && PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' .venv/bin/pytest` | exit `0`；`824 passed / 3 skipped / 2 warnings` |
+| Desktop engineering consumer | `cd desktop && npm run test:engineering-smoke && npm run typecheck && npm run build` | exit `0`；`76/76`、typecheck/build pass |
+| pre-1 governance | `python3 -B tools/check_pre1_work_plan.py`；`python3 -B -m unittest tools.tests.test_check_pre1_work_plan` | exit `0`；direct checker pass、`51/51` |
+| workflow/static | `node` + installed `js-yaml` parse two workflows and run `/bin/bash -n` on every `run` block；`python3 -m py_compile`；`node --check`；JSON parse | exit `0`；2 workflows、35 Bash blocks、Python/Node/JSON pass |
+| version / Markdown | `PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python tools/check_version_sync.py`；`PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python tools/check_markdown_links.py` | exit `0`；version/protocol sync pass；89 files |
+| diff/scope | `git diff --check`；`git status --short` | exit `0`；25 个 scoped files，真实 index 为空，无额外未跟踪文件 |
+
+| 项目 | 当前结论 |
+| --- | --- |
+| PR #21 sixth remediation technical attempt | `fail` / `superseded`（绑定 `cc6ade1…` / parent `c04fe9f…` / tree `911e91d…` 与 `31460588210` / `31460588223` / `31460588212`） |
+| PR #21 seventh remediation technical candidate | `not-run`（无 committed exact head/tree；无 fresh exact-head Actions） |
+| latest independent acceptance | `NO-GO`（仍只绑定旧 `8c5fd…` / `785f46…`）；sixth/seventh candidates `pending` |
+| canonical activation | `blocked` |
+| W02 | `in-progress` |
+| `VAL-PACKAGED-SMOKE-001` | `not-run` |
+| W10/W11 | `locked` |
+| packaged App / bundle sidecar launch | `not-run` |
+| public release | `NO-GO` |
+
+第六次失败在 assembled App launch/runtime 之前，第七次尚未执行。当前汇总是六次
+remediation attempts `fail` / `superseded` 与第七次 exact candidate `not-run`；
+`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 继续
+locked，latest independent 结论仍是旧 reviewed head/tree 的 `NO-GO`，canonical activation
+仍 `blocked`，public release 仍 `NO-GO`。

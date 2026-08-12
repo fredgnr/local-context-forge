@@ -122,7 +122,7 @@ jobs:
             "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17" \
             "${hashes}" | /usr/bin/shasum -a 256 --check
           test "$(/usr/bin/grep -Fxc \
-            '839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34  python-3.13.14-darwin-arm64.tar.gz' \
+            '839B14DF8A24415E17D15F222E2AC01D3A90845DEB39DF642E2CC01869140A34 python-3.13.14-darwin-arm64.tar.gz' \
             "${hashes}")" = "1"
           readonly archive_identity="$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' "${archive}")"
           readonly expected_archive_members="$(
@@ -886,15 +886,56 @@ jobs:
             "${RUNNER_TEMP}"/lcf-python-installer.*
           )
           test "${#runner_distribution_binding_residue[@]}" -eq 0
-          cleanup_assertion="source-root-bound"
-          cd "${LCF_REVIEWED_SOURCE_ROOT:?reviewed source root was not bound}"
-          cleanup_assertion="repo-fixed-directory-residue"
-          test ! -e desktop/generated/python-sidecar-build
-          cleanup_assertion="repo-fixed-symlink-residue"
-          test ! -L desktop/generated/python-sidecar-build
-          cleanup_assertion="repo-random-directory-residue"
-          repo_random_residue=(desktop/generated/python-sidecar-build-*)
-          test "${#repo_random_residue[@]}" -eq 0
+          cleanup_assertion="runner-source-residue"
+          runner_source_residue=("${RUNNER_TEMP}"/lcf-reviewed-source.*)
+          if test -z "${LCF_REVIEWED_SOURCE_ROOT:-}"; then
+            test "${#runner_source_residue[@]}" -eq 0
+          else
+            cleanup_assertion="source-root-prefix"
+            readonly source_prefix="${RUNNER_TEMP}/lcf-reviewed-source."
+            source_suffix="${LCF_REVIEWED_SOURCE_ROOT#"${source_prefix}"}"
+            readonly source_suffix
+            test "${LCF_REVIEWED_SOURCE_ROOT}" = "${source_prefix}${source_suffix}"
+            [[ "${source_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]
+            cleanup_assertion="source-root-directory"
+            test -d "${LCF_REVIEWED_SOURCE_ROOT}"
+            cleanup_assertion="source-root-not-symlink"
+            test ! -L "${LCF_REVIEWED_SOURCE_ROOT}"
+            cleanup_assertion="source-root-canonical"
+            source_root_real="$(cd "${LCF_REVIEWED_SOURCE_ROOT}" && /bin/pwd -P)"
+            test "${source_root_real}" = "${LCF_REVIEWED_SOURCE_ROOT}"
+            cleanup_assertion="source-root-owner"
+            test "$(/usr/bin/stat -f '%u' "${LCF_REVIEWED_SOURCE_ROOT}")" = \
+              "$(/usr/bin/id -u)"
+            cleanup_assertion="source-root-mode"
+            test "$(/usr/bin/stat -f '%Lp' "${LCF_REVIEWED_SOURCE_ROOT}")" = \
+              "700"
+            readonly provenance_env="${RUNNER_TEMP}/lcf-reviewed-source-provenance.env"
+            cleanup_assertion="source-provenance-file"
+            test -f "${provenance_env}"
+            cleanup_assertion="source-provenance-not-symlink"
+            test ! -L "${provenance_env}"
+            cleanup_assertion="source-provenance-owner"
+            test "$(/usr/bin/stat -f '%u' "${provenance_env}")" = \
+              "$(/usr/bin/id -u)"
+            cleanup_assertion="runner-source-residue-closure"
+            test "${#runner_source_residue[@]}" -eq 2
+            for source_residue in "${runner_source_residue[@]}"; do
+              case "${source_residue}" in
+                "${LCF_REVIEWED_SOURCE_ROOT}"|"${provenance_env}") ;;
+                *) false ;;
+              esac
+            done
+            cleanup_assertion="source-root-enter"
+            cd "${LCF_REVIEWED_SOURCE_ROOT}"
+            cleanup_assertion="repo-fixed-directory-residue"
+            test ! -e desktop/generated/python-sidecar-build
+            cleanup_assertion="repo-fixed-symlink-residue"
+            test ! -L desktop/generated/python-sidecar-build
+            cleanup_assertion="repo-random-directory-residue"
+            repo_random_residue=(desktop/generated/python-sidecar-build-*)
+            test "${#repo_random_residue[@]}" -eq 0
+          fi
           trap - ERR
 
       - name: Validate Python sidecar provenance

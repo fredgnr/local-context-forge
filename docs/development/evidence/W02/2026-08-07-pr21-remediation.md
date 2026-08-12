@@ -635,3 +635,111 @@ remediation attempts `fail` / `superseded` 与第七次 exact candidate `not-run
 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 继续
 locked，latest independent 结论仍是旧 reviewed head/tree 的 `NO-GO`，canonical activation
 仍 `blocked`，public release 仍 `NO-GO`。
+
+## 第七次 remediation 技术执行：`fail` / `superseded`
+
+上一节保留第七候选提交前的 `not-run` 与本地回归事实；本节只追加它后续的 exact-head
+Actions 结果，不回写旧记录。第七次 exact source、tree 与 fresh runs 如下：
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `aaf3f51f69dfded82b8237e03a871017317e7158` |
+| exact parent | `cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` |
+| exact tree | `60c2c6c2553ff8d10c2faee47ec838b34e378fc5` |
+| synthetic PR context SHA | `6f9a15f65301acd898109203c0ad9381d7290539`（仅为 merge context，不是 source authority） |
+| engineering-smoke run / job | [run `31559498116`](https://github.com/fredgnr/local-context-forge/actions/runs/31559498116) / job `93998717925` |
+| exact-head Desktop source run | [run `31559498106`](https://github.com/fredgnr/local-context-forge/actions/runs/31559498106) |
+| container run | [run `31559498070`](https://github.com/fredgnr/local-context-forge/actions/runs/31559498070) |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第七次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-seventh-remediation-authority: source=aaf3f51f69dfded82b8237e03a871017317e7158,parent=cc6ade1113d4753cc6094c5ee23a588dbbe8c18e,tree=60c2c6c2553ff8d10c2faee47ec838b34e378fc5,context=6f9a15f65301acd898109203c0ad9381d7290539,assembly-run=31559498116,assembly-job=93998717925,source-run=31559498106,container-run=31559498070,result=fail -->
+
+Engineering run 在 `Provision reviewed build Python without executing it` 中先成功校验
+locked archive SHA-256，以及 exact `2775`-byte hashes manifest 的 SHA-256；随后用于绑定
+archive digest/filename 的 whole-line `grep -Fxc` 返回失败。锁定 manifest 的真实行是大写
+digest 加一个 ASCII 空格：
+`839B14DF8A24415E17D15F222E2AC01D3A90845DEB39DF642E2CC01869140A34 python-3.13.14-darwin-arm64.tar.gz`；
+workflow 当时错误期待小写 digest 加两个空格。独立只读复核确认 outer archive member closure
+与代码一致，因此 primary failure 是 exact manifest literal 与锁定 bytes 不相符，不是 tar
+member drift；producer 在 installer/component seal 前已 fail closed。
+
+随后的 `Validate Python scratch cleanup` 因 `LCF_REVIEWED_SOURCE_ROOT` 尚未绑定而再次失败。
+producer 位于 source bootstrap 之前，所以 primary failure 会跳过 `Bind exact source provenance`；
+cleanup-only `always()` gate 却无条件解引用该 success-only 环境变量。这个 secondary failure
+不是 repo scratch residue 证据，也不改变 primary producer failure。后续 provenance、renderer、
+Desktop profile、static assembly/bundle audit 与 focused lifecycle tests 均 skipped；assembled App
+未启动，remote engineering product artifacts 为 `[]`。
+
+Desktop source run `31559498106` success；Containers run `31559498070` success 且 PR 路径没有
+publish。两者不能抵消 Engineering failure，也不能提升 packaged/runtime 或 release gate。
+
+## 第八次 remediation technical candidate：`not-run`
+
+当前修复继续使用同一 Draft PR #21 / branch，且不创建新的 W/Requirement/TODO/Validation ID。
+它尚无 committed exact head/tree 或 fresh exact-head Actions，technical result 必须保持
+`not-run`。第八候选只处理第七次暴露的两个边界：
+
+- 两份 shared workflow 仍先绑定 exact hashes manifest 的 size 与 SHA-256，再用
+  `grep -Fxc` + count `1` 校验上述真实 uppercase/single-space 整行；不使用大小写忽略、substring、
+  filename-only 或宽松 whitespace parsing，archive SHA-256、filename pairing 与 extraction order
+  均未放宽；
+- cleanup 的 runner toolchain/producer/installer residue 断言保持 unconditional。若 reviewed source
+  尚未绑定，必须证明 `${RUNNER_TEMP}/lcf-reviewed-source.*` 为零；若已绑定，则必须复验 random
+  root prefix/suffix、directory/non-symlink/canonical/euid/`0700`、provenance file 与 exact runner
+  closure，之后才进入 source root 运行既有 fixed/symlink/random repo scratch 断言。partial source
+  bootstrap 留下的 root/env file 因 unbound residue 非零而 fail closed；`LCF_REVIEWED_SOURCE_ROOT`
+  仍只表示 exact provenance 已成功，不提前导出；
+- 该 post-build gate 证明 Python build scratch 已清且仍在使用的 reviewed source lifecycle 形态
+  合法，不声称删除 reviewed source root；后续 repo consumers 仍依赖它。exact checkout 后的
+  threat boundary 继续排除主动 same-UID namespace/content writer，本轮也不新增跨步骤 dev:ino
+  或 held-dirfd 的 source-root ABA 抵抗声明；
+- policy checker 同时锁定 exact manifest command、两种 cleanup state 的顺序和 fail-closed closure，
+  并以 removal/digest/filename/`grep`/count/branch/residue/prefix/symlink/bypass mutations 覆盖；formal
+  workflow 复用同一 producer 与 cleanup run bytes。
+
+本轮没有运行 macOS arm64 component install/root seal/pre-Python verifier、assembled `.app`
+launch/runtime，也没有运行 W10/W11、tag、upload、Draft/Release 或 promotion。第八候选仍为
+`not-run`，`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 保持
+locked，latest independent 结论仍是旧 reviewed head/tree 的 `NO-GO`，public release 仍
+`NO-GO`。
+
+### 第八候选 pre-commit local validation
+
+该记录只绑定 2026-08-12 的本地工作树 bytes。它不是 committed exact-head、macOS Framework
+component install/root seal、assembled App launch/runtime 或 Actions authority，因此第八候选
+technical result 仍为 `not-run`，不能提升 `VAL-PACKAGED-SMOKE-001`、W02、W10/W11 或
+release 状态。
+
+| 字段 | 值 |
+| --- | --- |
+| local baseline | `HEAD aaf3f51f69dfded82b8237e03a871017317e7158` / tree `60c2c6c2553ff8d10c2faee47ec838b34e378fc5` + 未提交 `15`-file bytes；无 eighth candidate commit/tree |
+| local environment | `Linux 6.18.35 x86_64`；CPython `3.12.13`；Node `v24.14.0`；npm `11.9.0` |
+| unavailable boundary | macOS arm64 component install/root seal/pre-Python verifier、Bash 3.2 execution、assembled `.app` launch/runtime、fresh exact-head Actions 均为 `not-run` |
+
+| Gate | 实际命令 | 结果 |
+| --- | --- | --- |
+| packaged policy / verifier | `PYTHONDONTWRITEBYTECODE=1 make packaged-smoke-policy-check PYTHON=backend/.venv/bin/python` | exit `0`；Node verifier `42/42`、policy mutation `80/80`、exact-Git `1/1` |
+| Python packaging | `PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' make python-sidecar-packaging-test` | exit `0`；`559 passed / 2 skipped` |
+| formal workflow policy | `PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python -m pytest -q -p no:cacheprovider tests/backend/test_desktop_release_workflow_policy.py` | exit `0`；`11/11` |
+| backend full | `cd backend && PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' .venv/bin/pytest` | exit `0`；`824 passed / 3 skipped / 2 warnings` |
+| Desktop engineering consumer | `cd desktop && npm run test:engineering-smoke && npm run typecheck && npm run build` | exit `0`；`76/76`、typecheck/build pass |
+| pre-1 governance | `python3 -B tools/check_pre1_work_plan.py`；`python3 -B -m unittest tools.tests.test_check_pre1_work_plan` | exit `0`；direct checker pass、`53/53` |
+| workflow/static | PyYAML parse 两份 workflow；每个 detected `run` block 送入 `/bin/bash -n`；`python3 -B -m py_compile` | exit `0`；2 workflows、35 Bash blocks、5 modified Python files pass |
+| version / Markdown | `PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python tools/check_version_sync.py`；`PYTHONDONTWRITEBYTECODE=1 backend/.venv/bin/python tools/check_markdown_links.py` | exit `0`；version/protocol sync pass；89 files |
+| diff/scope | `git diff --check`；`git status --short`；`git diff --numstat` | exit `0`；15 个 scoped tracked files，index 为空，无 untracked file |
+
+本地环境准备先暴露两项非产品 setup failure，并均按仓库声明的安装路径恢复：默认 uv cache
+`/root/.cache/uv` 为只读，改用 `UV_CACHE_DIR=/tmp/lcf-uv-cache` 后 frozen dev sync 成功；重建
+venv 后第一次 Backend aggregate 因尚未执行 Makefile 的 editable MCP install 而在 collection
+报 `No module named 'mcp.server'`，随后执行
+`uv pip install --python backend/.venv/bin/python --editable ./mcp` 并用权威
+`cd backend && .venv/bin/pytest` 重跑得到上述 `824/3`。这些 setup incidents 不改写为 product
+pass，也不影响最终 scoped gate 的成功结果。
+
+第八候选仍没有 committed exact head/tree 或 fresh macOS Actions；上述本地通过只证明当前
+15-file worktree 的 portable policy、source regression 和文档一致性。latest independent
+`NO-GO`、W02 `in-progress`、`VAL-PACKAGED-SMOKE-001 not-run`、W10/W11 locked 与 public
+release `NO-GO` 均保持不变。

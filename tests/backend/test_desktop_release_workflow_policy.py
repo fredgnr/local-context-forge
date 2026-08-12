@@ -330,6 +330,17 @@ def test_runtime_source_urls_and_hashes_are_exactly_locked() -> None:
         node["hashManifestSha256"],
     ):
         assert value in workflow
+    manifest_entry = (
+        "839B14DF8A24415E17D15F222E2AC01D3A90845DEB39DF642E2CC01869140A34 "
+        "python-3.13.14-darwin-arm64.tar.gz"
+    )
+    manifest_binding = (
+        'test "$(/usr/bin/grep -Fxc \\\n'
+        f"            '{manifest_entry}' \\\n"
+        '            "${hashes}")" = "1"'
+    )
+    assert workflow.count(manifest_entry) == 1
+    assert workflow.count(manifest_binding) == 1
     assert "actions/setup-python@" not in workflow
     assert "python-version:" not in workflow
     assert "node-version: \"22.23.2\"" in workflow

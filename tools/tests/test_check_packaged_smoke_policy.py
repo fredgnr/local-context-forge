@@ -2707,13 +2707,13 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "status",
-                "seventh exact candidate `not-run`",
-                "seventh exact candidate `pass`",
+                "eighth exact candidate `not-run`",
+                "eighth exact candidate `pass`",
             ),
             (
                 "trace",
+                "first through seventh remediations failed and superseded",
                 "first through sixth remediations failed and superseded",
-                "first through fifth remediations failed and superseded",
             ),
             (
                 "iteration",
@@ -3028,6 +3028,29 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         producer = runs[0]
         mutations = (
             (CHECKER.PYTHON_ARCHIVE_SHA256, "0" * 64),
+            (CHECKER.EXPECTED_PYTHON_HASH_MANIFEST_BINDING, ""),
+            (
+                CHECKER.PYTHON_HASH_MANIFEST_ENTRY,
+                "039B14DF8A24415E17D15F222E2AC01D3A90845DEB39DF642E2CC01869140A34 "
+                "python-3.13.14-darwin-arm64.tar.gz",
+            ),
+            (
+                CHECKER.PYTHON_HASH_MANIFEST_ENTRY,
+                CHECKER.PYTHON_ARCHIVE_SHA256
+                + "  "
+                + CHECKER.PYTHON_ARCHIVE_NAME,
+            ),
+            (
+                "python-3.13.14-darwin-arm64.tar.gz' \\",
+                "python-3.13.14-darwin-x64.tar.gz' \\",
+            ),
+            ("/usr/bin/grep -Fxc", "/usr/bin/grep -Fc"),
+            (
+                CHECKER.EXPECTED_PYTHON_HASH_MANIFEST_BINDING,
+                CHECKER.EXPECTED_PYTHON_HASH_MANIFEST_BINDING.replace(
+                    '= "1"', '-ge "1"'
+                ),
+            ),
             ("'./setup.sh' \\", "'./setup.py' \\"),
             (
                 'readonly component="${expanded}/Python_Framework.pkg"',
@@ -3447,6 +3470,135 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 )
 
     def test_post_build_cleanup_always_gate_precedes_provenance(self) -> None:
+        cleanup = CHECKER.EXPECTED_POST_BUILD_CLEANUP_RUN
+        self.assertTrue(CHECKER._post_build_cleanup_is_semantic(cleanup))
+        semantic_mutations = (
+            (
+                'set -euo pipefail\ncleanup_assertion="runner-temp-present"',
+                'cleanup_assertion="runner-temp-present"',
+            ),
+            (
+                "trap 'cleanup_status=$?; printf \"lcf-scratch-cleanup: assertion=%s\\n\" "
+                '"${cleanup_assertion}" >&2; exit "${cleanup_status}"\' ERR\n',
+                "",
+            ),
+            ("shopt -s nullglob\n", ""),
+            (
+                'source_suffix="${LCF_REVIEWED_SOURCE_ROOT#"${source_prefix}"}"\n',
+                "",
+            ),
+            (
+                'source_root_real="$(cd "${LCF_REVIEWED_SOURCE_ROOT}" && /bin/pwd -P)"\n',
+                "",
+            ),
+            (
+                'test "${#runner_source_residue[@]}" -eq 0',
+                "true",
+            ),
+            (
+                'test "${#runner_source_residue[@]}" -eq 0',
+                'test "${#runner_source_residue[@]}" -ge 0',
+            ),
+            (
+                'test "${#runner_distribution_binding_residue[@]}" -eq 0\n',
+                "",
+            ),
+            (
+                'test "${LCF_REVIEWED_SOURCE_ROOT}" = '
+                '"${source_prefix}${source_suffix}"',
+                "true",
+            ),
+            ('test ! -L "${LCF_REVIEWED_SOURCE_ROOT}"', "true"),
+            (
+                'test "${#runner_source_residue[@]}" -eq 2',
+                'test "${#runner_source_residue[@]}" -ge 0',
+            ),
+            (
+                'else\n  cleanup_assertion="source-root-prefix"',
+                'else\n  exit 0\n  cleanup_assertion="source-root-prefix"',
+            ),
+            (
+                'test -n "${RUNNER_TEMP:-}"\n',
+                'test -n "${RUNNER_TEMP:-}"\nset +o errexit\n',
+            ),
+            (
+                'test -n "${RUNNER_TEMP:-}"\n',
+                'test -n "${RUNNER_TEMP:-}"\ntrap \':\' ERR\n',
+            ),
+            (
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n',
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n'
+                'test() { /usr/bin/true; }\n',
+            ),
+            (
+                'for source_residue in "${runner_source_residue[@]}"; do\n',
+                'false() { /usr/bin/true; }\n'
+                'for source_residue in "${runner_source_residue[@]}"; do\n',
+            ),
+            (
+                'shopt -s nullglob\n',
+                'shopt -s nullglob\nshopt -u nullglob\n',
+            ),
+            (
+                'test -n "${RUNNER_TEMP:-}"\n',
+                'test -n "${RUNNER_TEMP:-}"\n'
+                'builtin set +e\nbuiltin trap \':\' ERR\n',
+            ),
+            (
+                'test -n "${RUNNER_TEMP:-}"\n',
+                'test -n "${RUNNER_TEMP:-}"\n'
+                'command set +e\ncommand trap \':\' ERR\n',
+            ),
+            (
+                'test -n "${RUNNER_TEMP:-}"\n',
+                'test -n "${RUNNER_TEMP:-}"\n'
+                'eval \'set +e\'\neval \'trap ":" ERR\'\n',
+            ),
+            (
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n',
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n'
+                ':; test() { /usr/bin/true; }\n',
+            ),
+            (
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n',
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n'
+                'eval \'test() { /usr/bin/true; }\'\n',
+            ),
+            (
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n',
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n'
+                '! eval \'test() { /usr/bin/true; }\'\n',
+            ),
+            (
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n',
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n'
+                'X=1 eval \'test() { /usr/bin/true; }\'\n',
+            ),
+            (
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n',
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n'
+                'time eval \'test() { /usr/bin/true; }\'\n',
+            ),
+            (
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n',
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n'
+                '! /bin/bash -c \'rm -f -- "$1"\' _ "${RUNNER_TEMP}/residue"\n',
+            ),
+            (
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n',
+                'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)\n'
+                '! source /tmp/unreviewed-cleanup.sh\n',
+            ),
+        )
+        for old, new in semantic_mutations:
+            with self.subTest(semantic_mutation=old):
+                self.assertIn(old, cleanup)
+                self.assertFalse(
+                    CHECKER._post_build_cleanup_is_semantic(
+                        cleanup.replace(old, new, 1)
+                    )
+                )
+
         current = inputs()
         changed(
             current,
@@ -3475,6 +3627,33 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ("workflow", synchronized_workflow_summary),
             ("formal_workflow", synchronized_formal_workflow_summary),
         ):
+            for old, new in semantic_mutations:
+                with self.subTest(key=key, cleanup_mutation=old):
+                    current = inputs()
+                    yaml_indent = "          "
+                    yaml_old = textwrap.indent(old, yaml_indent)
+                    if yaml_old not in str(current[key]):
+                        yaml_indent = "            "
+                        yaml_old = textwrap.indent(old, yaml_indent)
+                    self.assertIn(yaml_old, str(current[key]))
+                    changed(
+                        current,
+                        key,
+                        yaml_old,
+                        textwrap.indent(new, yaml_indent) if new else "",
+                    )
+                    with summary(current):
+                        errors = CHECKER.validate_policy(current)
+                    self.assertTrue(
+                        any(
+                            "cleanup" in error.lower()
+                            or "critical step" in error.lower()
+                            or "run-step contract" in error.lower()
+                            for error in errors
+                        ),
+                        errors,
+                    )
+
             with self.subTest(key=key, mutation="framework-before-cleanup"):
                 current = inputs()
                 changed(
@@ -3538,7 +3717,18 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             "runner-toolchain-residue",
             "runner-producer-residue",
             "runner-distribution-binding-residue",
-            "source-root-bound",
+            "runner-source-residue",
+            "source-root-prefix",
+            "source-root-directory",
+            "source-root-not-symlink",
+            "source-root-canonical",
+            "source-root-owner",
+            "source-root-mode",
+            "source-provenance-file",
+            "source-provenance-not-symlink",
+            "source-provenance-owner",
+            "runner-source-residue-closure",
+            "source-root-enter",
             "repo-fixed-directory-residue",
             "repo-fixed-symlink-residue",
             "repo-random-directory-residue",

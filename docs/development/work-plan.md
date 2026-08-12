@@ -66,14 +66,20 @@
   success；Engineering `31460588223` / job `93683139742` 在 policy `67/67` 与 exact-Git `1/1`
   通过后以 `Reviewed Python installer launcher is unsafe` 失败，cleanup success、later stages
   skipped、artifacts `[]`；Containers `31460588212` success/no publish。第六次已 technical `fail` /
-  `superseded`、independent `pending`。第七次 exact remediation technical candidate `not-run`（无
-  committed exact head/tree 或 fresh exact-head Actions）。其当前本地设计不使用
+  `superseded`、independent `pending`。第七次 exact `aaf3f51…` / parent `cc6ade1…` / tree
+  `60c2c6c…` 的 Desktop source `31559498106` success；Engineering `31559498116` / job
+  `93998717925` 因 manifest actual uppercase/single-space 与 workflow lowercase/double-space literal
+  不符而 primary fail，cleanup 因 source 未绑定 secondary fail，later stages skipped、artifacts
+  `[]`；Containers `31559498070` success/no publish。第七次已 technical `fail` / `superseded`、
+  independent `pending`。第八次 exact remediation technical candidate `not-run`（无 committed exact
+  head/tree 或 fresh exact-head Actions）。它继承第七候选不使用
   `actions/setup-python` / 原 full pkg；exact outer pkg 验签后只以唯一 17-byte no-op 重打并安装
   `Python_Framework.pkg`，隔离旧 root/确认 target absent，再完成 non-symlink seal、大小写无关
   cache cleanup 与 O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node
   core/fresh-exclusion verification；之后才精确复验/清理
   quarantine，首次 framework Python 位于该 cleanup 后；运行时 install-reviewed 仅验证
-  distribution/binding，不安装或 `sudo`。六次失败均
+  distribution/binding，不安装或 `sudo`；同时把 manifest 真实整行固定为 `grep -Fxc` + count one，
+  cleanup 分成 source-unbound zero-residue 与 source-bound strict source/repo closure。七次失败均
   未启动 assembled App，
   packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。

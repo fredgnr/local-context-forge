@@ -254,9 +254,9 @@ CURRENT_W01_TRACE_MARKER = (
 )
 W02_PHASE_MARKERS = {
     "engineering-smoke boundary/assembly：旧 static technical run 保留；PR #21 independent",
-    "acceptance `NO-GO`；第一次至第六次 remediation technical attempts 均为 `fail` / `superseded`",
-    "第七 exact candidate `not-run`。旧 exact Draft head",
-    "packaged App launch/runtime smoke：六次 remediation 均未启动 bundle，第七 candidate 也尚未运行，\n"
+    "acceptance `NO-GO`；第一次至第七次 remediation technical attempts 均为 `fail` / `superseded`",
+    "第八 exact candidate `not-run`。旧 exact Draft head",
+    "packaged App launch/runtime smoke：七次 remediation 均未启动 bundle，第八 candidate 也尚未运行，\n"
     "    当前 `not-run`",
     "W10/W11 保持 locked",
 }
@@ -379,6 +379,14 @@ W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_RUN = "31460588223"
 W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_JOB = "93683139742"
 W02_PR21_SIXTH_REMEDIATION_SOURCE_RUN = "31460588210"
 W02_PR21_SIXTH_REMEDIATION_CONTAINER_RUN = "31460588212"
+W02_PR21_SEVENTH_REMEDIATION_HEAD = "aaf3f51f69dfded82b8237e03a871017317e7158"
+W02_PR21_SEVENTH_REMEDIATION_PARENT = "cc6ade1113d4753cc6094c5ee23a588dbbe8c18e"
+W02_PR21_SEVENTH_REMEDIATION_TREE = "60c2c6c2553ff8d10c2faee47ec838b34e378fc5"
+W02_PR21_SEVENTH_REMEDIATION_CONTEXT = "6f9a15f65301acd898109203c0ad9381d7290539"
+W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_RUN = "31559498116"
+W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_JOB = "93998717925"
+W02_PR21_SEVENTH_REMEDIATION_SOURCE_RUN = "31559498106"
+W02_PR21_SEVENTH_REMEDIATION_CONTAINER_RUN = "31559498070"
 W02_PR21_AUTHORITY_MARKER = (
     "<!-- w02-pr21-nogo-authority: "
     f"context={W02_PR21_CONTEXT},base={W02_PR21_BASE},"
@@ -446,6 +454,17 @@ W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER = (
     f"source-run={W02_PR21_SIXTH_REMEDIATION_SOURCE_RUN},"
     f"container-run={W02_PR21_SIXTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
 )
+W02_PR21_SEVENTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-seventh-remediation-authority: "
+    f"source={W02_PR21_SEVENTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_SEVENTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_SEVENTH_REMEDIATION_TREE},"
+    f"context={W02_PR21_SEVENTH_REMEDIATION_CONTEXT},"
+    f"assembly-run={W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_SEVENTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_SEVENTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
 W02_PR21_FIFTH_ROOT_CAUSE_LIMIT_MARKER = (
     "这是高置信代码/时序归因，不是 raw log 直接输出的\n"
     "binding root cause"
@@ -453,11 +472,15 @@ W02_PR21_FIFTH_ROOT_CAUSE_LIMIT_MARKER = (
 W02_PR21_SIXTH_PRECOMMIT_NOT_RUN_MARKER = (
     "| PR #21 sixth remediation technical candidate | `not-run`"
 )
-W02_PR21_SEVENTH_NOT_RUN_MARKER = (
+W02_PR21_SEVENTH_PRECOMMIT_NOT_RUN_MARKER = (
     "| PR #21 seventh remediation technical candidate | `not-run`"
 )
+W02_PR21_SEVENTH_NOT_RUN_MARKER = W02_PR21_SEVENTH_PRECOMMIT_NOT_RUN_MARKER
+W02_PR21_EIGHTH_NOT_RUN_MARKER = (
+    "第八次 remediation technical candidate：`not-run`"
+)
 W02_PR21_REMEDIATION_DOCUMENT_SHA256 = (
-    "eaa4d01a0644e4e7aeeac394ed532f05883a2d7be005844ed3db8d69b3208d09"
+    "6f6361bf66082d5bc1eb13a3e2cf9699826f1fb561c65239e5b18777cfefb9fa"
 )
 W02_PR21_REMEDIATION_REQUIRED_MARKERS = {
     "PR #21 independent NO-GO 与 remediation 交接",
@@ -582,8 +605,28 @@ W02_PR21_REMEDIATION_REQUIRED_MARKERS = {
     "Desktop source run `31460588210` 的预期 jobs 全部 success",
     "Containers run\n`31460588212` 也成功，但 PR 路径保持 no publish",
     "第七次 remediation technical candidate：`not-run`",
-    W02_PR21_SEVENTH_NOT_RUN_MARKER,
+    W02_PR21_SEVENTH_PRECOMMIT_NOT_RUN_MARKER,
     "六次\nremediation attempts `fail` / `superseded` 与第七次 exact candidate `not-run`",
+    "第七次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_SEVENTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_SEVENTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_SEVENTH_REMEDIATION_TREE}` |",
+    f"| synthetic PR context SHA | `{W02_PR21_SEVENTH_REMEDIATION_CONTEXT}`",
+    f"run `{W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_SEVENTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_SEVENTH_REMEDIATION_CONTAINER_RUN}`",
+    "digest 加一个 ASCII 空格",
+    "workflow 当时错误期待小写 digest 加两个空格",
+    "cleanup-only `always()` gate 却无条件解引用该 success-only 环境变量",
+    "| technical result | **`fail`**；第七次 remediation attempt 已 `superseded` |",
+    W02_PR21_EIGHTH_NOT_RUN_MARKER,
+    "它尚无 committed exact head/tree 或 fresh exact-head Actions",
+    "第八候选仍为\n`not-run`",
+    "第八候选 pre-commit local validation",
+    "| local baseline | `HEAD aaf3f51f69dfded82b8237e03a871017317e7158` / tree `60c2c6c2553ff8d10c2faee47ec838b34e378fc5` + 未提交 `15`-file bytes",
+    "direct checker pass、`53/53`",
+    "默认 uv cache\n`/root/.cache/uv` 为只读",
     "| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…`）；本候选 `pending` |",
     "| latest independent acceptance | `NO-GO`",
     "| W02 | `in-progress` |",
@@ -604,12 +647,15 @@ W02_PR21_REMEDIATION_FORBIDDEN_CLAIMS = {
     "| PR #21 sixth remediation technical candidate | `pass`",
     "| PR #21 sixth remediation technical attempt | `pass`",
     "| PR #21 seventh remediation technical candidate | `pass`",
+    "| PR #21 seventh remediation technical attempt | `pass`",
+    "| PR #21 eighth remediation technical candidate | `pass`",
+    "第八次 remediation technical candidate：`pass`",
     "raw log 直接证明 binding root cause",
 }
 
 W02_STATUS_CURRENT_SUMMARY = (
     "| 当前结论 | **W02 in-progress：latest independent `NO-GO`（仅绑定旧 reviewed "
-    "head/tree）；six remediation attempts `fail` / `superseded`；seventh exact "
+    "head/tree）；seven remediation attempts `fail` / `superseded`；eighth exact "
     "candidate `not-run`（无 committed exact head/tree；无 fresh exact-head Actions）；"
     "packaged launch/runtime `not-run`；W10/W11 locked；public release NO-GO** |"
 )
@@ -619,15 +665,9 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         "evidence/W02/2026-08-07-pr21-remediation.md",
         "reviewed `8c5fd232…` / tree `785f4656…`",
         "独立判定为 `NO-GO`",
-        "exact `9f7d5d…` / tree `ea8e62…`",
-        "exact `9ecf0e…` / tree `ee8271…`",
-        "第三次 exact `2665ec…` / tree\n  `c3cd17…`",
-        "第四次 exact `c2be665f…` / tree `f90b527b…`",
-        "第五次 exact\n  `c04fe9f…` / parent `c2be665f…` / tree `2f8b3ace…`",
-        "第五次已 technical `fail` /\n  `superseded`",
-        "第六次 exact\n  `cc6ade1…` / parent `c04fe9f…` / tree `911e91d…`",
-        "第六次已 technical `fail` /\n  `superseded`",
-        "第七次 exact remediation technical candidate `not-run`",
+        "第七次 exact `aaf3f51…` / parent `cc6ade1…` / tree\n  `60c2c6c…`",
+        "第七次已 technical `fail` / `superseded`",
+        "第八次 exact remediation technical candidate `not-run`",
         "`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`",
     },
     "TODO": {
@@ -635,72 +675,44 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_REVIEWED_TREE,
         "独立判定为 `NO-GO`",
         "first remediation technical attempt `fail` / `superseded`",
-        W02_PR21_SECOND_REMEDIATION_HEAD,
-        W02_PR21_SECOND_REMEDIATION_TREE,
-        "second remediation technical attempt 同样 `fail` /\n`superseded`",
-        W02_PR21_THIRD_REMEDIATION_HEAD,
-        W02_PR21_THIRD_REMEDIATION_TREE,
-        "third remediation technical attempt 仍为\n`fail` / `superseded`",
-        W02_PR21_FOURTH_REMEDIATION_HEAD,
-        W02_PR21_FOURTH_REMEDIATION_TREE,
-        "fourth remediation technical attempt 也为\n`fail` / `superseded`",
-        W02_PR21_FIFTH_REMEDIATION_HEAD,
-        W02_PR21_FIFTH_REMEDIATION_PARENT,
-        W02_PR21_FIFTH_REMEDIATION_TREE,
-        "fifth remediation technical attempt 也已 `fail` /\n`superseded`",
-        W02_PR21_SIXTH_REMEDIATION_HEAD,
-        W02_PR21_SIXTH_REMEDIATION_PARENT,
-        W02_PR21_SIXTH_REMEDIATION_TREE,
-        "sixth remediation\ntechnical attempt 也已 `fail` / `superseded`",
-        "seventh exact remediation technical candidate\n`not-run`",
+        W02_PR21_SEVENTH_REMEDIATION_HEAD,
+        W02_PR21_SEVENTH_REMEDIATION_PARENT,
+        W02_PR21_SEVENTH_REMEDIATION_TREE,
+        "seventh remediation technical attempt 也已\n`fail` / `superseded`",
+        "eighth exact remediation\ntechnical candidate `not-run`",
         "W10/W11 保持 locked",
     },
     "traceability": {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "independent `NO-GO`",
-        "first `9f7d5d…`、second `9ecf0e…`、third `2665ec…`、fourth `c2be665f…`、fifth `c04fe9f…`、sixth `cc6ade1…` remediations technical `fail` / `superseded` appended",
-        "seventh exact candidate `not-run`",
+        W02_PR21_SEVENTH_REMEDIATION_HEAD,
+        W02_PR21_SEVENTH_REMEDIATION_PARENT,
+        W02_PR21_SEVENTH_REMEDIATION_TREE,
+        "seventh `aaf3f51…` remediations technical `fail` / `superseded` appended",
+        "eighth exact candidate `not-run`",
         "W10/W11 locked",
     },
     "iteration": {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "latest independent `NO-GO`",
-        W02_PR21_SECOND_REMEDIATION_HEAD,
-        W02_PR21_SECOND_REMEDIATION_TREE,
-        W02_PR21_THIRD_REMEDIATION_HEAD,
-        W02_PR21_THIRD_REMEDIATION_TREE,
-        W02_PR21_FOURTH_REMEDIATION_HEAD,
-        W02_PR21_FOURTH_REMEDIATION_TREE,
-        W02_PR21_FIFTH_REMEDIATION_HEAD,
-        W02_PR21_FIFTH_REMEDIATION_PARENT,
-        W02_PR21_FIFTH_REMEDIATION_TREE,
-        W02_PR21_SIXTH_REMEDIATION_HEAD,
-        W02_PR21_SIXTH_REMEDIATION_PARENT,
-        W02_PR21_SIXTH_REMEDIATION_TREE,
-        "同样 technical `fail` / `superseded`；第七次 exact",
-        "seventh exact remediation technical candidate | `not-run`",
+        W02_PR21_SEVENTH_REMEDIATION_HEAD,
+        W02_PR21_SEVENTH_REMEDIATION_PARENT,
+        W02_PR21_SEVENTH_REMEDIATION_TREE,
+        "也为 technical `fail` / `superseded`；第八次 exact",
+        "eighth exact remediation technical candidate | `not-run`",
         "W10/W11 保持 locked",
     },
     "status": {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "latest independent `NO-GO`",
-        W02_PR21_SECOND_REMEDIATION_HEAD,
-        W02_PR21_SECOND_REMEDIATION_TREE,
-        W02_PR21_THIRD_REMEDIATION_HEAD,
-        W02_PR21_THIRD_REMEDIATION_TREE,
-        W02_PR21_FOURTH_REMEDIATION_HEAD,
-        W02_PR21_FOURTH_REMEDIATION_TREE,
-        W02_PR21_FIFTH_REMEDIATION_HEAD,
-        W02_PR21_FIFTH_REMEDIATION_PARENT,
-        W02_PR21_FIFTH_REMEDIATION_TREE,
-        W02_PR21_SIXTH_REMEDIATION_HEAD,
-        W02_PR21_SIXTH_REMEDIATION_PARENT,
-        W02_PR21_SIXTH_REMEDIATION_TREE,
-        "six remediation attempts `fail` / `superseded`",
-        "seventh exact candidate `not-run`",
+        W02_PR21_SEVENTH_REMEDIATION_HEAD,
+        W02_PR21_SEVENTH_REMEDIATION_PARENT,
+        W02_PR21_SEVENTH_REMEDIATION_TREE,
+        "seven remediation attempts `fail` / `superseded`",
+        "eighth exact candidate `not-run`",
         "W10/W11 locked",
         "public release NO-GO",
     },
@@ -708,19 +720,19 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "independent `NO-GO`",
-        "first/second/third/fourth/fifth/sixth remediation technical attempts `fail` / `superseded`",
-        W02_PR21_SIXTH_REMEDIATION_HEAD,
-        W02_PR21_SIXTH_REMEDIATION_PARENT,
-        W02_PR21_SIXTH_REMEDIATION_TREE,
-        "seventh exact candidate `not-run`",
+        "first through seventh remediation technical attempts `fail` / `superseded`",
+        W02_PR21_SEVENTH_REMEDIATION_HEAD,
+        W02_PR21_SEVENTH_REMEDIATION_PARENT,
+        W02_PR21_SEVENTH_REMEDIATION_TREE,
+        "eighth exact candidate `not-run`",
         "W10/W11 locked",
     },
     "parent iteration": {
         "reviewed `8c5fd232…` / tree `785f4656…`",
         "independent `NO-GO`",
-        "first through sixth attempts `fail` / `superseded`",
-        "seventh `not-run`",
-        "latest failed `cc6ade1…` / parent `c04fe9f…` / tree `911e91d…`",
+        "first through seventh attempts `fail` / `superseded`",
+        "eighth `not-run`",
+        "latest failed `aaf3f51…` / parent `cc6ade1…` / tree `60c2c6c…`",
         "W10/W11 locked",
     },
 }
@@ -1028,6 +1040,10 @@ def validate_documents(
         errors.append(
             "W02 PR #21 remediation must contain the exact sixth-attempt authority marker once"
         )
+    if w02_remediation.count(W02_PR21_SEVENTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact seventh-attempt authority marker once"
+        )
     if (
         hashlib.sha256(w02_remediation.encode("utf-8")).hexdigest()
         != W02_PR21_REMEDIATION_DOCUMENT_SHA256
@@ -1056,7 +1072,7 @@ def validate_documents(
                 errors.append(f"{label} missing current PR #21 NO-GO marker: {marker}")
     if status.count(W02_STATUS_CURRENT_SUMMARY) != 1:
         errors.append(
-            "status must contain the exact six-failure/seventh-candidate summary once"
+            "status must contain the exact seven-failure/eighth-candidate summary once"
         )
 
     r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)

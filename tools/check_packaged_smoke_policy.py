@@ -14,7 +14,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
 EXPECTED_WORKFLOW_SHA256 = (
-    "d471aac6f17d26f0c4caf8588077c15dddfd4421011b1965ad0d39eac90424c0"
+    "9423b02a1e429471106536a2ce84d0ff5795af475f0beb7010276aaeb8dc20ff"
 )
 MAKEFILE = ROOT / "Makefile"
 BUILD_SCRIPT = ROOT / "tools" / "build_python_sidecar.py"
@@ -42,7 +42,7 @@ REMEDIATION_EVIDENCE = (
     / "2026-08-07-pr21-remediation.md"
 )
 EXPECTED_REVIEWED_INPUT_SHA256 = {
-    "workflow": "d471aac6f17d26f0c4caf8588077c15dddfd4421011b1965ad0d39eac90424c0",
+    "workflow": "9423b02a1e429471106536a2ce84d0ff5795af475f0beb7010276aaeb8dc20ff",
     "makefile": "0406bfd27e312250c48d27899ccff958f25b9fe347871e7643950c437f688977",
     "build_script": "3cc787877d1fb65b8b551911a132400a0fd8e2d3eaf543975eceb88b131d1c19",
     "audit_script": "d3b2d638e28981915f346ead114f86f8bc82ddbbfb91f15416bc3127866504c9",
@@ -54,7 +54,7 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
     "python_packaging_tests": "5626799f953939294bc7aaf66e7bd976c063864c5068c6dae7df35a7e5f972d9",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "eaa4d01a0644e4e7aeeac394ed532f05883a2d7be005844ed3db8d69b3208d09",
+    "remediation_evidence": "6f6361bf66082d5bc1eb13a3e2cf9699826f1fb561c65239e5b18777cfefb9fa",
     "package": "7d4a247182d89a83734e151df373215f30c3932c7cb99c295c48900baea6e1e7",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
@@ -86,11 +86,11 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "formal_prepare_release": "86f42e539c4c9825760de56ccd07409b1cec07ac588380f4e64da41612df3311",
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
-    "formal_workflow": "1ab2d14b74dc4d24745bd8f76b0e0e80da4ba39ee796966523ff3dd40077c495",
-    "status": "eb84249ee5e39baa61ea6e33fb9b8cca5ffb9a9ea042a9860ba13188ee0ab9e4",
-    "todo": "6b10fb0f1f09c3a84c40334fc7c73c048d1da96dac368424f145fb2327933e9e",
-    "trace": "f588982b4826c81659a2d5aecd933318deea99796309cec7a103b55f082aa6bd",
-    "iteration": "9fe28af6c3ddf68ba8046b796e71bbe3472ff4c9ff797a5dcf8e9c4726d762c4",
+    "formal_workflow": "0ac61f3ad570b107121b11ba03440662b5e02530bf3e1fd3ec9895685114ea69",
+    "status": "ad18b998be2cf3dfb46012494e379d5d0007aa1df06059d7628c19f3c8e84dcb",
+    "todo": "87f42ac51546b42dbeb00d40e768564b5f521582d237c906764269ca5792a878",
+    "trace": "e2dfade5d20a9090cd0468f93027354449bfb95f1e214300c94ec9b5fea63306",
+    "iteration": "9981e12f494fb47923dba982bc376da1f05349b258114c155dfc7e14dfcd929c",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -324,7 +324,7 @@ EXPECTED_FORMAL_BOUNDARY_SHA256 = {
         "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5"
     ),
     "formal workflow": (
-        "1ab2d14b74dc4d24745bd8f76b0e0e80da4ba39ee796966523ff3dd40077c495"
+        "0ac61f3ad570b107121b11ba03440662b5e02530bf3e1fd3ec9895685114ea69"
     ),
 }
 STATUS = ROOT / "docs" / "development" / "status.md"
@@ -455,7 +455,7 @@ EXPECTED_FRAMEWORK_NODE_BIND_RUN_SHA256 = (
     "37b18d403af947f37679119bdec8309417ea7363139cd3db602d162b217da689"
 )
 EXPECTED_FRAMEWORK_PROVISION_RUN_SHA256 = (
-    "a5f9f62ccf7d4d76a612a00f80a855c350bd55336acdbe4b000d02e4df0129b5"
+    "5a3c686462d652a27417f57f5aad439e1c2e8c838549207714750a269cd32db5"
 )
 EXPECTED_FRAMEWORK_SEAL_RUN_SHA256 = (
     "b577ba78a526768e4a16d33b23d6bbc5ab8e871c5f25340193b8c40e9001ec72"
@@ -517,15 +517,56 @@ runner_distribution_binding_residue=(
   "${RUNNER_TEMP}"/lcf-python-installer.*
 )
 test "${#runner_distribution_binding_residue[@]}" -eq 0
-cleanup_assertion="source-root-bound"
-cd "${LCF_REVIEWED_SOURCE_ROOT:?reviewed source root was not bound}"
-cleanup_assertion="repo-fixed-directory-residue"
-test ! -e desktop/generated/python-sidecar-build
-cleanup_assertion="repo-fixed-symlink-residue"
-test ! -L desktop/generated/python-sidecar-build
-cleanup_assertion="repo-random-directory-residue"
-repo_random_residue=(desktop/generated/python-sidecar-build-*)
-test "${#repo_random_residue[@]}" -eq 0
+cleanup_assertion="runner-source-residue"
+runner_source_residue=("${RUNNER_TEMP}"/lcf-reviewed-source.*)
+if test -z "${LCF_REVIEWED_SOURCE_ROOT:-}"; then
+  test "${#runner_source_residue[@]}" -eq 0
+else
+  cleanup_assertion="source-root-prefix"
+  readonly source_prefix="${RUNNER_TEMP}/lcf-reviewed-source."
+  source_suffix="${LCF_REVIEWED_SOURCE_ROOT#"${source_prefix}"}"
+  readonly source_suffix
+  test "${LCF_REVIEWED_SOURCE_ROOT}" = "${source_prefix}${source_suffix}"
+  [[ "${source_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]
+  cleanup_assertion="source-root-directory"
+  test -d "${LCF_REVIEWED_SOURCE_ROOT}"
+  cleanup_assertion="source-root-not-symlink"
+  test ! -L "${LCF_REVIEWED_SOURCE_ROOT}"
+  cleanup_assertion="source-root-canonical"
+  source_root_real="$(cd "${LCF_REVIEWED_SOURCE_ROOT}" && /bin/pwd -P)"
+  test "${source_root_real}" = "${LCF_REVIEWED_SOURCE_ROOT}"
+  cleanup_assertion="source-root-owner"
+  test "$(/usr/bin/stat -f '%u' "${LCF_REVIEWED_SOURCE_ROOT}")" = \
+    "$(/usr/bin/id -u)"
+  cleanup_assertion="source-root-mode"
+  test "$(/usr/bin/stat -f '%Lp' "${LCF_REVIEWED_SOURCE_ROOT}")" = \
+    "700"
+  readonly provenance_env="${RUNNER_TEMP}/lcf-reviewed-source-provenance.env"
+  cleanup_assertion="source-provenance-file"
+  test -f "${provenance_env}"
+  cleanup_assertion="source-provenance-not-symlink"
+  test ! -L "${provenance_env}"
+  cleanup_assertion="source-provenance-owner"
+  test "$(/usr/bin/stat -f '%u' "${provenance_env}")" = \
+    "$(/usr/bin/id -u)"
+  cleanup_assertion="runner-source-residue-closure"
+  test "${#runner_source_residue[@]}" -eq 2
+  for source_residue in "${runner_source_residue[@]}"; do
+    case "${source_residue}" in
+      "${LCF_REVIEWED_SOURCE_ROOT}"|"${provenance_env}") ;;
+      *) false ;;
+    esac
+  done
+  cleanup_assertion="source-root-enter"
+  cd "${LCF_REVIEWED_SOURCE_ROOT}"
+  cleanup_assertion="repo-fixed-directory-residue"
+  test ! -e desktop/generated/python-sidecar-build
+  cleanup_assertion="repo-fixed-symlink-residue"
+  test ! -L desktop/generated/python-sidecar-build
+  cleanup_assertion="repo-random-directory-residue"
+  repo_random_residue=(desktop/generated/python-sidecar-build-*)
+  test "${#repo_random_residue[@]}" -eq 0
+fi
 trap - ERR'''
 EXPECTED_POST_BUILD_PROVENANCE_RUN = r'''set -euo pipefail
 cd "${LCF_REVIEWED_SOURCE_ROOT}"
@@ -627,6 +668,16 @@ PYTHON_ARCHIVE_SHA256 = (
 )
 PYTHON_HASHES_SHA256 = (
     "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17"
+)
+PYTHON_ARCHIVE_NAME = "python-3.13.14-darwin-arm64.tar.gz"
+PYTHON_HASH_MANIFEST_ENTRY = (
+    "839B14DF8A24415E17D15F222E2AC01D3A90845DEB39DF642E2CC01869140A34 "
+    f"{PYTHON_ARCHIVE_NAME}"
+)
+EXPECTED_PYTHON_HASH_MANIFEST_BINDING = (
+    'test "$(/usr/bin/grep -Fxc \\\n'
+    f"  '{PYTHON_HASH_MANIFEST_ENTRY}' \\\n"
+    '  "${hashes}")" = "1"'
 )
 PYTHON_INSTALL_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13"
 PYTHON_INTERPRETER_RELATIVE_PATH = "bin/python3.13"
@@ -891,13 +942,13 @@ make qmd-runtime-audit
 make renderer-audit'''
 EXPECTED_RUN_BLOCK_SHA256 = (
     ("framework verifier Node", "6af8ddd6ea4c0c6de9bf63ec4a69b3365f6aa417d2b332748f80d192bd9897b5"),
-    ("framework producer", "7580abcd21cf88016a6ef789370f2d6804d1b0abd971514f01c25589c3c4523c"),
+    ("framework producer", "5b70b5fc1d4d647d422f1374a681ff634d57522c56213fe1ddc7b6ce7ccc8242"),
     ("framework seal", "322c765ee6d92008dbef90f26c4e37f253e617c6cec78099cab8fbe73a9a2e3a"),
     ("exact provenance", "9ea36480b4f4ff8d721fcd2c64cc1a2173a94c8185c3ee6a5e69a8fcf51b596f"),
     ("policy", "285e761f042ad2c44db94e38730f1d19c30c1db0851dc81539083cb6df5fc32b"),
     ("Python sources", "f01e0ddbe2fd917eb765723935eaceb7a606db3350a9ee059402032ff89789a7"),
     ("Python sidecar", "af4ac525fb69726e592d6b743fd4951b5c61b3ad611d4be1f9099aac362c1579"),
-    ("Python cleanup", "1cec5a9cfba98dbb686332f9fdc1456cce785406dbc5438f349bbd37a1882a4f"),
+    ("Python cleanup", "cb5e6987f14d5bc6e7ea7d180b9967952677a0be9a1a25f9b874e31e1b192a4b"),
     ("Python provenance", "54db56d05ec592311d5245a8f6d0f4679838249bed827133567d1e9bfa920b40"),
     ("renderer", "2db53fd812c47c613361413200bfadec046be100dbb598a19c665d293bb6c024"),
     ("Desktop", "00cfc4213532da6e78034d720cb79f76a9e232c5f7dfa7f9262314f4e79478e2"),
@@ -5039,6 +5090,15 @@ def _workflow_steps(workflow: str, job_name: str) -> list[dict[str, str]]:
 def _workflow_python_producer_is_semantic(run: str) -> bool:
     """Require the exact no-Python framework component producer boundary."""
 
+    manifest_parts = PYTHON_HASH_MANIFEST_ENTRY.split(" ")
+    if (
+        len(manifest_parts) != 2
+        or manifest_parts[0].lower() != PYTHON_ARCHIVE_SHA256
+        or manifest_parts[1] != PYTHON_ARCHIVE_NAME
+        or not PYTHON_ARCHIVE_URL.endswith(f"/{PYTHON_ARCHIVE_NAME}")
+    ):
+        return False
+
     markers = (
         'readonly producer_prefix="${RUNNER_TEMP}/lcf-python-producer."',
         '/usr/bin/mktemp -d "${producer_prefix}XXXXXXXXXX"',
@@ -5052,6 +5112,7 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         'test "$(/usr/bin/stat -f \'%z\' "${hashes}")" = "2775"',
         PYTHON_ARCHIVE_SHA256,
         PYTHON_HASHES_SHA256,
+        EXPECTED_PYTHON_HASH_MANIFEST_BINDING,
         "'./setup.sh' \\",
         "'./build_output.txt' \\",
         "'./python-3.13.14-macos11.pkg'",
@@ -5103,6 +5164,7 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         return False
     order = (
         'printf \'%s  %s\\n\' \\\n  "839b14df8a24415e17d15f222e2ac01d3a90845deb39df642e2cc01869140a34"',
+        EXPECTED_PYTHON_HASH_MANIFEST_BINDING,
         '/usr/bin/tar -tzf "${archive}"',
         '/usr/bin/tar -xzf "${archive}"',
         '/usr/sbin/pkgutil --check-signature "${package}"',
@@ -5126,6 +5188,8 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         and run.count('/usr/sbin/pkgutil --expand "${no_op_package}"') == 1
         and run.count(PYTHON_ARCHIVE_URL) == 1
         and run.count(PYTHON_HASHES_URL) == 1
+        and run.count(EXPECTED_PYTHON_HASH_MANIFEST_BINDING) == 1
+        and run.count(PYTHON_HASH_MANIFEST_ENTRY) == 1
         and run.count("1404518") == 2
         and run.count("32739568") == 2
         and run.count("4e49a4c96076a4855219461f721d510493c6d4f3a7a2a9ad7c981ced723d09bd") == 2
@@ -5496,11 +5560,163 @@ def _run_block_has_bypass(block: str) -> bool:
             return True
         if re.search(r"\bif\s+(?:\[\[?\s*)?false\b", line):
             return True
-        if re.search(r"(?:^|[;&])\s*set\s+\+e(?:\s|;|$)", line):
+        if re.search(
+            r"(?:^|[;&])\s*set\s+(?:\+e|\+o\s+errexit)(?:\s|;|$)",
+            line,
+        ):
             return True
         if re.search(r"(?<![&>])&\s*$", line):
             return True
     return False
+
+
+def _cleanup_shell_control_surface_is_locked(run: str) -> bool:
+    """Reject shell-control resets and function shadowing in the cleanup gate."""
+
+    expected_trap = (
+        "trap 'cleanup_status=$?; printf \"lcf-scratch-cleanup: assertion=%s\\n\" "
+        '"${cleanup_assertion}" >&2; exit "${cleanup_status}"\' ERR'
+    )
+    expected_controls = (
+        "set -euo pipefail",
+        expected_trap,
+        "shopt -s nullglob",
+        "trap - ERR",
+    )
+    controls: list[str] = []
+    function_definition = re.compile(
+        r"(?:^|[;&|{(])\s*(?:function\s+)?[A-Za-z_][A-Za-z0-9_]*"
+        r"\s*(?:\(\s*\))?\s*\{"
+    )
+    dynamic_command = re.compile(
+        r"\b(?:eval|builtin|command|exec|enable|alias|unalias)\b"
+    )
+    source_command = re.compile(
+        r"(?:^|[\s;&|{(!])(?:source|\.)(?=\s|$)"
+    )
+    nested_shell = re.compile(
+        r"\b(?:bash|dash|ksh|zsh|sh)\b\s+-c(?:\s|$)"
+    )
+    for raw_line in run.splitlines():
+        line = raw_line.strip()
+        if (
+            function_definition.search(line)
+            or dynamic_command.search(line)
+            or source_command.search(line)
+            or nested_shell.search(line)
+        ):
+            return False
+        if re.search(r"\b(?:set|trap|shopt)\b", line):
+            if line not in expected_controls:
+                return False
+            controls.append(line)
+    return tuple(controls) == expected_controls
+
+
+def _post_build_cleanup_is_semantic(run: str) -> bool:
+    """Require a fail-closed cleanup gate for both source lifecycle states."""
+
+    prelude = (
+        'set -euo pipefail\n'
+        'cleanup_assertion="runner-temp-present"\n'
+        "trap 'cleanup_status=$?; printf \"lcf-scratch-cleanup: assertion=%s\\n\" "
+        '"${cleanup_assertion}" >&2; exit "${cleanup_status}"\' ERR\n'
+        'test -n "${RUNNER_TEMP:-}"'
+    )
+    state_branch = 'if test -z "${LCF_REVIEWED_SOURCE_ROOT:-}"; then'
+    unbound_assertion = 'test "${#runner_source_residue[@]}" -eq 0'
+    branch_else = "\nelse\n"
+    branch_end = "\nfi\ntrap - ERR"
+    if (
+        not run.startswith(prelude)
+        or run.count("set -euo pipefail") != 1
+        or run.count("lcf-scratch-cleanup: assertion=%s") != 1
+        or run.count("shopt -s nullglob") != 1
+        or run.count(state_branch) != 1
+        or run.count(branch_else) != 1
+        or run.count(branch_end) != 1
+        or len(re.findall(r"(?m)^\s*if\s+", run)) != 1
+        or "LCF_REVIEWED_BUILD_PYTHON" in run
+        or "LCF_SOURCE_" in run
+        or ":?reviewed source root" in run
+        or _run_block_has_bypass(run)
+        or not _cleanup_shell_control_surface_is_locked(run)
+    ):
+        return False
+
+    branch_offset = run.find(state_branch)
+    else_offset = run.find(branch_else, branch_offset)
+    end_offset = run.find(branch_end, else_offset)
+    unbound_offset = run.find(unbound_assertion, branch_offset)
+    if not (
+        0 <= branch_offset < unbound_offset < else_offset < end_offset
+        and run.count(unbound_assertion) == 1
+    ):
+        return False
+
+    unconditional_order = (
+        "set -euo pipefail",
+        "lcf-scratch-cleanup: assertion=%s",
+        'test -n "${RUNNER_TEMP:-}"',
+        'test "${runner_temp_real}" = "${RUNNER_TEMP}"',
+        "shopt -s nullglob",
+        'runner_toolchain_residue=("${RUNNER_TEMP}"/python-sidecar-toolchain-*)',
+        'test "${#runner_toolchain_residue[@]}" -eq 0',
+        'runner_producer_residue=("${RUNNER_TEMP}"/lcf-python-producer.*)',
+        'test "${#runner_producer_residue[@]}" -eq 0',
+        'runner_distribution_binding_residue=(\n'
+        '  "${RUNNER_TEMP}"/lcf-python-installer.*\n'
+        ')',
+        'test "${#runner_distribution_binding_residue[@]}" -eq 0',
+        'runner_source_residue=("${RUNNER_TEMP}"/lcf-reviewed-source.*)',
+        state_branch,
+    )
+    unconditional_offsets = [run.find(marker) for marker in unconditional_order]
+    if (
+        any(offset < 0 for offset in unconditional_offsets)
+        or unconditional_offsets != sorted(unconditional_offsets)
+    ):
+        return False
+
+    bound_order = (
+        'cleanup_assertion="source-root-prefix"',
+        'readonly source_prefix="${RUNNER_TEMP}/lcf-reviewed-source."',
+        'source_suffix="${LCF_REVIEWED_SOURCE_ROOT#"${source_prefix}"}"',
+        "readonly source_suffix",
+        'test "${LCF_REVIEWED_SOURCE_ROOT}" = "${source_prefix}${source_suffix}"',
+        '[[ "${source_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
+        'test -d "${LCF_REVIEWED_SOURCE_ROOT}"',
+        'test ! -L "${LCF_REVIEWED_SOURCE_ROOT}"',
+        'source_root_real="$(cd "${LCF_REVIEWED_SOURCE_ROOT}" && /bin/pwd -P)"',
+        'test "${source_root_real}" = "${LCF_REVIEWED_SOURCE_ROOT}"',
+        'test "$(/usr/bin/stat -f \'%u\' "${LCF_REVIEWED_SOURCE_ROOT}")" = \\\n'
+        '    "$(/usr/bin/id -u)"',
+        'test "$(/usr/bin/stat -f \'%Lp\' "${LCF_REVIEWED_SOURCE_ROOT}")" = \\\n'
+        '    "700"',
+        'readonly provenance_env="${RUNNER_TEMP}/lcf-reviewed-source-provenance.env"',
+        'test -f "${provenance_env}"',
+        'test ! -L "${provenance_env}"',
+        'test "$(/usr/bin/stat -f \'%u\' "${provenance_env}")" = \\\n'
+        '    "$(/usr/bin/id -u)"',
+        'test "${#runner_source_residue[@]}" -eq 2',
+        'for source_residue in "${runner_source_residue[@]}"; do',
+        '"${LCF_REVIEWED_SOURCE_ROOT}"|"${provenance_env}") ;;',
+        '*) false ;;',
+        'cleanup_assertion="source-root-enter"',
+        '\n  cd "${LCF_REVIEWED_SOURCE_ROOT}"',
+        'test ! -e desktop/generated/python-sidecar-build',
+        'test ! -L desktop/generated/python-sidecar-build',
+        'test "${#repo_random_residue[@]}" -eq 0',
+    )
+    bound_offsets = [run.find(marker, else_offset) for marker in bound_order]
+    return (
+        all(else_offset < offset < end_offset for offset in bound_offsets)
+        and bound_offsets == sorted(bound_offsets)
+        and run.count('runner_source_residue=("${RUNNER_TEMP}"/lcf-reviewed-source.*)')
+        == 1
+        and run.count('test "${#runner_source_residue[@]}" -eq 2') == 1
+        and run.count('\n  cd "${LCF_REVIEWED_SOURCE_ROOT}"') == 1
+    )
 
 
 def _source_block(document: str, start: str, end: str) -> str:
@@ -8295,7 +8511,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         != 1
         or "LCF_REVIEWED_BUILD_PYTHON" in cleanup_step.get("run", "")
         or "LCF_SOURCE_" in cleanup_step.get("run", "")
-        or re.search(r"^\s*if\s+", cleanup_step.get("run", ""), re.MULTILINE)
+        or not _post_build_cleanup_is_semantic(cleanup_step.get("run", ""))
         or re.search(r"^\s*if:\s*", provenance_step.get("document", ""), re.MULTILINE)
     ):
         errors.append(
@@ -8629,8 +8845,9 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     for value, expected_count in (
         (PYTHON_ARCHIVE_URL, 2),
         (PYTHON_HASHES_URL, 2),
-        (PYTHON_ARCHIVE_SHA256, 4),
+        (PYTHON_ARCHIVE_SHA256, 3),
         (PYTHON_HASHES_SHA256, 2),
+        (PYTHON_HASH_MANIFEST_ENTRY, 1),
     ):
         if "\n".join(run_blocks).count(value) != expected_count:
             errors.append("workflow Python source lock drifted")
@@ -8999,8 +9216,8 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         != 1
         or "LCF_REVIEWED_BUILD_PYTHON" in formal_cleanup_step.get("run", "")
         or "LCF_SOURCE_" in formal_cleanup_step.get("run", "")
-        or re.search(
-            r"^\s*if\s+", formal_cleanup_step.get("run", ""), re.MULTILINE
+        or not _post_build_cleanup_is_semantic(
+            formal_cleanup_step.get("run", "")
         )
         or re.search(
             r"^\s*if:\s*",
@@ -9551,33 +9768,33 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             "status",
             status,
             (
-                "six remediation attempts `fail` / `superseded`",
-                "seventh exact candidate `not-run`",
+                "seven remediation attempts `fail` / `superseded`",
+                "eighth exact candidate `not-run`",
             ),
         ),
         (
             "todo",
             todo,
             (
-                "six remediation attempts `fail` / `superseded`",
-                "seventh exact candidate `not-run`",
+                "seven remediation attempts `fail` / `superseded`",
+                "eighth exact candidate `not-run`",
             ),
         ),
         (
             "traceability",
             trace,
             (
-                "first through sixth remediations failed and superseded",
-                "seventh exact candidate not-run",
+                "first through seventh remediations failed and superseded",
+                "eighth exact candidate not-run",
             ),
         ),
         (
             "iteration",
             iteration,
             (
-                "第一次至第六次 remediation technical attempts 均为 "
+                "第一次至第七次 remediation technical attempts 均为 "
                 "`fail` / `superseded`",
-                "第七 exact candidate `not-run`",
+                "第八 exact candidate `not-run`",
             ),
         ),
     )

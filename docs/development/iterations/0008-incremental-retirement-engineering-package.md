@@ -29,6 +29,9 @@
   `aaf3f51f69dfded82b8237e03a871017317e7158` / parent
   `cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` / tree
   `60c2c6c2553ff8d10c2faee47ec838b34e378fc5` 也为 technical `fail` / `superseded`；第八次 exact
+  `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / parent
+  `aaf3f51f69dfded82b8237e03a871017317e7158` / tree
+  `66779e9ca8df445fb413e93faed4d265899fb1ec` 同样 technical `fail` / `superseded`；第九次 exact
   remediation technical candidate `not-run`（无 committed exact head/tree；无 fresh exact-head Actions）
 - 依赖：ADR-0016；W01 的 `VAL-PRE1-SEQUENCE-001`、`VAL-GOV-001`、
   `VAL-CI-COVERAGE-001=pass` 已闭环；W10/W11 随后仍依赖 W02 的
@@ -66,8 +69,8 @@
 - [ ] I01（W02）实现独立 non-release packaging mode 和最小 packaged smoke；不创建新的稳定
   task/VAL ID。内部执行阶段为：
   - [ ] engineering-smoke boundary/assembly：旧 static technical run 保留；PR #21 independent
-    acceptance `NO-GO`；第一次至第七次 remediation technical attempts 均为 `fail` / `superseded`，
-    第八 exact candidate `not-run`。旧 exact Draft head 只构建和审计 macOS arm64
+    acceptance `NO-GO`；第一次至第八次 remediation technical attempts 均为 `fail` / `superseded`，
+    第九 exact candidate `not-run`。旧 exact Draft head 只构建和审计 macOS arm64
     `.app`，未启动 assembled App；其 pre-pack frozen sidecar staging success 不能证明 held-dirfd/
     inode scratch lifecycle、exact Git tree/source provenance 或 fail-closed cleanup。当前 Work 只在
     同一 branch/PR 修复这些 blocker；见 [旧 assembly evidence](../evidence/W02/2026-08-06-08137c7-assembly.md)
@@ -78,7 +81,7 @@
     builders 与 consumers。exact Git checker 的 full raw post-check 是 defense-in-depth，不是对自身
     首次加载的追溯证明；npm seal 只声明 repo-derived inputs 与 installed-content digest，既有
     electron-builder/base runtime trust boundary 不在该声明内；
-  - [ ] 第八候选继承第七候选的 reviewed framework producer：不调用 `actions/setup-python`，
+  - [ ] 第九候选继承第八候选的 reviewed framework producer：不调用 `actions/setup-python`，
     也不安装原完整
     Python.org product pkg。system shell/Node 先校验 locked archive 与原 outer pkg 的 exact bytes、
     Apple signature/policy，再只展开并绑定 `Python_Framework.pkg` 的 `Bom`、`PackageInfo`、
@@ -91,7 +94,11 @@
     才精确复验/删除 quarantine，cleanup 成功后才首次
     运行 framework Python；运行时
     `--install-reviewed-python` 只验证 signed distribution/framework/interpreter binding，不安装且
-    不调用 `sudo`。这是尚未运行的本地设计，不是 Actions evidence；
+    不调用 `sudo`。第八次的 manifest/component 检查已通过，但 root-owned `0700` 空 quarantine
+    在普通 runner canonical `cd` 时 permission denied；cleanup-only success 未覆盖
+    `/Library/Frameworks/**`，所以 framework quarantine residue 清除是 `not-proven`。第九候选须在
+    普通 runner 访问前绑定 canonical path，并把 identity-bound exact quarantine zero-residue 加入 cleanup gate；
+    这是尚未运行的本地设计，不是 Actions evidence；
   - [ ] Python scratch/capability 保证限定在一次 process-level build CLI lifecycle；取消或固定
     失败后进程退出且不复用作 same-process retry。已持有 scratch 上瞬时 fd syscall→object store
     的窄窗口依赖退出时关闭 fd；namespace identity、transactional publish/rollback 与 exact
@@ -106,7 +113,7 @@
   - [ ] focused Python lifecycle tests 移到 static assembly/provenance 之后并作为 final repo-code
     step；运行前设置 `PYTHONDONTWRITEBYTECODE=1` 并使用显式 `python -B`；其后不再有 production repo Python load
     或 Node load，使 test 安装、pytest cache 或测试态 bytecode 不会成为后续 production input；
-  - [ ] packaged App launch/runtime smoke：七次 remediation 均未启动 bundle，第八 candidate 也尚未运行，
+  - [ ] packaged App launch/runtime smoke：八次 remediation 均未启动 bundle，第九 candidate 也尚未运行，
     当前 `not-run`；验证 renderer/preload、private
     UDS health/domain request、quit/no orphan、无 public INET，以及 exercised path 不发现系统
     Python/Node/Git；
@@ -149,6 +156,9 @@
 | PR #21 seventh remediation exact candidate | `fail` / `superseded` | `aaf3f51f69dfded82b8237e03a871017317e7158` / parent `cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` / tree `60c2c6c2553ff8d10c2faee47ec838b34e378fc5`；synthetic context `6f9a15f…` 不是 source authority | Desktop source `31559498106` success；Engineering `31559498116` / job `93998717925` 在 locked archive/hashes SHA 校验后因 manifest 实际 uppercase/single-space 与 workflow lowercase/double-space literal 不符而 fail；pre-source cleanup 又因 reviewed root 未绑定 secondary fail，later stages skipped、artifacts `[]`；Containers `31559498070` success/no publish；independent pending，activation blocked；[failure record](../evidence/W02/2026-08-07-pr21-remediation.md) |
 | PR #21 eighth exact remediation technical candidate | `not-run` | 尚无 committed exact head/tree 或 fresh exact-head Actions | exact manifest whole-line bytes 保持 `grep -Fxc` + count one；cleanup 显式区分 unbound-zero-residue 与 bound-strict-source/repo closure；first through seventh attempts remain failed/superseded history；no run or evidence may be reused |
 | PR #21 eighth pre-commit local validation | local `pass` / exact-head macOS `not-run` | `2026-08-12`；`Linux 6.18.35 x86_64` / CPython `3.12.13` / Node `v24.14.0`；`HEAD aaf3f51…` + 未提交 `15`-file bytes；无 eighth commit/tree/Actions | verifier `42/42`；policy mutation `80/80` + exact-Git `1/1`；Python packaging `559/2`；formal workflow `11/11`；backend `824/3/2 warnings`；Desktop engineering `76/76` + typecheck/build；pre-1 `53/53`；2 workflows/35 Bash blocks、version/89 links/diff pass；只证明本地 bytes，不提升 technical、packaged 或 release gate；exact commands 与 setup incidents 见 [append-only evidence](../evidence/W02/2026-08-07-pr21-remediation.md) |
+| PR #21 eighth remediation exact candidate | `fail` / `superseded` | `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / parent `aaf3f51f69dfded82b8237e03a871017317e7158` / tree `66779e9ca8df445fb413e93faed4d265899fb1ec`；synthetic context `1c662735da0306027ec54641b8706130cf6b91dc` 不是 source authority | Desktop source `31570734560` success；Engineering `31570734636` / job `94031972543` manifest/component checks passed，随后 root-owned `0700` quarantine 的 ordinary-runner canonical `cd` permission denied；cleanup success 仅覆盖 runner/source/repo，framework quarantine residue absence `not-proven`；later skipped、artifacts `[]`、no App launch；Containers `31570734580` success/no publish；independent pending，activation blocked；[failure record](../evidence/W02/2026-08-07-pr21-remediation.md) |
+| PR #21 ninth exact remediation technical candidate | `not-run` | 尚无 committed exact head/tree 或 fresh exact-head Actions | privileged quarantine 必须在普通 runner 访问前完成 canonical binding，并只证明 identity-bound exact placeholder zero-residue；first through eighth attempts remain failed/superseded history；no run or evidence may be reused |
+| PR #21 ninth pre-commit local validation | local `pass` / exact-head macOS `not-run` | `2026-08-12`；`HEAD 1533656…` / tree `66779e9…` + scoped `15`-file worktree；无 ninth commit/tree/Actions | verifier `42/42`；policy mutation `80/80` + exact-Git `1/1`；Python packaging `559/2`；formal workflow `11/11`；backend `824/3/2 warnings`；Desktop `76/76` + typecheck/build；pre-1 `55/55`；2 workflows/35 Bash blocks、version/89 links/diff pass；只证明本地 bytes，technical 与 release gates 不提升 |
 | portable inventory/cleanup regressions；Darwin-only evidence | historical portable `pass` / Darwin-only `not-run` | fifth pre-commit Linux validation；当时无 fresh exact-head Actions result | Python sidecar packaging `533/2`；backend `797/3/2 warnings`；tools `207/207`；policy `66/66` + exact-Git `1/1`；Web `51/51`、Containers policy `3/3`、Desktop `286/7`；typecheck/build、links `89` files、version/coverage/W01、compile/YAML/Bash/diff checks pass。skips 分别绑定 sandbox AF_UNIX、foreign uid 与 Darwin/APFS；该结果在 Actions 执行前只能让当时的 fifth candidate 保持 `not-run`，不能抵消后续 fifth Actions failure，也不改变 `VAL-PACKAGED-SMOKE-001` 的 `not-run`。 |
 | historical pre-pack frozen sidecar staging smoke | technical `pass` | old assembly job build step | 只证明旧 sidecar build/staging；assembled `.app` 未启动，sidecar 未从 bundle 启动；不能证明 remediation |
 | packaged App launch/runtime smoke | `not-run` | assembled macOS arm64 App required | renderer/preload、bundle-owned sidecar/UDS、quit/no-orphan、listener 与 packaged PATH trap 未运行 |

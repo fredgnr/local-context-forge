@@ -92,12 +92,42 @@ jobs:
             readonly saved_status="$?"
             trap - EXIT
             cleanup_status=0
-            /usr/bin/find -x "${producer_root}" -depth -delete || cleanup_status="$?"
+            cleanup_quarantine="${framework_quarantine_placeholder:-none}"
+            cleanup_quarantine_prefix="${framework_quarantine_prefix:-none}"
+            cleanup_quarantine_suffix="${cleanup_quarantine#"${cleanup_quarantine_prefix}"}"
+            if test "${framework_quarantine_placeholder_identity:-none}" != "none"; then
+              if test "${cleanup_quarantine%/*}" = "${framework_parent:-none}" && \
+                test "${cleanup_quarantine}" = \
+                  "${cleanup_quarantine_prefix}${cleanup_quarantine_suffix}" && \
+                [[ "${cleanup_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]] && \
+                test -d "${cleanup_quarantine}" && \
+                test ! -L "${cleanup_quarantine}" && \
+                test "$(/usr/bin/stat -f '%d:%i' "${cleanup_quarantine}")" = \
+                  "${framework_quarantine_placeholder_identity}"; then
+                /usr/bin/sudo --non-interactive /bin/rmdir \
+                  "${cleanup_quarantine}" || {
+                    candidate_status="$?"
+                    if test "${cleanup_status}" -eq 0; then
+                      cleanup_status="${candidate_status}"
+                    fi
+                  }
+              else
+                cleanup_status=70
+              fi
+            fi
+            /usr/bin/find -x "${producer_root}" -depth -delete || {
+              candidate_status="$?"
+              if test "${cleanup_status}" -eq 0; then
+                cleanup_status="${candidate_status}"
+              fi
+            }
             if test "${saved_status}" -ne 0; then
               exit "${saved_status}"
             fi
             exit "${cleanup_status}"
           }
+          framework_quarantine_placeholder="none"
+          framework_quarantine_placeholder_identity="none"
           trap cleanup_producer EXIT
           readonly archive="${producer_root}/python-3.13.14-darwin-arm64.tar.gz"
           readonly hashes="${producer_root}/hashes.sha256"
@@ -308,6 +338,7 @@ jobs:
             /usr/bin/sudo --non-interactive /bin/chmod -h go-w "${existing_ancestor}"
             test "$(/usr/bin/stat -f '%d:%i' "${existing_ancestor}")" = "${existing_identity}"
           done
+          readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
           framework_quarantine="none"
           framework_quarantine_identity="none"
           if test -e "${framework_root}" || test -L "${framework_root}"; then
@@ -316,17 +347,28 @@ jobs:
             readonly previous_root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
             framework_quarantine="$(
               /usr/bin/sudo --non-interactive /usr/bin/mktemp -d \
-                "${framework_parent}/.lcf-python-quarantine.XXXXXXXXXX"
+                "${framework_quarantine_prefix}XXXXXXXXXX"
             )"
-            test "${framework_quarantine#${framework_parent}/.lcf-python-quarantine.}" != \
-              "${framework_quarantine}"
+            framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"
+            readonly framework_quarantine_suffix
+            test "${framework_quarantine%/*}" = "${framework_parent}"
+            test "${framework_quarantine}" = \
+              "${framework_quarantine_prefix}${framework_quarantine_suffix}"
+            [[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]
             test -d "${framework_quarantine}"
             test ! -L "${framework_quarantine}"
-            test "$(cd "${framework_quarantine}" && /bin/pwd -P)" = \
-              "${framework_quarantine}"
+            framework_quarantine_placeholder="${framework_quarantine}"
+            framework_quarantine_placeholder_identity="$(/usr/bin/stat -f '%d:%i' \
+              "${framework_quarantine_placeholder}")"
             test "$(/usr/bin/stat -f '%u' \
               "${framework_quarantine}")" = "0"
+            test "$(/usr/bin/stat -f '%Lp' \
+              "${framework_quarantine}")" = "700"
             /usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"
+            test ! -e "${framework_quarantine}"
+            test ! -L "${framework_quarantine}"
+            framework_quarantine_placeholder_identity="none"
+            framework_quarantine_placeholder="none"
             /usr/bin/sudo --non-interactive /bin/mv \
               "${framework_root}" "${framework_quarantine}"
             test ! -e "${framework_root}"

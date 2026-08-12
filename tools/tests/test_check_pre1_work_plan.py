@@ -258,7 +258,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "(evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging "
             "smoke 不替代 packaged launch/runtime gate；[current PR #21 record]"
             "(evidence/W02/2026-08-07-pr21-remediation.md) binds latest independent `NO-GO`、"
-            "seven remediation technical failures / superseded states and eighth exact "
+            "eight remediation technical failures / superseded states and ninth exact "
             "candidate execution pending |"
         )
         self.assertIn(original, docs[2])
@@ -295,7 +295,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
     def test_w02_launch_phase_must_remain_not_run(self) -> None:
         docs = documents()
         marker = (
-            "packaged App launch/runtime smoke：七次 remediation 均未启动 bundle，第八 candidate 也尚未运行，\n"
+            "packaged App launch/runtime smoke：八次 remediation 均未启动 bundle，第九 candidate 也尚未运行，\n"
             "    当前 `not-run`"
         )
         docs[3] = replace_once(self, docs[3], marker, marker.replace("`not-run`", "`pass`"))
@@ -312,13 +312,13 @@ class Pre1WorkPlanTests(unittest.TestCase):
     def test_w02_static_assembly_phase_marker_is_required(self) -> None:
         docs = documents()
         marker = (
-            "acceptance `NO-GO`；第一次至第七次 remediation technical attempts 均为 `fail` / `superseded`"
+            "acceptance `NO-GO`；第一次至第八次 remediation technical attempts 均为 `fail` / `superseded`"
         )
         docs[3] = replace_once(
             self,
             docs[3],
             marker,
-            "acceptance `pass`；七次 remediation technical attempts `pass`",
+            "acceptance `pass`；八次 remediation technical attempts `pass`",
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
@@ -648,6 +648,42 @@ class Pre1WorkPlanTests(unittest.TestCase):
         docs[12] += f"\n{CHECKER.W02_PR21_SEVENTH_REMEDIATION_AUTHORITY_MARKER}\n"
         self.assertIn(expected, CHECKER.validate_documents(*docs))
 
+    def test_w02_pr21_eighth_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_HEAD, "0" * 40),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_PARENT, "1" * 40),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_TREE, "2" * 40),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_CONTEXT, "3" * 40),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_RUN, "31570734637"),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_JOB, "94031972544"),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_SOURCE_RUN, "31570734561"),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_CONTAINER_RUN, "31570734581"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact eighth-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_EIGHTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original, replacement
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_EIGHTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_EIGHTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
     def test_w02_pr21_historical_sixth_precommit_state_is_preserved(self) -> None:
         docs = documents()
         marker = CHECKER.W02_PR21_SIXTH_PRECOMMIT_NOT_RUN_MARKER
@@ -682,9 +718,9 @@ class Pre1WorkPlanTests(unittest.TestCase):
             errors,
         )
 
-    def test_w02_pr21_eighth_candidate_must_remain_not_run(self) -> None:
+    def test_w02_pr21_historical_eighth_precommit_state_is_preserved(self) -> None:
         docs = documents()
-        marker = CHECKER.W02_PR21_EIGHTH_NOT_RUN_MARKER
+        marker = CHECKER.W02_PR21_EIGHTH_PRECOMMIT_NOT_RUN_MARKER
         docs[12] = replace_once(
             self,
             docs[12],
@@ -702,33 +738,53 @@ class Pre1WorkPlanTests(unittest.TestCase):
             errors,
         )
 
-    def test_current_summary_cannot_regress_seven_failures_to_six(self) -> None:
+    def test_w02_pr21_ninth_candidate_must_remain_not_run(self) -> None:
         docs = documents()
-        marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
-        docs[6] = replace_once(
+        marker = CHECKER.W02_PR21_NINTH_NOT_RUN_MARKER
+        docs[12] = replace_once(
             self,
-            docs[6],
+            docs[12],
             marker,
-            marker.replace("seven remediation attempts", "six remediation attempts"),
+            marker.replace("`not-run`", "`pass`"),
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(
-            "status must contain the exact seven-failure/eighth-candidate summary once",
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "第九次 remediation technical candidate：`pass`",
             errors,
         )
 
-    def test_current_summary_cannot_regress_eighth_candidate_to_seventh(self) -> None:
+    def test_current_summary_cannot_regress_eight_failures_to_seven(self) -> None:
         docs = documents()
         marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
         docs[6] = replace_once(
             self,
             docs[6],
             marker,
-            marker.replace("eighth exact candidate", "seventh exact candidate"),
+            marker.replace("eight remediation attempts", "seven remediation attempts"),
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(
-            "status must contain the exact seven-failure/eighth-candidate summary once",
+            "status must contain the exact eight-failure/ninth-candidate summary once",
+            errors,
+        )
+
+    def test_current_summary_cannot_regress_ninth_candidate_to_eighth(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
+        docs[6] = replace_once(
+            self,
+            docs[6],
+            marker,
+            marker.replace("ninth exact candidate", "eighth exact candidate"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "status must contain the exact eight-failure/ninth-candidate summary once",
             errors,
         )
 

@@ -2707,13 +2707,13 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "status",
-                "eighth exact candidate `not-run`",
-                "eighth exact candidate `pass`",
+                "ninth exact candidate `not-run`",
+                "ninth exact candidate `pass`",
             ),
             (
                 "trace",
+                "first through eighth remediations failed and superseded",
                 "first through seventh remediations failed and superseded",
-                "first through sixth remediations failed and superseded",
             ),
             (
                 "iteration",
@@ -3026,6 +3026,161 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             runs.append(run)
         self.assertEqual(runs[0], runs[1])
         producer = runs[0]
+        cleanup_identity_compare = (
+            'test "$(/usr/bin/stat -f \'%d:%i\' "${cleanup_quarantine}")" = \\\n'
+            '        "${framework_quarantine_placeholder_identity}"'
+        )
+        active_identity_assignment = (
+            'framework_quarantine_placeholder_identity="$(/usr/bin/stat -f \'%d:%i\' \\\n'
+            '    "${framework_quarantine_placeholder}")"'
+        )
+        quarantine_mutations = (
+            (
+                'framework_quarantine_placeholder="none"\n'
+                'framework_quarantine_placeholder_identity="none"\n'
+                'trap cleanup_producer EXIT',
+                'trap cleanup_producer EXIT\n'
+                'framework_quarantine_placeholder="none"\n'
+                'framework_quarantine_placeholder_identity="none"',
+            ),
+            (
+                'framework_quarantine_placeholder_identity="none"\n'
+                'trap cleanup_producer EXIT',
+                'trap cleanup_producer EXIT',
+            ),
+            (
+                'framework_quarantine_placeholder="none"\n',
+                'framework_quarantine_placeholder="${framework_quarantine_placeholder:=none}"\n',
+            ),
+            (
+                "trap cleanup_producer EXIT",
+                "trap cleanup_producer EXIT\ntrap - EXIT",
+            ),
+            (
+                "trap cleanup_producer EXIT",
+                "trap cleanup_producer EXIT\ncleanup_producer() { :; }",
+            ),
+            (
+                "trap cleanup_producer EXIT",
+                "trap cleanup_producer EXIT\ntrap : EXIT",
+            ),
+            (
+                "trap cleanup_producer EXIT",
+                "trap cleanup_producer EXIT\n"
+                "/usr/bin/sudo --non-interactive /bin/rmdir \"${framework_quarantine}\"",
+            ),
+            (cleanup_identity_compare, "true"),
+            ("cleanup_status=70", "cleanup_status=0"),
+            (
+                '/usr/bin/sudo --non-interactive /bin/rmdir \\\n'
+                '        "${cleanup_quarantine}"',
+                '/usr/bin/sudo --non-interactive /bin/rm -rf -- \\\n'
+                '        "${cleanup_quarantine}"',
+            ),
+            (
+                'framework_quarantine_placeholder_identity="none"\n'
+                '  framework_quarantine_placeholder="none"\n',
+                'framework_quarantine_placeholder="none"\n',
+            ),
+            (
+                'framework_quarantine_placeholder_identity="none"\n'
+                '  framework_quarantine_placeholder="none"\n',
+                'framework_quarantine_placeholder_identity="none"\n',
+            ),
+            (
+                'framework_quarantine_placeholder="${framework_quarantine}"\n'
+                f'  {active_identity_assignment}',
+                'readonly framework_quarantine_placeholder="${framework_quarantine}"\n'
+                f'  {active_identity_assignment}',
+            ),
+            (
+                'framework_quarantine_placeholder="${framework_quarantine}"\n'
+                f'  {active_identity_assignment}\n'
+                '  test "$(/usr/bin/stat -f \'%u\' \\\n'
+                '    "${framework_quarantine}")" = "0"',
+                'test "$(/usr/bin/stat -f \'%u\' \\\n'
+                '    "${framework_quarantine}")" = "0"\n'
+                '  framework_quarantine_placeholder="${framework_quarantine}"\n'
+                f'  {active_identity_assignment}',
+            ),
+            (
+                'test "$(cd "${existing_ancestor}" && /bin/pwd -P)" = "${existing_ancestor}"\n',
+                "",
+            ),
+            (
+                'test "$(/usr/bin/stat -f \'%d:%i\' "${existing_ancestor}")" = "${existing_identity}"\n',
+                "",
+            ),
+            (
+                'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."',
+                'readonly framework_quarantine_prefix="${RUNNER_TEMP}/.lcf-python-quarantine."',
+            ),
+            (
+                'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."\n',
+                'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."\n'
+                'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."\n',
+            ),
+            (
+                '"${framework_quarantine_prefix}XXXXXXXXXX"',
+                '"${framework_parent}/unreviewed.XXXXXXXXXX"',
+            ),
+            (
+                'framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"\n',
+                "",
+            ),
+            ("readonly framework_quarantine_suffix\n", ""),
+            ('test "${framework_quarantine%/*}" = "${framework_parent}"\n', ""),
+            (
+                'test "${framework_quarantine}" = \\\n'
+                '    "${framework_quarantine_prefix}${framework_quarantine_suffix}"',
+                'test "${framework_quarantine}" != \\\n'
+                '    "${framework_quarantine_prefix}${framework_quarantine_suffix}"',
+            ),
+            (
+                '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
+                '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]+$ ]]',
+            ),
+            (
+                '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
+                '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9/]{10}$ ]]',
+            ),
+            ('test -d "${framework_quarantine}"', "true"),
+            ('test ! -L "${framework_quarantine}"', "true"),
+            (
+                '"${framework_quarantine}")" = "0"',
+                '"${framework_quarantine}")" = "$(/usr/bin/id -u)"',
+            ),
+            (
+                '"${framework_quarantine}")" = "700"',
+                '"${framework_quarantine}")" = "755"',
+            ),
+            (
+                '/usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"',
+                "true",
+            ),
+            (
+                'test ! -e "${framework_quarantine}"\n'
+                '  test ! -L "${framework_quarantine}"',
+                "true",
+            ),
+            (
+                '"${framework_root}" "${framework_quarantine}"',
+                '"${framework_root}" "${framework_parent}/unreviewed"',
+            ),
+            (
+                'test -d "${framework_quarantine}"\n',
+                'test -d "${framework_quarantine}"\n'
+                'cd "${framework_quarantine}"\n',
+            ),
+            (
+                'test "$(/usr/bin/stat -f \'%Lp\' \\\n'
+                '    "${framework_quarantine}")" = "700"\n'
+                '  /usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"',
+                '  /usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"\n'
+                'test "$(/usr/bin/stat -f \'%Lp\' \\\n'
+                '    "${framework_quarantine}")" = "700"',
+            ),
+        )
         mutations = (
             (CHECKER.PYTHON_ARCHIVE_SHA256, "0" * 64),
             (CHECKER.EXPECTED_PYTHON_HASH_MANIFEST_BINDING, ""),
@@ -3100,7 +3255,7 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 ')" != "${framework_quarantine_identity}"',
                 ')" = "${framework_quarantine_identity}"',
             ),
-        )
+        ) + quarantine_mutations
         for old, new in mutations:
             with self.subTest(old=old):
                 self.assertIn(old, producer)
@@ -3109,6 +3264,37 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                         producer.replace(old, new, 1)
                     )
                 )
+
+        for key, summary in (
+            ("workflow", synchronized_workflow_summary),
+            ("formal_workflow", synchronized_formal_workflow_summary),
+        ):
+            for old, new in quarantine_mutations:
+                with self.subTest(key=key, quarantine_mutation=old):
+                    current = inputs()
+                    yaml_indent = "          "
+                    yaml_old = textwrap.indent(old, yaml_indent)
+                    if yaml_old not in str(current[key]):
+                        yaml_indent = "            "
+                        yaml_old = textwrap.indent(old, yaml_indent)
+                    self.assertIn(yaml_old, str(current[key]))
+                    changed(
+                        current,
+                        key,
+                        yaml_old,
+                        textwrap.indent(new, yaml_indent) if new else "",
+                    )
+                    with summary(current):
+                        errors = CHECKER.validate_policy(current)
+                    self.assertTrue(
+                        any(
+                            "producer" in error.lower()
+                            or "critical step" in error.lower()
+                            or "run-step contract" in error.lower()
+                            for error in errors
+                        ),
+                        errors,
+                    )
 
         final_absence = 'test ! -e "${framework_root}"'
         offset = producer.rfind(final_absence)

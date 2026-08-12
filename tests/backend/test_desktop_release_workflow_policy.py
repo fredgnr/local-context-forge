@@ -393,6 +393,59 @@ def test_reviewed_framework_is_sealed_and_node_verified_before_first_python() ->
     assert str(component["noOpPostinstallSize"]) in producer
     assert component["noOpPostinstallSha256"] in producer
     assert f'/bin/chmod {component["noOpPostinstallMode"]} ' in producer
+    quarantine_markers = (
+        'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."',
+        '"${framework_quarantine_prefix}XXXXXXXXXX"',
+        'framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"',
+        'test "${framework_quarantine%/*}" = "${framework_parent}"',
+        '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
+        'test -d "${framework_quarantine}"',
+        'test ! -L "${framework_quarantine}"',
+        '"${framework_quarantine}")" = "0"',
+        '"${framework_quarantine}")" = "700"',
+        '/usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"',
+        'test ! -e "${framework_quarantine}"',
+        '/usr/bin/sudo --non-interactive /bin/mv \\\n'
+        '              "${framework_root}" "${framework_quarantine}"',
+    )
+    quarantine_offsets = [producer.index(marker) for marker in quarantine_markers]
+    assert quarantine_offsets == sorted(quarantine_offsets)
+    cleanup_markers = (
+        'readonly saved_status="$?"',
+        "trap - EXIT",
+        'cleanup_quarantine="${framework_quarantine_placeholder:-none}"',
+        'if test "${framework_quarantine_placeholder_identity:-none}" != "none"; then',
+        'test "$(/usr/bin/stat -f \'%d:%i\' "${cleanup_quarantine}")" = \\\n'
+        '                  "${framework_quarantine_placeholder_identity}"',
+        'cleanup_status=70',
+        '/usr/bin/find -x "${producer_root}" -depth -delete || {',
+        'if test "${saved_status}" -ne 0; then',
+        'exit "${saved_status}"',
+        'exit "${cleanup_status}"',
+        'framework_quarantine_placeholder="none"\n'
+        '          framework_quarantine_placeholder_identity="none"\n'
+        '          trap cleanup_producer EXIT',
+    )
+    cleanup_offsets = [producer.index(marker) for marker in cleanup_markers]
+    assert cleanup_offsets == sorted(cleanup_offsets)
+    active_offset = producer.index(
+        'framework_quarantine_placeholder="${framework_quarantine}"'
+    )
+    identity_offset = producer.index(
+        'framework_quarantine_placeholder_identity="$(/usr/bin/stat -f \'%d:%i\''
+    )
+    owner_offset = producer.index('"${framework_quarantine}")" = "0"')
+    clear_offset = producer.index(
+        'framework_quarantine_placeholder_identity="none"', identity_offset
+    )
+    move_offset = producer.index(
+        '/usr/bin/sudo --non-interactive /bin/mv \\\n'
+        '              "${framework_root}" "${framework_quarantine}"'
+    )
+    assert active_offset < identity_offset < owner_offset < clear_offset < move_offset
+    assert producer.count("/bin/rmdir") == 2
+    assert "readonly framework_quarantine_placeholder" not in producer
+    assert 'cd "${framework_quarantine}"' not in producer
 
     verifier_payload = (
         PROJECT_ROOT / "tools" / "verify_reviewed_python_framework.cjs"

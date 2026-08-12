@@ -743,3 +743,115 @@ pass，也不影响最终 scoped gate 的成功结果。
 15-file worktree 的 portable policy、source regression 和文档一致性。latest independent
 `NO-GO`、W02 `in-progress`、`VAL-PACKAGED-SMOKE-001 not-run`、W10/W11 locked 与 public
 release `NO-GO` 均保持不变。
+
+## 第八次 remediation 技术执行：`fail` / `superseded`
+
+上一节保留第八候选提交前的 `not-run` 与本地回归事实；本节只追加它后续的 exact-head
+Actions 结果，不回写旧记录。第八次 exact source、tree 与 fresh runs 如下：
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` |
+| exact parent | `aaf3f51f69dfded82b8237e03a871017317e7158` |
+| exact tree | `66779e9ca8df445fb413e93faed4d265899fb1ec` |
+| synthetic PR context SHA | `1c662735da0306027ec54641b8706130cf6b91dc`（仅为 merge context，不是 source authority） |
+| engineering-smoke run / job | [run `31570734636`](https://github.com/fredgnr/local-context-forge/actions/runs/31570734636) / job `94031972543` |
+| exact-head Desktop source run | [run `31570734560`](https://github.com/fredgnr/local-context-forge/actions/runs/31570734560) / `success` |
+| container run | [run `31570734580`](https://github.com/fredgnr/local-context-forge/actions/runs/31570734580) / `success`；PR no publish |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第八次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-eighth-remediation-authority: source=15336568c6fcf3a40eb051cdb2b90242ef1e1e09,parent=aaf3f51f69dfded82b8237e03a871017317e7158,tree=66779e9ca8df445fb413e93faed4d265899fb1ec,context=1c662735da0306027ec54641b8706130cf6b91dc,assembly-run=31570734636,assembly-job=94031972543,source-run=31570734560,container-run=31570734580,result=fail -->
+
+Engineering run 的 `Provision reviewed build Python without executing it` 已成功校验 locked
+archive 与 hashes manifest 的 SHA-256，并通过真实 uppercase/single-space manifest 整行的
+`grep -Fxc`；outer pkg signature/policy、component metadata/payload、locked no-op postinstall 与
+re-expanded component 也均通过。第七次的 manifest primary failure 因此已关闭，cleanup-only
+`always()` step 也成功完成其既定 runner-temp/source/repo scope。
+
+新的 primary failure 出现在 existing framework quarantine 的 canonical-path 检查。workflow 用
+`sudo mktemp -d` 在 `/Library/Frameworks/Python.framework/Versions` 下创建 root-owned、不可由
+普通 runner 遍历的 `.lcf-python-quarantine.*` 空目录，随后立即由普通 runner 执行
+`cd "${framework_quarantine}" && /bin/pwd -P`。Actions 原始日志在该命令报告
+`Permission denied`，producer 因而在 quarantine `rmdir`、旧 framework move、component install、
+framework seal 和首次 framework Python 启动之前 fail closed。
+
+后续 cleanup-only step 的 `success` 只证明它声明的 runner-temp producer/toolchain/installer、
+reviewed-source 与 repo scratch scope；该 gate 不检查 `/Library/Frameworks/**`。失败发生在
+root-owned empty quarantine 创建之后、既定 `sudo rmdir` 之前，所以本 run 没有证明该空 quarantine
+已被 workflow 清理；runner teardown 不能替代 product cleanup evidence。该 system-root quarantine
+residue cleanup 明确为 `not-proven`，不得从 cleanup step `success` 推导为 `pass`。
+
+success-only source provenance、renderer、Desktop profile、static assembly/bundle audit 与 focused
+lifecycle tests 全部 skipped；assembled App 未启动，remote engineering product artifacts 为 `[]`。
+Desktop source run `31570734560` 与 Containers run `31570734580` success，后者保持 PR no publish；
+两者不能抵消 Engineering failure，也不能提升 packaged/runtime 或 release gate。
+
+## 第九次 remediation technical candidate：`not-run`
+
+当前修复继续使用同一 Draft PR #21 / branch，且不创建新的 W/Requirement/TODO/Validation ID。
+它尚无 committed exact head/tree 或 fresh exact-head Actions，technical result 必须保持
+`not-run`。第九候选只处理第八次暴露的 root quarantine lifecycle：
+
+- root-owned quarantine 的 canonical/identity 验证不能依赖普通 runner `cd` 进入 `0700` 目录；
+- privileged quarantine 在 exact parent/suffix/type 与 `dev:ino` 安全绑定成功后，任何后续失败路径
+  必须只清理该 identity-bound 空 placeholder；绑定前若 identity 无法取得则 fail closed 并保留现场，
+  不得删除 replacement、其他版本或未绑定的同前缀目录；
+- 第八候选已通过的 exact manifest、outer/component/no-op binding、source-unbound/bound cleanup
+  分支与 downstream security boundary 不得放宽；
+- policy checker 必须覆盖普通 runner traversal、owner/mode/identity、create→failure cleanup 与
+  bypass/replacement mutations，两份 shared workflow 继续保持同源边界。
+
+本轮没有运行 macOS arm64 component install/root seal/pre-Python verifier、assembled `.app`
+launch/runtime，也没有运行 W10/W11、tag、upload、Draft/Release 或 promotion。第九候选仍为
+`not-run`，`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 保持
+locked，latest independent 结论仍是旧 reviewed head/tree 的 `NO-GO`，public release 仍
+`NO-GO`。
+
+| 项目 | 当前结论 |
+| --- | --- |
+| PR #21 eighth remediation technical attempt | `fail` / `superseded`（绑定 `1533656…` / parent `aaf3f51…` / tree `66779e9…` 与 `31570734560` / `31570734636` / `31570734580`） |
+| PR #21 ninth remediation technical candidate | `not-run`（无 committed exact head/tree；无 fresh exact-head Actions） |
+| latest independent acceptance | `NO-GO`（仍只绑定旧 `8c5fd…` / `785f46…`）；eighth/ninth candidates `pending` |
+| canonical activation | `blocked` |
+| W02 | `in-progress` |
+| `VAL-PACKAGED-SMOKE-001` | `not-run` |
+| W10/W11 | `locked` |
+| packaged App / bundle sidecar launch | `not-run` |
+| public release | `NO-GO` |
+
+当前汇总是八次 remediation attempts `fail` / `superseded` 与第九次 exact candidate `not-run`；
+`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 继续 locked，latest
+independent 结论仍是旧 reviewed head/tree 的 `NO-GO`，canonical activation 仍 `blocked`，public
+release 仍 `NO-GO`。
+
+## 第九候选 pre-commit local validation
+
+本节只记录当前未提交 bytes 的 portable 验证，不把它写成 committed exact-head、macOS framework
+installer、packaged App runtime 或 technical `pass`。本地 baseline 仍是
+`HEAD 15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree
+`66779e9ca8df445fb413e93faed4d265899fb1ec` 加当前 scoped `15`-file worktree；第九候选尚无
+commit/tree 或 fresh exact-head Actions。
+
+| Gate | 实际命令 | 结果 |
+| --- | --- | --- |
+| packaged policy / verifier | `PYTHONDONTWRITEBYTECODE=1 make packaged-smoke-policy-check PYTHON=backend/.venv/bin/python` | exit `0`；Node verifier `42/42`、policy mutation `80/80`、exact-Git `1/1` |
+| Python packaging | `PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' make python-sidecar-packaging-test` | exit `0`；`559 passed / 2 skipped` |
+| formal workflow policy | `PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' backend/.venv/bin/python -m pytest -q tests/backend/test_desktop_release_workflow_policy.py` | exit `0`；`11/11` |
+| backend full | `cd backend && PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' .venv/bin/pytest` | exit `0`；`824 passed / 3 skipped / 2 warnings` |
+| Desktop engineering consumer | `cd desktop && npm run test:engineering-smoke && npm run typecheck && npm run build` | exit `0`；`76/76`、typecheck/build pass |
+| pre-1 governance | `python3 -B tools/check_pre1_work_plan.py`；`python3 -B -m unittest tools.tests.test_check_pre1_work_plan` | exit `0`；direct checker pass、`55/55` |
+| workflow/static | PyYAML parse 两份 workflow；35 个 detected `run` block 送入 `/bin/bash -n`；5 个 modified Python files compile | exit `0`；2 workflows、35 Bash blocks、5 Python files pass |
+| version / Markdown / scope | version sync；Markdown links；`git diff --check`；`git status --short` | exit `0`；version/protocol pass、89 files、15 个 scoped tracked files、index empty、无 untracked file |
+
+本地 policy 明确锁住：placeholder state 在 EXIT trap 注册前覆盖 inherited values；只有 exact
+parent/prefix、十位 alphanumeric suffix、directory/non-symlink 与 `dev:ino` 全部匹配时才允许
+`sudo rmdir`；正常 `rmdir` 与双 absence 后在 framework `mv` 前清除 active identity。replacement、
+missing、symlink 或 identity drift 均 fail closed 且不删除；不使用 recursive privileged cleanup。
+这些 portable 结果不证明 Bash 3.2/macOS installer/root seal/pre-Python verifier，也不运行 packaged App。
+
+当前汇总仍是八次 remediation attempts `fail` / `superseded` 与第九次 exact candidate `not-run`；
+`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 locked，latest independent
+仍为旧 reviewed head/tree 的 `NO-GO`，canonical activation `blocked`，public release `NO-GO`。

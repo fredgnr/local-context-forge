@@ -14,7 +14,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
 EXPECTED_WORKFLOW_SHA256 = (
-    "9423b02a1e429471106536a2ce84d0ff5795af475f0beb7010276aaeb8dc20ff"
+    "7236d2601f5a08f25d8c19f3af1e109d59856f9f837fcad505683a95a38f1347"
 )
 MAKEFILE = ROOT / "Makefile"
 BUILD_SCRIPT = ROOT / "tools" / "build_python_sidecar.py"
@@ -42,7 +42,7 @@ REMEDIATION_EVIDENCE = (
     / "2026-08-07-pr21-remediation.md"
 )
 EXPECTED_REVIEWED_INPUT_SHA256 = {
-    "workflow": "9423b02a1e429471106536a2ce84d0ff5795af475f0beb7010276aaeb8dc20ff",
+    "workflow": "7236d2601f5a08f25d8c19f3af1e109d59856f9f837fcad505683a95a38f1347",
     "makefile": "0406bfd27e312250c48d27899ccff958f25b9fe347871e7643950c437f688977",
     "build_script": "3cc787877d1fb65b8b551911a132400a0fd8e2d3eaf543975eceb88b131d1c19",
     "audit_script": "d3b2d638e28981915f346ead114f86f8bc82ddbbfb91f15416bc3127866504c9",
@@ -54,7 +54,7 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
     "python_packaging_tests": "5626799f953939294bc7aaf66e7bd976c063864c5068c6dae7df35a7e5f972d9",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "6f6361bf66082d5bc1eb13a3e2cf9699826f1fb561c65239e5b18777cfefb9fa",
+    "remediation_evidence": "49a24644d98de7295f3c32562d965425ba34fea26fb208642b6d942b15da9c13",
     "package": "7d4a247182d89a83734e151df373215f30c3932c7cb99c295c48900baea6e1e7",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
@@ -86,11 +86,11 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "formal_prepare_release": "86f42e539c4c9825760de56ccd07409b1cec07ac588380f4e64da41612df3311",
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
-    "formal_workflow": "0ac61f3ad570b107121b11ba03440662b5e02530bf3e1fd3ec9895685114ea69",
-    "status": "ad18b998be2cf3dfb46012494e379d5d0007aa1df06059d7628c19f3c8e84dcb",
-    "todo": "87f42ac51546b42dbeb00d40e768564b5f521582d237c906764269ca5792a878",
-    "trace": "e2dfade5d20a9090cd0468f93027354449bfb95f1e214300c94ec9b5fea63306",
-    "iteration": "9981e12f494fb47923dba982bc376da1f05349b258114c155dfc7e14dfcd929c",
+    "formal_workflow": "b3bf3fd40e1b0296bcd67a5b7c1fdcbe9704f55d5bdfae33cba4ddb83da3912e",
+    "status": "2698f695e1bb74430512e14b29292e9191847924decc7b2cfc2af9b0afd66b94",
+    "todo": "9873aa6bc03ae4c42146e6b8a07ba8d3a892cb783be52a9f8b63450fae9659dc",
+    "trace": "3f90fbe4a6077bbd7336161ab8f6c5f7f99bd227c341dce9b39b043ab80a9557",
+    "iteration": "8e66c9bba250662f7dafaf2ef9b373fa09980dbf8c6776714669164eccb5582b",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -324,7 +324,7 @@ EXPECTED_FORMAL_BOUNDARY_SHA256 = {
         "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5"
     ),
     "formal workflow": (
-        "0ac61f3ad570b107121b11ba03440662b5e02530bf3e1fd3ec9895685114ea69"
+        "b3bf3fd40e1b0296bcd67a5b7c1fdcbe9704f55d5bdfae33cba4ddb83da3912e"
     ),
 }
 STATUS = ROOT / "docs" / "development" / "status.md"
@@ -455,8 +455,87 @@ EXPECTED_FRAMEWORK_NODE_BIND_RUN_SHA256 = (
     "37b18d403af947f37679119bdec8309417ea7363139cd3db602d162b217da689"
 )
 EXPECTED_FRAMEWORK_PROVISION_RUN_SHA256 = (
-    "5a3c686462d652a27417f57f5aad439e1c2e8c838549207714750a269cd32db5"
+    "099831784f1f5181d83042bb077d27265922cc23e7e129b97c8c01a6a0a24cec"
 )
+EXPECTED_FRAMEWORK_PLACEHOLDER_CLEANUP = r'''cleanup_producer() {
+  readonly saved_status="$?"
+  trap - EXIT
+  cleanup_status=0
+  cleanup_quarantine="${framework_quarantine_placeholder:-none}"
+  cleanup_quarantine_prefix="${framework_quarantine_prefix:-none}"
+  cleanup_quarantine_suffix="${cleanup_quarantine#"${cleanup_quarantine_prefix}"}"
+  if test "${framework_quarantine_placeholder_identity:-none}" != "none"; then
+    if test "${cleanup_quarantine%/*}" = "${framework_parent:-none}" && \
+      test "${cleanup_quarantine}" = \
+        "${cleanup_quarantine_prefix}${cleanup_quarantine_suffix}" && \
+      [[ "${cleanup_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]] && \
+      test -d "${cleanup_quarantine}" && \
+      test ! -L "${cleanup_quarantine}" && \
+      test "$(/usr/bin/stat -f '%d:%i' "${cleanup_quarantine}")" = \
+        "${framework_quarantine_placeholder_identity}"; then
+      /usr/bin/sudo --non-interactive /bin/rmdir \
+        "${cleanup_quarantine}" || {
+          candidate_status="$?"
+          if test "${cleanup_status}" -eq 0; then
+            cleanup_status="${candidate_status}"
+          fi
+        }
+    else
+      cleanup_status=70
+    fi
+  fi
+  /usr/bin/find -x "${producer_root}" -depth -delete || {
+    candidate_status="$?"
+    if test "${cleanup_status}" -eq 0; then
+      cleanup_status="${candidate_status}"
+    fi
+  }
+  if test "${saved_status}" -ne 0; then
+    exit "${saved_status}"
+  fi
+  exit "${cleanup_status}"
+}'''
+EXPECTED_FRAMEWORK_QUARANTINE_TRANSITION = r'''readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
+framework_quarantine="none"
+framework_quarantine_identity="none"
+if test -e "${framework_root}" || test -L "${framework_root}"; then
+  test -d "${framework_root}"
+  test ! -L "${framework_root}"
+  readonly previous_root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
+  framework_quarantine="$(
+    /usr/bin/sudo --non-interactive /usr/bin/mktemp -d \
+      "${framework_quarantine_prefix}XXXXXXXXXX"
+  )"
+  framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"
+  readonly framework_quarantine_suffix
+  test "${framework_quarantine%/*}" = "${framework_parent}"
+  test "${framework_quarantine}" = \
+    "${framework_quarantine_prefix}${framework_quarantine_suffix}"
+  [[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]
+  test -d "${framework_quarantine}"
+  test ! -L "${framework_quarantine}"
+  framework_quarantine_placeholder="${framework_quarantine}"
+  framework_quarantine_placeholder_identity="$(/usr/bin/stat -f '%d:%i' \
+    "${framework_quarantine_placeholder}")"
+  test "$(/usr/bin/stat -f '%u' \
+    "${framework_quarantine}")" = "0"
+  test "$(/usr/bin/stat -f '%Lp' \
+    "${framework_quarantine}")" = "700"
+  /usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"
+  test ! -e "${framework_quarantine}"
+  test ! -L "${framework_quarantine}"
+  framework_quarantine_placeholder_identity="none"
+  framework_quarantine_placeholder="none"
+  /usr/bin/sudo --non-interactive /bin/mv \
+    "${framework_root}" "${framework_quarantine}"
+  test ! -e "${framework_root}"
+  test ! -L "${framework_root}"
+  test -d "${framework_quarantine}"
+  test ! -L "${framework_quarantine}"
+  test "$(/usr/bin/stat -f '%d:%i' \
+    "${framework_quarantine}")" = "${previous_root_identity}"
+  framework_quarantine_identity="${previous_root_identity}"
+fi'''
 EXPECTED_FRAMEWORK_SEAL_RUN_SHA256 = (
     "b577ba78a526768e4a16d33b23d6bbc5ab8e871c5f25340193b8c40e9001ec72"
 )
@@ -942,7 +1021,7 @@ make qmd-runtime-audit
 make renderer-audit'''
 EXPECTED_RUN_BLOCK_SHA256 = (
     ("framework verifier Node", "6af8ddd6ea4c0c6de9bf63ec4a69b3365f6aa417d2b332748f80d192bd9897b5"),
-    ("framework producer", "5b70b5fc1d4d647d422f1374a681ff634d57522c56213fe1ddc7b6ce7ccc8242"),
+    ("framework producer", "4f4e4303542f05c0f6e31c8b9566b16983a29878c5d657672730137caa3c86c1"),
     ("framework seal", "322c765ee6d92008dbef90f26c4e37f253e617c6cec78099cab8fbe73a9a2e3a"),
     ("exact provenance", "9ea36480b4f4ff8d721fcd2c64cc1a2173a94c8185c3ee6a5e69a8fcf51b596f"),
     ("policy", "285e761f042ad2c44db94e38730f1d19c30c1db0851dc81539083cb6df5fc32b"),
@@ -5096,6 +5175,8 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         or manifest_parts[0].lower() != PYTHON_ARCHIVE_SHA256
         or manifest_parts[1] != PYTHON_ARCHIVE_NAME
         or not PYTHON_ARCHIVE_URL.endswith(f"/{PYTHON_ARCHIVE_NAME}")
+        or run.count(EXPECTED_FRAMEWORK_PLACEHOLDER_CLEANUP) != 1
+        or run.count(EXPECTED_FRAMEWORK_QUARANTINE_TRANSITION) != 1
     ):
         return False
 
@@ -5103,6 +5184,8 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         'readonly producer_prefix="${RUNNER_TEMP}/lcf-python-producer."',
         '/usr/bin/mktemp -d "${producer_prefix}XXXXXXXXXX"',
         '/bin/chmod 0700 "${producer_root}"',
+        EXPECTED_FRAMEWORK_PLACEHOLDER_CLEANUP,
+        'framework_quarantine_placeholder="none"\nframework_quarantine_placeholder_identity="none"\ntrap cleanup_producer EXIT',
         "trap cleanup_producer EXIT",
         'readonly archive="${producer_root}/python-3.13.14-darwin-arm64.tar.gz"',
         'readonly hashes="${producer_root}/hashes.sha256"',
@@ -5146,11 +5229,31 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         'readonly reviewed_postinstall="${reviewed_no_op}/Scripts/postinstall"',
         'for existing_ancestor in \\\n  "/Library" \\\n  "/Library/Frameworks" \\\n  "/Library/Frameworks/Python.framework" \\\n  "/Library/Frameworks/Python.framework/Versions" \\\n  "/Library/Frameworks/Python.framework/Versions/3.13"; do',
         'if test ! -e "${existing_ancestor}" && \\\n    test ! -L "${existing_ancestor}"; then',
+        'test "$(cd "${existing_ancestor}" && /bin/pwd -P)" = "${existing_ancestor}"',
+        'existing_identity="$(/usr/bin/stat -f \'%d:%i\' "${existing_ancestor}")"',
         '/usr/bin/sudo --non-interactive /usr/sbin/chown -h 0:0 "${existing_ancestor}"',
         '/usr/bin/sudo --non-interactive /bin/chmod -h -N "${existing_ancestor}"',
         '/usr/bin/sudo --non-interactive /bin/chmod -h go-w "${existing_ancestor}"',
+        'test "$(/usr/bin/stat -f \'%d:%i\' "${existing_ancestor}")" = "${existing_identity}"',
+        'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."',
         'readonly previous_root_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")"',
-        '"${framework_parent}/.lcf-python-quarantine.XXXXXXXXXX"',
+        '"${framework_quarantine_prefix}XXXXXXXXXX"',
+        'framework_quarantine_placeholder="${framework_quarantine}"',
+        'framework_quarantine_placeholder_identity="$(/usr/bin/stat -f \'%d:%i\' \\\n    "${framework_quarantine_placeholder}")"',
+        'framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"',
+        'readonly framework_quarantine_suffix',
+        'test "${framework_quarantine%/*}" = "${framework_parent}"',
+        'test "${framework_quarantine}" = \\\n    "${framework_quarantine_prefix}${framework_quarantine_suffix}"',
+        '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
+        'test -d "${framework_quarantine}"',
+        'test ! -L "${framework_quarantine}"',
+        'test "$(/usr/bin/stat -f \'%u\' \\\n    "${framework_quarantine}")" = "0"',
+        'test "$(/usr/bin/stat -f \'%Lp\' \\\n    "${framework_quarantine}")" = "700"',
+        '/usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"',
+        'test ! -e "${framework_quarantine}"',
+        'test ! -L "${framework_quarantine}"',
+        'framework_quarantine_placeholder_identity="none"',
+        'framework_quarantine_placeholder="none"',
         '/usr/bin/sudo --non-interactive /bin/mv \\\n    "${framework_root}" "${framework_quarantine}"',
         'test ! -e "${framework_root}"',
         'test ! -L "${framework_root}"',
@@ -5174,7 +5277,32 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         '/usr/sbin/pkgutil --flatten "${component}" "${no_op_package}"',
         '/usr/sbin/pkgutil --expand "${no_op_package}" "${reviewed_no_op}"',
         'for existing_ancestor in \\',
+        'test "$(cd "${existing_ancestor}" && /bin/pwd -P)" = "${existing_ancestor}"',
+        'existing_identity="$(/usr/bin/stat -f \'%d:%i\' "${existing_ancestor}")"',
+        '/usr/bin/sudo --non-interactive /usr/sbin/chown -h 0:0 "${existing_ancestor}"',
+        '/usr/bin/sudo --non-interactive /bin/chmod -h -N "${existing_ancestor}"',
+        '/usr/bin/sudo --non-interactive /bin/chmod -h go-w "${existing_ancestor}"',
+        'test "$(/usr/bin/stat -f \'%d:%i\' "${existing_ancestor}")" = "${existing_identity}"',
+        'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."',
         'if test -e "${framework_root}" || test -L "${framework_root}"; then',
+        '/usr/bin/sudo --non-interactive /usr/bin/mktemp -d \\',
+        'framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"',
+        'readonly framework_quarantine_suffix',
+        'test "${framework_quarantine%/*}" = "${framework_parent}"',
+        'test "${framework_quarantine}" = \\\n    "${framework_quarantine_prefix}${framework_quarantine_suffix}"',
+        '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
+        'test -d "${framework_quarantine}"',
+        'test ! -L "${framework_quarantine}"',
+        'framework_quarantine_placeholder="${framework_quarantine}"',
+        'framework_quarantine_placeholder_identity="$(/usr/bin/stat -f \'%d:%i\' \\',
+        'test "$(/usr/bin/stat -f \'%u\' \\\n    "${framework_quarantine}")" = "0"',
+        'test "$(/usr/bin/stat -f \'%Lp\' \\\n    "${framework_quarantine}")" = "700"',
+        '/usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"',
+        'test ! -e "${framework_quarantine}"\n'
+        '  test ! -L "${framework_quarantine}"\n'
+        '  framework_quarantine_placeholder_identity="none"\n'
+        '  framework_quarantine_placeholder="none"',
+        '/usr/bin/sudo --non-interactive /bin/mv \\',
         'test ! -e "${framework_root}"',
         '/usr/bin/sudo --non-interactive /usr/sbin/installer \\',
         'test -d "/Library/Frameworks/Python.framework/Versions/3.13"',
@@ -5201,6 +5329,54 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         and run.count('"${no_op_sha256}" "${no_op_package}"') == 2
         and run.count('test ! -e "${framework_root}"') == 2
         and run.count('test ! -L "${framework_root}"') == 3
+        and run.count('test ! -e "${framework_quarantine}"') == 1
+        and run.count('test ! -L "${framework_quarantine}"') == 3
+        and run.count(
+            'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."'
+        ) == 1
+        and run.count(
+            'framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"'
+        ) == 1
+        and run.count("readonly framework_quarantine_suffix") == 1
+        and run.count('test "$(cd "${existing_ancestor}"') == 1
+        and run.count('"${existing_ancestor}")" = "${existing_identity}"') == 1
+        and run.count('"${framework_quarantine}")" = "0"') == 1
+        and run.count('"${framework_quarantine}")" = "700"') == 1
+        and run.count(
+            'test "${framework_quarantine}" = \\\n    "${framework_quarantine_prefix}${framework_quarantine_suffix}"'
+        ) == 1
+        and run.count(
+            '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]'
+        ) == 1
+        and run.count(
+            '/usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"'
+        ) == 1
+        and run.count(
+            '/usr/bin/sudo --non-interactive /bin/rmdir \\\n'
+            '        "${cleanup_quarantine}"'
+        ) == 1
+        and run.count("cleanup_producer() {") == 1
+        and run.count("trap - EXIT") == 1
+        and run.count("trap cleanup_producer EXIT") == 1
+        and run.count("cleanup_producer") == 3
+        and len(re.findall(r"(?m)^\s*trap\s", run)) == 2
+        and run.count("/bin/rmdir") == 2
+        and run.count('framework_quarantine_placeholder="${framework_quarantine}"') == 1
+        and run.count(
+            'framework_quarantine_placeholder_identity="$(/usr/bin/stat -f \'%d:%i\' \\'
+        ) == 1
+        and run.count('framework_quarantine_placeholder_identity="none"') == 2
+        and run.count('framework_quarantine_placeholder="none"') == 2
+        and "readonly framework_quarantine_placeholder" not in run
+        and not re.search(
+            r"/bin/rm(?:\s|\\\n)[\s\S]{0,160}"
+            r"(?:framework|cleanup)_quarantine",
+            run,
+        )
+        and not re.search(
+            r"/usr/bin/find[^\n]*(?:framework|cleanup)_quarantine", run
+        )
+        and 'cd "${framework_quarantine}"' not in run
         and run.count(
             'test "$(/usr/bin/stat -f \'%d:%i:%Lp:%u:%g:%l:%z:%m\' \\\n'
             '  "${no_op_package}")" = "${no_op_identity}"'
@@ -9768,33 +9944,33 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             "status",
             status,
             (
-                "seven remediation attempts `fail` / `superseded`",
-                "eighth exact candidate `not-run`",
+                "eight remediation attempts `fail` / `superseded`",
+                "ninth exact candidate `not-run`",
             ),
         ),
         (
             "todo",
             todo,
             (
-                "seven remediation attempts `fail` / `superseded`",
-                "eighth exact candidate `not-run`",
+                "eight remediation attempts `fail` / `superseded`",
+                "ninth exact candidate `not-run`",
             ),
         ),
         (
             "traceability",
             trace,
             (
-                "first through seventh remediations failed and superseded",
-                "eighth exact candidate not-run",
+                "first through eighth remediations failed and superseded",
+                "ninth exact candidate not-run",
             ),
         ),
         (
             "iteration",
             iteration,
             (
-                "第一次至第七次 remediation technical attempts 均为 "
+                "第一次至第八次 remediation technical attempts 均为 "
                 "`fail` / `superseded`",
-                "第八 exact candidate `not-run`",
+                "第九 exact candidate `not-run`",
             ),
         ),
     )

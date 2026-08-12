@@ -9236,6 +9236,9 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
         bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS
     )
     assert python_lock["frameworkCoreFingerprintSha256"] == (
+        "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"
+    )
+    assert python_lock["frameworkCoreFingerprintSha256"] != (
         "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
     )
     assert python_lock["reviewedBrokenSymlinks"] == [

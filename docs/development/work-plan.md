@@ -78,8 +78,14 @@
   quarantine ordinary-runner canonical `cd` permission fail；cleanup success 未证明 framework
   quarantine residue absent，later skipped、artifacts `[]`、no App launch；Containers `31570734580`
   success/no publish。第八次已 technical `fail` / `superseded`、independent `pending`。第九次 exact
-  remediation technical candidate 是 current worktree / pre-commit，`not-run`（无 committed exact
-  head/tree 或 fresh exact-head Actions）。它继承第八候选不使用
+  `6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent
+  `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree
+  `3361f3e3880c926015a82abc862cb3e8334410c2` 的 Desktop `31575062814` success；Engineering
+  `31575062796` / job `94045233041` producer success 后因 archive symlink mode `0775` vs Installer
+  `0777` core-fingerprint fail；cleanup runner scope success、later skipped、artifacts `[]`、no App；
+  Containers `31575062785` success/no publish。第九次已 technical `fail` / `superseded`、independent
+  `pending`。第十次 exact remediation technical candidate `not-run`（无 committed exact head/tree 或
+  fresh exact-head Actions）。它继承第九候选不使用
   `actions/setup-python` / 原 full pkg；exact outer pkg 验签后只以唯一 17-byte no-op 重打并安装
   `Python_Framework.pkg`，隔离旧 root/确认 target absent，再完成 non-symlink seal、大小写无关
   cache cleanup 与 O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node
@@ -88,7 +94,14 @@
   distribution/binding，不安装或 `sudo`；同时把 manifest 真实整行固定为 `grep -Fxc` + count one，
   cleanup 分成 source-unbound zero-residue 与 source-bound strict source/repo closure，并要求
   privileged quarantine 在 ordinary runner 访问前完成 canonical binding、cleanup gate 显式证明
-  identity-bound exact framework quarantine zero-residue。八次失败均
+  identity-bound exact framework quarantine zero-residue，并要求 fingerprint contract 精确绑定
+  archive `0775` → Installer `0777` symlink-mode transformation、单一 pin `ba58cfb…`，不放宽其他
+  seal。locked Payload `f922c9d…` 的 canonical inventory 用 33 条 symlink `0775` 得旧
+  `863a6353…`，仅映射 Installer `0777` 得唯一 `ba58cfb…`，物化同 Payload 的 Node verifier 独立
+  复算一致；不是 runtime learn-and-accept，mode/target/path/type 均参与。两份 workflow 以
+  pre-trap sentinel 起步；新 root/旧 quarantine exact identity 绑定后才激活，
+  failure 只在匹配时删除新 root并恢复旧 root（无旧 root 只删新 root），mismatch 不删且 fixed
+  failure，verifier/held inputs 成功后 committed 只精确清理匹配 quarantine。九次失败均
   未启动 assembled App，
   packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。

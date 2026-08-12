@@ -14,7 +14,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
 EXPECTED_WORKFLOW_SHA256 = (
-    "7236d2601f5a08f25d8c19f3af1e109d59856f9f837fcad505683a95a38f1347"
+    "fb30be64f717856b2f86c3f95911d549cda235779663ab7ee6334beab7159177"
 )
 MAKEFILE = ROOT / "Makefile"
 BUILD_SCRIPT = ROOT / "tools" / "build_python_sidecar.py"
@@ -42,26 +42,26 @@ REMEDIATION_EVIDENCE = (
     / "2026-08-07-pr21-remediation.md"
 )
 EXPECTED_REVIEWED_INPUT_SHA256 = {
-    "workflow": "7236d2601f5a08f25d8c19f3af1e109d59856f9f837fcad505683a95a38f1347",
+    "workflow": "fb30be64f717856b2f86c3f95911d549cda235779663ab7ee6334beab7159177",
     "makefile": "0406bfd27e312250c48d27899ccff958f25b9fe347871e7643950c437f688977",
     "build_script": "3cc787877d1fb65b8b551911a132400a0fd8e2d3eaf543975eceb88b131d1c19",
     "audit_script": "d3b2d638e28981915f346ead114f86f8bc82ddbbfb91f15416bc3127866504c9",
     "python_bootstrap": "0a2e6671f7a765f09e31e20a306be48b3756f28b110ae7244a9eefa0ac4e45c4",
-    "framework_verifier": "b3e2576fff416be2924adab5470004f5b52fd0eba342b522adad761fe9176c26",
+    "framework_verifier": "ffbf6ed2f41a35f44edda68bdd831be4d42384f9488dcdc93f8242abcfb9e218",
     "framework_verifier_tests": "59f34be890573a0759519022f5dac39572d5330d1f5192a518aa362a6844a46d",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "5626799f953939294bc7aaf66e7bd976c063864c5068c6dae7df35a7e5f972d9",
+    "python_packaging_tests": "c89f4182106c65d4fa0d605ff3d235337a3d6dd3c65c675882e57d07b5ec9d11",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "49a24644d98de7295f3c32562d965425ba34fea26fb208642b6d942b15da9c13",
+    "remediation_evidence": "81695dbc6c131270acef3d0f37ef52f34dcf7ecf345bfa0b1cf831c8bdaffd7d",
     "package": "7d4a247182d89a83734e151df373215f30c3932c7cb99c295c48900baea6e1e7",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
     "web_package_lock": "ae4f9bdf4283763a980ee4b21f3fdd844d4de43a0b35fa7086406eddc2ab857f",
     "python_build_requirements_lock": "1e16e69c50364465e8587e58d4399c34146d11a91bfa3a2399e80e0741bf6342",
     "python_runtime_lock": "a961d5863a346c820cfdfa9daae0223672e761302b5f5aea92ef779c1b69f121",
-    "python_toolchain_lock": "5388627f89b43ab4e30ac8c0089d3d2ec2c18928515152f9975ce0fe4e89f3be",
+    "python_toolchain_lock": "07eea5053918470ec59c38bf8780df6de8871636278761b22a74ff7dbc4c0a8a",
     "pyinstaller_spec": "e61b437496bd243f1fcbf73fae3faae911199f4d5d0f352f6365d7828928289d",
     "smoke_config": "b7b9dedb2fbe15cf5682ddd8255286feb799cc28eb2454c0ceaf4b5ec201b448",
     "common_audit": "1e754dc8f4d2e76f3a28a71f86622e6b0338feaf2ad4112fe6666d108c969398",
@@ -81,16 +81,16 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "python_sidecar_schema": "6c5c4fb707d29c02676a34c76f00c2e0eec509df2500be6d73b5f6aa8d97cb1c",
     "formal_base_config": "cede533e71bdfb00401451e3016b7c7032b5867b5ba0147682d72029d08cafb4",
     "formal_release_config": "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd",
-    "formal_before_pack": "5b2a6d63327f7bef575ec0b7d03512912e7f07ba3b287e071de5d7721dd776e1",
+    "formal_before_pack": "2e7ec5a008066f46024dfa9d3d063f55ff62dcf1dc484f20f53978843e8028c4",
     "formal_after_pack": "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5",
     "formal_prepare_release": "86f42e539c4c9825760de56ccd07409b1cec07ac588380f4e64da41612df3311",
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
-    "formal_workflow": "b3bf3fd40e1b0296bcd67a5b7c1fdcbe9704f55d5bdfae33cba4ddb83da3912e",
-    "status": "2698f695e1bb74430512e14b29292e9191847924decc7b2cfc2af9b0afd66b94",
-    "todo": "9873aa6bc03ae4c42146e6b8a07ba8d3a892cb783be52a9f8b63450fae9659dc",
-    "trace": "3f90fbe4a6077bbd7336161ab8f6c5f7f99bd227c341dce9b39b043ab80a9557",
-    "iteration": "8e66c9bba250662f7dafaf2ef9b373fa09980dbf8c6776714669164eccb5582b",
+    "formal_workflow": "fcaba8c76c6ad5b840c30ba60ca1eee7b90d2a67f1d1678ea44bd061034ecf85",
+    "status": "05ddb9b308fba45d73a0b013949372f13416d6e9627297253c2ccf01ccaf1ee2",
+    "todo": "d585d1f2e9dffb2934f8d28e83527a9d7e9cf7c02cfbe1ae185731cea27677f8",
+    "trace": "23cac3d7c72704f549fdf84839c1d268d08f5ffdecd97e51c9d9b6d237450a93",
+    "iteration": "68f10f1917605423e67a691fbc803d9407f42b373018382d55f7683ac359208c",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -318,13 +318,13 @@ EXPECTED_FORMAL_BOUNDARY_SHA256 = {
         "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd"
     ),
     "formal beforePack": (
-        "5b2a6d63327f7bef575ec0b7d03512912e7f07ba3b287e071de5d7721dd776e1"
+        "2e7ec5a008066f46024dfa9d3d063f55ff62dcf1dc484f20f53978843e8028c4"
     ),
     "formal afterPack": (
         "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5"
     ),
     "formal workflow": (
-        "b3bf3fd40e1b0296bcd67a5b7c1fdcbe9704f55d5bdfae33cba4ddb83da3912e"
+        "fcaba8c76c6ad5b840c30ba60ca1eee7b90d2a67f1d1678ea44bd061034ecf85"
     ),
 }
 STATUS = ROOT / "docs" / "development" / "status.md"
@@ -362,95 +362,6 @@ EXPECTED_WORKFLOW_STEPS = (
     "Assemble and statically audit app directory",
     "Run focused Python sidecar lifecycle tests",
 )
-EXPECTED_FRAMEWORK_SEAL_RUN = r'''set -euo pipefail
-readonly framework_root="/Library/Frameworks/Python.framework/Versions/3.13"
-readonly framework_parent="${framework_root%/*}"
-readonly framework_anchor="${framework_parent%/*}"
-readonly framework_container="${framework_anchor%/*}"
-readonly library_root="${framework_container%/*}"
-readonly framework_python="${framework_root}/bin/python3.13"
-readonly framework_binary="${framework_root}/Python"
-test -d "${library_root}"
-test ! -L "${library_root}"
-test "$(cd "${library_root}" && /bin/pwd -P)" = "${library_root}"
-test -d "${framework_container}"
-test ! -L "${framework_container}"
-test "$(cd "${framework_container}" && /bin/pwd -P)" = "${framework_container}"
-test -d "${framework_anchor}"
-test ! -L "${framework_anchor}"
-test "$(cd "${framework_anchor}" && /bin/pwd -P)" = "${framework_anchor}"
-test -d "${framework_parent}"
-test ! -L "${framework_parent}"
-test "$(cd "${framework_parent}" && /bin/pwd -P)" = "${framework_parent}"
-test -d "${framework_root}"
-test ! -L "${framework_root}"
-test "$(cd "${framework_root}" && /bin/pwd -P)" = "${framework_root}"
-/usr/bin/sudo --non-interactive /usr/sbin/chown \
-  -h 0:0 "${framework_anchor}"
-/usr/bin/sudo --non-interactive /bin/chmod \
-  -h -N "${framework_anchor}"
-/usr/bin/sudo --non-interactive /bin/chmod \
-  -h go-w "${framework_anchor}"
-/usr/bin/sudo --non-interactive /usr/sbin/chown \
-  -h 0:0 "${framework_parent}"
-/usr/bin/sudo --non-interactive /bin/chmod \
-  -h -N "${framework_parent}"
-/usr/bin/sudo --non-interactive /bin/chmod \
-  -h go-w "${framework_parent}"
-/usr/bin/sudo --non-interactive /usr/sbin/chown \
-  -R -P -h 0:0 "${framework_root}"
-/usr/bin/sudo --non-interactive /bin/chmod \
-  -R -P -N "${framework_root}"
-/usr/bin/sudo --non-interactive /bin/chmod \
-  -R -P go-w "${framework_root}"
-/usr/bin/sudo --non-interactive /usr/bin/find -x \
-  "${framework_root}" -type f \
-  \( -name '*.pyc' -o -name '*.pyo' \) -delete
-/usr/bin/sudo --non-interactive /usr/bin/find -x \
-  "${framework_root}" -depth -type d \
-  -name '__pycache__' -delete
-test "$(/usr/bin/stat -f '%u' "${library_root}")" = "0"
-library_mode="$(/usr/bin/stat -f '%Lp' "${library_root}")"
-(( (8#${library_mode} & 07022) == 0 ))
-test "$(/usr/bin/stat -f '%u' "${framework_container}")" = "0"
-container_mode="$(/usr/bin/stat -f '%Lp' "${framework_container}")"
-(( (8#${container_mode} & 07022) == 0 ))
-test "$(/usr/bin/stat -f '%u' "${framework_anchor}")" = "0"
-anchor_mode="$(/usr/bin/stat -f '%Lp' "${framework_anchor}")"
-(( (8#${anchor_mode} & 07022) == 0 ))
-test "$(/usr/bin/stat -f '%u' "${framework_parent}")" = "0"
-parent_mode="$(/usr/bin/stat -f '%Lp' "${framework_parent}")"
-(( (8#${parent_mode} & 07022) == 0 ))
-framework_entries=0
-while IFS= read -r -d '' entry; do
-  framework_entries=$((framework_entries + 1))
-  test "${framework_entries}" -le 100000
-  test "$(/usr/bin/stat -f '%u' "${entry}")" = "0"
-  relative_entry="${entry#${framework_root}/}"
-  case "${relative_entry}" in
-    __pycache__|__pycache__/*|*/__pycache__|*/__pycache__/*|*.pyc|*.pyo)
-      exit 1
-      ;;
-  esac
-  if test -L "${entry}"; then
-    test "$(/usr/bin/stat -f '%l' "${entry}")" = "1"
-    continue
-  fi
-  entry_mode="$(/usr/bin/stat -f '%Lp' "${entry}")"
-  (( (8#${entry_mode} & 07022) == 0 ))
-  if test -f "${entry}"; then
-    test "$(/usr/bin/stat -f '%l' "${entry}")" = "1"
-  else
-    test -d "${entry}"
-  fi
-done < <(/usr/bin/find -x "${framework_root}" -print0)
-test "${framework_entries}" -gt 1
-printf '%s  %s\n' \
-  "ee3c4103b97e32a98e98cfad7f6ca4d09b2ab2dc16f3d28e18b54a4a0244efe0" \
-  "${framework_python}" | /usr/bin/shasum -a 256 --check
-printf '%s  %s\n' \
-  "db77544e7135af8478d62c7d1289581d83714a676c7d3f2b7a4b996bdfef5717" \
-  "${framework_binary}" | /usr/bin/shasum -a 256 --check'''
 EXPECTED_FRAMEWORK_NODE_BIND_RUN_SHA256 = (
     "37b18d403af947f37679119bdec8309417ea7363139cd3db602d162b217da689"
 )
@@ -536,8 +447,169 @@ if test -e "${framework_root}" || test -L "${framework_root}"; then
     "${framework_quarantine}")" = "${previous_root_identity}"
   framework_quarantine_identity="${previous_root_identity}"
 fi'''
+EXPECTED_FRAMEWORK_SEAL_TRANSACTION_SENTINELS = r'''seal_transaction_phase="pending"
+seal_installed_root_identity="none"
+seal_quarantine_state="unvalidated"
+seal_quarantine="none"
+seal_quarantine_identity="none"'''
+EXPECTED_FRAMEWORK_SEAL_TRANSACTION_CLEANUP = r'''cleanup_sealed_framework() {
+  readonly saved_status="$?"
+  trap - EXIT
+  cleanup_status=0
+  rollback_ready=1
+  if test "${seal_transaction_phase:-unvalidated}" = "pending"; then
+    if test "${seal_installed_root_identity:-none}" = "none" || \
+      test ! -d "${framework_root}" || \
+      test -L "${framework_root}" || \
+      test "$(/usr/bin/stat -f '%u' "${framework_root}")" != "0" || \
+      test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" != \
+        "${seal_installed_root_identity}"; then
+      rollback_ready=0
+      cleanup_status=70
+    fi
+    if test "${seal_quarantine_state:-unvalidated}" = "active"; then
+      if test "${seal_quarantine%/*}" != "${framework_parent}" || \
+        test ! -d "${seal_quarantine}" || \
+        test -L "${seal_quarantine}" || \
+        test "$(/usr/bin/stat -f '%u' "${seal_quarantine}")" != "0" || \
+        test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" != \
+          "${seal_quarantine_identity}"; then
+        rollback_ready=0
+        if test "${cleanup_status}" -eq 0; then
+          cleanup_status=70
+        fi
+      fi
+    elif test "${seal_quarantine_state:-unvalidated}" != "none"; then
+      rollback_ready=0
+      if test "${cleanup_status}" -eq 0; then
+        cleanup_status=70
+      fi
+    fi
+    if test "${rollback_ready}" -eq 1; then
+      /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+        "${framework_root}" -depth -delete || {
+          candidate_status="$?"
+          if test "${cleanup_status}" -eq 0; then
+            cleanup_status="${candidate_status}"
+          fi
+        }
+      if test -e "${framework_root}" || test -L "${framework_root}"; then
+        if test "${cleanup_status}" -eq 0; then
+          cleanup_status=70
+        fi
+      elif test "${seal_quarantine_state}" = "active"; then
+        /usr/bin/sudo --non-interactive /bin/mv \
+          "${seal_quarantine}" "${framework_root}" || {
+            candidate_status="$?"
+            if test "${cleanup_status}" -eq 0; then
+              cleanup_status="${candidate_status}"
+            fi
+          }
+        if test ! -d "${framework_root}" || \
+          test -L "${framework_root}" || \
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" != \
+            "${seal_quarantine_identity}" || \
+          test -e "${seal_quarantine}" || \
+          test -L "${seal_quarantine}"; then
+          if test "${cleanup_status}" -eq 0; then
+            cleanup_status=70
+          fi
+        fi
+      fi
+    fi
+  elif test "${seal_transaction_phase:-unvalidated}" = "committed"; then
+    if test "${seal_quarantine_state:-unvalidated}" = "active"; then
+      if test "${seal_quarantine%/*}" = "${framework_parent}" && \
+        test -d "${seal_quarantine}" && \
+        test ! -L "${seal_quarantine}" && \
+        test "$(/usr/bin/stat -f '%u' "${seal_quarantine}")" = "0" && \
+        test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" = \
+          "${seal_quarantine_identity}"; then
+        /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+          "${seal_quarantine}" -depth -delete || {
+            candidate_status="$?"
+            if test "${cleanup_status}" -eq 0; then
+              cleanup_status="${candidate_status}"
+            fi
+          }
+        if test -e "${seal_quarantine}" || \
+          test -L "${seal_quarantine}"; then
+          if test "${cleanup_status}" -eq 0; then
+            cleanup_status=70
+          fi
+        fi
+      else
+        cleanup_status=70
+      fi
+    elif test "${seal_quarantine_state:-unvalidated}" != "none"; then
+      cleanup_status=70
+    fi
+  elif test "${seal_transaction_phase:-unvalidated}" != "complete"; then
+    cleanup_status=70
+  fi
+  if test "${cleanup_status}" -ne 0; then
+    printf 'lcf-framework-transaction-cleanup: phase=%s status=%s\n' \
+      "${seal_transaction_phase:-unvalidated}" "${cleanup_status}" >&2
+  fi
+  if test "${saved_status}" -ne 0; then
+    exit "${saved_status}"
+  fi
+  exit "${cleanup_status}"
+}'''
+EXPECTED_FRAMEWORK_SEAL_QUARANTINE_BINDING = r'''test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE:-}"
+test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY:-}"
+if test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" = "none"; then
+  test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" = "none"
+  seal_quarantine_state="none"
+else
+  readonly quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
+  quarantine_suffix="${LCF_REVIEWED_FRAMEWORK_QUARANTINE#"${quarantine_prefix}"}"
+  readonly quarantine_suffix
+  test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE%/*}" = \
+    "${framework_parent}"
+  test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" = \
+    "${quarantine_prefix}${quarantine_suffix}"
+  [[ "${quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]
+  [[ "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" =~ \
+    ^[0-9]+:[0-9]+$ ]]
+  test -d "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+  test ! -L "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+  test "$(/usr/bin/stat -f '%u' \
+    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"
+  test "$(/usr/bin/stat -f '%d:%i' \
+    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = \
+    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
+  seal_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+  seal_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
+  seal_quarantine_state="active"
+fi'''
+EXPECTED_FRAMEWORK_SEAL_ROOT_BINDING = r'''test -d "${framework_root}"
+test ! -L "${framework_root}"
+test "$(cd "${framework_root}" && /bin/pwd -P)" = "${framework_root}"
+readonly library_identity="$(/usr/bin/stat -f '%d:%i' "${library_root}")"
+readonly container_identity="$(/usr/bin/stat -f '%d:%i' "${framework_container}")"
+readonly anchor_identity="$(/usr/bin/stat -f '%d:%i' "${framework_anchor}")"
+readonly parent_identity="$(/usr/bin/stat -f '%d:%i' "${framework_parent}")"
+readonly root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
+[[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
+seal_installed_root_identity="${root_identity}"'''
+EXPECTED_FRAMEWORK_SEAL_TRANSACTION_COMMIT = r'''seal_transaction_phase="committed"
+if test "${seal_quarantine_state}" = "active"; then
+  test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" = \
+    "${seal_quarantine_identity}"
+  /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+    "${seal_quarantine}" -depth -delete
+  test ! -e "${seal_quarantine}"
+  test ! -L "${seal_quarantine}"
+  seal_quarantine_state="none"
+  seal_quarantine="none"
+  seal_quarantine_identity="none"
+fi
+seal_transaction_phase="complete"
+trap - EXIT'''
 EXPECTED_FRAMEWORK_SEAL_RUN_SHA256 = (
-    "b577ba78a526768e4a16d33b23d6bbc5ab8e871c5f25340193b8c40e9001ec72"
+    "536e2ae21b659258032d1a8c9c0675f0ca4eaf6b7199c137158d4ced9c091de9"
 )
 EXACT_PROVENANCE_ENV_KEYS = (
     "LCF_SOURCE_SHA",
@@ -781,7 +853,7 @@ PYTHON_FRAMEWORK_CORE_EXCLUDED_PATHS = (
     "share/doc/python3.13/html",
 )
 PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256 = (
-    "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
+    "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"
 )
 PYTHON_REVIEWED_BROKEN_SYMLINKS = (
     {
@@ -1022,7 +1094,7 @@ make renderer-audit'''
 EXPECTED_RUN_BLOCK_SHA256 = (
     ("framework verifier Node", "6af8ddd6ea4c0c6de9bf63ec4a69b3365f6aa417d2b332748f80d192bd9897b5"),
     ("framework producer", "4f4e4303542f05c0f6e31c8b9566b16983a29878c5d657672730137caa3c86c1"),
-    ("framework seal", "322c765ee6d92008dbef90f26c4e37f253e617c6cec78099cab8fbe73a9a2e3a"),
+    ("framework seal", "85a1253ea653f4ec6a3ada67f5f1c2c0c4dfc92d62c89d07602241fc5fd4dff9"),
     ("exact provenance", "9ea36480b4f4ff8d721fcd2c64cc1a2173a94c8185c3ee6a5e69a8fcf51b596f"),
     ("policy", "285e761f042ad2c44db94e38730f1d19c30c1db0851dc81539083cb6df5fc32b"),
     ("Python sources", "f01e0ddbe2fd917eb765723935eaceb7a606db3350a9ee059402032ff89789a7"),
@@ -4804,7 +4876,7 @@ def _reviewed_framework_node_verifier_is_semantic(
     )
     required_source_markers = (
         'const EXACT_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13";',
-        '  "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";',
+        '  "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec";',
         "const CORE_EXCLUDED_PATHS = Object.freeze([",
         'const SITE_PACKAGES_PATH = "lib/python3.13/site-packages";',
         "const ABSENT_PRODUCTION_EXCLUSIONS = Object.freeze(",
@@ -5498,7 +5570,7 @@ def _workflow_held_framework_loader_is_semantic(run: str) -> bool:
 
 
 def _workflow_python_seal_is_semantic(run: str) -> bool:
-    """Require no-follow tree sealing, cache removal, and Node verification."""
+    """Require transactional framework sealing, rollback, and Node verification."""
 
     ancestor_targets = (
         ("library_root", "library_identity"),
@@ -5525,12 +5597,16 @@ def _workflow_python_seal_is_semantic(run: str) -> bool:
         '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n  "${framework_root}" \\( -type f -o -type d \\) \\\n  -exec /bin/chmod -N \'{}\' \'+\'',
         '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n  "${framework_root}" \\( -type f -o -type d \\) \\\n  -exec /bin/chmod go-w \'{}\' \'+\'',
     )
+    transaction_blocks = (
+        EXPECTED_FRAMEWORK_SEAL_TRANSACTION_SENTINELS,
+        EXPECTED_FRAMEWORK_SEAL_TRANSACTION_CLEANUP,
+        "trap cleanup_sealed_framework EXIT",
+        EXPECTED_FRAMEWORK_SEAL_QUARANTINE_BINDING,
+        EXPECTED_FRAMEWORK_SEAL_ROOT_BINDING,
+        EXPECTED_FRAMEWORK_SEAL_TRANSACTION_COMMIT,
+    )
     markers = (
-        'readonly library_identity="$(/usr/bin/stat -f \'%d:%i\' "${library_root}")"',
-        'readonly container_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_container}")"',
-        'readonly anchor_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_anchor}")"',
-        'readonly parent_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_parent}")"',
-        'readonly root_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")"',
+        *transaction_blocks,
         *ancestor_seal_commands,
         *root_find_commands,
         '/usr/bin/sudo --non-interactive /usr/bin/find -x \\\n  "${framework_root}" -type f \\\n  \\( -iname \'*.pyc\' -o -iname \'*.pyo\' \\) -delete',
@@ -5541,32 +5617,25 @@ def _workflow_python_seal_is_semantic(run: str) -> bool:
         "[[ \"${sealed_listing}\" != *$'\\n'* ]]",
         "entry_listing=\"$(/bin/ls -lde \"${entry}\")\"",
         "[[ \"${entry_listing}\" != *$'\\n'* ]]",
-        'readonly quarantine_prefix="${framework_parent}/.lcf-python-quarantine."',
-        '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete',
         'readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"',
         'readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"',
         'readonly framework_verifier_size="27853"',
-        'readonly framework_verifier_sha256="b3e2576fff416be2924adab5470004f5b52fd0eba342b522adad761fe9176c26"',
+        'readonly framework_verifier_sha256="ffbf6ed2f41a35f44edda68bdd831be4d42384f9488dcdc93f8242abcfb9e218"',
         'readonly framework_lock_size="4198"',
-        'readonly framework_lock_sha256="db66ce92b38e83273bf9a089085e76309a1db15494371a4d5a338066b74a4e67"',
+        'readonly framework_lock_sha256="d5fb2f15b8e0440cdac44418c3a151605dd39f195c5a784d8d9f86b2c1623d97"',
         '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"',
         '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}"',
     )
-    if any(marker not in run for marker in markers):
+    if any(run.count(block) != 1 for block in transaction_blocks) or any(
+        marker not in run for marker in markers[len(transaction_blocks) :]
+    ):
         return False
+    transaction_offsets = [run.find(block) for block in transaction_blocks]
     ancestor_offsets = [run.find(command) for command in ancestor_seal_commands]
-    offsets = [run.find(command) for command in root_find_commands]
+    root_offsets = [run.find(command) for command in root_find_commands]
     cache_offset = run.find("\\( -iname '*.pyc' -o -iname '*.pyo' \\) -delete")
     verifier_offset = run.find("  -e '\n")
-    verifier_success_offset = run.find(
-        'test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"'
-    )
-    quarantine_validation_offset = run.find(
-        'test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"'
-    )
-    quarantine_cleanup_offset = run.find(
-        '"${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete'
-    )
+    commit_offset = run.find(EXPECTED_FRAMEWORK_SEAL_TRANSACTION_COMMIT)
     node_identity_check = (
         'test "$(/usr/bin/stat -f \'%d:%i:%Lp:%u:%g:%l:%z:%m\' \\\n'
         '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \\\n'
@@ -5583,11 +5652,13 @@ def _workflow_python_seal_is_semantic(run: str) -> bool:
     first_hash = run.find(node_hash_check)
     last_hash = run.rfind(node_hash_check)
     return (
-        offsets == sorted(offsets)
-        and all(offset >= 0 for offset in offsets)
+        transaction_offsets == sorted(transaction_offsets)
+        and all(offset >= 0 for offset in transaction_offsets)
+        and root_offsets == sorted(root_offsets)
+        and all(offset >= 0 for offset in root_offsets)
         and ancestor_offsets == sorted(ancestor_offsets)
         and all(offset >= 0 for offset in ancestor_offsets)
-        and ancestor_offsets[-1] < offsets[0]
+        and transaction_offsets[4] < ancestor_offsets[0] < root_offsets[0]
         and all(
             run.count(
                 'test "$(/usr/bin/stat -f \'%d:%i\' '
@@ -5600,21 +5671,88 @@ def _workflow_python_seal_is_semantic(run: str) -> bool:
             'test "$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")" = '
             '"${root_identity}"'
         ) == 1
-        and offsets[-1] < cache_offset < verifier_offset
-        < verifier_success_offset
-        <= quarantine_validation_offset < quarantine_cleanup_offset
+        and root_offsets[-1] < cache_offset < verifier_offset < commit_offset
         and first_identity < first_hash < verifier_offset
-        < last_identity < last_hash < quarantine_validation_offset
+        < last_identity < last_hash < commit_offset
         and run.count(node_identity_check) == 2
         and run.count(node_hash_check) == 2
         and run.count("-exec /usr/sbin/chown 0:0 '{}' '+'") == 1
         and run.count("-exec /bin/chmod -N '{}' '+'") == 1
         and run.count("-exec /bin/chmod go-w '{}' '+'") == 1
+        and run.count("cleanup_sealed_framework() {") == 1
+        and run.count("cleanup_sealed_framework") == 2
+        and run.count("trap cleanup_sealed_framework EXIT") == 1
+        and run.count("trap - EXIT") == 2
+        and len(re.findall(r"(?m)^\s*trap\s", run)) == 3
+        and run.count('seal_transaction_phase="pending"') == 1
+        and run.count('seal_transaction_phase="committed"') == 1
+        and run.count('seal_transaction_phase="complete"') == 1
+        and run.count('seal_installed_root_identity="${root_identity}"') == 1
+        and run.count('seal_quarantine_state="active"') == 1
+        and run.count('"${framework_root}" -depth -delete') == 1
+        and run.count('"${seal_quarantine}" -depth -delete') == 2
+        and run.count('"${seal_quarantine}" "${framework_root}"') == 1
+        and not re.search(
+            r"/bin/rm(?:\s|\\\n)[\s\S]{0,160}"
+            r"(?:framework_root|seal_quarantine)",
+            run,
+        )
         and "-R -P" not in run
         and "actions/setup-python" not in run
         and not re.search(r"(?m)^\s*(?:python|python3)(?:\s|$)", run)
+        and not _run_block_has_bypass(run)
+        and _framework_seal_shell_control_surface_is_locked(run)
         and _workflow_held_framework_loader_is_semantic(run)
     )
+
+
+def _framework_seal_shell_control_surface_is_locked(run: str) -> bool:
+    """Allow only the reviewed seal's fixed shell control surface."""
+
+    loader_prefix = "  -e '\n"
+    loader_suffix = "\n' \\\n"
+    if run.count(loader_prefix) != 1 or run.count(loader_suffix) != 1:
+        return False
+    shell = run.split(loader_prefix, 1)[0] + run.split(loader_suffix, 1)[1]
+    shell = re.sub(r"\\\r?\n", "", shell)
+    expected_controls = (
+        "set -euo pipefail",
+        "trap - EXIT",
+        "trap cleanup_sealed_framework EXIT",
+        "shopt -s nocasematch",
+        "shopt -u nocasematch",
+        "trap - EXIT",
+    )
+    controls: list[str] = []
+    function_header = re.compile(
+        r"(?:^|[;&|{(])\s*(?:"
+        r"function\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(\s*\))?"
+        r"|([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)"
+        r")(?=\s|[({]|$)",
+        re.MULTILINE,
+    )
+    dynamic_command = re.compile(
+        r"\b(?:eval|builtin|command|enable|alias|unalias)\b|(?<!-)\bexec\b"
+    )
+    source_command = re.compile(r"(?:^|[;&|{(!])\s*(?:source|\.)(?:\s|$)")
+    nested_shell = re.compile(r"\b(?:bash|dash|ksh|zsh|sh)\b\s+-c(?:\s|$)")
+    functions = tuple(
+        keyword_name or posix_name
+        for keyword_name, posix_name in function_header.findall(shell)
+    )
+    for raw_line in shell.splitlines():
+        line = raw_line.strip()
+        if (
+            dynamic_command.search(line)
+            or source_command.search(line)
+            or nested_shell.search(line)
+        ):
+            return False
+        if re.search(r"\b(?:set|trap|shopt)\b", line):
+            if line not in expected_controls:
+                return False
+            controls.append(line)
+    return functions == ("cleanup_sealed_framework",) and tuple(controls) == expected_controls
 
 
 def _canonical_signing_control_text(document: str) -> str:
@@ -9944,33 +10082,33 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             "status",
             status,
             (
-                "eight remediation attempts `fail` / `superseded`",
-                "ninth exact candidate `not-run`",
+                "nine remediation attempts `fail` / `superseded`",
+                "tenth exact candidate `not-run`",
             ),
         ),
         (
             "todo",
             todo,
             (
-                "eight remediation attempts `fail` / `superseded`",
-                "ninth exact candidate `not-run`",
+                "nine remediation attempts `fail` / `superseded`",
+                "tenth exact candidate `not-run`",
             ),
         ),
         (
             "traceability",
             trace,
             (
-                "first through eighth remediations failed and superseded",
-                "ninth exact candidate not-run",
+                "first through ninth remediations failed and superseded",
+                "tenth exact candidate not-run",
             ),
         ),
         (
             "iteration",
             iteration,
             (
-                "第一次至第八次 remediation technical attempts 均为 "
+                "第一次至第九次 remediation technical attempts 均为 "
                 "`fail` / `superseded`",
-                "第九 exact candidate `not-run`",
+                "第十 exact candidate `not-run`",
             ),
         ),
     )

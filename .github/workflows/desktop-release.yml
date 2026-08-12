@@ -437,6 +437,116 @@ jobs:
           readonly library_root="${framework_container%/*}"
           readonly framework_python="${framework_root}/bin/python3.13"
           readonly framework_binary="${framework_root}/Python"
+          seal_transaction_phase="pending"
+          seal_installed_root_identity="none"
+          seal_quarantine_state="unvalidated"
+          seal_quarantine="none"
+          seal_quarantine_identity="none"
+          cleanup_sealed_framework() {
+            readonly saved_status="$?"
+            trap - EXIT
+            cleanup_status=0
+            rollback_ready=1
+            if test "${seal_transaction_phase:-unvalidated}" = "pending"; then
+              if test "${seal_installed_root_identity:-none}" = "none" || \
+                test ! -d "${framework_root}" || \
+                test -L "${framework_root}" || \
+                test "$(/usr/bin/stat -f '%u' "${framework_root}")" != "0" || \
+                test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" != \
+                  "${seal_installed_root_identity}"; then
+                rollback_ready=0
+                cleanup_status=70
+              fi
+              if test "${seal_quarantine_state:-unvalidated}" = "active"; then
+                if test "${seal_quarantine%/*}" != "${framework_parent}" || \
+                  test ! -d "${seal_quarantine}" || \
+                  test -L "${seal_quarantine}" || \
+                  test "$(/usr/bin/stat -f '%u' "${seal_quarantine}")" != "0" || \
+                  test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" != \
+                    "${seal_quarantine_identity}"; then
+                  rollback_ready=0
+                  if test "${cleanup_status}" -eq 0; then
+                    cleanup_status=70
+                  fi
+                fi
+              elif test "${seal_quarantine_state:-unvalidated}" != "none"; then
+                rollback_ready=0
+                if test "${cleanup_status}" -eq 0; then
+                  cleanup_status=70
+                fi
+              fi
+              if test "${rollback_ready}" -eq 1; then
+                /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+                  "${framework_root}" -depth -delete || {
+                    candidate_status="$?"
+                    if test "${cleanup_status}" -eq 0; then
+                      cleanup_status="${candidate_status}"
+                    fi
+                  }
+                if test -e "${framework_root}" || test -L "${framework_root}"; then
+                  if test "${cleanup_status}" -eq 0; then
+                    cleanup_status=70
+                  fi
+                elif test "${seal_quarantine_state}" = "active"; then
+                  /usr/bin/sudo --non-interactive /bin/mv \
+                    "${seal_quarantine}" "${framework_root}" || {
+                      candidate_status="$?"
+                      if test "${cleanup_status}" -eq 0; then
+                        cleanup_status="${candidate_status}"
+                      fi
+                    }
+                  if test ! -d "${framework_root}" || \
+                    test -L "${framework_root}" || \
+                    test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" != \
+                      "${seal_quarantine_identity}" || \
+                    test -e "${seal_quarantine}" || \
+                    test -L "${seal_quarantine}"; then
+                    if test "${cleanup_status}" -eq 0; then
+                      cleanup_status=70
+                    fi
+                  fi
+                fi
+              fi
+            elif test "${seal_transaction_phase:-unvalidated}" = "committed"; then
+              if test "${seal_quarantine_state:-unvalidated}" = "active"; then
+                if test "${seal_quarantine%/*}" = "${framework_parent}" && \
+                  test -d "${seal_quarantine}" && \
+                  test ! -L "${seal_quarantine}" && \
+                  test "$(/usr/bin/stat -f '%u' "${seal_quarantine}")" = "0" && \
+                  test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" = \
+                    "${seal_quarantine_identity}"; then
+                  /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+                    "${seal_quarantine}" -depth -delete || {
+                      candidate_status="$?"
+                      if test "${cleanup_status}" -eq 0; then
+                        cleanup_status="${candidate_status}"
+                      fi
+                    }
+                  if test -e "${seal_quarantine}" || \
+                    test -L "${seal_quarantine}"; then
+                    if test "${cleanup_status}" -eq 0; then
+                      cleanup_status=70
+                    fi
+                  fi
+                else
+                  cleanup_status=70
+                fi
+              elif test "${seal_quarantine_state:-unvalidated}" != "none"; then
+                cleanup_status=70
+              fi
+            elif test "${seal_transaction_phase:-unvalidated}" != "complete"; then
+              cleanup_status=70
+            fi
+            if test "${cleanup_status}" -ne 0; then
+              printf 'lcf-framework-transaction-cleanup: phase=%s status=%s\n' \
+                "${seal_transaction_phase:-unvalidated}" "${cleanup_status}" >&2
+            fi
+            if test "${saved_status}" -ne 0; then
+              exit "${saved_status}"
+            fi
+            exit "${cleanup_status}"
+          }
+          trap cleanup_sealed_framework EXIT
           test -d "${library_root}"
           test ! -L "${library_root}"
           test "$(cd "${library_root}" && /bin/pwd -P)" = "${library_root}"
@@ -449,6 +559,33 @@ jobs:
           test -d "${framework_parent}"
           test ! -L "${framework_parent}"
           test "$(cd "${framework_parent}" && /bin/pwd -P)" = "${framework_parent}"
+          test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE:-}"
+          test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY:-}"
+          if test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" = "none"; then
+            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" = "none"
+            seal_quarantine_state="none"
+          else
+            readonly quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
+            quarantine_suffix="${LCF_REVIEWED_FRAMEWORK_QUARANTINE#"${quarantine_prefix}"}"
+            readonly quarantine_suffix
+            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE%/*}" = \
+              "${framework_parent}"
+            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" = \
+              "${quarantine_prefix}${quarantine_suffix}"
+            [[ "${quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]
+            [[ "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" =~ \
+              ^[0-9]+:[0-9]+$ ]]
+            test -d "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+            test ! -L "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+            test "$(/usr/bin/stat -f '%u' \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"
+            test "$(/usr/bin/stat -f '%d:%i' \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = \
+              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
+            seal_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+            seal_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
+            seal_quarantine_state="active"
+          fi
           test -d "${framework_root}"
           test ! -L "${framework_root}"
           test "$(cd "${framework_root}" && /bin/pwd -P)" = "${framework_root}"
@@ -457,6 +594,9 @@ jobs:
           readonly anchor_identity="$(/usr/bin/stat -f '%d:%i' "${framework_anchor}")"
           readonly parent_identity="$(/usr/bin/stat -f '%d:%i' "${framework_parent}")"
           readonly root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
+          [[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+          test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
+          seal_installed_root_identity="${root_identity}"
           /usr/bin/sudo --non-interactive /usr/sbin/chown \
             -h 0:0 "${library_root}"
           /usr/bin/sudo --non-interactive /bin/chmod \
@@ -570,9 +710,9 @@ jobs:
           readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"
           readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"
           readonly framework_verifier_size="27853"
-          readonly framework_verifier_sha256="b3e2576fff416be2924adab5470004f5b52fd0eba342b522adad761fe9176c26"
+          readonly framework_verifier_sha256="ffbf6ed2f41a35f44edda68bdd831be4d42384f9488dcdc93f8242abcfb9e218"
           readonly framework_lock_size="4198"
-          readonly framework_lock_sha256="db66ce92b38e83273bf9a089085e76309a1db15494371a4d5a338066b74a4e67"
+          readonly framework_lock_sha256="d5fb2f15b8e0440cdac44418c3a151605dd39f195c5a784d8d9f86b2c1623d97"
           /usr/bin/env -i \
             HOME="${RUNNER_TEMP}" \
             PATH="/usr/bin:/bin" \
@@ -750,31 +890,20 @@ jobs:
             "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \
             "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \
             /usr/bin/shasum -a 256 --check
-          test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
-          test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
-          if test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" = "none"; then
-            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" = "none"
-          else
-            readonly quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
-            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE#${quarantine_prefix}}" != \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
-            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE%/*}" = \
-              "${framework_parent}"
-            [[ "${LCF_REVIEWED_FRAMEWORK_QUARANTINE##*/}" =~ \
-              ^\.lcf-python-quarantine\.[A-Za-z0-9]{10}$ ]]
-            test -d "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
-            test ! -L "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
-            test "$(cd "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" && /bin/pwd -P)" = \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
-            test "$(/usr/bin/stat -f '%u' \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"
-            test "$(/usr/bin/stat -f '%d:%i' \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
+          seal_transaction_phase="committed"
+          if test "${seal_quarantine_state}" = "active"; then
+            test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" = \
+              "${seal_quarantine_identity}"
             /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete
-            test ! -e "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+              "${seal_quarantine}" -depth -delete
+            test ! -e "${seal_quarantine}"
+            test ! -L "${seal_quarantine}"
+            seal_quarantine_state="none"
+            seal_quarantine="none"
+            seal_quarantine_identity="none"
           fi
+          seal_transaction_phase="complete"
+          trap - EXIT
 
       - name: Bind release provenance
         shell: bash

@@ -84,7 +84,7 @@ const EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS = Object.freeze([
   "share/doc/python3.13/html"
 ]);
 const EXPECTED_FRAMEWORK_CORE_SHA256 =
-  "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";
+  "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec";
 const EXPECTED_PYTHON_INSTALL_METHOD =
   "macos-installer-no-op-framework-component";
 const EXPECTED_FRAMEWORK_COMPONENT = Object.freeze({

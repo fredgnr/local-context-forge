@@ -27,7 +27,7 @@
       "lib/python3.13/site-packages",
       "share/doc/python3.13/html"
     ],
-    "frameworkCoreFingerprintSha256": "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
+    "frameworkCoreFingerprintSha256": "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec",
     "reviewedBrokenSymlinks": [
       {
         "path": "Frameworks/Tcl.framework/PrivateHeaders",

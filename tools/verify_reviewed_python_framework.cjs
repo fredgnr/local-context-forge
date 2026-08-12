@@ -8,7 +8,7 @@ const { TextDecoder } = require("node:util");
 
 const EXACT_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13";
 const CORE_DIGEST =
-  "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";
+  "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec";
 const CORE_EXCLUDED_PATHS = Object.freeze([
   "Resources/English.lproj/Documentation",
   "bin/pip",

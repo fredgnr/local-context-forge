@@ -855,3 +855,134 @@ missing、symlink 或 identity drift 均 fail closed 且不删除；不使用 re
 当前汇总仍是八次 remediation attempts `fail` / `superseded` 与第九次 exact candidate `not-run`；
 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 locked，latest independent
 仍为旧 reviewed head/tree 的 `NO-GO`，canonical activation `blocked`，public release `NO-GO`。
+
+## 第九次 remediation 技术执行：`fail` / `superseded`
+
+上一节保留第九候选提交前的 `not-run` 与 portable local validation；本节只追加它后续的
+exact-head Actions 结果，不把历史 local `pass` 提升为 technical `pass`。
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `6eec41125b431a9fd99d8b1821362573de1b5b8a` |
+| exact parent | `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` |
+| exact tree | `3361f3e3880c926015a82abc862cb3e8334410c2` |
+| synthetic PR context SHA | `8b862ebff66e86bb2549ec76da67422fe60c8f7b`（仅为 merge context，不是 source authority） |
+| engineering-smoke run / job | [run `31575062796`](https://github.com/fredgnr/local-context-forge/actions/runs/31575062796) / job `94045233041` |
+| exact-head Desktop source run | [run `31575062814`](https://github.com/fredgnr/local-context-forge/actions/runs/31575062814) / `success` |
+| container run | [run `31575062785`](https://github.com/fredgnr/local-context-forge/actions/runs/31575062785) / `success`；PR no publish |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第九次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；没有替代旧 `8c5fd…` head 的 independent `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-ninth-remediation-authority: source=6eec41125b431a9fd99d8b1821362573de1b5b8a,parent=15336568c6fcf3a40eb051cdb2b90242ef1e1e09,tree=3361f3e3880c926015a82abc862cb3e8334410c2,context=8b862ebff66e86bb2549ec76da67422fe60c8f7b,assembly-run=31575062796,assembly-job=94045233041,source-run=31575062814,container-run=31575062785,result=fail -->
+
+Engineering producer 已完成 exact manifest、outer/component/no-op binding、identity-bound quarantine
+lifecycle、component install 与 reviewed framework preparation。新的 primary failure 出现在
+pre-Python framework seal：reviewed archive 中 symlink mode 是 `0775`，macOS Installer 落盘后的
+同一 symlink mode 是 `0777`；core fingerprint 把该 mode 纳入比较，因此旧/新 fingerprint 不同，
+verifier 以 exact `Reviewed Python framework core fingerprint changed` fail closed。该差异解释的是
+本次已观察到的 archive/install metadata transformation；不能据此放宽 symlink target、路径、内容、
+非 symlink mode 或其他 framework seal。
+
+cleanup-only `always()` step 成功只证明其声明的 runner-temp producer/toolchain/installer、
+reviewed-source 与 repo scratch scope；它不证明 system framework rollback 或 residue cleanup。
+success-only source provenance、renderer、Desktop profile、static assembly/bundle audit 与 focused
+lifecycle tests 均 skipped，assembled App 未启动，remote engineering product artifacts 为 `[]`。
+Desktop source run `31575062814` 与 Containers run `31575062785` success，后者保持 PR no publish；
+两者不能抵消 Engineering failure，也不能提升 packaged/runtime 或 release gate。
+
+## 第十次 remediation technical candidate：`not-run`
+
+当前修复继续使用同一 Draft PR #21 / branch，且不创建新的 W/Requirement/TODO/Validation ID。
+它尚无 committed exact head/tree 或 fresh exact-head Actions，technical result 必须保持 `not-run`。
+第十候选只处理第九次暴露的 archive/install symlink-mode fingerprint contract：必须显式绑定 macOS
+Installer 对 archive `0775` symlink 落盘为 `0777` 的已观察转换，同时保留 exact symlink target、
+path/type、non-symlink mode、core bytes、dynamic exclusions 与完整 seal 的 fail-closed 检查；不得用
+忽略所有 mode 或跳过 core fingerprint 的方式规避失败。
+
+本轮没有运行第十候选的 fresh exact-head Actions、macOS arm64 framework seal、assembled `.app`
+launch/runtime，也没有运行 W10/W11、tag、upload、Draft/Release 或 promotion。第十候选仍为
+`not-run`，`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 保持
+locked，latest independent 结论仍是旧 reviewed head/tree 的 `NO-GO`，public release 仍
+`NO-GO`。
+
+| 项目 | 当前结论 |
+| --- | --- |
+| PR #21 ninth remediation technical attempt | `fail` / `superseded`（绑定 `6eec411…` / parent `1533656…` / tree `3361f3e…` 与 `31575062814` / `31575062796` / `31575062785`） |
+| PR #21 tenth remediation technical candidate | `not-run`（无 committed exact head/tree；无 fresh exact-head Actions） |
+| latest independent acceptance | `NO-GO`（仍只绑定旧 `8c5fd…` / `785f46…`）；ninth/tenth candidates `pending` |
+| canonical activation | `blocked` |
+| W02 | `in-progress` |
+| `VAL-PACKAGED-SMOKE-001` | `not-run` |
+| W10/W11 | `locked` |
+| packaged App / bundle sidecar launch | `not-run` |
+| public release | `NO-GO` |
+
+当前汇总是九次 remediation attempts `fail` / `superseded` 与第十次 exact candidate `not-run`；
+`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W02 仍 `in-progress`，W10/W11 继续 locked，latest
+independent 结论仍是旧 reviewed head/tree 的 `NO-GO`，canonical activation 仍 `blocked`，public
+release 仍 `NO-GO`。
+
+### 第十候选设计补充：单一落盘指纹与事务式 seal cleanup
+
+本节只追加第十候选尚未运行的设计约束，不是 local validation 或 technical `pass`。第十候选把
+macOS Installer 落盘后的 reviewed framework core fingerprint 单一固定为
+`ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec`；不得保留 archive/install
+双 digest allowlist，也不得用忽略 mode 的方式绕过完整 inventory fingerprint。
+
+该 pin 的诊断链可离线复核：locked component Payload SHA-256 是
+`f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391`。按 verifier 的 canonical
+inventory 直接读取 CPIO，其中 `33` 条 symlink 的 lstat mode 为 `0775`，得到旧 fingerprint
+`863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d`；只把这 `33` 条 symlink
+mode 映射为 macOS Installer 表示的 `0777`，其他 path/type/target/mode/bytes 均不变，就唯一得到
+`ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec`。本地物化同一 locked
+Payload 后，仓库 Node verifier 独立计算也得到同一 `ba58…`。这不是 runtime learn-and-accept：
+运行时仍只接受单一 pinned fingerprint，symlink mode、target、path、type 与其他 inventory mode/
+bytes 全部参与比较。
+
+两份 shared workflow 的 seal step 还必须使用同源事务式失败清理：
+
+- 在注册 EXIT trap 前，transaction phase、新 installed root identity 与旧 quarantine state/identity
+  都先写入 fail-closed sentinel；不得继承或误用环境中的同名值；
+- 只有在新 root 与旧 quarantine（若存在）的 exact path、directory/non-symlink type、root owner 和
+  `dev:ino` 全部验证并绑定后，rollback transaction 才可激活；没有旧 root 时 quarantine state
+  必须精确绑定为 `none`；
+- verifier 或 held verifier/lock inputs 失败时，只在新 root 与旧 quarantine 的双 identity 仍与已绑定
+  值一致时删除新 root并把旧 root 原子恢复到 exact framework path；原先没有旧 root 时只删除
+  identity-matched 新 root；
+- 任一 path/type/owner/`dev:ino` mismatch 都不得删除新 root、旧 quarantine 或 replacement，并必须
+  记录 fixed cleanup failure `70`，保持原 verifier failure 为失败；禁止 recursive prefix cleanup；
+- verifier 与 held inputs 全部成功后才能把 transaction 标为 `committed`；committed cleanup 只在旧
+  quarantine exact identity 仍匹配时精确删除该 quarantine，随后才进入 `complete`，不得触碰已验证
+  的新 root。
+
+这些约束仍无 committed tenth exact head/tree 或 fresh exact-head Actions。第十候选 technical
+result 继续为 `not-run`；W02、`VAL-PACKAGED-SMOKE-001`、W10/W11、independent acceptance 与
+public release 状态均不提升。
+
+## 第十候选 pre-commit local validation
+
+本节只记录当前未提交 bytes 的 portable/local 验证，不把它写成 committed exact-head、macOS
+framework seal/rollback、packaged App runtime 或 technical `pass`。本地 baseline 是
+`HEAD 6eec41125b431a9fd99d8b1821362573de1b5b8a` / tree
+`3361f3e3880c926015a82abc862cb3e8334410c2` 加当前 `19` 个 tracked-file worktree；环境为
+`Linux 6.18.35 x86_64` / CPython `3.12.13` / Node `v24.14.0`。第十候选仍无 committed exact
+head/tree 或 fresh exact-head Actions。
+
+| Gate | 实际结果 |
+| --- | --- |
+| packaged policy target | exit `0`；Node verifier `42/42`、direct checker pass、policy mutation `80/80`、exact-Git `1/1` |
+| Python packaging | `559 passed / 2 skipped` |
+| formal workflow policy | `11/11` |
+| backend full | `824 passed / 3 skipped / 2 warnings` |
+| Desktop engineering consumer | `76/76`；typecheck/build pass |
+| pre-1 governance | direct checker pass；`57/57` |
+| workflow/static | `2` YAML workflows parse；`35` Bash blocks syntax pass；`6` modified Python files compile；`2` CJS files syntax check pass |
+| version / Markdown / diff | version/protocol sync pass；Markdown links `89` files；`git diff --check` pass |
+
+这些 portable/local 结果不证明 macOS Installer 的 exact seal、transaction rollback/restore、held
+verifier inputs、assembled App launch/runtime 或 fresh exact-head Actions，也不能把第十候选提升为
+technical `pass`。当前 summary 不变：九次 remediation attempts `fail` / `superseded`，第十次
+exact candidate 仍为 `not-run`；W02、`VAL-PACKAGED-SMOKE-001`、W10/W11、independent acceptance
+与 public release 状态均不提升。

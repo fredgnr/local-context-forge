@@ -46,7 +46,7 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 | TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `done` | Governance/Architecture | 无 | accepted head + independent acceptance + resulting-main source `pass` |
 | TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `done` | Governance/CI | 无 | immutable history + external closeout evidence |
 | TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `done` | CI/QMD/Sites | 无 | resulting-main run `30986208251` success |
-| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；eight remediation attempts `fail` / `superseded`；ninth exact candidate `not-run`；`VAL-PACKAGED-SMOKE-001` remains `not-run` |
+| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；nine remediation attempts `fail` / `superseded`；tenth exact candidate `not-run`；`VAL-PACKAGED-SMOKE-001` remains `not-run` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
 | TODO-DATA-BACKUP-001 | Priority-1 | W04/P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
@@ -158,9 +158,15 @@ W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建�
    `31570734560` success；Engineering `31570734636` / job `94031972543` manifest/component checks
    passed 后在 root-owned `0700` empty quarantine ordinary-runner canonical `cd` permission fail；
    cleanup success 未证明 `/Library/Frameworks/**` quarantine residue absent；later skipped、artifacts
-   `[]`、no App launch；Containers `31570734580` success/no publish。第九次 exact remediation
-   candidate 是 current worktree / pre-commit，尚无 committed exact head/tree 或 fresh exact-head
-   Actions result。它保留第八候选不使用
+   `[]`、no App launch；Containers `31570734580` success/no publish。第九次 exact
+   `6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent
+   `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree
+   `3361f3e3880c926015a82abc862cb3e8334410c2` 也已 `fail` / `superseded`：Desktop source
+   `31575062814` success；Engineering `31575062796` / job `94045233041` producer success 后因
+   archive symlink mode `0775` vs macOS Installer `0777` core-fingerprint fail；cleanup runner scope
+   success、later skipped、artifacts `[]`、no App launch；Containers `31575062785` success/no publish。
+   第十次 exact remediation candidate 尚无 committed exact head/tree 或 fresh exact-head Actions
+   result。它保留第九候选不使用
    `actions/setup-python` 或原 full pkg 的 producer：验签 exact outer pkg 后只把
    `Python_Framework.pkg` 的唯一 postinstall 替换为 locked 17-byte no-op，隔离旧 root/确认
    target absent 后 component-install，再进行 non-symlink seal、大小写无关 cache 清理和
@@ -169,9 +175,17 @@ W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建�
    framework Python 必须在该 cleanup 后；
    运行时 `--install-reviewed-python` 只验证 distribution/framework/interpreter binding，不安装或
    调用 `sudo`；并把 manifest 真实 uppercase/single-space 整行固定在 `grep -Fxc` + count one，
-   cleanup 显式区分 source-unbound zero-residue 与 source-bound strict source/repo closure。该设计
-   本身不改变 `not-run`；
-2. packaged App launch/runtime smoke：八次 remediation 均未启动 bundle，第九 candidate 也尚未运行，
+   cleanup 显式区分 source-unbound zero-residue 与 source-bound strict source/repo closure；
+   fingerprint contract 只精确绑定 archive `0775` → Installer `0777` symlink-mode transformation，
+   单一 pin 落盘 fingerprint `ba58cfb…`，不放宽 target/path/type、non-symlink mode 或 core bytes。
+   locked Payload `f922c9d…` 的 canonical CPIO inventory 以 33 条 symlink `0775` 得旧 `863a6353…`；
+   仅映射 Installer `0777` 得唯一 `ba58cfb…`，同 Payload 物化后的 Node verifier 独立复算一致。
+   这不是 runtime learn-and-accept，mode/target/path/type 仍全部参与。
+   两份 workflow 的 seal transaction 以 pre-trap sentinel 开始，只在新 root/旧 quarantine exact
+   path/type/root-owner/`dev:ino` 绑定后激活；失败时匹配才删除新 root并恢复旧 root，无旧 root 只删
+   新 root，mismatch 不删且 fixed failure；verifier/held inputs 成功后 committed 只精确清 quarantine。
+   该设计本身不改变 `not-run`；
+2. packaged App launch/runtime smoke：九次 remediation 均未启动 bundle，第十 candidate 也尚未运行，
    保持 `not-run`；未来验证 renderer/preload
    handshake、Main → private UDS sidecar health/领域请求、正常退出、无 orphan、无 public INET
    listener，并以 PATH trap 证明 exercised path 不发现系统 Python/Node/Git。
@@ -223,8 +237,12 @@ later skipped、artifacts `[]`；Containers `31559498070` success/no publish。e
 Desktop source `31570734560` and Containers `31570734580` success/no publish；Engineering
 `31570734636` / job `94031972543` failed at ordinary-runner canonical `cd` into root-owned quarantine
 after manifest/component checks passed；cleanup success did not prove framework quarantine residue
-absent，later skipped、artifacts `[]`、no App launch。ninth exact remediation technical candidate is
-current worktree / pre-commit and remains `not-run`（无 committed exact head/tree；无 fresh exact-head Actions），W02
+absent，later skipped、artifacts `[]`、no App launch。ninth remediation exact
+`6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent `1533656…` / tree `3361f3e…` also failed：
+Desktop `31575062814` and Containers `31575062785` success/no publish；Engineering `31575062796` /
+job `94045233041` producer success then archive symlink mode `0775` vs Installer `0777` core-fingerprint
+failure；cleanup runner scope success，later skipped、artifacts `[]`、no App launch。tenth exact
+remediation technical candidate remains `not-run`（无 committed exact head/tree；无 fresh exact-head Actions），W02
 `in-progress`。packaged App
 launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。W10/W11 保持 locked，直至未来
 packaged 阶段在 independently accepted exact head、合入后 resulting `main` 上取得完整 smoke

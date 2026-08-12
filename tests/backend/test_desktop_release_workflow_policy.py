@@ -507,16 +507,90 @@ def test_reviewed_framework_is_sealed_and_node_verified_before_first_python() ->
     ]
     assert held_contract_order == sorted(held_contract_order)
 
+    transaction_sentinel = (
+        'seal_transaction_phase="pending"\n'
+        '          seal_installed_root_identity="none"\n'
+        '          seal_quarantine_state="unvalidated"\n'
+        '          seal_quarantine="none"\n'
+        '          seal_quarantine_identity="none"'
+    )
+    assert transaction_sentinel in seal
+    sentinel_offset = seal.index(transaction_sentinel)
+    cleanup_function_offset = seal.index("cleanup_sealed_framework() {")
+    trap_install_offset = seal.index("trap cleanup_sealed_framework EXIT")
+    quarantine_activation_offset = seal.index(
+        'seal_quarantine_state="active"'
+    )
+    root_activation_offset = seal.index(
+        'seal_installed_root_identity="${root_identity}"'
+    )
+    assert (
+        sentinel_offset
+        < cleanup_function_offset
+        < trap_install_offset
+        < quarantine_activation_offset
+        < root_activation_offset
+    )
+    for marker in (
+        'readonly saved_status="$?"',
+        "trap - EXIT",
+        'if test "${seal_transaction_phase:-unvalidated}" = "pending"; then',
+        'test "${seal_installed_root_identity:-none}" = "none"',
+        'test "$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")" != \\\n'
+        '                  "${seal_installed_root_identity}"',
+        'if test "${seal_quarantine_state:-unvalidated}" = "active"; then',
+        'test "$(/usr/bin/stat -f \'%d:%i\' "${seal_quarantine}")" != \\\n'
+        '                    "${seal_quarantine_identity}"',
+        '"${framework_root}" -depth -delete || {',
+        '"${seal_quarantine}" "${framework_root}" || {',
+        'elif test "${seal_transaction_phase:-unvalidated}" = "committed"; then',
+        'lcf-framework-transaction-cleanup: phase=%s status=%s',
+        'if test "${saved_status}" -ne 0; then',
+        'exit "${saved_status}"',
+        'exit "${cleanup_status}"',
+        '[[ "${quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
+        '[[ "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" =~ \\\n'
+        '              ^[0-9]+:[0-9]+$ ]]',
+        'test "$(/usr/bin/stat -f \'%u\' \\\n'
+        '              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"',
+        '[[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]',
+        'test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" = "0"',
+    ):
+        assert marker in seal
+    assert seal.count("cleanup_sealed_framework() {") == 1
+    assert seal.count("trap cleanup_sealed_framework EXIT") == 1
+    assert seal.count("trap - EXIT") == 2
+    assert seal.count('"${framework_root}" -depth -delete') == 1
+    assert seal.count('"${seal_quarantine}" -depth -delete') == 2
+    assert seal.count('"${seal_quarantine}" "${framework_root}"') == 1
+    assert '"${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete' not in seal
+    assert "rm -rf" not in seal
+
     node_loader = build_job.index(
         '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" \\\n'
         "            -e '",
         seal_start,
         bind_start,
     )
+    transaction_commit = build_job.index(
+        'seal_transaction_phase="committed"',
+        node_loader,
+        bind_start,
+    )
     quarantine_cleanup = build_job.index(
         "/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n"
-        '              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete',
-        node_loader,
+        '              "${seal_quarantine}" -depth -delete',
+        transaction_commit,
+        bind_start,
+    )
+    transaction_complete = build_job.index(
+        'seal_transaction_phase="complete"',
+        quarantine_cleanup,
+        bind_start,
+    )
+    trap_clear = build_job.index(
+        "trap - EXIT",
+        transaction_complete,
         bind_start,
     )
     first_framework_python = build_job.index(
@@ -527,7 +601,10 @@ def test_reviewed_framework_is_sealed_and_node_verified_before_first_python() ->
         producer_start
         < seal_start
         < node_loader
+        < transaction_commit
         < quarantine_cleanup
+        < transaction_complete
+        < trap_clear
         < bind_start
         < first_framework_python
     )

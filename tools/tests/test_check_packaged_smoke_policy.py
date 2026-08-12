@@ -1492,8 +1492,8 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         )
         source_mutations = (
             (
+                "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec",
                 "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
-                "0" * 64,
             ),
             (
                 "python.installRoot !== EXACT_ROOT",
@@ -2707,13 +2707,13 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "status",
-                "ninth exact candidate `not-run`",
-                "ninth exact candidate `pass`",
+                "tenth exact candidate `not-run`",
+                "tenth exact candidate `pass`",
             ),
             (
                 "trace",
+                "first through ninth remediations failed and superseded",
                 "first through eighth remediations failed and superseded",
-                "first through seventh remediations failed and superseded",
             ),
             (
                 "iteration",
@@ -3535,12 +3535,12 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ('[[ "${entry_listing}" != *$\'\\n\'* ]]', "true"),
             ('readonly framework_verifier_size="27853"', 'readonly framework_verifier_size="1"'),
             (
-                'readonly framework_verifier_sha256="b3e2576fff416be2924adab5470004f5b52fd0eba342b522adad761fe9176c26"',
+                'readonly framework_verifier_sha256="ffbf6ed2f41a35f44edda68bdd831be4d42384f9488dcdc93f8242abcfb9e218"',
                 'readonly framework_verifier_sha256="' + "0" * 64 + '"',
             ),
             ('readonly framework_lock_size="4198"', 'readonly framework_lock_size="1"'),
             (
-                'readonly framework_lock_sha256="db66ce92b38e83273bf9a089085e76309a1db15494371a4d5a338066b74a4e67"',
+                'readonly framework_lock_sha256="d5fb2f15b8e0440cdac44418c3a151605dd39f195c5a784d8d9f86b2c1623d97"',
                 'readonly framework_lock_sha256="' + "0" * 64 + '"',
             ),
         )
@@ -3552,6 +3552,160 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                         seal.replace(old, new, 1)
                     )
                 )
+
+        loader_start = "/usr/bin/env -i \\\n"
+        transaction_mutations = (
+            ('seal_transaction_phase="pending"', 'seal_transaction_phase="complete"'),
+            ('seal_quarantine_state="unvalidated"', 'seal_quarantine_state="none"'),
+            ("trap cleanup_sealed_framework EXIT", "trap : EXIT"),
+            (
+                loader_start,
+                'seal_transaction_phase="committed"\n' + loader_start,
+            ),
+            ('test "${seal_installed_root_identity:-none}" = "none"', "false"),
+            ('test ! -d "${framework_root}"', "false"),
+            ('test -L "${framework_root}"', "false"),
+            (
+                'test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" != "0"',
+                "false",
+            ),
+            (
+                'test "$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")" != \\\n'
+                '        "${seal_installed_root_identity}"',
+                "false",
+            ),
+            ('test "${seal_quarantine%/*}" != "${framework_parent}"', "false"),
+            ('test ! -d "${seal_quarantine}"', "false"),
+            ('test -L "${seal_quarantine}"', "false"),
+            (
+                'test "$(/usr/bin/stat -f \'%u\' "${seal_quarantine}")" != "0"',
+                "false",
+            ),
+            (
+                'test "$(/usr/bin/stat -f \'%d:%i\' "${seal_quarantine}")" != \\\n'
+                '          "${seal_quarantine_identity}"',
+                "false",
+            ),
+            ('if test "${rollback_ready}" -eq 1; then', "if true; then"),
+            (
+                '"${seal_quarantine}" "${framework_root}"',
+                '"${framework_root}" "${seal_quarantine}"',
+            ),
+            (
+                'test -L "${framework_root}" || \\\n'
+                '          test "$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")" != \\\n'
+                '            "${seal_quarantine_identity}"',
+                'test -L "${framework_root}"',
+            ),
+            (
+                '"${seal_quarantine}" -depth -delete',
+                '"${framework_root}" -depth -delete',
+            ),
+            (
+                'seal_quarantine_state="none"\n'
+                '  seal_quarantine="none"\n'
+                '  seal_quarantine_identity="none"',
+                'seal_quarantine_state="none"',
+            ),
+            (
+                'seal_transaction_phase="complete"\ntrap - EXIT',
+                'seal_transaction_phase="complete"',
+            ),
+            ('if test "${saved_status}" -ne 0; then', "if false; then"),
+            ('exit "${cleanup_status}"', "exit 0"),
+            (
+                'seal_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"\n'
+                '  seal_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"\n'
+                '  seal_quarantine_state="active"',
+                'seal_quarantine_state="active"\n'
+                '  seal_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"\n'
+                '  seal_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"',
+            ),
+            (
+                '[[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]\n'
+                'test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" = "0"\n'
+                'seal_installed_root_identity="${root_identity}"',
+                'seal_installed_root_identity="${root_identity}"\n'
+                '[[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]\n'
+                'test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" = "0"',
+            ),
+            (
+                'test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE%/*}" = \\\n'
+                '    "${framework_parent}"',
+                "true",
+            ),
+            ('test -d "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"', "true"),
+            ('test ! -L "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"', "true"),
+            (
+                'test "$(/usr/bin/stat -f \'%u\' \\\n'
+                '    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"',
+                "true",
+            ),
+            (
+                'test "$(/usr/bin/stat -f \'%d:%i\' \\\n'
+                '    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = \\\n'
+                '    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"',
+                "true",
+            ),
+            (loader_start, "test(){ true; }\n" + loader_start),
+            (loader_start, "test()\n{\n  :\n}\n" + loader_start),
+            (loader_start, "function test\n{\n  :\n}\n" + loader_start),
+            (loader_start, "test()\n(\n  /usr/bin/true\n)\n" + loader_start),
+            (loader_start, "function test\n(\n  /usr/bin/true\n)\n" + loader_start),
+            (loader_start, "test() [[ 1 ]]\n" + loader_start),
+            (loader_start, "test \\\n( \\\n) \\\n{ /usr/bin/true; }\n" + loader_start),
+            (loader_start, "test\\\n()\\\n{ /usr/bin/true; }\n" + loader_start),
+            (loader_start, "functi\\\non test { /usr/bin/true; }\n" + loader_start),
+            (loader_start, "find(){ true; }\n" + loader_start),
+            (loader_start, "function stat { true; }\n" + loader_start),
+            (loader_start, "set +e\n" + loader_start),
+            (loader_start, "builtin set +e\n" + loader_start),
+            (loader_start, "trap : EXIT\n" + loader_start),
+            (loader_start, "shopt -u nocasematch\n" + loader_start),
+            (loader_start, "eval true\n" + loader_start),
+            (loader_start, "ev\\\nal true\n" + loader_start),
+            (loader_start, "X=1 eval true\n" + loader_start),
+            (loader_start, "! eval false\n" + loader_start),
+            (loader_start, "command true\n" + loader_start),
+            (loader_start, "source /dev/null\n" + loader_start),
+            (loader_start, "! bash -c 'exit 1'\n" + loader_start),
+            (loader_start, "! /bin/bash -c 'exit 1'\n" + loader_start),
+        )
+        for old, new in transaction_mutations:
+            with self.subTest(transaction_mutation=old):
+                self.assertIn(old, seal)
+                self.assertFalse(
+                    CHECKER._workflow_python_seal_is_semantic(
+                        seal.replace(old, new, 1)
+                    )
+                )
+
+        for key, summary, expected_error in (
+            (
+                "workflow",
+                synchronized_workflow_summary,
+                "workflow reviewed Python no-follow seal closure drifted",
+            ),
+            (
+                "formal_workflow",
+                synchronized_formal_workflow_summary,
+                "formal workflow reviewed Python framework seal step drifted",
+            ),
+        ):
+            yaml_seal = textwrap.indent(seal, "          ")
+            for old, new in transaction_mutations:
+                with self.subTest(key=key, transaction_mutation=old):
+                    mutated_seal = seal.replace(old, new, 1)
+                    current = inputs()
+                    changed(
+                        current,
+                        key,
+                        yaml_seal,
+                        textwrap.indent(mutated_seal, "          "),
+                    )
+                    with summary(current):
+                        errors = CHECKER.validate_policy(current)
+                    self.assertIn(expected_error, errors)
 
         loader_mutations = (
             (
@@ -3613,20 +3767,6 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                     self.assertFalse(
                         CHECKER._workflow_python_seal_is_semantic(mutated)
                     )
-
-        loader_start = "/usr/bin/env -i \\\n"
-        self.assertIn(loader_start, seal)
-        for bypass in (
-            'test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"\n',
-            '/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n'
-            '  "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete\n',
-        ):
-            with self.subTest(loader_order=bypass):
-                self.assertFalse(
-                    CHECKER._workflow_python_seal_is_semantic(
-                        seal.replace(loader_start, bypass + loader_start, 1)
-                    )
-                )
 
     def test_workflow_reviewed_framework_python_cannot_drop_no_site_isolation(
         self,

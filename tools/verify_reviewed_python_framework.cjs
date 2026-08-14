@@ -8,7 +8,19 @@ const { TextDecoder } = require("node:util");
 
 const EXACT_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13";
 const CORE_DIGEST =
-  "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec";
+  "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9";
+// The complete production inventory is generated and pinned separately.  These
+// constants bind the reviewed shape without embedding thousands of payload
+// entries in executable verifier code.
+const EXPECTED_INVENTORY_SCHEMA_VERSION = 1;
+const EXPECTED_CORE_SOURCE_ENTRY_COUNT = 3654;
+const EXPECTED_CORE_SOURCE_INVENTORY_SHA256 =
+  "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";
+const EXPECTED_CORE_ENTRY_COUNT = 3648;
+const EXPECTED_CORE_INVENTORY_SHA256 =
+  "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9";
+const EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS = 6;
+const EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES = 33;
 const CORE_EXCLUDED_PATHS = Object.freeze([
   "Resources/English.lproj/Documentation",
   "bin/pip",
@@ -62,24 +74,71 @@ const FRAMEWORK_COMPONENT_CONTRACT = Object.freeze({
     "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
   noOpPostinstallMode: "0755",
 });
+const EXPECTED_INVENTORY_CONTRACT = Object.freeze({
+  schemaVersion: EXPECTED_INVENTORY_SCHEMA_VERSION,
+  payloadSize: FRAMEWORK_COMPONENT_CONTRACT.payloadSize,
+  payloadSha256: FRAMEWORK_COMPONENT_CONTRACT.payloadSha256,
+  sourceEntryCount: EXPECTED_CORE_SOURCE_ENTRY_COUNT,
+  sourceInventorySha256: EXPECTED_CORE_SOURCE_INVENTORY_SHA256,
+  installedEntryCount: EXPECTED_CORE_ENTRY_COUNT,
+  installedInventorySha256: EXPECTED_CORE_INVENTORY_SHA256,
+  appleDoubleRemovals: EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS,
+  symlinkModeChanges: EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES,
+});
+const FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT = Object.freeze({
+  fileName: "python-framework-sealed-inventory.json",
+  fileSize: 620662,
+  fileSha256:
+    "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",
+  schemaVersion: EXPECTED_INVENTORY_SCHEMA_VERSION,
+  sourcePayloadSize: FRAMEWORK_COMPONENT_CONTRACT.payloadSize,
+  sourcePayloadSha256: FRAMEWORK_COMPONENT_CONTRACT.payloadSha256,
+  sourceEntryCount: EXPECTED_CORE_SOURCE_ENTRY_COUNT,
+  sourceInventorySha256: EXPECTED_CORE_SOURCE_INVENTORY_SHA256,
+  transformationCount:
+    EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS +
+    EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES,
+  entryCount: EXPECTED_CORE_ENTRY_COUNT,
+  inventorySha256: EXPECTED_CORE_INVENTORY_SHA256,
+});
 
 const MAX_LOCK_BYTES = 1024 * 1024;
+const MAX_EXPECTED_INVENTORY_BYTES = 16 * 1024 * 1024;
 const MAX_TREE_ENTRIES = 100_000;
 const MAX_TREE_FILE_BYTES = 256 * 1024 * 1024;
 const MAX_TREE_TOTAL_BYTES = 1024 * 1024 * 1024;
 const MAX_SYMLINK_EXPANSIONS = 40;
+const MAX_RELATIVE_PATH_BYTES = 4096;
+const MAX_DIAGNOSTIC_PATH_BYTES = 256;
+const MAX_DIAGNOSTIC_DIFFERENCES = 20;
 const READ_BUFFER_BYTES = 1024 * 1024;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const MODE_PATTERN = /^[0-7]{4}$/;
+const SECRET_LIKE_PATTERN =
+  /(?:secret|token|nonce|passw(?:or)?d|credential|authorization|bearer|private[-_. ]?key|api[-_. ]?key|access[-_. ]?key)/iu;
 
 class VerificationError extends Error {
-  constructor(message, options) {
-    super(message, options);
+  constructor(message, { cause, diagnostics } = {}) {
+    super(message, cause === undefined ? undefined : { cause });
     this.name = "VerificationError";
+    if (diagnostics !== undefined) {
+      Object.defineProperty(this, "diagnostics", {
+        configurable: false,
+        enumerable: false,
+        value: diagnostics,
+        writable: false,
+      });
+    }
   }
 }
 
 function fail(message, cause) {
   throw new VerificationError(message, cause === undefined ? undefined : { cause });
+}
+
+function failWithDiagnostics(message, diagnostics) {
+  throw new VerificationError(message, { diagnostics });
 }
 
 function comparePythonStrings(left, right) {
@@ -140,6 +199,8 @@ function statIdentity(info) {
     info.ino,
     info.mode,
     info.nlink,
+    info.uid,
+    info.gid,
     info.size,
     info.mtimeNs,
     info.ctimeNs,
@@ -168,8 +229,13 @@ function splitSafeRelative(name, label) {
   if (
     typeof name !== "string" ||
     name.length === 0 ||
+    Buffer.byteLength(name, "utf8") > MAX_RELATIVE_PATH_BYTES ||
     name.includes("\\") ||
     name.includes("\0") ||
+    Array.from(name).some((character) => {
+      const point = character.codePointAt(0);
+      return point <= 0x1f || point === 0x7f;
+    }) ||
     path.posix.isAbsolute(name)
   ) {
     fail(`${label} is unsafe`);
@@ -458,7 +524,431 @@ function isPythonFingerprintCachePath(relativeParts) {
   );
 }
 
-function fingerprintInstallRoot(
+function isPlainRecord(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactKeys(value, expectedKeys) {
+  if (!isPlainRecord(value)) {
+    return false;
+  }
+  const actual = Object.keys(value).sort(comparePythonStrings);
+  const expected = [...expectedKeys].sort(comparePythonStrings);
+  return (
+    actual.length === expected.length &&
+    actual.every((name, index) => name === expected[index])
+  );
+}
+
+function isSafeSymlinkTarget(target) {
+  return (
+    typeof target === "string" &&
+    target.length > 0 &&
+    Buffer.byteLength(target, "utf8") <= MAX_RELATIVE_PATH_BYTES &&
+    !target.includes("\0") &&
+    !path.posix.isAbsolute(target) &&
+    !Array.from(target).some((character) => {
+      const point = character.codePointAt(0);
+      return point <= 0x1f || point === 0x7f;
+    })
+  );
+}
+
+function digestInventory(inventory) {
+  if (!Array.isArray(inventory)) {
+    fail("Framework inventory is malformed");
+  }
+  return crypto
+    .createHash("sha256")
+    .update(canonicalJsonBytes(inventory))
+    .digest("hex");
+}
+
+function validateInventoryEntries(entries, label = "Framework inventory") {
+  if (
+    !Array.isArray(entries) ||
+    entries.length === 0 ||
+    entries.length > MAX_TREE_ENTRIES
+  ) {
+    fail(`${label} is malformed`);
+  }
+  const result = [];
+  let previousPath;
+  let totalBytes = 0n;
+  for (const entry of entries) {
+    if (!isPlainRecord(entry)) {
+      fail(`${label} entry is malformed`);
+    }
+    const relativeParts = splitSafeRelative(entry.path, `${label} entry path`);
+    if (isForbiddenBytecodeCachePath(relativeParts)) {
+      fail(`${label} contains executable bytecode cache`);
+    }
+    if (
+      previousPath !== undefined &&
+      comparePythonStrings(previousPath, entry.path) >= 0
+    ) {
+      fail(`${label} entries are not strictly ordered`);
+    }
+    previousPath = entry.path;
+    if (typeof entry.type !== "string" || !MODE_PATTERN.test(entry.mode)) {
+      fail(`${label} entry is malformed`);
+    }
+
+    let normalized;
+    if (entry.type === "directory") {
+      if (!hasExactKeys(entry, ["mode", "path", "type"])) {
+        fail(`${label} directory entry is malformed`);
+      }
+      normalized = {
+        path: entry.path,
+        mode: entry.mode,
+        type: "directory",
+      };
+    } else if (entry.type === "file") {
+      if (
+        !hasExactKeys(entry, ["mode", "path", "sha256", "size", "type"]) ||
+        !Number.isSafeInteger(entry.size) ||
+        entry.size < 0 ||
+        entry.size > MAX_TREE_FILE_BYTES ||
+        !SHA256_PATTERN.test(entry.sha256)
+      ) {
+        fail(`${label} regular-file entry is malformed`);
+      }
+      totalBytes += BigInt(entry.size);
+      if (totalBytes > BigInt(MAX_TREE_TOTAL_BYTES)) {
+        fail(`${label} exceeds its byte bound`);
+      }
+      normalized = {
+        path: entry.path,
+        mode: entry.mode,
+        type: "file",
+        size: entry.size,
+        sha256: entry.sha256,
+      };
+    } else if (entry.type === "symlink") {
+      const hasBroken = Object.hasOwn(entry, "broken");
+      const keys = ["mode", "path", "sha256", "target", "type"];
+      if (hasBroken) {
+        keys.push("broken");
+      }
+      if (
+        !hasExactKeys(entry, keys) ||
+        (hasBroken && entry.broken !== true) ||
+        !isSafeSymlinkTarget(entry.target) ||
+        !SHA256_PATTERN.test(entry.sha256) ||
+        entry.sha256 !==
+          crypto.createHash("sha256").update(entry.target, "utf8").digest("hex")
+      ) {
+        fail(`${label} symlink entry is malformed`);
+      }
+      normalized = {
+        path: entry.path,
+        mode: entry.mode,
+        type: "symlink",
+        target: entry.target,
+      };
+      if (hasBroken) {
+        normalized.broken = true;
+      }
+      normalized.sha256 = entry.sha256;
+    } else {
+      fail(`${label} entry type is unsupported`);
+    }
+    result.push(Object.freeze(normalized));
+  }
+  return Object.freeze(result);
+}
+
+function normalizeExpectedTransformations(transformations) {
+  if (
+    !Array.isArray(transformations) ||
+    transformations.length > MAX_TREE_ENTRIES
+  ) {
+    fail("Expected framework inventory transformations are malformed");
+  }
+  const result = [];
+  let previousPath;
+  for (const transformation of transformations) {
+    if (!isPlainRecord(transformation)) {
+      fail("Expected framework inventory transformation is malformed");
+    }
+    splitSafeRelative(
+      transformation.path,
+      "Expected framework inventory transformation path",
+    );
+    if (
+      previousPath !== undefined &&
+      comparePythonStrings(previousPath, transformation.path) >= 0
+    ) {
+      fail("Expected framework inventory transformations are not strictly ordered");
+    }
+    previousPath = transformation.path;
+
+    if (transformation.kind === "remove-appledouble") {
+      if (
+        !hasExactKeys(transformation, [
+          "kind",
+          "mode",
+          "path",
+          "sha256",
+          "size",
+          "type",
+        ]) ||
+        transformation.type !== "file" ||
+        transformation.mode !== "0664" ||
+        !Number.isSafeInteger(transformation.size) ||
+        transformation.size < 0 ||
+        transformation.size > MAX_TREE_FILE_BYTES ||
+        !SHA256_PATTERN.test(transformation.sha256) ||
+        !path.posix.basename(transformation.path).startsWith("._") ||
+        path.posix.basename(transformation.path) === "._"
+      ) {
+        fail("Expected AppleDouble removal transformation is malformed");
+      }
+      result.push(
+        Object.freeze({
+          kind: "remove-appledouble",
+          path: transformation.path,
+          type: "file",
+          mode: "0664",
+          size: transformation.size,
+          sha256: transformation.sha256,
+        }),
+      );
+      continue;
+    }
+
+    if (transformation.kind === "symlink-mode") {
+      if (
+        !hasExactKeys(transformation, [
+          "fromMode",
+          "kind",
+          "path",
+          "target",
+          "toMode",
+          "type",
+        ]) ||
+        transformation.type !== "symlink" ||
+        transformation.fromMode !== "0775" ||
+        transformation.toMode !== "0777" ||
+        !isSafeSymlinkTarget(transformation.target)
+      ) {
+        fail("Expected symlink-mode transformation is malformed");
+      }
+      result.push(
+        Object.freeze({
+          kind: "symlink-mode",
+          path: transformation.path,
+          type: "symlink",
+          target: transformation.target,
+          fromMode: "0775",
+          toMode: "0777",
+        }),
+      );
+      continue;
+    }
+
+    fail("Expected framework inventory transformation kind is unsupported");
+  }
+  return Object.freeze(result);
+}
+
+function sealedNonSymlinkMode(mode) {
+  if (!MODE_PATTERN.test(mode)) {
+    fail("Expected non-symlink mode transformation is malformed");
+  }
+  return (Number.parseInt(mode, 8) & ~0o022).toString(8).padStart(4, "0");
+}
+
+function applyNormalizedExpectedInventoryTransformations(
+  sourceInventory,
+  transformations,
+) {
+  const byPath = new Map(
+    sourceInventory.map((entry) => [entry.path, { ...entry }]),
+  );
+  for (const transformation of transformations) {
+    const entry = byPath.get(transformation.path);
+    if (entry === undefined || entry.type !== transformation.type) {
+      fail("Expected framework inventory transformation does not match its entry");
+    }
+    if (transformation.kind === "remove-appledouble") {
+      if (
+        entry.mode !== sealedNonSymlinkMode(transformation.mode) ||
+        entry.size !== transformation.size ||
+        entry.sha256 !== transformation.sha256
+      ) {
+        fail("Expected AppleDouble removal source metadata changed");
+      }
+      byPath.delete(transformation.path);
+      continue;
+    }
+    if (
+      transformation.kind !== "symlink-mode" ||
+      entry.mode !== transformation.fromMode ||
+      entry.target !== transformation.target
+    ) {
+      fail("Expected framework inventory transformation source metadata changed");
+    }
+    entry.mode = transformation.toMode;
+  }
+  const transformed = [...byPath.values()].sort((left, right) =>
+    comparePythonStrings(left.path, right.path),
+  );
+  return validateInventoryEntries(
+    transformed,
+    "Transformed expected framework inventory",
+  );
+}
+
+function applyExpectedInventoryTransformations(entries, transformations) {
+  return applyNormalizedExpectedInventoryTransformations(
+    validateInventoryEntries(entries, "Expected source framework inventory"),
+    normalizeExpectedTransformations(transformations),
+  );
+}
+
+function reconstructSourceInventory(installedInventory, transformations) {
+  const byPath = new Map(
+    installedInventory.map((entry) => [entry.path, { ...entry }]),
+  );
+  for (const transformation of transformations) {
+    const installed = byPath.get(transformation.path);
+    if (transformation.kind === "remove-appledouble") {
+      if (installed !== undefined) {
+        fail("Expected removed AppleDouble path still exists");
+      }
+      byPath.set(transformation.path, {
+        path: transformation.path,
+        mode: sealedNonSymlinkMode(transformation.mode),
+        type: "file",
+        size: transformation.size,
+        sha256: transformation.sha256,
+      });
+      continue;
+    }
+    if (
+      transformation.kind !== "symlink-mode" ||
+      installed === undefined ||
+      installed.type !== "symlink" ||
+      installed.mode !== transformation.toMode ||
+      installed.target !== transformation.target
+    ) {
+      fail("Expected installed symlink transformation metadata changed");
+    }
+    installed.mode = transformation.fromMode;
+  }
+  return validateInventoryEntries(
+    [...byPath.values()].sort((left, right) =>
+      comparePythonStrings(left.path, right.path),
+    ),
+    "Reconstructed source framework inventory",
+  );
+}
+
+function validateExpectedInventoryValue(value) {
+  if (
+    !hasExactKeys(value, [
+      "entries",
+      "entryCount",
+      "inventorySha256",
+      "schemaVersion",
+      "source",
+      "transformations",
+    ]) ||
+    value.schemaVersion !== EXPECTED_INVENTORY_SCHEMA_VERSION ||
+    !hasExactKeys(value.source, [
+      "coreEntryCount",
+      "coreInventorySha256",
+      "payloadSha256",
+      "payloadSize",
+    ]) ||
+    !Number.isSafeInteger(value.source.payloadSize) ||
+    value.source.payloadSize <= 0 ||
+    value.source.payloadSize > MAX_TREE_FILE_BYTES ||
+    !SHA256_PATTERN.test(value.source.payloadSha256) ||
+    !Number.isSafeInteger(value.source.coreEntryCount) ||
+    value.source.coreEntryCount <= 0 ||
+    value.source.coreEntryCount > MAX_TREE_ENTRIES ||
+    !SHA256_PATTERN.test(value.source.coreInventorySha256) ||
+    !Number.isSafeInteger(value.entryCount) ||
+    value.entryCount <= 0 ||
+    value.entryCount > MAX_TREE_ENTRIES ||
+    !SHA256_PATTERN.test(value.inventorySha256)
+  ) {
+    fail("Expected framework inventory is malformed");
+  }
+
+  const inventory = validateInventoryEntries(
+    value.entries,
+    "Expected installed framework inventory",
+  );
+  const inventoryDigest = digestInventory(inventory);
+  if (
+    value.entryCount !== inventory.length ||
+    value.inventorySha256 !== inventoryDigest
+  ) {
+    fail("Expected installed framework inventory binding changed");
+  }
+  const transformations = normalizeExpectedTransformations(value.transformations);
+  const sourceInventory = reconstructSourceInventory(
+    inventory,
+    transformations,
+  );
+  const sourceDigest = digestInventory(sourceInventory);
+  if (
+    value.source.coreEntryCount !== sourceInventory.length ||
+    value.source.coreInventorySha256 !== sourceDigest
+  ) {
+    fail("Expected source framework inventory binding changed");
+  }
+
+  return Object.freeze({
+    schemaVersion: value.schemaVersion,
+    source: Object.freeze({
+      payloadSize: value.source.payloadSize,
+      payloadSha256: value.source.payloadSha256,
+      coreEntryCount: value.source.coreEntryCount,
+      coreInventorySha256: value.source.coreInventorySha256,
+    }),
+    transformations,
+    entryCount: value.entryCount,
+    inventorySha256: value.inventorySha256,
+    sourceInventory,
+    inventory,
+  });
+}
+
+function verifyExpectedInventoryProductionContract(value) {
+  const validated = validateExpectedInventoryValue(value);
+  const removalCount = validated.transformations.filter(
+    (item) => item.kind === "remove-appledouble",
+  ).length;
+  const symlinkModeCount = validated.transformations.filter(
+    (item) => item.kind === "symlink-mode",
+  ).length;
+  if (
+    validated.source.payloadSize !== EXPECTED_INVENTORY_CONTRACT.payloadSize ||
+    validated.source.payloadSha256 !== EXPECTED_INVENTORY_CONTRACT.payloadSha256 ||
+    validated.source.coreEntryCount !== EXPECTED_INVENTORY_CONTRACT.sourceEntryCount ||
+    validated.source.coreInventorySha256 !==
+      EXPECTED_INVENTORY_CONTRACT.sourceInventorySha256 ||
+    validated.entryCount !== EXPECTED_INVENTORY_CONTRACT.installedEntryCount ||
+    validated.inventorySha256 !==
+      EXPECTED_INVENTORY_CONTRACT.installedInventorySha256 ||
+    removalCount !== EXPECTED_INVENTORY_CONTRACT.appleDoubleRemovals ||
+    symlinkModeCount !== EXPECTED_INVENTORY_CONTRACT.symlinkModeChanges
+  ) {
+    fail("Expected framework inventory differs from the production contract");
+  }
+  return validated;
+}
+
+function inspectInstallRoot(
   root,
   {
     excludedPaths = CORE_EXCLUDED_PATHS,
@@ -673,14 +1163,25 @@ function fingerprintInstallRoot(
     fail("Framework fingerprint is empty");
   }
   inventory.sort((left, right) => comparePythonStrings(left.path, right.path));
-  return crypto.createHash("sha256").update(canonicalJsonBytes(inventory)).digest("hex");
+  const reviewedInventory = validateInventoryEntries(
+    inventory,
+    "Observed framework inventory",
+  );
+  return Object.freeze({
+    inventory: reviewedInventory,
+    digest: digestInventory(reviewedInventory),
+  });
 }
 
-function verifyProductionExclusionClosure(
+function fingerprintInstallRoot(root, options = {}) {
+  return inspectInstallRoot(root, options).digest;
+}
+
+function inspectProductionExclusionClosure(
   root,
   { reviewedBrokenSymlinks = REVIEWED_BROKEN_SYMLINKS } = {},
 ) {
-  return fingerprintInstallRoot(root, {
+  return inspectInstallRoot(root, {
     excludedPaths: CORE_EXCLUDED_PATHS,
     reviewedBrokenSymlinks,
     rejectBytecodeCaches: true,
@@ -688,17 +1189,234 @@ function verifyProductionExclusionClosure(
   });
 }
 
-function readLockFile(lockPath) {
-  if (typeof lockPath !== "string" || lockPath.length === 0 || lockPath.includes("\0")) {
-    fail("Reviewed Python lock path is unsafe");
+function verifyProductionExclusionClosure(
+  root,
+  { reviewedBrokenSymlinks = REVIEWED_BROKEN_SYMLINKS } = {},
+) {
+  return inspectProductionExclusionClosure(root, { reviewedBrokenSymlinks }).digest;
+}
+
+function diagnosticPathRecord(relative, untrusted) {
+  if (
+    untrusted ||
+    Buffer.byteLength(relative, "utf8") > MAX_DIAGNOSTIC_PATH_BYTES ||
+    SECRET_LIKE_PATTERN.test(relative)
+  ) {
+    return Object.freeze({
+      pathSha256: crypto.createHash("sha256").update(relative, "utf8").digest("hex"),
+    });
   }
-  const resolved = path.resolve(lockPath);
-  const before = lstat(resolved, "Reviewed Python lock is unavailable");
+  return Object.freeze({ path: relative });
+}
+
+function compareInventories(
+  expectedEntries,
+  observedEntries,
+  { limit = MAX_DIAGNOSTIC_DIFFERENCES } = {},
+) {
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 0 ||
+    limit > MAX_DIAGNOSTIC_DIFFERENCES
+  ) {
+    fail("Framework inventory diagnostic bound is unsafe");
+  }
+  const expected = validateInventoryEntries(
+    expectedEntries,
+    "Expected installed framework inventory",
+  );
+  const observed = validateInventoryEntries(
+    observedEntries,
+    "Observed framework inventory",
+  );
+  const differenceCounts = {
+    missing: 0,
+    extra: 0,
+    type: 0,
+    mode: 0,
+    target: 0,
+    size: 0,
+    content: 0,
+  };
+  const firstDifferences = [];
+
+  function record(kind, relative, untrusted = false) {
+    differenceCounts[kind] += 1;
+    if (firstDifferences.length < limit) {
+      firstDifferences.push(
+        Object.freeze({
+          kind,
+          ...diagnosticPathRecord(relative, untrusted),
+        }),
+      );
+    }
+  }
+
+  let expectedIndex = 0;
+  let observedIndex = 0;
+  while (expectedIndex < expected.length || observedIndex < observed.length) {
+    if (expectedIndex >= expected.length) {
+      record("extra", observed[observedIndex].path, true);
+      observedIndex += 1;
+      continue;
+    }
+    if (observedIndex >= observed.length) {
+      record("missing", expected[expectedIndex].path);
+      expectedIndex += 1;
+      continue;
+    }
+    const expectedEntry = expected[expectedIndex];
+    const observedEntry = observed[observedIndex];
+    const order = comparePythonStrings(expectedEntry.path, observedEntry.path);
+    if (order < 0) {
+      record("missing", expectedEntry.path);
+      expectedIndex += 1;
+      continue;
+    }
+    if (order > 0) {
+      record("extra", observedEntry.path, true);
+      observedIndex += 1;
+      continue;
+    }
+
+    if (expectedEntry.type !== observedEntry.type) {
+      record("type", expectedEntry.path);
+    } else {
+      if (expectedEntry.mode !== observedEntry.mode) {
+        record("mode", expectedEntry.path);
+      }
+      if (expectedEntry.type === "file") {
+        if (expectedEntry.size !== observedEntry.size) {
+          record("size", expectedEntry.path);
+        }
+        if (expectedEntry.sha256 !== observedEntry.sha256) {
+          record("content", expectedEntry.path);
+        }
+      } else if (
+        expectedEntry.type === "symlink" &&
+        (expectedEntry.target !== observedEntry.target ||
+          expectedEntry.broken !== observedEntry.broken)
+      ) {
+        record("target", expectedEntry.path);
+      }
+    }
+    expectedIndex += 1;
+    observedIndex += 1;
+  }
+
+  const differenceTotal = Object.values(differenceCounts).reduce(
+    (total, value) => total + value,
+    0,
+  );
+  return Object.freeze({
+    matches: differenceTotal === 0,
+    expectedDigest: digestInventory(expected),
+    observedDigest: digestInventory(observed),
+    expectedEntries: expected.length,
+    observedEntries: observed.length,
+    differenceCounts: Object.freeze(differenceCounts),
+    firstDifferences: Object.freeze(firstDifferences),
+    truncated: differenceTotal > firstDifferences.length,
+  });
+}
+
+function formatVerificationDiagnostics(diagnostics) {
+  if (
+    !isPlainRecord(diagnostics) ||
+    !SHA256_PATTERN.test(diagnostics.expectedDigest) ||
+    !SHA256_PATTERN.test(diagnostics.observedDigest) ||
+    !Number.isSafeInteger(diagnostics.expectedEntries) ||
+    !Number.isSafeInteger(diagnostics.observedEntries) ||
+    !hasExactKeys(diagnostics.differenceCounts, [
+      "content",
+      "extra",
+      "missing",
+      "mode",
+      "size",
+      "target",
+      "type",
+    ]) ||
+    Object.values(diagnostics.differenceCounts).some(
+      (value) => !Number.isSafeInteger(value) || value < 0,
+    ) ||
+    !Array.isArray(diagnostics.firstDifferences) ||
+    diagnostics.firstDifferences.length > MAX_DIAGNOSTIC_DIFFERENCES ||
+    typeof diagnostics.truncated !== "boolean"
+  ) {
+    fail("Framework inventory diagnostics are malformed");
+  }
+  for (const difference of diagnostics.firstDifferences) {
+    if (
+      !isPlainRecord(difference) ||
+      ![
+        "missing",
+        "extra",
+        "type",
+        "mode",
+        "target",
+        "size",
+        "content",
+      ].includes(difference.kind) ||
+      (!hasExactKeys(difference, ["kind", "path"]) &&
+        !hasExactKeys(difference, ["kind", "pathSha256"])) ||
+      (Object.hasOwn(difference, "path") ===
+        Object.hasOwn(difference, "pathSha256"))
+    ) {
+      fail("Framework inventory diagnostic record is malformed");
+    }
+    if (Object.hasOwn(difference, "path")) {
+      splitSafeRelative(difference.path, "Framework inventory diagnostic path");
+      if (
+        SECRET_LIKE_PATTERN.test(difference.path) ||
+        Buffer.byteLength(difference.path, "utf8") > MAX_DIAGNOSTIC_PATH_BYTES
+      ) {
+        fail("Framework inventory diagnostic path is unsafe");
+      }
+    } else if (!SHA256_PATTERN.test(difference.pathSha256)) {
+      fail("Framework inventory diagnostic path digest is malformed");
+    }
+  }
+  const counts = diagnostics.differenceCounts;
+  return [
+    `expected_digest=${diagnostics.expectedDigest}`,
+    `observed_digest=${diagnostics.observedDigest}`,
+    `expected_entries=${diagnostics.expectedEntries}`,
+    `observed_entries=${diagnostics.observedEntries}`,
+    "difference_counts=" +
+      `missing:${counts.missing},extra:${counts.extra},type:${counts.type},` +
+      `mode:${counts.mode},target:${counts.target},size:${counts.size},` +
+      `content:${counts.content}`,
+    `first_differences=${canonicalJson(diagnostics.firstDifferences)}`,
+    `truncated=${diagnostics.truncated ? "true" : "false"}`,
+  ].join("\n");
+}
+
+function verifyInventoryMatch(expectedEntries, observedEntries) {
+  const diagnostics = compareInventories(expectedEntries, observedEntries);
+  if (!diagnostics.matches) {
+    failWithDiagnostics(
+      "Reviewed Python framework core inventory changed",
+      diagnostics,
+    );
+  }
+  return diagnostics.observedDigest;
+}
+
+function readBoundedJsonFile(pathname, { label, maximumBytes }) {
+  if (
+    typeof pathname !== "string" ||
+    pathname.length === 0 ||
+    pathname.includes("\0")
+  ) {
+    fail(`${label} path is unsafe`);
+  }
+  const resolved = path.resolve(pathname);
+  const before = lstat(resolved, `${label} is unavailable`);
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) {
-    fail("Reviewed Python lock must be one regular file");
+    fail(`${label} must be one regular file`);
   }
-  if (before.size <= 0n || before.size > BigInt(MAX_LOCK_BYTES)) {
-    fail("Reviewed Python lock has an unsafe size");
+  if (before.size <= 0n || before.size > BigInt(maximumBytes)) {
+    fail(`${label} has an unsafe size`);
   }
   const flags =
     fs.constants.O_RDONLY |
@@ -707,12 +1425,12 @@ function readLockFile(lockPath) {
   try {
     descriptor = fs.openSync(resolved, flags);
   } catch (error) {
-    fail("Reviewed Python lock cannot be opened without following links", error);
+    fail(`${label} cannot be opened without following links`, error);
   }
   try {
     const heldBefore = fs.fstatSync(descriptor, { bigint: true });
     if (!heldBefore.isFile() || !sameIdentity(before, heldBefore)) {
-      fail("Reviewed Python lock changed before reading");
+      fail(`${label} changed before reading`);
     }
     const content = Buffer.alloc(Number(heldBefore.size));
     let offset = 0;
@@ -725,28 +1443,44 @@ function readLockFile(lockPath) {
         null,
       );
       if (count === 0) {
-        fail("Reviewed Python lock was truncated while reading");
+        fail(`${label} was truncated while reading`);
       }
       offset += count;
     }
     const heldAfter = fs.fstatSync(descriptor, { bigint: true });
-    const namedAfter = lstat(resolved, "Reviewed Python lock changed while reading");
+    const namedAfter = lstat(resolved, `${label} changed while reading`);
     if (!sameIdentity(heldBefore, heldAfter) || !sameIdentity(heldBefore, namedAfter)) {
-      fail("Reviewed Python lock changed while reading");
+      fail(`${label} changed while reading`);
     }
     let value;
     try {
-      value = JSON.parse(decodeUtf8(content, "Reviewed Python lock"));
+      value = JSON.parse(decodeUtf8(content, label));
     } catch (error) {
       if (error instanceof VerificationError) {
         throw error;
       }
-      fail("Reviewed Python lock is invalid JSON", error);
+      fail(`${label} is invalid JSON`, error);
     }
     return value;
   } finally {
     fs.closeSync(descriptor);
   }
+}
+
+function readLockFile(lockPath) {
+  return readBoundedJsonFile(lockPath, {
+    label: "Reviewed Python lock",
+    maximumBytes: MAX_LOCK_BYTES,
+  });
+}
+
+function readExpectedInventoryFile(inventoryPath) {
+  const value = readBoundedJsonFile(inventoryPath, {
+    label: "Expected framework inventory",
+    maximumBytes: MAX_EXPECTED_INVENTORY_BYTES,
+  });
+  validateExpectedInventoryValue(value);
+  return value;
 }
 
 function sameJson(left, right) {
@@ -765,6 +1499,10 @@ function verifyLockValue(lock) {
     python.installRoot !== EXACT_ROOT ||
     python.frameworkCoreFingerprintSha256 !== CORE_DIGEST ||
     !sameJson(python.frameworkCoreFingerprintExcludedPaths, CORE_EXCLUDED_PATHS) ||
+    !sameJson(
+      python.frameworkCoreInventory,
+      FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT,
+    ) ||
     !sameJson(python.reviewedBrokenSymlinks, REVIEWED_BROKEN_SYMLINKS) ||
     distribution === null ||
     typeof distribution !== "object" ||
@@ -781,28 +1519,40 @@ function verifyLockContract(lockPath) {
 }
 
 function parseCliArguments(argv) {
-  if (!Array.isArray(argv) || argv.length !== 4) {
-    fail("Usage: verify_reviewed_python_framework.cjs --root PATH --lock PATH");
+  const usage =
+    "Usage: verify_reviewed_python_framework.cjs --root PATH --lock PATH --inventory PATH";
+  if (!Array.isArray(argv) || argv.length !== 6) {
+    fail(usage);
   }
   const result = Object.create(null);
   for (let index = 0; index < argv.length; index += 2) {
     const option = argv[index];
     const value = argv[index + 1];
     if (
-      (option !== "--root" && option !== "--lock") ||
+      (option !== "--root" &&
+        option !== "--lock" &&
+        option !== "--inventory") ||
       Object.hasOwn(result, option) ||
       typeof value !== "string" ||
       value.length === 0 ||
       value.startsWith("--")
     ) {
-      fail("Usage: verify_reviewed_python_framework.cjs --root PATH --lock PATH");
+      fail(usage);
     }
     result[option] = value;
   }
-  if (!Object.hasOwn(result, "--root") || !Object.hasOwn(result, "--lock")) {
-    fail("Usage: verify_reviewed_python_framework.cjs --root PATH --lock PATH");
+  if (
+    !Object.hasOwn(result, "--root") ||
+    !Object.hasOwn(result, "--lock") ||
+    !Object.hasOwn(result, "--inventory")
+  ) {
+    fail(usage);
   }
-  return { root: result["--root"], lock: result["--lock"] };
+  return {
+    root: result["--root"],
+    lock: result["--lock"],
+    inventory: result["--inventory"],
+  };
 }
 
 function verifyStartupEnvironment(environment) {
@@ -828,10 +1578,16 @@ function verifyReviewedPythonFramework(options) {
   if (hasLockPath === hasLockValue) {
     fail("Provide exactly one of lock or lockValue");
   }
+  const hasInventoryPath = Object.hasOwn(options, "inventory");
+  const hasInventoryValue = Object.hasOwn(options, "inventoryValue");
+  if (hasInventoryPath === hasInventoryValue) {
+    fail("Provide exactly one of inventory or inventoryValue");
+  }
   const allowedKeys = new Set([
     "root",
     hasLockPath ? "lock" : "lockValue",
   ]);
+  allowedKeys.add(hasInventoryPath ? "inventory" : "inventoryValue");
   if (Object.keys(options).some((name) => !allowedKeys.has(name))) {
     fail("Reviewed Python framework verification arguments are malformed");
   }
@@ -839,16 +1595,25 @@ function verifyReviewedPythonFramework(options) {
   if (root !== EXACT_ROOT) {
     fail("Reviewed Python framework root differs from the hard-coded path");
   }
-  if (hasLockPath) {
-    verifyLockContract(options.lock);
-  } else {
-    verifyLockValue(options.lockValue);
+  const lockValue = hasLockPath
+    ? verifyLockContract(options.lock)
+    : verifyLockValue(options.lockValue);
+  const inventoryValue = hasInventoryPath
+    ? readExpectedInventoryFile(options.inventory)
+    : options.inventoryValue;
+  const expected = verifyExpectedInventoryProductionContract(inventoryValue);
+  if (
+    lockValue.python.frameworkCoreFingerprintSha256 !==
+    expected.inventorySha256
+  ) {
+    fail("Reviewed Python lock and expected framework inventory disagree");
   }
-  const observed = verifyProductionExclusionClosure(root);
-  if (observed !== CORE_DIGEST) {
-    fail("Reviewed Python framework core fingerprint changed");
+  const observed = inspectProductionExclusionClosure(root);
+  const digest = verifyInventoryMatch(expected.inventory, observed.inventory);
+  if (digest !== observed.digest || digest !== CORE_DIGEST) {
+    fail("Reviewed Python framework inventory digest changed");
   }
-  return observed;
+  return digest;
 }
 
 function main() {
@@ -859,6 +1624,14 @@ function main() {
     process.stdout.write(`${digest}\n`);
   } catch (error) {
     process.stderr.write("Reviewed Python framework verification failed\n");
+    if (error instanceof VerificationError && error.diagnostics !== undefined) {
+      try {
+        process.stderr.write(`${formatVerificationDiagnostics(error.diagnostics)}\n`);
+      } catch (_diagnosticError) {
+        // Never expose an unexpected error, cause, path, or stack while handling
+        // a verification failure.
+      }
+    }
     process.exitCode = 1;
   }
 }
@@ -868,15 +1641,38 @@ module.exports = Object.freeze({
   CORE_DIGEST,
   CORE_EXCLUDED_PATHS,
   EXACT_ROOT,
+  EXPECTED_CORE_ENTRY_COUNT,
+  EXPECTED_CORE_INVENTORY_SHA256,
+  EXPECTED_CORE_SOURCE_ENTRY_COUNT,
+  EXPECTED_CORE_SOURCE_INVENTORY_SHA256,
+  EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS,
+  EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES,
+  EXPECTED_INVENTORY_CONTRACT,
+  EXPECTED_INVENTORY_SCHEMA_VERSION,
   FRAMEWORK_COMPONENT_CONTRACT,
+  FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT,
+  MAX_DIAGNOSTIC_DIFFERENCES,
   PRODUCER_INSTALL_METHOD,
   REVIEWED_BROKEN_SYMLINKS,
   SITE_PACKAGES_PATH,
   SITE_PACKAGES_README,
   VerificationError,
+  applyExpectedInventoryTransformations,
   canonicalJsonBytes,
+  compareInventories,
+  comparePythonStrings,
+  digestInventory,
   fingerprintInstallRoot,
+  formatVerificationDiagnostics,
+  inspectInstallRoot,
+  inspectProductionExclusionClosure,
   parseCliArguments,
+  readExpectedInventoryFile,
+  sealedNonSymlinkMode,
+  validateExpectedInventoryValue,
+  validateInventoryEntries,
+  verifyExpectedInventoryProductionContract,
+  verifyInventoryMatch,
   verifyLockContract,
   verifyLockValue,
   verifyProductionExclusionClosure,

@@ -3,6 +3,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 import textwrap
 import unittest
 from contextlib import ExitStack, contextmanager
@@ -195,6 +200,8 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 "python_bootstrap",
                 "framework_verifier",
                 "framework_verifier_tests",
+                "framework_inventory_generator",
+                "framework_inventory",
                 "exact_git_checker",
                 "exact_git_checker_tests",
                 "exact_node_installer",
@@ -1492,8 +1499,8 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         )
         source_mutations = (
             (
+                "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9",
                 "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec",
-                "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
             ),
             (
                 "python.installRoot !== EXACT_ROOT",
@@ -1585,6 +1592,41 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             errors = CHECKER.validate_policy(current)
         self.assertIn(
             "exact reviewed Python framework Node verifier closure drifted",
+            errors,
+        )
+
+    def test_reviewed_framework_inventory_inputs_are_semantic(self) -> None:
+        current = inputs()
+        changed(
+            current,
+            "framework_inventory_generator",
+            "const SEALED_CORE_CONTRACT = Object.freeze({",
+            "const UNREVIEWED_CORE_CONTRACT = Object.freeze({",
+        )
+        with synchronized_reviewed_input_summaries(
+            current,
+            "framework_inventory_generator",
+        ):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "reviewed Python framework inventory generator drifted",
+            errors,
+        )
+
+        current = inputs()
+        changed(
+            current,
+            "framework_inventory",
+            '"inventorySha256":"fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"',
+            '"inventorySha256":"ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"',
+        )
+        with synchronized_reviewed_input_summaries(
+            current,
+            "framework_inventory",
+        ):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "reviewed Python framework sealed inventory drifted",
             errors,
         )
 
@@ -2657,7 +2699,7 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "iteration",
-                "tools/{check_exact_git_provenance.py,exact_node_install.cjs,verify_reviewed_python_framework.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}",
+                "tools/{check_exact_git_provenance.py,exact_node_install.cjs,generate_reviewed_python_framework_inventory.cjs,verify_reviewed_python_framework.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}",
                 "tools/build_python_sidecar.py",
             ),
             (
@@ -2707,13 +2749,13 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "status",
-                "tenth exact candidate `not-run`",
-                "tenth exact candidate `pass`",
+                "eleventh local candidate `not-run`",
+                "eleventh local candidate `pass`",
             ),
             (
                 "trace",
+                "first through tenth remediations failed and superseded",
                 "first through ninth remediations failed and superseded",
-                "first through eighth remediations failed and superseded",
             ),
             (
                 "iteration",
@@ -3012,315 +3054,284 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             errors = CHECKER.validate_policy(current)
         self.assertTrue(any("continue-on-error" in error for error in errors), errors)
 
+    def test_reviewed_framework_transaction_is_synchronized_and_fail_closed(
+        self,
+    ) -> None:
+        current = inputs()
+        step_names = (
+            "Provision reviewed build Python without executing it",
+            "Seal reviewed build Python framework",
+            "Validate reviewed Python framework transaction postcondition",
+        )
+        runs_by_workflow: list[tuple[str, str, str]] = []
+        for key, job in (("workflow", "assemble"), ("formal_workflow", "build")):
+            steps = CHECKER._workflow_steps(str(current[key]), job)
+            by_name = {step["name"]: step for step in steps}
+            runs = tuple(by_name[name]["run"] for name in step_names)
+            runs_by_workflow.append(runs)
+            self.assertIn("id: provision_reviewed_python", by_name[step_names[0]]["document"])
+            self.assertIn("id: seal_reviewed_python", by_name[step_names[1]]["document"])
+            postcondition_document = by_name[step_names[2]]["document"]
+            self.assertEqual(postcondition_document.count("if: ${{ always() }}"), 1)
+            self.assertNotIn("continue-on-error:", postcondition_document)
+            self.assertIn("steps.provision_reviewed_python.outcome", postcondition_document)
+            self.assertIn("steps.seal_reviewed_python.outcome", postcondition_document)
+
+        self.assertEqual(runs_by_workflow[0], runs_by_workflow[1])
+        producer, seal, postcondition = runs_by_workflow[0]
+        self.assertTrue(CHECKER._workflow_python_producer_is_semantic(producer))
+        self.assertTrue(CHECKER._workflow_python_seal_is_semantic(seal))
+        self.assertTrue(CHECKER._workflow_held_framework_loader_is_semantic(seal))
+        self.assertTrue(
+            CHECKER._workflow_framework_postcondition_is_semantic(postcondition)
+        )
+
+        for block in (producer, seal, postcondition):
+            for signal in ("HUP", "INT", "TERM"):
+                self.assertIn(signal, block)
+            self.assertNotIn("rm -rf", block)
+            self.assertNotIn('find -P -x "${framework_parent}"', block)
+        for marker in (
+            "LCF_REVIEWED_FRAMEWORK_INITIAL_STATE",
+            "LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY",
+            "LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY",
+            "LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY",
+            "cleanup=failed",
+            "exit 70",
+        ):
+            self.assertIn(marker, producer)
+            self.assertIn(marker, postcondition)
+        self.assertIn("cleanup=failed", seal)
+        self.assertIn("exit 70", seal)
+        self.assertNotIn('"${seal_quarantine}" -depth -delete', seal)
+        self.assertNotIn(
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete",
+            seal,
+        )
+        seal_signal_mask = seal.rindex("trap '' HUP INT TERM")
+        seal_commit_journal = seal.index(
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=committed",
+            seal_signal_mask,
+        )
+        seal_exit_handoff = seal.index("trap - EXIT", seal_commit_journal)
+        seal_local_commit = seal.index(
+            'seal_transaction_phase="committed"',
+            seal_exit_handoff,
+        )
+        self.assertLess(
+            seal_signal_mask,
+            seal_commit_journal,
+        )
+        self.assertLess(seal_commit_journal, seal_exit_handoff)
+        self.assertLess(seal_exit_handoff, seal_local_commit)
+        for marker in (
+            "finish_postcondition_failure() {",
+            "handle_verification_failure() {",
+            'finish_postcondition_failure verification "${verification_status}"',
+            "finish_postcondition_failure successful-steps-rolled-back 1",
+            "cleanup=complete",
+            'case "${transaction_phase:-unvalidated}:${postcondition_phase:-unarmed}" in',
+            "pending:pending|rolled-back:rolled-back|committed:committed)",
+            "trap 'handle_postcondition_signal HUP 129' HUP",
+            "trap 'handle_postcondition_signal INT 130' INT",
+            "trap 'handle_postcondition_signal TERM 143' TERM",
+            'postcondition_phase="finalizing"',
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=finalizing",
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete",
+        ):
+            self.assertIn(marker, postcondition)
+        verifier = postcondition.index("verifier.verifyReviewedPythonFramework({")
+        identity_recheck = postcondition.index(
+            "trap 'fail_postcondition identity-mismatch' ERR"
+        )
+        finalizing_signal_mask = postcondition.rindex(
+            "trap '' HUP INT TERM",
+            0,
+            postcondition.index('postcondition_phase="finalizing"'),
+        )
+        finalizing = postcondition.index('postcondition_phase="finalizing"')
+        finalizing_failure_trap = postcondition.index(
+            "trap 'fail_postcondition finalizing' ERR",
+            finalizing,
+        )
+        quarantine_delete = postcondition.index(
+            '"${framework_quarantine}" -depth -delete'
+        )
+        complete = postcondition.index(
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete"
+        )
+        self.assertLess(verifier, identity_recheck)
+        self.assertLess(identity_recheck, finalizing)
+        self.assertLess(finalizing_signal_mask, finalizing)
+        self.assertLess(finalizing, finalizing_failure_trap)
+        self.assertLess(finalizing, quarantine_delete)
+        self.assertLess(quarantine_delete, complete)
+        self.assertNotIn(
+            "restore_initial_state",
+            postcondition[finalizing:complete],
+        )
+
+        semantic_mutations = (
+            (
+                CHECKER._workflow_python_producer_is_semantic,
+                producer,
+                "trap 'handle_producer_signal TERM 143' TERM",
+                "true",
+            ),
+            (
+                CHECKER._workflow_python_producer_is_semantic,
+                producer,
+                "exit 70",
+                'exit "${saved_status}"',
+            ),
+            (
+                CHECKER._workflow_python_seal_is_semantic,
+                seal,
+                "trap 'handle_seal_signal INT 130' INT",
+                "true",
+            ),
+            (
+                CHECKER._workflow_python_seal_is_semantic,
+                seal,
+                '"${seal_installed_root_identity}"',
+                '"${framework_parent}"',
+            ),
+            (
+                CHECKER._workflow_python_seal_is_semantic,
+                seal,
+                CHECKER.EXPECTED_FRAMEWORK_SEAL_TRANSACTION_COMMIT,
+                CHECKER.EXPECTED_FRAMEWORK_SEAL_TRANSACTION_COMMIT.replace(
+                    "trap '' HUP INT TERM\n",
+                    "",
+                    1,
+                )
+                + "\ntrap '' HUP INT TERM",
+            ),
+            (
+                CHECKER._workflow_framework_postcondition_is_semantic,
+                postcondition,
+                '"${framework_root}" -depth -delete',
+                '"${framework_parent}" -depth -delete',
+            ),
+            (
+                CHECKER._workflow_framework_postcondition_is_semantic,
+                postcondition,
+                '"${framework_quarantine}" -depth -delete',
+                '"${framework_parent}" -depth -delete',
+            ),
+            (
+                CHECKER._workflow_framework_postcondition_is_semantic,
+                postcondition,
+                'finish_postcondition_failure verification "${verification_status}"',
+                'fail_postcondition verification',
+            ),
+            (
+                CHECKER._workflow_framework_postcondition_is_semantic,
+                postcondition,
+                'postcondition_phase="finalizing"',
+                'postcondition_phase="complete"',
+            ),
+            (
+                CHECKER._workflow_framework_postcondition_is_semantic,
+                postcondition,
+                "pending:pending|rolled-back:rolled-back|committed:committed)",
+                "committed:committed)",
+            ),
+            (
+                CHECKER._workflow_framework_postcondition_is_semantic,
+                postcondition,
+                "trap '' HUP INT TERM\n  postcondition_phase=\"finalizing\"",
+                "postcondition_phase=\"finalizing\"\n  trap '' HUP INT TERM",
+            ),
+        )
+        for semantic, block, old, new in semantic_mutations:
+            with self.subTest(mutation=old):
+                self.assertIn(old, block)
+                self.assertFalse(semantic(block.replace(old, new, 1)))
+
+        current = inputs()
+        changed(
+            current,
+            "formal_workflow",
+            "      - name: Seal reviewed build Python framework",
+            "      - name: Seal reviewed build Python framework\n"
+            "        continue-on-error: true",
+        )
+        with synchronized_formal_workflow_summary(current):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn("formal workflow must not use continue-on-error", errors)
+
+        current = inputs()
+        changed(
+            current,
+            "formal_workflow",
+            'run: cd "${LCF_REVIEWED_SOURCE_ROOT}" && make python-sidecar-build',
+            'run: cd "${LCF_REVIEWED_SOURCE_ROOT}" && make python-sidecar-build '
+            "&& make packaged-smoke-policy-check",
+        )
+        with synchronized_formal_workflow_summary(current):
+            errors = CHECKER.validate_policy(current)
+        self.assertTrue(
+            any("must not reference the engineering boundary" in error for error in errors),
+            errors,
+        )
+
     def test_reviewed_framework_workflow_producer_is_semantic(self) -> None:
         current = inputs()
-        runs: list[str] = []
-        for key, job in (("workflow", "assemble"), ("formal_workflow", "build")):
-            run = next(
+        runs = [
+            next(
                 step["run"]
                 for step in CHECKER._workflow_steps(str(current[key]), job)
                 if step["name"]
                 == "Provision reviewed build Python without executing it"
             )
-            self.assertTrue(CHECKER._workflow_python_producer_is_semantic(run))
-            runs.append(run)
+            for key, job in (("workflow", "assemble"), ("formal_workflow", "build"))
+        ]
         self.assertEqual(runs[0], runs[1])
         producer = runs[0]
-        cleanup_identity_compare = (
-            'test "$(/usr/bin/stat -f \'%d:%i\' "${cleanup_quarantine}")" = \\\n'
-            '        "${framework_quarantine_placeholder_identity}"'
+        self.assertTrue(CHECKER._workflow_python_producer_is_semantic(producer))
+        for marker in (
+            'framework_initial_state="present"',
+            'framework_initial_state="absent"',
+            "LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY",
+            "LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY",
+            "LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY",
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=pending",
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=rolled-back",
+            "trap 'handle_producer_signal HUP 129' HUP",
+            "trap 'handle_producer_signal INT 130' INT",
+            "trap 'handle_producer_signal TERM 143' TERM",
+            "cleanup=failed",
+            "exit 70",
+            '"${framework_root}" -depth -delete',
+            '"${framework_quarantine}" "${framework_root}"',
+            'elif test "${framework_candidate_root_identity}" = "none"; then',
+        ):
+            self.assertIn(marker, producer)
+        self.assertNotIn("rm -rf", producer)
+        self.assertNotIn('find -P -x "${framework_parent}"', producer)
+        self.assertNotIn(
+            'framework_candidate_root_identity="${observed_candidate_identity}"',
+            producer,
         )
-        active_identity_assignment = (
-            'framework_quarantine_placeholder_identity="$(/usr/bin/stat -f \'%d:%i\' \\\n'
-            '    "${framework_quarantine_placeholder}")"'
-        )
-        quarantine_mutations = (
+        for old, new in (
+            ("LCF_REVIEWED_FRAMEWORK_INITIAL_STATE=present", "LCF_REVIEWED_FRAMEWORK_INITIAL_STATE=unknown"),
+            ("LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY=%s", "LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY=none"),
+            ("trap 'handle_producer_signal HUP 129' HUP", "true"),
+            ('"${framework_root}" -depth -delete', '"${framework_parent}" -depth -delete'),
+            ("exit 70", 'exit "${saved_status}"'),
             (
-                'framework_quarantine_placeholder="none"\n'
-                'framework_quarantine_placeholder_identity="none"\n'
-                'trap cleanup_producer EXIT',
-                'trap cleanup_producer EXIT\n'
-                'framework_quarantine_placeholder="none"\n'
-                'framework_quarantine_placeholder_identity="none"',
+                'elif test "${framework_candidate_root_identity}" = "none"; then\n'
+                "          rollback_ready=0",
+                'elif test "${framework_candidate_root_identity}" = "none"; then\n'
+                '          framework_candidate_root_identity="${observed_candidate_identity}"',
             ),
-            (
-                'framework_quarantine_placeholder_identity="none"\n'
-                'trap cleanup_producer EXIT',
-                'trap cleanup_producer EXIT',
-            ),
-            (
-                'framework_quarantine_placeholder="none"\n',
-                'framework_quarantine_placeholder="${framework_quarantine_placeholder:=none}"\n',
-            ),
-            (
-                "trap cleanup_producer EXIT",
-                "trap cleanup_producer EXIT\ntrap - EXIT",
-            ),
-            (
-                "trap cleanup_producer EXIT",
-                "trap cleanup_producer EXIT\ncleanup_producer() { :; }",
-            ),
-            (
-                "trap cleanup_producer EXIT",
-                "trap cleanup_producer EXIT\ntrap : EXIT",
-            ),
-            (
-                "trap cleanup_producer EXIT",
-                "trap cleanup_producer EXIT\n"
-                "/usr/bin/sudo --non-interactive /bin/rmdir \"${framework_quarantine}\"",
-            ),
-            (cleanup_identity_compare, "true"),
-            ("cleanup_status=70", "cleanup_status=0"),
-            (
-                '/usr/bin/sudo --non-interactive /bin/rmdir \\\n'
-                '        "${cleanup_quarantine}"',
-                '/usr/bin/sudo --non-interactive /bin/rm -rf -- \\\n'
-                '        "${cleanup_quarantine}"',
-            ),
-            (
-                'framework_quarantine_placeholder_identity="none"\n'
-                '  framework_quarantine_placeholder="none"\n',
-                'framework_quarantine_placeholder="none"\n',
-            ),
-            (
-                'framework_quarantine_placeholder_identity="none"\n'
-                '  framework_quarantine_placeholder="none"\n',
-                'framework_quarantine_placeholder_identity="none"\n',
-            ),
-            (
-                'framework_quarantine_placeholder="${framework_quarantine}"\n'
-                f'  {active_identity_assignment}',
-                'readonly framework_quarantine_placeholder="${framework_quarantine}"\n'
-                f'  {active_identity_assignment}',
-            ),
-            (
-                'framework_quarantine_placeholder="${framework_quarantine}"\n'
-                f'  {active_identity_assignment}\n'
-                '  test "$(/usr/bin/stat -f \'%u\' \\\n'
-                '    "${framework_quarantine}")" = "0"',
-                'test "$(/usr/bin/stat -f \'%u\' \\\n'
-                '    "${framework_quarantine}")" = "0"\n'
-                '  framework_quarantine_placeholder="${framework_quarantine}"\n'
-                f'  {active_identity_assignment}',
-            ),
-            (
-                'test "$(cd "${existing_ancestor}" && /bin/pwd -P)" = "${existing_ancestor}"\n',
-                "",
-            ),
-            (
-                'test "$(/usr/bin/stat -f \'%d:%i\' "${existing_ancestor}")" = "${existing_identity}"\n',
-                "",
-            ),
-            (
-                'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."',
-                'readonly framework_quarantine_prefix="${RUNNER_TEMP}/.lcf-python-quarantine."',
-            ),
-            (
-                'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."\n',
-                'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."\n'
-                'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."\n',
-            ),
-            (
-                '"${framework_quarantine_prefix}XXXXXXXXXX"',
-                '"${framework_parent}/unreviewed.XXXXXXXXXX"',
-            ),
-            (
-                'framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"\n',
-                "",
-            ),
-            ("readonly framework_quarantine_suffix\n", ""),
-            ('test "${framework_quarantine%/*}" = "${framework_parent}"\n', ""),
-            (
-                'test "${framework_quarantine}" = \\\n'
-                '    "${framework_quarantine_prefix}${framework_quarantine_suffix}"',
-                'test "${framework_quarantine}" != \\\n'
-                '    "${framework_quarantine_prefix}${framework_quarantine_suffix}"',
-            ),
-            (
-                '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
-                '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]+$ ]]',
-            ),
-            (
-                '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
-                '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9/]{10}$ ]]',
-            ),
-            ('test -d "${framework_quarantine}"', "true"),
-            ('test ! -L "${framework_quarantine}"', "true"),
-            (
-                '"${framework_quarantine}")" = "0"',
-                '"${framework_quarantine}")" = "$(/usr/bin/id -u)"',
-            ),
-            (
-                '"${framework_quarantine}")" = "700"',
-                '"${framework_quarantine}")" = "755"',
-            ),
-            (
-                '/usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"',
-                "true",
-            ),
-            (
-                'test ! -e "${framework_quarantine}"\n'
-                '  test ! -L "${framework_quarantine}"',
-                "true",
-            ),
-            (
-                '"${framework_root}" "${framework_quarantine}"',
-                '"${framework_root}" "${framework_parent}/unreviewed"',
-            ),
-            (
-                'test -d "${framework_quarantine}"\n',
-                'test -d "${framework_quarantine}"\n'
-                'cd "${framework_quarantine}"\n',
-            ),
-            (
-                'test "$(/usr/bin/stat -f \'%Lp\' \\\n'
-                '    "${framework_quarantine}")" = "700"\n'
-                '  /usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"',
-                '  /usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"\n'
-                'test "$(/usr/bin/stat -f \'%Lp\' \\\n'
-                '    "${framework_quarantine}")" = "700"',
-            ),
-        )
-        mutations = (
-            (CHECKER.PYTHON_ARCHIVE_SHA256, "0" * 64),
-            (CHECKER.EXPECTED_PYTHON_HASH_MANIFEST_BINDING, ""),
-            (
-                CHECKER.PYTHON_HASH_MANIFEST_ENTRY,
-                "039B14DF8A24415E17D15F222E2AC01D3A90845DEB39DF642E2CC01869140A34 "
-                "python-3.13.14-darwin-arm64.tar.gz",
-            ),
-            (
-                CHECKER.PYTHON_HASH_MANIFEST_ENTRY,
-                CHECKER.PYTHON_ARCHIVE_SHA256
-                + "  "
-                + CHECKER.PYTHON_ARCHIVE_NAME,
-            ),
-            (
-                "python-3.13.14-darwin-arm64.tar.gz' \\",
-                "python-3.13.14-darwin-x64.tar.gz' \\",
-            ),
-            ("/usr/bin/grep -Fxc", "/usr/bin/grep -Fc"),
-            (
-                CHECKER.EXPECTED_PYTHON_HASH_MANIFEST_BINDING,
-                CHECKER.EXPECTED_PYTHON_HASH_MANIFEST_BINDING.replace(
-                    '= "1"', '-ge "1"'
-                ),
-            ),
-            ("'./setup.sh' \\", "'./setup.py' \\"),
-            (
-                'readonly component="${expanded}/Python_Framework.pkg"',
-                'readonly component="${expanded}/Other.pkg"',
-            ),
-            (
-                '"${component}/Bom")" = "1404518"',
-                '"${component}/Bom")" = "1"',
-            ),
-            (
-                "printf '#!/bin/sh\\nexit 0\\n'",
-                "printf '#!/bin/sh\\nexit 1\\n'",
-            ),
-            (
-                '/bin/chmod 0755 "${no_op_postinstall}"',
-                '/bin/chmod 0777 "${no_op_postinstall}"',
-            ),
-            (
-                '/bin/mv -f "${no_op_postinstall}" "${postinstall}"',
-                '/bin/cp "${no_op_postinstall}" "${postinstall}"',
-            ),
-            (
-                '/usr/sbin/pkgutil --flatten "${component}" "${no_op_package}"',
-                '/usr/sbin/pkgutil --expand "${component}" "${no_op_package}"',
-            ),
-            ('  "/Library" \\\n', ""),
-            (
-                'if test ! -e "${existing_ancestor}" && \\\n'
-                '    test ! -L "${existing_ancestor}"; then',
-                'if test ! -e "${existing_ancestor}"; then',
-            ),
-            (
-                '/usr/bin/sudo --non-interactive /usr/sbin/chown -h 0:0 "${existing_ancestor}"',
-                '/usr/bin/sudo --non-interactive /usr/sbin/chown -h 501:20 "${existing_ancestor}"',
-            ),
-            (
-                '/usr/bin/sudo --non-interactive /usr/sbin/installer \\\n'
-                '  -pkg "${no_op_package}" -target /',
-                '/usr/bin/sudo --non-interactive /usr/sbin/installer \\\n'
-                '  -pkg "${no_op_package}" -target "${framework_root}"',
-            ),
-            (
-                'if test -e "${framework_root}" || test -L "${framework_root}"; then',
-                'if test -e "${framework_root}"; then',
-            ),
-            (
-                ')" != "${framework_quarantine_identity}"',
-                ')" = "${framework_quarantine_identity}"',
-            ),
-        ) + quarantine_mutations
-        for old, new in mutations:
-            with self.subTest(old=old):
+        ):
+            with self.subTest(mutation=old):
                 self.assertIn(old, producer)
                 self.assertFalse(
                     CHECKER._workflow_python_producer_is_semantic(
                         producer.replace(old, new, 1)
-                    )
-                )
-
-        for key, summary in (
-            ("workflow", synchronized_workflow_summary),
-            ("formal_workflow", synchronized_formal_workflow_summary),
-        ):
-            for old, new in quarantine_mutations:
-                with self.subTest(key=key, quarantine_mutation=old):
-                    current = inputs()
-                    yaml_indent = "          "
-                    yaml_old = textwrap.indent(old, yaml_indent)
-                    if yaml_old not in str(current[key]):
-                        yaml_indent = "            "
-                        yaml_old = textwrap.indent(old, yaml_indent)
-                    self.assertIn(yaml_old, str(current[key]))
-                    changed(
-                        current,
-                        key,
-                        yaml_old,
-                        textwrap.indent(new, yaml_indent) if new else "",
-                    )
-                    with summary(current):
-                        errors = CHECKER.validate_policy(current)
-                    self.assertTrue(
-                        any(
-                            "producer" in error.lower()
-                            or "critical step" in error.lower()
-                            or "run-step contract" in error.lower()
-                            for error in errors
-                        ),
-                        errors,
-                    )
-
-        final_absence = 'test ! -e "${framework_root}"'
-        offset = producer.rfind(final_absence)
-        self.assertGreaterEqual(offset, 0)
-        self.assertFalse(
-            CHECKER._workflow_python_producer_is_semantic(
-                producer[:offset]
-                + "true"
-                + producer[offset + len(final_absence) :]
-            )
-        )
-        final_symlink_absence = 'test ! -L "${framework_root}"'
-        offset = producer.rfind(final_symlink_absence)
-        self.assertGreaterEqual(offset, 0)
-        self.assertFalse(
-            CHECKER._workflow_python_producer_is_semantic(
-                producer[:offset]
-                + "true"
-                + producer[offset + len(final_symlink_absence) :]
-            )
-        )
-        for executable in ("python3 -c pass", '"./setup.sh"'):
-            with self.subTest(executable=executable):
-                self.assertFalse(
-                    CHECKER._workflow_python_producer_is_semantic(
-                        producer + "\n" + executable
                     )
                 )
 
@@ -3362,6 +3373,10 @@ class PackagedSmokePolicyTests(unittest.TestCase):
                 ),
                 (
                     "Seal reviewed build Python framework",
+                    "Validate reviewed Python framework transaction postcondition",
+                ),
+                (
+                    "Validate reviewed Python framework transaction postcondition",
                     "Bind exact source provenance"
                     if key == "workflow"
                     else "Bind release provenance",
@@ -3503,270 +3518,655 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         self,
     ) -> None:
         current = inputs()
-        seal_runs: list[str] = []
-        for key, job in (("workflow", "assemble"), ("formal_workflow", "build")):
-            run = next(
+        runs = [
+            next(
                 step["run"]
                 for step in CHECKER._workflow_steps(str(current[key]), job)
                 if step["name"] == "Seal reviewed build Python framework"
             )
-            self.assertTrue(CHECKER._workflow_python_seal_is_semantic(run))
-            self.assertTrue(
-                CHECKER._workflow_held_framework_loader_is_semantic(run)
-            )
-            seal_runs.append(run)
-        self.assertEqual(seal_runs[0], seal_runs[1])
-        seal = seal_runs[0]
-
-        seal_mutations = (
-            (
-                'readonly library_identity="$(/usr/bin/stat -f \'%d:%i\' "${library_root}")"',
-                'readonly library_identity="$(/usr/bin/stat -f \'%d:%i\' "${framework_container}")"',
-            ),
-            ('-h -N "${library_root}"', '-N "${library_root}"'),
-            ('-h go-w "${framework_container}"', '-h go+r "${framework_container}"'),
-            ("/usr/bin/find -P -x", "/usr/bin/find -x"),
-            ("\\( -type f -o -type d \\)", "\\( -type f \\)"),
-            ("-exec /bin/chmod -N '{}' '+'", "-exec /bin/chmod -R -N '{}' '+'"),
-            ("-iname '*.pyc'", "-name '*.pyc'"),
-            ("-iname '__pycache__'", "-name '__pycache__'"),
-            ("shopt -s nocasematch", "true"),
-            ('[[ "${sealed_listing}" != *$\'\\n\'* ]]', "true"),
-            ('[[ "${entry_listing}" != *$\'\\n\'* ]]', "true"),
-            ('readonly framework_verifier_size="27853"', 'readonly framework_verifier_size="1"'),
-            (
-                'readonly framework_verifier_sha256="ffbf6ed2f41a35f44edda68bdd831be4d42384f9488dcdc93f8242abcfb9e218"',
-                'readonly framework_verifier_sha256="' + "0" * 64 + '"',
-            ),
-            ('readonly framework_lock_size="4198"', 'readonly framework_lock_size="1"'),
-            (
-                'readonly framework_lock_sha256="d5fb2f15b8e0440cdac44418c3a151605dd39f195c5a784d8d9f86b2c1623d97"',
-                'readonly framework_lock_sha256="' + "0" * 64 + '"',
-            ),
-        )
-        for old, new in seal_mutations:
-            with self.subTest(seal_mutation=old):
-                self.assertIn(old, seal)
-                self.assertFalse(
-                    CHECKER._workflow_python_seal_is_semantic(
-                        seal.replace(old, new, 1)
-                    )
-                )
-
-        loader_start = "/usr/bin/env -i \\\n"
-        transaction_mutations = (
-            ('seal_transaction_phase="pending"', 'seal_transaction_phase="complete"'),
-            ('seal_quarantine_state="unvalidated"', 'seal_quarantine_state="none"'),
-            ("trap cleanup_sealed_framework EXIT", "trap : EXIT"),
-            (
-                loader_start,
-                'seal_transaction_phase="committed"\n' + loader_start,
-            ),
-            ('test "${seal_installed_root_identity:-none}" = "none"', "false"),
-            ('test ! -d "${framework_root}"', "false"),
-            ('test -L "${framework_root}"', "false"),
-            (
-                'test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" != "0"',
-                "false",
-            ),
-            (
-                'test "$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")" != \\\n'
-                '        "${seal_installed_root_identity}"',
-                "false",
-            ),
-            ('test "${seal_quarantine%/*}" != "${framework_parent}"', "false"),
-            ('test ! -d "${seal_quarantine}"', "false"),
-            ('test -L "${seal_quarantine}"', "false"),
-            (
-                'test "$(/usr/bin/stat -f \'%u\' "${seal_quarantine}")" != "0"',
-                "false",
-            ),
-            (
-                'test "$(/usr/bin/stat -f \'%d:%i\' "${seal_quarantine}")" != \\\n'
-                '          "${seal_quarantine_identity}"',
-                "false",
-            ),
-            ('if test "${rollback_ready}" -eq 1; then', "if true; then"),
-            (
-                '"${seal_quarantine}" "${framework_root}"',
-                '"${framework_root}" "${seal_quarantine}"',
-            ),
-            (
-                'test -L "${framework_root}" || \\\n'
-                '          test "$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")" != \\\n'
-                '            "${seal_quarantine_identity}"',
-                'test -L "${framework_root}"',
-            ),
-            (
-                '"${seal_quarantine}" -depth -delete',
-                '"${framework_root}" -depth -delete',
-            ),
-            (
-                'seal_quarantine_state="none"\n'
-                '  seal_quarantine="none"\n'
-                '  seal_quarantine_identity="none"',
-                'seal_quarantine_state="none"',
-            ),
-            (
-                'seal_transaction_phase="complete"\ntrap - EXIT',
-                'seal_transaction_phase="complete"',
-            ),
-            ('if test "${saved_status}" -ne 0; then', "if false; then"),
-            ('exit "${cleanup_status}"', "exit 0"),
-            (
-                'seal_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"\n'
-                '  seal_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"\n'
-                '  seal_quarantine_state="active"',
-                'seal_quarantine_state="active"\n'
-                '  seal_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"\n'
-                '  seal_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"',
-            ),
-            (
-                '[[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]\n'
-                'test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" = "0"\n'
-                'seal_installed_root_identity="${root_identity}"',
-                'seal_installed_root_identity="${root_identity}"\n'
-                '[[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]\n'
-                'test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" = "0"',
-            ),
-            (
-                'test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE%/*}" = \\\n'
-                '    "${framework_parent}"',
-                "true",
-            ),
-            ('test -d "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"', "true"),
-            ('test ! -L "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"', "true"),
-            (
-                'test "$(/usr/bin/stat -f \'%u\' \\\n'
-                '    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"',
-                "true",
-            ),
-            (
-                'test "$(/usr/bin/stat -f \'%d:%i\' \\\n'
-                '    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = \\\n'
-                '    "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"',
-                "true",
-            ),
-            (loader_start, "test(){ true; }\n" + loader_start),
-            (loader_start, "test()\n{\n  :\n}\n" + loader_start),
-            (loader_start, "function test\n{\n  :\n}\n" + loader_start),
-            (loader_start, "test()\n(\n  /usr/bin/true\n)\n" + loader_start),
-            (loader_start, "function test\n(\n  /usr/bin/true\n)\n" + loader_start),
-            (loader_start, "test() [[ 1 ]]\n" + loader_start),
-            (loader_start, "test \\\n( \\\n) \\\n{ /usr/bin/true; }\n" + loader_start),
-            (loader_start, "test\\\n()\\\n{ /usr/bin/true; }\n" + loader_start),
-            (loader_start, "functi\\\non test { /usr/bin/true; }\n" + loader_start),
-            (loader_start, "find(){ true; }\n" + loader_start),
-            (loader_start, "function stat { true; }\n" + loader_start),
-            (loader_start, "set +e\n" + loader_start),
-            (loader_start, "builtin set +e\n" + loader_start),
-            (loader_start, "trap : EXIT\n" + loader_start),
-            (loader_start, "shopt -u nocasematch\n" + loader_start),
-            (loader_start, "eval true\n" + loader_start),
-            (loader_start, "ev\\\nal true\n" + loader_start),
-            (loader_start, "X=1 eval true\n" + loader_start),
-            (loader_start, "! eval false\n" + loader_start),
-            (loader_start, "command true\n" + loader_start),
-            (loader_start, "source /dev/null\n" + loader_start),
-            (loader_start, "! bash -c 'exit 1'\n" + loader_start),
-            (loader_start, "! /bin/bash -c 'exit 1'\n" + loader_start),
-        )
-        for old, new in transaction_mutations:
-            with self.subTest(transaction_mutation=old):
-                self.assertIn(old, seal)
-                self.assertFalse(
-                    CHECKER._workflow_python_seal_is_semantic(
-                        seal.replace(old, new, 1)
-                    )
-                )
-
-        for key, summary, expected_error in (
-            (
-                "workflow",
-                synchronized_workflow_summary,
-                "workflow reviewed Python no-follow seal closure drifted",
-            ),
-            (
-                "formal_workflow",
-                synchronized_formal_workflow_summary,
-                "formal workflow reviewed Python framework seal step drifted",
-            ),
+            for key, job in (("workflow", "assemble"), ("formal_workflow", "build"))
+        ]
+        self.assertEqual(runs[0], runs[1])
+        seal = runs[0]
+        self.assertTrue(CHECKER._workflow_python_seal_is_semantic(seal))
+        self.assertTrue(CHECKER._workflow_held_framework_loader_is_semantic(seal))
+        for marker in (
+            'seal_initial_state="${LCF_REVIEWED_FRAMEWORK_INITIAL_STATE:-unvalidated}"',
+            'seal_previous_root_identity="${LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY:-none}"',
+            'seal_installed_root_identity="${LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY:-none}"',
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=rolled-back",
+            "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=committed",
+            "trap 'handle_seal_signal HUP 129' HUP",
+            "trap 'handle_seal_signal INT 130' INT",
+            "trap 'handle_seal_signal TERM 143' TERM",
+            "cleanup=failed",
+            "exit 70",
+            '"${framework_root}" -depth -delete',
+            '"${seal_quarantine}" "${framework_root}"',
+            "reviewedModule._compile(",
+            "revalidate(verifierBinding);",
+            "revalidate(lockBinding);",
+            "revalidate(inventoryBinding);",
+            'readonly framework_inventory="${GITHUB_WORKSPACE}/backend/packaging/python-framework-sealed-inventory.json"',
+            'readonly framework_inventory_size="620662"',
+            'readonly framework_inventory_sha256="b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"',
+            'let message = "lcf-reviewed-framework-verification: failed\\n";',
+            "error instanceof verifier.VerificationError",
+            "verifier.formatVerificationDiagnostics(",
+            'Buffer.byteLength(candidate, "utf8") <= 8192',
+            '!candidate.includes("\\r")',
+            '!candidate.includes("\\0")',
+            "fs.writeSync(2, message);",
+            "process.exitCode = 1;",
         ):
-            yaml_seal = textwrap.indent(seal, "          ")
-            for old, new in transaction_mutations:
-                with self.subTest(key=key, transaction_mutation=old):
-                    mutated_seal = seal.replace(old, new, 1)
-                    current = inputs()
-                    changed(
-                        current,
-                        key,
-                        yaml_seal,
-                        textwrap.indent(mutated_seal, "          "),
+            self.assertIn(marker, seal)
+        self.assertNotIn("LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete", seal)
+        self.assertNotIn('"${seal_quarantine}" -depth -delete', seal)
+        self.assertNotIn('!candidate.includes("\\n")', seal)
+        self.assertNotIn("rm -rf", seal)
+        self.assertNotIn('find -P -x "${framework_parent}"', seal)
+        for old, new in (
+            ("trap 'handle_seal_signal TERM 143' TERM", "true"),
+            ('"${seal_installed_root_identity}"', '"${framework_parent}"'),
+            ('"${framework_root}" -depth -delete', '"${framework_parent}" -depth -delete'),
+            ("exit 70", 'exit "${saved_status}"'),
+            ("fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW", "fs.constants.O_RDONLY"),
+            ("revalidate(lockBinding);", "true;"),
+            ("revalidate(inventoryBinding);", "true;"),
+            (
+                "} catch (error) {\n  rememberFailure(error);\n} finally {",
+                "} catch (error) {\n  throw error;\n} finally {",
+            ),
+            ("fs.writeSync(2, message);", "fs.writeSync(2, error.stack);"),
+            ("fs.writeSync(2, message);", "fs.writeSync(2, error.cause);"),
+            ('!candidate.includes("\\r")', "true"),
+            ('!candidate.includes("\\0")', "true"),
+            ("throw _reportError", "throw _reportError"),
+        ):
+            with self.subTest(mutation=old):
+                if old == new:
+                    reporter_catch = (
+                        "} catch (_reportError) {\n"
+                        "    // The fixed reporter must never surface an exception or stack.\n"
+                        "  }"
                     )
-                    with summary(current):
-                        errors = CHECKER.validate_policy(current)
-                    self.assertIn(expected_error, errors)
-
-        loader_mutations = (
-            (
-                "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW",
-                "fs.constants.O_RDONLY",
-            ),
-            (
-                "namedBefore.uid !== BigInt(process.geteuid())",
-                "false && namedBefore.uid !== BigInt(process.geteuid())",
-            ),
-            ("namedBefore.nlink !== 1n", "namedBefore.nlink < 1n"),
-            (
-                "const unsafeMode = (namedBefore.mode & 0o7022n) !== 0n;",
-                "const unsafeMode = (namedBefore.mode & 0o0022n) !== 0n;",
-            ),
-            ("namedBefore.size !== expectedSize", "false"),
-            ("expectedSize > 1048576n", "expectedSize > 10485760n"),
-            (
-                'crypto.createHash("sha256").update(content).digest("hex") !==',
-                "false &&",
-            ),
-            ("    info.ctimeNs,\n", ""),
-            ("  revalidate(lockBinding);\n", ""),
-            ("    lockValue,\n", "    lock: lockPath,\n"),
-            (
-                "  reviewedModule._compile(\n",
-                "  require(verifierPath);\n  reviewedModule._compile(\n",
-            ),
-            (
-                "  const lockValue = JSON.parse(decoder.decode(lockBinding.content));",
-                "  const lockValue = JSON.parse(fs.readFileSync(lockPath));",
-            ),
-        )
-        for old, new in loader_mutations:
-            with self.subTest(loader_mutation=old):
-                self.assertIn(old, seal)
-                self.assertFalse(
-                    CHECKER._workflow_held_framework_loader_is_semantic(
-                        seal.replace(old, new, 1)
+                    self.assertIn(reporter_catch, seal)
+                    mutated = seal.replace(
+                        reporter_catch,
+                        "} catch (_reportError) {\n    throw _reportError;\n  }",
+                        1,
                     )
-                )
-
-        identity_check = (
-            'test "$(/usr/bin/stat -f \'%d:%i:%Lp:%u:%g:%l:%z:%m\' \\\n'
-            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \\\n'
-            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"'
-        )
-        hash_check = (
-            "printf '%s  %s\\n' \\\n"
-            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \\\n'
-            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \\\n'
-            "  /usr/bin/shasum -a 256 --check"
-        )
-        for check in (identity_check, hash_check):
-            self.assertEqual(seal.count(check), 2)
-            for offset in (seal.find(check), seal.rfind(check)):
-                with self.subTest(node_revalidation=check[:20], offset=offset):
-                    mutated = seal[:offset] + "true" + seal[offset + len(check) :]
+                else:
+                    self.assertIn(old, seal)
+                    mutated = seal.replace(old, new, 1)
+                self.assertFalse(CHECKER._workflow_python_seal_is_semantic(mutated))
+                if old in (
+                    "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW",
+                    "revalidate(lockBinding);",
+                    "revalidate(inventoryBinding);",
+                    "} catch (error) {\n  rememberFailure(error);\n} finally {",
+                    "fs.writeSync(2, message);",
+                    '!candidate.includes("\\r")',
+                    '!candidate.includes("\\0")',
+                    "throw _reportError",
+                ):
                     self.assertFalse(
-                        CHECKER._workflow_python_seal_is_semantic(mutated)
+                        CHECKER._workflow_held_framework_loader_is_semantic(mutated)
                     )
+
+    def test_reviewed_framework_loader_reports_only_bounded_diagnostics(self) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node is unavailable")
+        current = inputs()
+        seal = next(
+            step["run"]
+            for step in CHECKER._workflow_steps(str(current["workflow"]), "assemble")
+            if step["name"] == "Seal reviewed build Python framework"
+        )
+        loader_prefix = (
+            "/usr/bin/env -i \\\n"
+            '  HOME="${RUNNER_TEMP}" \\\n'
+            '  PATH="/usr/bin:/bin" \\\n'
+            "  NODE_OPTIONS= \\\n"
+            "  NODE_PATH= \\\n"
+            '  "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" \\\n'
+            "  -e '\n"
+        )
+        loader_suffix = (
+            "\n' \\\n"
+            '  "${framework_verifier}" \\\n'
+            '  "${framework_verifier_size}"'
+        )
+        loader = seal.split(loader_prefix, 1)[1].split(loader_suffix, 1)[0]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            verifier = root / "verifier.cjs"
+            lock = root / "lock.json"
+            inventory = root / "inventory.json"
+            verifier.write_text(
+                textwrap.dedent(
+                    r'''
+                    "use strict";
+                    class VerificationError extends Error {
+                      constructor() {
+                        super("TOP_SECRET /Secret/absolute/framework");
+                        this.cause = new Error("TOP_SECRET_CAUSE");
+                        this.diagnostics = Object.freeze({ mismatch: true });
+                      }
+                    }
+                    module.exports = Object.freeze({
+                      VerificationError,
+                      formatVerificationDiagnostics() {
+                        return [
+                          "reviewed_python_framework_verification_failed",
+                          "expected_inventory_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "observed_inventory_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                          "difference_counts={\"missing\":1,\"unexpected\":0,\"mismatched\":0}",
+                          "first_differences=[{\"kind\":\"missing\",\"path\":\"bin/python3.13\"}]",
+                          "expected_entry_count=1",
+                          "observed_entry_count=0",
+                        ].join("\n");
+                      },
+                      verifyStartupEnvironment() {},
+                      verifyReviewedPythonFramework() {
+                        throw new VerificationError();
+                      },
+                    });
+                    '''
+                ).lstrip(),
+                encoding="utf-8",
+            )
+            lock.write_text("{}", encoding="utf-8")
+            inventory.write_text("{}", encoding="utf-8")
+            for pathname in (verifier, lock, inventory):
+                pathname.chmod(0o600)
+
+            def pin(pathname: Path) -> tuple[str, str]:
+                content = pathname.read_bytes()
+                return str(len(content)), hashlib.sha256(content).hexdigest()
+
+            verifier_size, verifier_sha256 = pin(verifier)
+            lock_size, lock_sha256 = pin(lock)
+            inventory_size, inventory_sha256 = pin(inventory)
+            environment = {
+                "HOME": str(root),
+                "PATH": "/usr/bin:/bin",
+                "NODE_OPTIONS": "",
+                "NODE_PATH": "",
+            }
+            result = subprocess.run(
+                [
+                    node,
+                    "-e",
+                    loader,
+                    str(verifier),
+                    verifier_size,
+                    verifier_sha256,
+                    str(lock),
+                    lock_size,
+                    lock_sha256,
+                    str(inventory),
+                    inventory_size,
+                    inventory_sha256,
+                    "/Secret/absolute/framework",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(result.returncode, 1, result)
+            self.assertEqual(result.stdout, "")
+            self.assertTrue(
+                result.stderr.startswith(
+                    "lcf-reviewed-framework-verification: failed\n"
+                ),
+                result.stderr,
+            )
+            self.assertIn("difference_counts=", result.stderr)
+            self.assertIn("first_differences=", result.stderr)
+            self.assertEqual(len(result.stderr.splitlines()), 8)
+            for leaked in (
+                "TOP_SECRET",
+                "TOP_SECRET_CAUSE",
+                "/Secret/absolute/framework",
+                str(root),
+                "Error:",
+                " at ",
+                "cause",
+                "stack",
+            ):
+                self.assertNotIn(leaked, result.stderr)
+
+            contract_failure = subprocess.run(
+                [node, "-e", loader],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(contract_failure.returncode, 1, contract_failure)
+            self.assertEqual(contract_failure.stdout, "")
+            self.assertEqual(
+                contract_failure.stderr,
+                "lcf-reviewed-framework-verification: failed\n",
+            )
+
+    def test_reviewed_framework_restore_probe_preserves_exact_identities(self) -> None:
+        current = inputs()
+        postcondition = next(
+            step["run"]
+            for step in CHECKER._workflow_steps(str(current["workflow"]), "assemble")
+            if step["name"]
+            == "Validate reviewed Python framework transaction postcondition"
+        )
+        function_start = postcondition.index("restore_initial_state() {")
+        function_end = postcondition.index(
+            "\npostcondition_restore_ready=",
+            function_start,
+        )
+        exact_restore = postcondition[function_start:function_end]
+        owner_root = (
+            '    test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" = "0"\n'
+        )
+        owner_quarantine = (
+            '      test "$(/usr/bin/stat -f \'%u\' '
+            '"${framework_quarantine}")" = "0"\n'
+        )
+        delete_command = (
+            "    /usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n"
+            '      "${framework_root}" -depth -delete'
+        )
+        move_command = (
+            "      /usr/bin/sudo --non-interactive /bin/mv \\\n"
+            '        "${framework_quarantine}" "${framework_root}"'
+        )
+        for marker in (
+            owner_root,
+            owner_quarantine,
+            delete_command,
+            move_command,
+            "/usr/bin/stat -f '%d:%i'",
+        ):
+            self.assertIn(marker, exact_restore)
+        controlled_restore = exact_restore.replace(owner_root, "", 1)
+        controlled_restore = controlled_restore.replace(owner_quarantine, "", 1)
+        controlled_restore = controlled_restore.replace(
+            "/usr/bin/stat -f '%d:%i'",
+            "lcf_identity",
+        )
+        controlled_restore = controlled_restore.replace(
+            delete_command,
+            '    lcf_delete_exact "${framework_root}"',
+            1,
+        )
+        controlled_restore = controlled_restore.replace(
+            move_command,
+            '      lcf_move_exact "${framework_quarantine}" "${framework_root}"',
+            1,
+        )
+        self.assertNotIn("/usr/bin/sudo", controlled_restore)
+        self.assertNotIn("/usr/bin/stat", controlled_restore)
+        harness = textwrap.dedent(
+            r'''
+            set -Eeuo pipefail
+            lcf_identity() {
+              "${python_executable}" -c \
+                'import os,sys; value=os.lstat(sys.argv[1]); print(f"{value.st_dev}:{value.st_ino}")' \
+                "$1"
+            }
+            lcf_delete_exact() {
+              test "$1" = "${framework_root}"
+              test "$(lcf_identity "$1")" = "${candidate_root_identity}"
+              /usr/bin/find "$1" -depth -delete
+            }
+            lcf_move_exact() {
+              test "$1" = "${framework_quarantine}"
+              test "$2" = "${framework_root}"
+              test "$(lcf_identity "$1")" = "${previous_root_identity}"
+              /bin/mv "$1" "$2"
+            }
+            '''
+        ) + controlled_restore + "\nrestore_initial_state\n"
+
+        def identity(pathname: Path) -> str:
+            info = pathname.lstat()
+            return f"{info.st_dev}:{info.st_ino}"
+
+        def run_probe(
+            base: Path,
+            *,
+            initial_state: str,
+            previous_identity: str,
+            candidate_identity: str,
+            root_state: str,
+            quarantine_state: str,
+        ) -> subprocess.CompletedProcess[str]:
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "python_executable": sys.executable,
+                    "framework_root": str(base / "candidate"),
+                    "framework_quarantine": str(base / "quarantine"),
+                    "initial_state": initial_state,
+                    "previous_root_identity": previous_identity,
+                    "candidate_root_identity": candidate_identity,
+                    "root_state": root_state,
+                    "quarantine_state": quarantine_state,
+                    "postcondition_phase": "committed",
+                    "GITHUB_ENV": str(base / "github-env"),
+                }
+            )
+            return subprocess.run(
+                ["/bin/bash", "-c", harness],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "present"
+            base.mkdir()
+            candidate = base / "candidate"
+            quarantine = base / "quarantine"
+            candidate.mkdir()
+            quarantine.mkdir()
+            (candidate / "new").write_text("candidate", encoding="utf-8")
+            (quarantine / "old").write_text("previous", encoding="utf-8")
+            candidate_identity = identity(candidate)
+            previous_identity = identity(quarantine)
+            result = run_probe(
+                base,
+                initial_state="present",
+                previous_identity=previous_identity,
+                candidate_identity=candidate_identity,
+                root_state="candidate",
+                quarantine_state="previous",
+            )
+            self.assertEqual(result.returncode, 0, result)
+            self.assertEqual(identity(candidate), previous_identity)
+            self.assertTrue((candidate / "old").is_file())
+            self.assertFalse(quarantine.exists())
+            self.assertIn(
+                "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=rolled-back",
+                (base / "github-env").read_text(encoding="utf-8"),
+            )
+
+            base = Path(directory) / "absent"
+            base.mkdir()
+            candidate = base / "candidate"
+            candidate.mkdir()
+            (candidate / "new").write_text("candidate", encoding="utf-8")
+            result = run_probe(
+                base,
+                initial_state="absent",
+                previous_identity="none",
+                candidate_identity=identity(candidate),
+                root_state="candidate",
+                quarantine_state="absent",
+            )
+            self.assertEqual(result.returncode, 0, result)
+            self.assertFalse(candidate.exists())
+            self.assertFalse((base / "quarantine").exists())
+
+            base = Path(directory) / "identity-drift"
+            base.mkdir()
+            candidate = base / "candidate"
+            quarantine = base / "quarantine"
+            candidate.mkdir()
+            quarantine.mkdir()
+            candidate_identity = identity(candidate)
+            previous_identity = identity(quarantine)
+            candidate.rename(base / "original-candidate")
+            candidate.mkdir()
+            (candidate / "replacement").write_text("preserve", encoding="utf-8")
+            result = run_probe(
+                base,
+                initial_state="present",
+                previous_identity=previous_identity,
+                candidate_identity=candidate_identity,
+                root_state="candidate",
+                quarantine_state="previous",
+            )
+            self.assertNotEqual(result.returncode, 0, result)
+            self.assertTrue((candidate / "replacement").is_file())
+            self.assertEqual(identity(quarantine), previous_identity)
+            self.assertTrue((base / "original-candidate").is_dir())
+
+    def test_postcondition_signal_handler_restores_each_validated_phase_pair(
+        self,
+    ) -> None:
+        current = inputs()
+        postcondition = next(
+            step["run"]
+            for step in CHECKER._workflow_steps(str(current["workflow"]), "assemble")
+            if step["name"]
+            == "Validate reviewed Python framework transaction postcondition"
+        )
+
+        def function(name: str, following: str) -> str:
+            start = postcondition.index(f"{name}() {{")
+            end = postcondition.index(f"\n{following}", start)
+            return postcondition[start:end]
+
+        fail_function = function(
+            "fail_postcondition",
+            "finish_postcondition_failure() {",
+        )
+        finish_function = function(
+            "finish_postcondition_failure",
+            "handle_postcondition_signal() {",
+        )
+        signal_function = function(
+            "handle_postcondition_signal",
+            "trap 'fail_postcondition command' ERR",
+        )
+        harness = (
+            "set -Eeuo pipefail\n"
+            'postcondition_signal="none"\n'
+            'postcondition_restore_ready="true"\n'
+            'transaction_phase="${LCF_TEST_TRANSACTION_PHASE}"\n'
+            'postcondition_phase="${LCF_TEST_POSTCONDITION_PHASE}"\n'
+            + fail_function
+            + "\n"
+            + finish_function
+            + "\n"
+            + textwrap.dedent(
+                r'''
+                restore_initial_state() {
+                  printf 'restore\n' >> "${LCF_TEST_TRACE}"
+                  postcondition_phase="rolled-back"
+                }
+                '''
+            )
+            + signal_function
+            + "\n"
+            + textwrap.dedent(
+                r'''
+                trap 'handle_postcondition_signal HUP 129' HUP
+                trap 'handle_postcondition_signal INT 130' INT
+                trap 'handle_postcondition_signal TERM 143' TERM
+                kill -s "${LCF_TEST_SIGNAL}" "$$"
+                exit 99
+                '''
+            )
+        )
+        cases = (
+            ("pending", "pending", "HUP", 129, True),
+            ("rolled-back", "rolled-back", "INT", 130, True),
+            ("committed", "committed", "TERM", 143, True),
+            ("complete", "complete", "TERM", 143, False),
+            ("pending", "committed", "TERM", 70, False),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for transaction_phase, postcondition_phase, signal_name, status, restored in cases:
+                with self.subTest(
+                    transaction_phase=transaction_phase,
+                    postcondition_phase=postcondition_phase,
+                    signal=signal_name,
+                ):
+                    trace = Path(directory) / (
+                        f"{transaction_phase}-{postcondition_phase}-{signal_name}"
+                    )
+                    environment = dict(os.environ)
+                    environment.update(
+                        {
+                            "LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME": "failure",
+                            "LCF_REVIEWED_FRAMEWORK_SEAL_OUTCOME": "skipped",
+                            "LCF_TEST_TRANSACTION_PHASE": transaction_phase,
+                            "LCF_TEST_POSTCONDITION_PHASE": postcondition_phase,
+                            "LCF_TEST_SIGNAL": signal_name,
+                            "LCF_TEST_TRACE": str(trace),
+                        }
+                    )
+                    result = subprocess.run(
+                        ["/bin/bash", "-c", harness],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        env=environment,
+                    )
+                    self.assertEqual(result.returncode, status, result)
+                    self.assertEqual(trace.exists(), restored, result)
+                    if restored:
+                        self.assertEqual(trace.read_text(encoding="utf-8"), "restore\n")
+                        self.assertIn("cleanup=complete", result.stderr)
+                    elif status == 70:
+                        self.assertIn("cleanup=failed", result.stderr)
+                    else:
+                        self.assertIn("cleanup=complete", result.stderr)
+                    self.assertIn(f"signal={signal_name}", result.stderr)
+
+    def test_producer_cleanup_never_learns_an_unbound_candidate_identity(self) -> None:
+        current = inputs()
+        producer = next(
+            step["run"]
+            for step in CHECKER._workflow_steps(str(current["workflow"]), "assemble")
+            if step["name"]
+            == "Provision reviewed build Python without executing it"
+        )
+        self.assertNotIn(
+            'framework_candidate_root_identity="${observed_candidate_identity}"',
+            producer,
+        )
+        self.assertIn(
+            'elif test "${framework_candidate_root_identity}" = "none"; then\n'
+            "          rollback_ready=0",
+            producer,
+        )
+        snippet_start = producer.index("    rollback_ready=1\n")
+        snippet_end = producer.index(
+            '    if test "${rollback_ready}" -eq 1 && \\\n'
+            '      test "${framework_initial_state}" = "present"',
+            snippet_start,
+        )
+        exact_cleanup_decision = producer[snippet_start:snippet_end]
+        delete_command = (
+            "      /usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n"
+            '        "${framework_root}" -depth -delete || cleanup_status=70'
+        )
+        self.assertIn(delete_command, exact_cleanup_decision)
+        controlled_decision = exact_cleanup_decision.replace(
+            "/usr/bin/stat -f '%u'",
+            "lcf_uid",
+        ).replace(
+            "/usr/bin/stat -f '%d:%i'",
+            "lcf_identity",
+        ).replace(
+            delete_command,
+            '      lcf_delete_exact "${framework_root}" || cleanup_status=70',
+            1,
+        )
+        self.assertNotIn("/usr/bin/sudo", controlled_decision)
+        self.assertNotIn("/usr/bin/stat", controlled_decision)
+        harness = textwrap.dedent(
+            r'''
+            set -Eeuo pipefail
+            lcf_uid() {
+              printf '0\n'
+            }
+            lcf_identity() {
+              "${python_executable}" -c \
+                'import os,sys; value=os.lstat(sys.argv[1]); print(f"{value.st_dev}:{value.st_ino}")' \
+                "$1"
+            }
+            lcf_delete_exact() {
+              test "$1" = "${framework_root}"
+              test "$(lcf_identity "$1")" = "${framework_candidate_root_identity}"
+              /usr/bin/find "$1" -depth -delete
+            }
+            '''
+        ) + controlled_decision + (
+            '\nprintf \'rollback=%s candidate=%s cleanup=%s\\n\' '
+            '"${rollback_ready}" "${candidate_present}" "${cleanup_status}"\n'
+        )
+
+        def identity(pathname: Path) -> str:
+            info = pathname.lstat()
+            return f"{info.st_dev}:{info.st_ino}"
+
+        def run_probe(
+            base: Path,
+            candidate_identity: str,
+        ) -> subprocess.CompletedProcess[str]:
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "python_executable": sys.executable,
+                    "framework_root": str(base / "candidate"),
+                    "framework_parent": str(base),
+                    "framework_initial_state": "absent",
+                    "framework_previous_root_identity": "none",
+                    "framework_candidate_root_identity": candidate_identity,
+                    "framework_quarantine": "none",
+                    "cleanup_status": "0",
+                }
+            )
+            return subprocess.run(
+                ["/bin/bash", "-c", harness],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory) / "unbound"
+            base.mkdir()
+            candidate = base / "candidate"
+            candidate.mkdir()
+            (candidate / "replacement").write_text("preserve", encoding="utf-8")
+            result = run_probe(base, "none")
+            self.assertEqual(result.returncode, 0, result)
+            self.assertEqual(result.stdout, "rollback=0 candidate=0 cleanup=0\n")
+            self.assertTrue((candidate / "replacement").is_file())
+
+            base = Path(directory) / "bound"
+            base.mkdir()
+            candidate = base / "candidate"
+            candidate.mkdir()
+            (candidate / "owned").write_text("delete", encoding="utf-8")
+            result = run_probe(base, identity(candidate))
+            self.assertEqual(result.returncode, 0, result)
+            self.assertEqual(result.stdout, "rollback=1 candidate=1 cleanup=0\n")
+            self.assertFalse(candidate.exists())
+
+            base = Path(directory) / "drift"
+            base.mkdir()
+            candidate = base / "candidate"
+            candidate.mkdir()
+            recorded_identity = identity(candidate)
+            candidate.rename(base / "recorded")
+            candidate.mkdir()
+            (candidate / "replacement").write_text("preserve", encoding="utf-8")
+            result = run_probe(base, recorded_identity)
+            self.assertEqual(result.returncode, 0, result)
+            self.assertEqual(result.stdout, "rollback=0 candidate=0 cleanup=0\n")
+            self.assertTrue((candidate / "replacement").is_file())
+            self.assertTrue((base / "recorded").is_dir())
 
     def test_workflow_reviewed_framework_python_cannot_drop_no_site_isolation(
         self,

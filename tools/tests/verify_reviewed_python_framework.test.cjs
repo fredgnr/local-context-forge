@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -14,11 +15,79 @@ const TOOLCHAIN_LOCK = path.join(
   REPOSITORY_ROOT,
   "backend/packaging/python-sidecar-toolchain.lock.json",
 );
+const EXPECTED_INVENTORY = path.join(
+  REPOSITORY_ROOT,
+  "backend/packaging/python-framework-sealed-inventory.json",
+);
 const KNOWN_FIXTURE_DIGEST =
   "75bbd549d2dec5a10bad3d27f279a010e6fd5992de20dd79f5cf2f7284414735";
 const SITE_PACKAGES_README_CONTENT =
   "This directory exists so that 3rd party packages can be installed\n" +
   "here.  Read the source for site.py for more details.\n";
+const SYNTHETIC_PAYLOAD_SHA256 = "a".repeat(64);
+
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function sortEntries(entries) {
+  return [...entries].sort((left, right) =>
+    verifier.comparePythonStrings(left.path, right.path),
+  );
+}
+
+function directoryEntry(entryPath, mode = "0755") {
+  return { path: entryPath, mode, type: "directory" };
+}
+
+function fileEntry(entryPath, content, mode = "0644") {
+  const value = Buffer.from(content);
+  return {
+    path: entryPath,
+    mode,
+    type: "file",
+    size: value.length,
+    sha256: sha256(value),
+  };
+}
+
+function symlinkEntry(entryPath, target, mode = "0777", broken = false) {
+  const entry = {
+    path: entryPath,
+    mode,
+    type: "symlink",
+    target,
+    sha256: sha256(Buffer.from(target, "utf8")),
+  };
+  if (broken) {
+    entry.broken = true;
+  }
+  return entry;
+}
+
+function expectedManifest(sourceEntries, transformations = []) {
+  const source = verifier.validateInventoryEntries(
+    sortEntries(sourceEntries),
+    "Synthetic source framework inventory",
+  );
+  const entries = verifier.applyExpectedInventoryTransformations(
+    source,
+    transformations,
+  );
+  return {
+    schemaVersion: verifier.EXPECTED_INVENTORY_SCHEMA_VERSION,
+    source: {
+      payloadSize: 123,
+      payloadSha256: SYNTHETIC_PAYLOAD_SHA256,
+      coreEntryCount: source.length,
+      coreInventorySha256: verifier.digestInventory(source),
+    },
+    transformations,
+    entryCount: entries.length,
+    inventorySha256: verifier.digestInventory(entries),
+    entries,
+  };
+}
 
 function makeSandbox() {
   const temporary = fs.mkdtempSync(
@@ -102,6 +171,10 @@ test("hard-coded constants exactly match the repository lock", () => {
     verifier.CORE_EXCLUDED_PATHS,
   );
   assert.deepEqual(
+    lock.python.frameworkCoreInventory,
+    verifier.FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT,
+  );
+  assert.deepEqual(
     lock.python.reviewedBrokenSymlinks,
     verifier.REVIEWED_BROKEN_SYMLINKS,
   );
@@ -113,11 +186,42 @@ test("hard-coded constants exactly match the repository lock", () => {
     lock.python.distribution.frameworkComponent,
     verifier.FRAMEWORK_COMPONENT_CONTRACT,
   );
+  assert.deepEqual(verifier.EXPECTED_INVENTORY_CONTRACT, {
+    schemaVersion: 1,
+    payloadSize: 32739568,
+    payloadSha256:
+      "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
+    sourceEntryCount: 3654,
+    sourceInventorySha256:
+      "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
+    installedEntryCount: 3648,
+    installedInventorySha256:
+      "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9",
+    appleDoubleRemovals: 6,
+    symlinkModeChanges: 33,
+  });
 });
 
 test("a held parsed lock value satisfies the same hard-coded contract", () => {
   const lockValue = JSON.parse(fs.readFileSync(TOOLCHAIN_LOCK, "utf8"));
   assert.equal(verifier.verifyLockValue(lockValue), lockValue);
+});
+
+test("the production expected inventory satisfies its exact file and schema contract", () => {
+  const content = fs.readFileSync(EXPECTED_INVENTORY);
+  assert.equal(
+    content.length,
+    verifier.FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT.fileSize,
+  );
+  assert.equal(
+    sha256(content),
+    verifier.FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT.fileSha256,
+  );
+  const value = verifier.readExpectedInventoryFile(EXPECTED_INVENTORY);
+  const validated = verifier.verifyExpectedInventoryProductionContract(value);
+  assert.equal(validated.sourceInventory.length, 3654);
+  assert.equal(validated.inventory.length, 3648);
+  assert.equal(validated.inventorySha256, verifier.CORE_DIGEST);
 });
 
 test("framework verification requires exactly one lock path or held value", () => {
@@ -137,6 +241,24 @@ test("framework verification requires exactly one lock path or held value", () =
         root: verifier.EXACT_ROOT,
       }),
     /exactly one of lock or lockValue/,
+  );
+  assert.throws(
+    () =>
+      verifier.verifyReviewedPythonFramework({
+        root: verifier.EXACT_ROOT,
+        lockValue,
+      }),
+    /exactly one of inventory or inventoryValue/,
+  );
+  assert.throws(
+    () =>
+      verifier.verifyReviewedPythonFramework({
+        root: verifier.EXACT_ROOT,
+        lockValue,
+        inventory: "/tmp/inventory.json",
+        inventoryValue: {},
+      }),
+    /exactly one of inventory or inventoryValue/,
   );
 });
 
@@ -208,15 +330,42 @@ test("every producer-contract field is sealed against lock mutation", async (t) 
   }
 });
 
+test("every expected-inventory lock field is sealed against mutation", async (t) => {
+  for (const field of Object.keys(
+    verifier.FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT,
+  )) {
+    await t.test(field, () => {
+      const lock = JSON.parse(fs.readFileSync(TOOLCHAIN_LOCK, "utf8"));
+      const current = lock.python.frameworkCoreInventory[field];
+      lock.python.frameworkCoreInventory[field] =
+        typeof current === "number" ? current + 1 : `${current}-mutated`;
+      assert.throws(
+        () => verifier.verifyLockValue(lock),
+        /differs from the hard-coded framework contract/,
+      );
+    });
+  }
+
+  const lock = JSON.parse(fs.readFileSync(TOOLCHAIN_LOCK, "utf8"));
+  lock.python.frameworkCoreInventory.unreviewed = true;
+  assert.throws(
+    () => verifier.verifyLockValue(lock),
+    /differs from the hard-coded framework contract/,
+  );
+});
+
 test("CLI parsing rejects duplicate, missing, and surplus arguments", () => {
+  const inventory = path.join(REPOSITORY_ROOT, "expected-inventory.json");
   assert.deepEqual(
     verifier.parseCliArguments([
       "--lock",
       TOOLCHAIN_LOCK,
       "--root",
       verifier.EXACT_ROOT,
+      "--inventory",
+      inventory,
     ]),
-    { root: verifier.EXACT_ROOT, lock: TOOLCHAIN_LOCK },
+    { root: verifier.EXACT_ROOT, lock: TOOLCHAIN_LOCK, inventory },
   );
   assert.throws(
     () =>
@@ -225,6 +374,8 @@ test("CLI parsing rejects duplicate, missing, and surplus arguments", () => {
         verifier.EXACT_ROOT,
         "--root",
         verifier.EXACT_ROOT,
+        "--inventory",
+        inventory,
       ]),
     /Usage/,
   );
@@ -239,6 +390,8 @@ test("CLI parsing rejects duplicate, missing, and surplus arguments", () => {
         verifier.EXACT_ROOT,
         "--lock",
         TOOLCHAIN_LOCK,
+        "--inventory",
+        inventory,
         "extra",
       ]),
     /Usage/,
@@ -275,7 +428,305 @@ test("canonical JSON recursively sorts keys without ASCII escaping", () => {
 test("known canonical inventory digest matches Python fingerprinting", () => {
   withSandbox(({ root }) => {
     makeKnownFixture(root);
-    assert.equal(fingerprint(root), KNOWN_FIXTURE_DIGEST);
+    const inspected = verifier.inspectInstallRoot(root, {
+      excludedPaths: [],
+      reviewedBrokenSymlinks: [],
+      rejectBytecodeCaches: true,
+    });
+    assert.equal(inspected.digest, KNOWN_FIXTURE_DIGEST);
+    assert.equal(verifier.digestInventory(inspected.inventory), inspected.digest);
+    assert.equal(fingerprint(root), inspected.digest);
+    assert.deepEqual(
+      inspected.inventory.map((entry) => entry.path),
+      ["alpha.txt", "nested", "nested/tool"],
+    );
+  });
+});
+
+test("strict expected inventory accepts an exact synthetic manifest", () => {
+  const source = sortEntries([
+    directoryEntry("bin"),
+    fileEntry("bin/python3.13", "synthetic interpreter\n", "0755"),
+    directoryEntry("lib"),
+  ]);
+  const manifest = expectedManifest(source);
+  const validated = verifier.validateExpectedInventoryValue(manifest);
+  assert.equal(validated.source.coreEntryCount, source.length);
+  assert.equal(
+    validated.source.coreInventorySha256,
+    verifier.digestInventory(source),
+  );
+  assert.deepEqual(validated.inventory, source);
+  assert.equal(
+    verifier.verifyInventoryMatch(validated.inventory, source),
+    manifest.inventorySha256,
+  );
+});
+
+test("strict expected inventory applies exact Installer metadata transformations", () => {
+  const target = "Versions/Current/Headers";
+  const source = sortEntries([
+    fileEntry("Frameworks/Tcl.framework/._carrier", "appledouble\n"),
+    symlinkEntry(
+      "Frameworks/Tcl.framework/Headers",
+      target,
+      "0775",
+    ),
+    fileEntry("payload.txt", "payload\n"),
+  ]);
+  const carrier = source.find((entry) => entry.path.endsWith("._carrier"));
+  const transformations = [
+    {
+      kind: "remove-appledouble",
+      path: carrier.path,
+      type: "file",
+      mode: "0664",
+      size: carrier.size,
+      sha256: carrier.sha256,
+    },
+    {
+      kind: "symlink-mode",
+      path: "Frameworks/Tcl.framework/Headers",
+      type: "symlink",
+      target,
+      fromMode: "0775",
+      toMode: "0777",
+    },
+  ].sort((left, right) =>
+    verifier.comparePythonStrings(left.path, right.path),
+  );
+  const manifest = expectedManifest(source, transformations);
+  const validated = verifier.validateExpectedInventoryValue(manifest);
+  assert.equal(validated.sourceInventory.length, 3);
+  assert.equal(validated.inventory.length, 2);
+  assert.equal(
+    validated.inventory.find((entry) => entry.type === "symlink").mode,
+    "0777",
+  );
+  assert.equal(
+    validated.inventory.some((entry) => entry.path === carrier.path),
+    false,
+  );
+});
+
+test("expected inventory rejects transformations outside the exact contract", () => {
+  const target = "payload";
+  const source = [symlinkEntry("alias", target, "0775")];
+  assert.throws(
+    () =>
+      verifier.applyExpectedInventoryTransformations(source, [
+        {
+          kind: "symlink-mode",
+          path: "alias",
+          type: "symlink",
+          target,
+          fromMode: "0775",
+          toMode: "0755",
+        },
+      ]),
+    /symlink-mode transformation is malformed/,
+  );
+  assert.throws(
+    () =>
+      verifier.applyExpectedInventoryTransformations(
+        [fileEntry("ordinary", "payload\n")],
+        [
+          {
+            kind: "remove-appledouble",
+            path: "ordinary",
+            type: "file",
+            mode: "0664",
+            size: 8,
+            sha256: sha256(Buffer.from("payload\n")),
+          },
+        ],
+      ),
+    /AppleDouble removal transformation is malformed/,
+  );
+});
+
+test("inventory comparison classifies non-allowlisted mode and file drift", () => {
+  const expected = [fileEntry("payload", "first\n", "0644")];
+  const observed = [fileEntry("payload", "second payload\n", "0600")];
+  const comparison = verifier.compareInventories(expected, observed);
+  assert.equal(comparison.matches, false);
+  assert.deepEqual(comparison.differenceCounts, {
+    missing: 0,
+    extra: 0,
+    type: 0,
+    mode: 1,
+    target: 0,
+    size: 1,
+    content: 1,
+  });
+  assert.deepEqual(
+    comparison.firstDifferences.map((item) => item.kind),
+    ["mode", "size", "content"],
+  );
+});
+
+test("inventory comparison classifies target, path, and type drift", () => {
+  const expected = sortEntries([
+    symlinkEntry("alias", "first"),
+    directoryEntry("kind"),
+    fileEntry("missing", "payload\n"),
+  ]);
+  const observed = sortEntries([
+    symlinkEntry("alias", "second"),
+    fileEntry("extra", "payload\n"),
+    fileEntry("kind", "payload\n"),
+  ]);
+  const comparison = verifier.compareInventories(expected, observed);
+  assert.deepEqual(comparison.differenceCounts, {
+    missing: 1,
+    extra: 1,
+    type: 1,
+    mode: 0,
+    target: 1,
+    size: 0,
+    content: 0,
+  });
+  assert.equal(
+    comparison.firstDifferences.find((item) => item.kind === "extra").path,
+    undefined,
+  );
+  assert.match(
+    comparison.firstDifferences.find((item) => item.kind === "extra")
+      .pathSha256,
+    /^[0-9a-f]{64}$/,
+  );
+});
+
+test("verification errors carry only bounded sanitized inventory diagnostics", () => {
+  const expected = [
+    symlinkEntry("nonce-secret/alias", "SECRET_TOKEN_expected-value", "0777"),
+  ];
+  const observed = [
+    symlinkEntry("nonce-secret/alias", "SECRET_TOKEN_observed-value", "0777"),
+  ];
+  let failure;
+  try {
+    verifier.verifyInventoryMatch(expected, observed);
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure instanceof verifier.VerificationError);
+  assert.equal(failure.cause, undefined);
+  assert.equal(failure.diagnostics.differenceCounts.target, 1);
+  assert.deepEqual(failure.diagnostics.firstDifferences, [
+    {
+      kind: "target",
+      pathSha256: sha256(Buffer.from("nonce-secret/alias", "utf8")),
+    },
+  ]);
+  const formatted = verifier.formatVerificationDiagnostics(failure.diagnostics);
+  assert.doesNotMatch(
+    formatted,
+    /SECRET_TOKEN|nonce-secret|\/Library|\/Users|\/tmp/,
+  );
+  assert.doesNotMatch(formatted, /expected-value|observed-value/);
+  assert.match(formatted, /target:1/);
+});
+
+test("diagnostics truncate at twenty records and hash every extra path", () => {
+  const expected = [fileEntry("anchor", "anchor\n")];
+  const secretNames = Array.from(
+    { length: verifier.MAX_DIAGNOSTIC_DIFFERENCES + 7 },
+    (_value, index) => `extras/SECRET_TOKEN_value_${String(index).padStart(2, "0")}`,
+  );
+  const observed = sortEntries([
+    ...expected,
+    ...secretNames.map((entryPath) => fileEntry(entryPath, "extra\n")),
+  ]);
+  const comparison = verifier.compareInventories(expected, observed);
+  assert.equal(comparison.differenceCounts.extra, secretNames.length);
+  assert.equal(
+    comparison.firstDifferences.length,
+    verifier.MAX_DIAGNOSTIC_DIFFERENCES,
+  );
+  assert.equal(comparison.truncated, true);
+  assert.ok(
+    comparison.firstDifferences.every(
+      (item) => item.kind === "extra" && item.path === undefined &&
+        /^[0-9a-f]{64}$/.test(item.pathSha256),
+    ),
+  );
+  const formatted = verifier.formatVerificationDiagnostics(comparison);
+  assert.doesNotMatch(formatted, /SECRET_TOKEN|value_\d/);
+  assert.match(formatted, /truncated=true/);
+});
+
+test("expected inventory reader rejects symlinks and hardlinks", () => {
+  withSandbox(({ root }) => {
+    const manifest = expectedManifest([fileEntry("payload", "payload\n")]);
+    const source = path.join(root, "inventory.json");
+    writeFile(source, `${JSON.stringify(manifest, null, 2)}\n`);
+    assert.deepEqual(verifier.readExpectedInventoryFile(source), manifest);
+
+    const symlink = path.join(root, "inventory-link.json");
+    fs.symlinkSync("inventory.json", symlink);
+    assert.throws(
+      () => verifier.readExpectedInventoryFile(symlink),
+      /must be one regular file/,
+    );
+
+    const hardlinkSource = path.join(root, "inventory-hard-source.json");
+    const hardlink = path.join(root, "inventory-hard.json");
+    writeFile(hardlinkSource, `${JSON.stringify(manifest)}\n`);
+    fs.linkSync(hardlinkSource, hardlink);
+    assert.throws(
+      () => verifier.readExpectedInventoryFile(hardlink),
+      /must be one regular file/,
+    );
+  });
+});
+
+test("expected inventory reader rejects pathname replacement and identity drift", () => {
+  withSandbox(({ root }) => {
+    const manifest = expectedManifest([fileEntry("payload", "payload\n")]);
+    const content = `${JSON.stringify(manifest, null, 2)}\n`;
+    const pathname = path.join(root, "inventory.json");
+    const replacement = path.join(root, "replacement.json");
+    writeFile(pathname, content);
+    writeFile(replacement, content);
+
+    const originalRead = fs.readSync;
+    let replaced = false;
+    fs.readSync = function replaceAfterRead(...args) {
+      const count = originalRead.apply(this, args);
+      if (!replaced) {
+        replaced = true;
+        fs.renameSync(replacement, pathname);
+      }
+      return count;
+    };
+    try {
+      assert.throws(
+        () => verifier.readExpectedInventoryFile(pathname),
+        /changed while reading/,
+      );
+    } finally {
+      fs.readSync = originalRead;
+    }
+
+    writeFile(replacement, content);
+    let changedMode = false;
+    fs.readSync = function changeModeAfterRead(...args) {
+      const count = originalRead.apply(this, args);
+      if (!changedMode) {
+        changedMode = true;
+        fs.chmodSync(pathname, 0o600);
+      }
+      return count;
+    };
+    try {
+      assert.throws(
+        () => verifier.readExpectedInventoryFile(pathname),
+        /changed while reading/,
+      );
+    } finally {
+      fs.readSync = originalRead;
+    }
   });
 });
 

@@ -986,3 +986,127 @@ verifier inputs、assembled App launch/runtime 或 fresh exact-head Actions，�
 technical `pass`。当前 summary 不变：九次 remediation attempts `fail` / `superseded`，第十次
 exact candidate 仍为 `not-run`；W02、`VAL-PACKAGED-SMOKE-001`、W10/W11、independent acceptance
 与 public release 状态均不提升。
+
+## 第十次 remediation 技术执行：`fail` / `superseded`
+
+上一节保留第十候选提交前的 `not-run`、设计与 portable/local validation；本节只追加它随后
+发生的 exact-head Actions 事实，不把旧记录重写成已经执行。第十次 exact technical execution
+的坐标如下：
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `70b1823259590725d6f579b97fa294d3d9dcf728` |
+| exact parent | `6eec41125b431a9fd99d8b1821362573de1b5b8a` |
+| exact tree | `a706817f28b170bab1fe9fe6c3a6e8b673e5dc81` |
+| exact-head Desktop source run | [run `31580628860`](https://github.com/fredgnr/local-context-forge/actions/runs/31580628860) / `success` |
+| engineering-smoke run / job | [run `31580628877`](https://github.com/fredgnr/local-context-forge/actions/runs/31580628877) / job `94062603909` / `failure` |
+| Containers run | [run `31580628857`](https://github.com/fredgnr/local-context-forge/actions/runs/31580628857) / `success`；PR path no publish |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第十次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；latest binding independent verdict 仍是旧 reviewed head/tree 的 `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-tenth-remediation-authority: source=70b1823259590725d6f579b97fa294d3d9dcf728,parent=6eec41125b431a9fd99d8b1821362573de1b5b8a,tree=a706817f28b170bab1fe9fe6c3a6e8b673e5dc81,assembly-run=31580628877,assembly-job=94062603909,source-run=31580628860,container-run=31580628857,result=fail -->
+
+Engineering producer 已通过 exact archive、hash manifest、signed outer package、reviewed component、
+17-byte no-op postinstall、component installation 与 interpreter/framework binary digest 检查；primary
+failure 仍发生在 pre-Python Node seal verifier，错误是
+`Reviewed Python framework core fingerprint changed`。因此第十候选的“只把 `33` 条 symlink mode
+从 archive `0775` 映射为 Installer `0777` 即得到 `ba58cfb…`”模型不完整；该 opaque digest
+不再是可接受的 sealed inventory contract。
+
+source provenance、frozen sidecar build/audit、renderer/Desktop profile、`.app` static assembly、
+bundle audit 与 focused lifecycle tests 均未在该 Engineering run 完成；assembled App 没有启动。
+Desktop source success 与 Containers success/no-publish 不能抵消 Engineering failure，也不能提升
+任何 packaged/runtime、independent acceptance 或 release gate。
+
+## 第十一次 remediation technical candidate：`not-run`
+
+当前修复仍使用同一 Draft PR #21 / branch、W02、TODO-PACKAGED-SMOKE-001、
+REQ-PACKAGED-SMOKE-001、ADR-0016、ITER-0008/I01 与 VAL-PACKAGED-SMOKE-001；没有创建新的稳定
+Work/Requirement/TODO/Validation ID。当前只有从 handoff checkout
+`8b2277a2c8027c5fbdab8f3e85506b72044dbba4` / tree
+`dd741078e65d1fc9d02e3d012e5590df3a5f98fd` 开始的未提交本地 worktree，没有第十一次 candidate
+commit/tree，也没有 fresh exact-head Source/Engineering/Containers Actions，因此 technical result
+严格保持 `not-run`。
+
+### Installer/seal 根因与最小转换合同
+
+locked `Python_Framework.pkg` Payload 仍绑定 size `32739568` 与 SHA-256
+`f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391`。对该 Payload 的 raw core
+执行现有 canonical inventory，结果为 `3654` entries / SHA-256
+`863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d`。两次独立
+`pkgutil --expand-full` materialization 暴露了此前遗漏的另一类确定性 package transformation：
+
+- 以下 `6` 个 exact AppleDouble regular-file entries 被 package expansion/Installer metadata
+  语义消费，不作为普通文件落盘：
+  `Frameworks/Tcl.framework/Versions/8.6/._libtclstub8.6.a`、
+  `Frameworks/Tcl.framework/Versions/8.6/._tclConfig.sh`、
+  `Frameworks/Tcl.framework/Versions/8.6/._tclooConfig.sh`、
+  `Frameworks/Tk.framework/Versions/8.6/._libtkstub8.6.a`、
+  `Frameworks/Tk.framework/Versions/8.6/._tkConfig.sh` 与
+  `lib/python3.13/config-3.13-darwin/._python.o`；
+- manifest 中 `33` 个 exact `kind=symlink-mode` records 只允许同一路径、type 与 target 的 mode
+  从 `0775` 变为 `0777`；不得把该规则推广到其他 path/type/mode，也不得忽略 symlink target；
+- 其余 path/type、regular-file bytes/size/mode、directory mode 与 symlink target 均保持 exact。
+
+以上 `39` 条 path-level transformations 产生唯一 expected sealed core：`3648` entries / SHA-256
+`fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9`。完整 expected inventory
+位于 [python-framework-sealed-inventory.json](../../../../backend/packaging/python-framework-sealed-inventory.json)，
+文件 size `620662` / SHA-256
+`b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec`；lock 同时绑定 raw source、
+transform count、final entry count/digest 与该 manifest 文件 identity。这不是 runtime
+learn-and-accept：生产 verifier 必须从 held bytes 加载 exact lock 与 inventory，以一次 physical/no-follow
+traversal 同时生成 observed inventory/digest 和有界、相对路径、脱敏的 mismatch diagnostics。
+
+两个独立 `pkgutil --expand-full` raw materialization 都只作为 seal 输入，不被描述为 Installer
+落盘或 sealed output；raw 树仍包含待清理的 cache residue 与 archive-mode `0775` symlink。对两份树
+分别显式执行与 workflow 同源的 non-symlink seal、大小写无关 cache cleanup，以及 manifest-bound
+`33` 条 symlink mode `0775→0777` normalization 后，verifier 才严格重算为 `3648` /
+`fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9`，missing、extra、type、mode、
+target、size、content 七类 difference count 全部为 `0`。本机没有 passwordless `sudo`，而真实
+`/usr/sbin/installer` 对 system target 需要 root；因此 real Installer reproduction、privileged
+`/Library/Frameworks` rollback/restore 与 system-root postcondition 仍为 `not-run`，不能用两次
+`pkgutil` + explicit seal 结果替代。实验前后
+`/Library/Frameworks/Python.framework/Versions/3.13` 均不存在，本轮没有修改 host framework。
+
+当前 transaction 实现中，seal 在屏蔽 `HUP`/`INT`/`TERM` 后先写 `committed` journal，写入成功前
+EXIT rollback trap 保持有效；随后才解除该 trap，并让 `committed` 状态继续保留旧 quarantine。
+独立 `always()` postcondition 重新验证 held verifier/lock/inventory 与 candidate identity；在
+rollback-ready 的 `pending:pending`、`rolled-back:rolled-back` 或 `committed:committed` 状态收到
+`HUP`/`INT`/`TERM` 时，先精确恢复 initial state，再返回 `129`/`130`/`143`。验证成功后才进入
+`finalizing`，屏蔽这些 signal、写 journal、按 identity 精确删除 quarantine，全部清理与 identity
+复验成功后才进入 `complete`。`finalizing` 已开始删除，因而其失败明确是 no-rollback/fixed `70`，
+保留 candidate 与可能的 quarantine residue 供诊断；Installer 后尚未绑定的 candidate 或任一
+identity mismatch 也必须 preserve/no-delete 并 fixed `70`。这不声称能从 `SIGKILL`、host crash 或
+VM disappearance 恢复。
+
+### 第十一次候选本地验证
+
+以下只绑定 2026-08-14 当前未提交 worktree bytes 与本机
+`macOS 26.2 (25C56) arm64` / Node `v24.10.0` / npm `11.6.0` / Python `3.14.6`。它们不是
+committed exact-head Actions、real Installer、system-root rollback、assembled App launch/runtime 或
+independent acceptance evidence。
+
+| Gate | 实际命令/范围 | 结果 |
+| --- | --- | --- |
+| packaged policy aggregate | `PYTHONDONTWRITEBYTECODE=1 make packaged-smoke-policy-check` | exit `0`；policy mutation `86/86`；exact-Git `1/1` |
+| reviewed framework verifier | `node --test tools/tests/verify_reviewed_python_framework.test.cjs` | exit `0`；`60 passed / 4 skipped`；4 个 skip 均为 root-only fixture |
+| Desktop beforePack focused | inventory input/fail-closed consumer focused tests | exit `0`；`50/50` |
+| Python packaging environment initial | exact focused collection without compatibility path | blocked before product assertions；Homebrew Python `pyexpat` 缺 `_XML_SetAllocTrackerActivationThreshold` symbol |
+| Python packaging focused | `PYTHONPATH=/private/tmp/lcf-python313-compat` 下运行 framework inventory/consumer focused selection | exit `0`；`22 passed`；临时 path 是 host Python compatibility workaround |
+| formal workflow policy | `backend/.venv/bin/python -m pytest -q tests/backend/test_desktop_release_workflow_policy.py` | exit `0`；`11 passed` |
+| Desktop engineering consumer initial | default `npm --prefix desktop run test:engineering-smoke` before locked Web dependency/TMPDIR setup | exit non-zero；`85 passed / 5 failed`；environment/setup failure，不记为 product pass |
+| Desktop engineering consumer | `TMPDIR=/private/tmp npm --prefix desktop run test:engineering-smoke`；先按 lock 安装 Web dependencies | exit `0`；`90/90` |
+| Desktop static | `npm --prefix desktop run typecheck`；`npm --prefix desktop run build` | exit `0`；typecheck/build pass |
+| Python packaging aggregate | `PYTHONPATH=/private/tmp/lcf-python313-compat PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' make python-sidecar-packaging-test` | exit non-zero；`460 passed / 114 failed / 1 skipped`；临时 path 绕过上述 host `pyexpat` 符号不匹配后，macOS 26.2 的 `/dev/fd/<n>` 对 `O_DIRECTORY` 返回 `ENOTDIR`，同一失败在 sandbox 外复现；focused 22 已通过，但 aggregate 不得记为 pass |
+| pre-1 governance | `python3 -B tools/check_pre1_work_plan.py`；`python3 -B -m unittest tools.tests.test_check_pre1_work_plan` | exit `0`；direct checker pass；`59/59` |
+| workflow/static | 两份 workflow YAML parse；全部 workflow `run` block 执行 `/bin/bash -n` | exit `0`；YAML `2/2`；Bash `37/37` |
+| documentation/diff | `python3 -B tools/check_markdown_links.py`；`git diff --check` | exit `0`；Markdown links `90` files；diff check pass |
+
+第十一次候选还没有 committed exact head/tree 或 fresh exact-head Actions；Source/Engineering/
+Containers、real Installer/system-root transaction、packaged App launch/runtime、independent acceptance、
+W10/W11、tag/upload/Draft/Release/promotion 均保持 `not-run` / pending。当前汇总是十次 remediation
+attempts `fail` / `superseded` 与第十一次 local candidate `not-run`；latest independent verdict 仍是旧
+reviewed `8c5fd232…` / `785f4656…` 的 `NO-GO`，canonical activation `blocked`，W02
+`in-progress`，`VAL-PACKAGED-SMOKE-001 not-run`，W10/W11 locked，public release `NO-GO`。

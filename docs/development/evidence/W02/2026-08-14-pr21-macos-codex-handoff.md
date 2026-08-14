@@ -99,10 +99,10 @@ fresh and green. PR #21 must remain Draft; no merge is authorized by this handof
 
 Read the repository state at the actual handoff head, then at minimum read:
 
-- [`AGENTS.md`](../../../AGENTS.md);
-- [desktop development skill](../../../.agents/skills/lcf-desktop-development/SKILL.md);
-- [change traceability skill](../../../.agents/skills/lcf-change-traceability/SKILL.md);
-- [ADR-0016](../../../docs/adr/0016-pre1-incremental-retirement-engineering-package.md);
+- [`AGENTS.md`](../../../../AGENTS.md);
+- [desktop development skill](../../../../.agents/skills/lcf-desktop-development/SKILL.md);
+- [change traceability skill](../../../../.agents/skills/lcf-change-traceability/SKILL.md);
+- [ADR-0016](../../../adr/0016-pre1-incremental-retirement-engineering-package.md);
 - [ITER-0008](../../iterations/0008-incremental-retirement-engineering-package.md);
 - [evidence rules](../README.md);
 - [append-only PR #21 remediation history](2026-08-07-pr21-remediation.md);

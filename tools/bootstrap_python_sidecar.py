@@ -52,6 +52,7 @@ MAX_TREE_TOTAL_BYTES = 1024 * 1024 * 1024
 MAX_RUNTIME_LOCK_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 128 * 1024 * 1024
 MAX_SUBPROCESS_OUTPUT_BYTES = 32 * 1024 * 1024
+MAX_FRAMEWORK_CORE_INVENTORY_BYTES = 16 * 1024 * 1024
 MAX_INNER_DIAGNOSTIC_BYTES = 128
 INNER_BUILD_DIAGNOSTIC_FD_ENV = "LCF_INNER_BUILD_DIAGNOSTIC_FD"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -70,6 +71,27 @@ REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS = (
     "lib/python3.13/site-packages",
     "share/doc/python3.13/html",
 )
+REVIEWED_FRAMEWORK_CORE_INVENTORY_NAME = (
+    "python-framework-sealed-inventory.json"
+)
+REVIEWED_FRAMEWORK_CORE_INVENTORY_SOURCE = (
+    f"backend/packaging/{REVIEWED_FRAMEWORK_CORE_INVENTORY_NAME}"
+)
+REVIEWED_FRAMEWORK_CORE_INVENTORY_KEYS = frozenset(
+    {
+        "fileName",
+        "fileSize",
+        "fileSha256",
+        "schemaVersion",
+        "sourcePayloadSize",
+        "sourcePayloadSha256",
+        "sourceEntryCount",
+        "sourceInventorySha256",
+        "transformationCount",
+        "entryCount",
+        "inventorySha256",
+    }
+)
 
 SOURCE_INPUTS = (
     "Makefile",
@@ -77,6 +99,7 @@ SOURCE_INPUTS = (
     "backend/uv.lock",
     "backend/packaging/build-requirements.lock",
     "backend/packaging/lcf_sidecar.spec",
+    REVIEWED_FRAMEWORK_CORE_INVENTORY_SOURCE,
     "backend/packaging/python-sidecar-toolchain.lock.json",
     "runtime/python-sidecar-build-manifest.schema.json",
     "tools/audit_python_sidecar.py",
@@ -1884,7 +1907,148 @@ def _reviewed_framework_core_contract(
         raise ToolchainBootstrapError(
             "Reviewed Python framework core lock is malformed"
         )
+    inventory = _reviewed_framework_inventory_contract(python_lock)
+    if inventory["inventorySha256"] != digest:
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework core lock is malformed"
+        )
     return REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS, digest
+
+
+def _reviewed_framework_inventory_contract(
+    python_lock: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw = python_lock.get("frameworkCoreInventory")
+    if not isinstance(raw, dict) or set(raw) != REVIEWED_FRAMEWORK_CORE_INVENTORY_KEYS:
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework inventory lock is malformed"
+        )
+
+    def positive_integer(name: str, maximum: int) -> bool:
+        value = raw.get(name)
+        return (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 < value <= maximum
+        )
+
+    def nonnegative_integer(name: str, maximum: int) -> bool:
+        value = raw.get(name)
+        return (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= maximum
+        )
+
+    def sha256(name: str) -> bool:
+        value = raw.get(name)
+        return isinstance(value, str) and SHA256_PATTERN.fullmatch(value) is not None
+
+    if (
+        raw.get("fileName") != REVIEWED_FRAMEWORK_CORE_INVENTORY_NAME
+        or not positive_integer(
+            "fileSize", MAX_FRAMEWORK_CORE_INVENTORY_BYTES
+        )
+        or not sha256("fileSha256")
+        or not isinstance(raw.get("schemaVersion"), int)
+        or isinstance(raw.get("schemaVersion"), bool)
+        or raw.get("schemaVersion") != 1
+        or not positive_integer("sourcePayloadSize", MAX_TREE_FILE_BYTES)
+        or not sha256("sourcePayloadSha256")
+        or not positive_integer("sourceEntryCount", MAX_TREE_ENTRIES)
+        or not sha256("sourceInventorySha256")
+        or not nonnegative_integer("transformationCount", MAX_TREE_ENTRIES)
+        or not positive_integer("entryCount", MAX_TREE_ENTRIES)
+        or not sha256("inventorySha256")
+    ):
+        raise ToolchainBootstrapError(
+            "Reviewed Python framework inventory lock is malformed"
+        )
+    distribution = python_lock.get("distribution")
+    if isinstance(distribution, Mapping):
+        component = distribution.get("frameworkComponent")
+        if isinstance(component, Mapping) and (
+            raw["sourcePayloadSize"] != component.get("payloadSize")
+            or raw["sourcePayloadSha256"] != component.get("payloadSha256")
+        ):
+            raise ToolchainBootstrapError(
+                "Reviewed Python framework inventory lock is malformed"
+            )
+    return dict(raw)
+
+
+def _verify_reviewed_framework_inventory_file(
+    bound: _BoundFile,
+    contract: Mapping[str, Any],
+) -> None:
+    error_message = "Reviewed Python framework inventory file is inconsistent"
+    _revalidate_bound_file(
+        bound,
+        maximum_size=MAX_FRAMEWORK_CORE_INVENTORY_BYTES,
+        error_message=error_message,
+    )
+    if (
+        bound.path.name != contract["fileName"]
+        or bound.size != contract["fileSize"]
+        or bound.sha256 != contract["fileSha256"]
+    ):
+        raise ToolchainBootstrapError(error_message)
+    payload = _read_regular_descriptor(
+        bound.descriptor,
+        expected_size=bound.size,
+        maximum_size=MAX_FRAMEWORK_CORE_INVENTORY_BYTES,
+        error_message=error_message,
+    )
+    try:
+        value = json.loads(payload.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ToolchainBootstrapError(error_message) from exc
+    if not isinstance(value, dict) or set(value) != {
+        "schemaVersion",
+        "source",
+        "transformations",
+        "entryCount",
+        "inventorySha256",
+        "entries",
+    }:
+        raise ToolchainBootstrapError(error_message)
+    source = value.get("source")
+    transformations = value.get("transformations")
+    entries = value.get("entries")
+    if (
+        not isinstance(source, dict)
+        or set(source)
+        != {
+            "payloadSize",
+            "payloadSha256",
+            "coreEntryCount",
+            "coreInventorySha256",
+        }
+        or value.get("schemaVersion") != contract["schemaVersion"]
+        or source.get("payloadSize") != contract["sourcePayloadSize"]
+        or source.get("payloadSha256") != contract["sourcePayloadSha256"]
+        or source.get("coreEntryCount") != contract["sourceEntryCount"]
+        or source.get("coreInventorySha256")
+        != contract["sourceInventorySha256"]
+        or not isinstance(transformations, list)
+        or len(transformations) != contract["transformationCount"]
+        or value.get("entryCount") != contract["entryCount"]
+        or value.get("inventorySha256") != contract["inventorySha256"]
+        or not isinstance(entries, list)
+        or len(entries) != contract["entryCount"]
+        or hashlib.sha256(_canonical_json_bytes(entries)).hexdigest()
+        != contract["inventorySha256"]
+    ):
+        raise ToolchainBootstrapError(error_message)
+
+
+def _verify_reviewed_framework_inventory_source(
+    source: _SourceSeal,
+    python_lock: Mapping[str, Any],
+) -> None:
+    contract = _reviewed_framework_inventory_contract(python_lock)
+    bound = _source_file(source, REVIEWED_FRAMEWORK_CORE_INVENTORY_SOURCE)
+    _verify_reviewed_framework_inventory_file(bound, contract)
 
 
 def _reviewed_framework_owner() -> int:
@@ -3248,6 +3412,7 @@ def install_reviewed_python(
                 raise ToolchainBootstrapError("Python distribution lock is malformed")
             _reviewed_framework_security_contract(python_lock)
             _reviewed_framework_core_contract(python_lock)
+            _verify_reviewed_framework_inventory_source(source, python_lock)
             _reviewed_broken_framework_symlinks(python_lock)
             install_root = Path(str(python_lock.get("installRoot", "")))
             interpreter = install_root / str(
@@ -3571,6 +3736,7 @@ def build_with_exact_toolchain(environment: Mapping[str, str]) -> str:
                 raise TypeError("python lock")
             _reviewed_framework_security_contract(python_lock)
             _reviewed_framework_core_contract(python_lock)
+            _verify_reviewed_framework_inventory_source(source, python_lock)
             _reviewed_broken_framework_symlinks(python_lock)
             install_root = Path(environment["LCF_PYTHON_INSTALL_ROOT"])
             locked_install_root = Path(str(python_lock["installRoot"]))

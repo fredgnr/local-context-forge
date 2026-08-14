@@ -27,7 +27,20 @@
       "lib/python3.13/site-packages",
       "share/doc/python3.13/html"
     ],
-    "frameworkCoreFingerprintSha256": "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec",
+    "frameworkCoreFingerprintSha256": "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9",
+    "frameworkCoreInventory": {
+      "fileName": "python-framework-sealed-inventory.json",
+      "fileSize": 620662,
+      "fileSha256": "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",
+      "schemaVersion": 1,
+      "sourcePayloadSize": 32739568,
+      "sourcePayloadSha256": "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
+      "sourceEntryCount": 3654,
+      "sourceInventorySha256": "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
+      "transformationCount": 39,
+      "entryCount": 3648,
+      "inventorySha256": "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"
+    },
     "reviewedBrokenSymlinks": [
       {
         "path": "Frameworks/Tcl.framework/PrivateHeaders",

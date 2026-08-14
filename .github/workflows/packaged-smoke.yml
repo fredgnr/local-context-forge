@@ -71,6 +71,7 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Provision reviewed build Python without executing it
+        id: provision_reviewed_python
         shell: bash
         run: |
           set -euo pipefail
@@ -88,9 +89,21 @@ jobs:
           test "$(cd "${producer_root}" && /bin/pwd -P)" = "${producer_root}"
           test "$(/usr/bin/stat -f '%u' "${producer_root}")" = "$(/usr/bin/id -u)"
           test "$(/usr/bin/stat -f '%Lp' "${producer_root}")" = "700"
+          producer_signal="none"
+          framework_transaction_armed="false"
+          framework_transaction_handoff="false"
+          framework_transaction_phase="unarmed"
+          framework_initial_state="unvalidated"
+          framework_previous_root_identity="none"
+          framework_candidate_root_identity="none"
+          framework_quarantine="none"
+          framework_quarantine_identity="none"
+          framework_quarantine_placeholder="none"
+          framework_quarantine_placeholder_identity="none"
           cleanup_producer() {
             readonly saved_status="$?"
             trap - EXIT
+            trap '' HUP INT TERM
             cleanup_status=0
             cleanup_quarantine="${framework_quarantine_placeholder:-none}"
             cleanup_quarantine_prefix="${framework_quarantine_prefix:-none}"
@@ -115,20 +128,117 @@ jobs:
                 cleanup_status=70
               fi
             fi
+            if test "${framework_transaction_armed:-false}" = "true" && \
+              test "${framework_transaction_handoff:-false}" != "true"; then
+              rollback_ready=1
+              candidate_present=0
+              if test -e "${framework_root}" || test -L "${framework_root}"; then
+                if test ! -d "${framework_root}" || \
+                  test -L "${framework_root}" || \
+                  test "$(/usr/bin/stat -f '%u' "${framework_root}")" != "0"; then
+                  rollback_ready=0
+                else
+                  observed_candidate_identity="$(/usr/bin/stat -f '%d:%i' \
+                    "${framework_root}")"
+                  if test "${framework_initial_state}" = "present" && \
+                    test "${observed_candidate_identity}" = \
+                      "${framework_previous_root_identity}"; then
+                    candidate_present=0
+                  elif test "${framework_candidate_root_identity}" = "none"; then
+                    rollback_ready=0
+                  elif test "${observed_candidate_identity}" != \
+                    "${framework_candidate_root_identity}"; then
+                    rollback_ready=0
+                  else
+                    candidate_present=1
+                  fi
+                fi
+              fi
+              if test "${framework_initial_state}" = "present"; then
+                if test "${candidate_present}" -eq 0 && \
+                  test -d "${framework_root}" && \
+                  test ! -L "${framework_root}" && \
+                  test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = \
+                    "${framework_previous_root_identity}" && \
+                  test ! -e "${framework_quarantine}" && \
+                  test ! -L "${framework_quarantine}"; then
+                  rollback_ready="${rollback_ready}"
+                elif test "${framework_quarantine%/*}" != "${framework_parent}" || \
+                  test ! -d "${framework_quarantine}" || \
+                  test -L "${framework_quarantine}" || \
+                  test "$(/usr/bin/stat -f '%u' "${framework_quarantine}")" != "0" || \
+                  test "$(/usr/bin/stat -f '%d:%i' "${framework_quarantine}")" != \
+                    "${framework_previous_root_identity}"; then
+                  rollback_ready=0
+                fi
+              elif test "${framework_initial_state}" != "absent" || \
+                test "${framework_quarantine}" != "none"; then
+                rollback_ready=0
+              fi
+              if test "${rollback_ready}" -eq 1 && \
+                test "${candidate_present}" -eq 1; then
+                /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+                  "${framework_root}" -depth -delete || cleanup_status=70
+                if test -e "${framework_root}" || test -L "${framework_root}"; then
+                  cleanup_status=70
+                fi
+              fi
+              if test "${rollback_ready}" -eq 1 && \
+                test "${framework_initial_state}" = "present" && \
+                { test ! -e "${framework_root}" && test ! -L "${framework_root}"; }; then
+                /usr/bin/sudo --non-interactive /bin/mv \
+                  "${framework_quarantine}" "${framework_root}" || cleanup_status=70
+              fi
+              if test "${rollback_ready}" -ne 1; then
+                cleanup_status=70
+              elif test "${framework_initial_state}" = "present"; then
+                if test ! -d "${framework_root}" || \
+                  test -L "${framework_root}" || \
+                  test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" != \
+                    "${framework_previous_root_identity}" || \
+                  test -e "${framework_quarantine}" || \
+                  test -L "${framework_quarantine}"; then
+                  cleanup_status=70
+                fi
+              elif test -e "${framework_root}" || test -L "${framework_root}"; then
+                cleanup_status=70
+              fi
+              if test "${cleanup_status}" -eq 0; then
+                if printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=rolled-back\n' \
+                  >> "${GITHUB_ENV}"; then
+                  framework_transaction_phase="rolled-back"
+                else
+                  cleanup_status=70
+                fi
+              fi
+            fi
             /usr/bin/find -x "${producer_root}" -depth -delete || {
               candidate_status="$?"
               if test "${cleanup_status}" -eq 0; then
                 cleanup_status="${candidate_status}"
               fi
             }
-            if test "${saved_status}" -ne 0; then
-              exit "${saved_status}"
+            if test "${cleanup_status}" -ne 0; then
+              printf 'lcf-framework-transaction: owner=producer phase=%s primary=%s signal=%s cleanup=failed\n' \
+                "${framework_transaction_phase:-unvalidated}" \
+                "${saved_status}" "${producer_signal:-none}" >&2
+              exit 70
             fi
-            exit "${cleanup_status}"
+            if test "${saved_status}" -ne 0; then
+              printf 'lcf-framework-transaction: owner=producer phase=%s primary=%s signal=%s cleanup=complete\n' \
+                "${framework_transaction_phase:-unvalidated}" \
+                "${saved_status}" "${producer_signal:-none}" >&2
+            fi
+            exit "${saved_status}"
           }
-          framework_quarantine_placeholder="none"
-          framework_quarantine_placeholder_identity="none"
+          handle_producer_signal() {
+            producer_signal="$1"
+            exit "$2"
+          }
           trap cleanup_producer EXIT
+          trap 'handle_producer_signal HUP 129' HUP
+          trap 'handle_producer_signal INT 130' INT
+          trap 'handle_producer_signal TERM 143' TERM
           readonly archive="${producer_root}/python-3.13.14-darwin-arm64.tar.gz"
           readonly hashes="${producer_root}/hashes.sha256"
           /usr/bin/curl --fail --location --proto '=https' --tlsv1.2 \
@@ -339,12 +449,12 @@ jobs:
             test "$(/usr/bin/stat -f '%d:%i' "${existing_ancestor}")" = "${existing_identity}"
           done
           readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
-          framework_quarantine="none"
-          framework_quarantine_identity="none"
           if test -e "${framework_root}" || test -L "${framework_root}"; then
             test -d "${framework_root}"
             test ! -L "${framework_root}"
-            readonly previous_root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
+            framework_initial_state="present"
+            framework_previous_root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
+            [[ "${framework_previous_root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
             framework_quarantine="$(
               /usr/bin/sudo --non-interactive /usr/bin/mktemp -d \
                 "${framework_quarantine_prefix}XXXXXXXXXX"
@@ -360,10 +470,30 @@ jobs:
             framework_quarantine_placeholder="${framework_quarantine}"
             framework_quarantine_placeholder_identity="$(/usr/bin/stat -f '%d:%i' \
               "${framework_quarantine_placeholder}")"
+            [[ "${framework_quarantine_placeholder_identity}" =~ ^[0-9]+:[0-9]+$ ]]
             test "$(/usr/bin/stat -f '%u' \
               "${framework_quarantine}")" = "0"
             test "$(/usr/bin/stat -f '%Lp' \
               "${framework_quarantine}")" = "700"
+            framework_quarantine_identity="${framework_previous_root_identity}"
+            framework_transaction_phase="pending"
+            framework_transaction_armed="true"
+            {
+              printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_ARMED=true\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=pending\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_INITIAL_STATE=present\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY=%s\n' \
+                "${framework_previous_root_identity}"
+              printf 'LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY=none\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE=%s\n' \
+                "${framework_quarantine}"
+              printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY=%s\n' \
+                "${framework_quarantine_identity}"
+              printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_PLACEHOLDER=%s\n' \
+                "${framework_quarantine_placeholder}"
+              printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_PLACEHOLDER_IDENTITY=%s\n' \
+                "${framework_quarantine_placeholder_identity}"
+            } >> "${GITHUB_ENV}"
             /usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"
             test ! -e "${framework_quarantine}"
             test ! -L "${framework_quarantine}"
@@ -376,8 +506,22 @@ jobs:
             test -d "${framework_quarantine}"
             test ! -L "${framework_quarantine}"
             test "$(/usr/bin/stat -f '%d:%i' \
-              "${framework_quarantine}")" = "${previous_root_identity}"
-            framework_quarantine_identity="${previous_root_identity}"
+              "${framework_quarantine}")" = "${framework_previous_root_identity}"
+          else
+            framework_initial_state="absent"
+            framework_transaction_phase="pending"
+            framework_transaction_armed="true"
+            {
+              printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_ARMED=true\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=pending\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_INITIAL_STATE=absent\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY=none\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY=none\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE=none\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY=none\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_PLACEHOLDER=none\n'
+              printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_PLACEHOLDER_IDENTITY=none\n'
+            } >> "${GITHUB_ENV}"
           fi
           test ! -e "${framework_root}"
           test ! -L "${framework_root}"
@@ -393,19 +537,21 @@ jobs:
             /usr/bin/shasum -a 256 --check
           test -d "/Library/Frameworks/Python.framework/Versions/3.13"
           test ! -L "/Library/Frameworks/Python.framework/Versions/3.13"
-          if test "${framework_quarantine_identity}" != "none"; then
-            test "$(/usr/bin/stat -f '%d:%i' \
-              "${framework_root}")" != "${framework_quarantine_identity}"
+          test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
+          framework_candidate_root_identity="$(/usr/bin/stat -f '%d:%i' \
+            "${framework_root}")"
+          [[ "${framework_candidate_root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+          if test "${framework_previous_root_identity}" != "none"; then
+            test "${framework_candidate_root_identity}" != \
+              "${framework_previous_root_identity}"
           fi
-          {
-            printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE=%s\n' \
-              "${framework_quarantine}"
-            printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY=%s\n' \
-              "${framework_quarantine_identity}"
-          } >> "${GITHUB_ENV}"
+          printf 'LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY=%s\n' \
+            "${framework_candidate_root_identity}" >> "${GITHUB_ENV}"
+          framework_transaction_handoff="true"
           cleanup_producer
 
       - name: Seal reviewed build Python framework
+        id: seal_reviewed_python
         shell: bash
         run: |
           set -euo pipefail
@@ -416,116 +562,130 @@ jobs:
           readonly library_root="${framework_container%/*}"
           readonly framework_python="${framework_root}/bin/python3.13"
           readonly framework_binary="${framework_root}/Python"
-          seal_transaction_phase="pending"
-          seal_installed_root_identity="none"
+          seal_signal="none"
+          seal_transaction_phase="${LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE:-unvalidated}"
+          seal_initial_state="${LCF_REVIEWED_FRAMEWORK_INITIAL_STATE:-unvalidated}"
+          seal_previous_root_identity="${LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY:-none}"
+          seal_installed_root_identity="${LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY:-none}"
           seal_quarantine_state="unvalidated"
-          seal_quarantine="none"
-          seal_quarantine_identity="none"
+          seal_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE:-none}"
+          seal_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY:-none}"
           cleanup_sealed_framework() {
             readonly saved_status="$?"
             trap - EXIT
+            trap '' HUP INT TERM
             cleanup_status=0
             rollback_ready=1
             if test "${seal_transaction_phase:-unvalidated}" = "pending"; then
-              if test "${seal_installed_root_identity:-none}" = "none" || \
-                test ! -d "${framework_root}" || \
-                test -L "${framework_root}" || \
-                test "$(/usr/bin/stat -f '%u' "${framework_root}")" != "0" || \
-                test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" != \
-                  "${seal_installed_root_identity}"; then
-                rollback_ready=0
-                cleanup_status=70
-              fi
-              if test "${seal_quarantine_state:-unvalidated}" = "active"; then
-                if test "${seal_quarantine%/*}" != "${framework_parent}" || \
-                  test ! -d "${seal_quarantine}" || \
-                  test -L "${seal_quarantine}" || \
-                  test "$(/usr/bin/stat -f '%u' "${seal_quarantine}")" != "0" || \
-                  test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" != \
-                    "${seal_quarantine_identity}"; then
+              candidate_present=0
+              if test -e "${framework_root}" || test -L "${framework_root}"; then
+                if test ! -d "${framework_root}" || \
+                  test -L "${framework_root}" || \
+                  test "$(/usr/bin/stat -f '%u' "${framework_root}")" != "0"; then
                   rollback_ready=0
-                  if test "${cleanup_status}" -eq 0; then
-                    cleanup_status=70
-                  fi
-                fi
-              elif test "${seal_quarantine_state:-unvalidated}" != "none"; then
-                rollback_ready=0
-                if test "${cleanup_status}" -eq 0; then
-                  cleanup_status=70
-                fi
-              fi
-              if test "${rollback_ready}" -eq 1; then
-                /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
-                  "${framework_root}" -depth -delete || {
-                    candidate_status="$?"
-                    if test "${cleanup_status}" -eq 0; then
-                      cleanup_status="${candidate_status}"
-                    fi
-                  }
-                if test -e "${framework_root}" || test -L "${framework_root}"; then
-                  if test "${cleanup_status}" -eq 0; then
-                    cleanup_status=70
-                  fi
-                elif test "${seal_quarantine_state}" = "active"; then
-                  /usr/bin/sudo --non-interactive /bin/mv \
-                    "${seal_quarantine}" "${framework_root}" || {
-                      candidate_status="$?"
-                      if test "${cleanup_status}" -eq 0; then
-                        cleanup_status="${candidate_status}"
-                      fi
-                    }
-                  if test ! -d "${framework_root}" || \
-                    test -L "${framework_root}" || \
-                    test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" != \
-                      "${seal_quarantine_identity}" || \
-                    test -e "${seal_quarantine}" || \
-                    test -L "${seal_quarantine}"; then
-                    if test "${cleanup_status}" -eq 0; then
-                      cleanup_status=70
-                    fi
+                else
+                  observed_root_identity="$(/usr/bin/stat -f '%d:%i' \
+                    "${framework_root}")"
+                  if test "${seal_initial_state}" = "present" && \
+                    test "${observed_root_identity}" = \
+                      "${seal_previous_root_identity}"; then
+                    candidate_present=0
+                  elif test "${seal_installed_root_identity}" != "none" && \
+                    test "${observed_root_identity}" = \
+                      "${seal_installed_root_identity}"; then
+                    candidate_present=1
+                  else
+                    rollback_ready=0
                   fi
                 fi
               fi
-            elif test "${seal_transaction_phase:-unvalidated}" = "committed"; then
-              if test "${seal_quarantine_state:-unvalidated}" = "active"; then
-                if test "${seal_quarantine%/*}" = "${framework_parent}" && \
+              if test "${seal_initial_state}" = "present"; then
+                if test "${candidate_present}" -eq 0 && \
+                  test -d "${framework_root}" && \
+                  test ! -L "${framework_root}" && \
+                  test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = \
+                    "${seal_previous_root_identity}" && \
+                  test ! -e "${seal_quarantine}" && \
+                  test ! -L "${seal_quarantine}"; then
+                  seal_quarantine_state="none"
+                elif test "${seal_quarantine%/*}" = "${framework_parent}" && \
                   test -d "${seal_quarantine}" && \
                   test ! -L "${seal_quarantine}" && \
                   test "$(/usr/bin/stat -f '%u' "${seal_quarantine}")" = "0" && \
                   test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" = \
-                    "${seal_quarantine_identity}"; then
-                  /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
-                    "${seal_quarantine}" -depth -delete || {
-                      candidate_status="$?"
-                      if test "${cleanup_status}" -eq 0; then
-                        cleanup_status="${candidate_status}"
-                      fi
-                    }
-                  if test -e "${seal_quarantine}" || \
-                    test -L "${seal_quarantine}"; then
-                    if test "${cleanup_status}" -eq 0; then
-                      cleanup_status=70
-                    fi
-                  fi
+                    "${seal_previous_root_identity}"; then
+                  seal_quarantine_state="active"
+                else
+                  rollback_ready=0
+                fi
+              elif test "${seal_initial_state}" = "absent" && \
+                test "${seal_previous_root_identity}" = "none" && \
+                test "${seal_quarantine}" = "none" && \
+                test "${seal_quarantine_identity}" = "none"; then
+                seal_quarantine_state="none"
+              else
+                rollback_ready=0
+              fi
+              if test "${rollback_ready}" -eq 1 && \
+                test "${candidate_present}" -eq 1; then
+                /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+                  "${framework_root}" -depth -delete || cleanup_status=70
+                if test -e "${framework_root}" || test -L "${framework_root}"; then
+                  cleanup_status=70
+                fi
+              fi
+              if test "${rollback_ready}" -eq 1 && \
+                test "${seal_initial_state}" = "present" && \
+                { test ! -e "${framework_root}" && test ! -L "${framework_root}"; }; then
+                /usr/bin/sudo --non-interactive /bin/mv \
+                  "${seal_quarantine}" "${framework_root}" || cleanup_status=70
+              fi
+              if test "${rollback_ready}" -ne 1; then
+                cleanup_status=70
+              elif test "${seal_initial_state}" = "present"; then
+                if test ! -d "${framework_root}" || \
+                  test -L "${framework_root}" || \
+                  test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" != \
+                    "${seal_previous_root_identity}" || \
+                  test -e "${seal_quarantine}" || \
+                  test -L "${seal_quarantine}"; then
+                  cleanup_status=70
+                fi
+              elif test -e "${framework_root}" || test -L "${framework_root}"; then
+                cleanup_status=70
+              fi
+              if test "${cleanup_status}" -eq 0; then
+                if printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=rolled-back\n' \
+                  >> "${GITHUB_ENV}"; then
+                  seal_transaction_phase="rolled-back"
                 else
                   cleanup_status=70
                 fi
-              elif test "${seal_quarantine_state:-unvalidated}" != "none"; then
-                cleanup_status=70
               fi
-            elif test "${seal_transaction_phase:-unvalidated}" != "complete"; then
+            else
               cleanup_status=70
             fi
             if test "${cleanup_status}" -ne 0; then
-              printf 'lcf-framework-transaction-cleanup: phase=%s status=%s\n' \
-                "${seal_transaction_phase:-unvalidated}" "${cleanup_status}" >&2
+              printf 'lcf-framework-transaction: owner=seal phase=%s primary=%s signal=%s cleanup=failed\n' \
+                "${seal_transaction_phase:-unvalidated}" \
+                "${saved_status}" "${seal_signal:-none}" >&2
+              exit 70
             fi
             if test "${saved_status}" -ne 0; then
-              exit "${saved_status}"
+              printf 'lcf-framework-transaction: owner=seal phase=%s primary=%s signal=%s cleanup=complete\n' \
+                "${seal_transaction_phase:-unvalidated}" \
+                "${saved_status}" "${seal_signal:-none}" >&2
             fi
-            exit "${cleanup_status}"
+            exit "${saved_status}"
+          }
+          handle_seal_signal() {
+            seal_signal="$1"
+            exit "$2"
           }
           trap cleanup_sealed_framework EXIT
+          trap 'handle_seal_signal HUP 129' HUP
+          trap 'handle_seal_signal INT 130' INT
+          trap 'handle_seal_signal TERM 143' TERM
           test -d "${library_root}"
           test ! -L "${library_root}"
           test "$(cd "${library_root}" && /bin/pwd -P)" = "${library_root}"
@@ -538,32 +698,37 @@ jobs:
           test -d "${framework_parent}"
           test ! -L "${framework_parent}"
           test "$(cd "${framework_parent}" && /bin/pwd -P)" = "${framework_parent}"
+          test "${LCF_REVIEWED_FRAMEWORK_TRANSACTION_ARMED:-}" = "true"
+          test "${seal_transaction_phase}" = "pending"
+          [[ "${seal_installed_root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
           test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE:-}"
           test -n "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY:-}"
-          if test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" = "none"; then
-            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" = "none"
+          if test "${seal_initial_state}" = "absent"; then
+            test "${seal_previous_root_identity}" = "none"
+            test "${seal_quarantine}" = "none"
+            test "${seal_quarantine_identity}" = "none"
             seal_quarantine_state="none"
-          else
+          elif test "${seal_initial_state}" = "present"; then
+            [[ "${seal_previous_root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+            test "${seal_quarantine}" != "none"
+            test "${seal_quarantine_identity}" = \
+              "${seal_previous_root_identity}"
             readonly quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
-            quarantine_suffix="${LCF_REVIEWED_FRAMEWORK_QUARANTINE#"${quarantine_prefix}"}"
+            quarantine_suffix="${seal_quarantine#"${quarantine_prefix}"}"
             readonly quarantine_suffix
-            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE%/*}" = \
-              "${framework_parent}"
-            test "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" = \
+            test "${seal_quarantine%/*}" = "${framework_parent}"
+            test "${seal_quarantine}" = \
               "${quarantine_prefix}${quarantine_suffix}"
             [[ "${quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]
-            [[ "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" =~ \
-              ^[0-9]+:[0-9]+$ ]]
-            test -d "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
-            test ! -L "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
+            test -d "${seal_quarantine}"
+            test ! -L "${seal_quarantine}"
             test "$(/usr/bin/stat -f '%u' \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"
+              "${seal_quarantine}")" = "0"
             test "$(/usr/bin/stat -f '%d:%i' \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = \
-              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
-            seal_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE}"
-            seal_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}"
+              "${seal_quarantine}")" = "${seal_previous_root_identity}"
             seal_quarantine_state="active"
+          else
+            exit 1
           fi
           test -d "${framework_root}"
           test ! -L "${framework_root}"
@@ -574,8 +739,8 @@ jobs:
           readonly parent_identity="$(/usr/bin/stat -f '%d:%i' "${framework_parent}")"
           readonly root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
           [[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+          test "${root_identity}" = "${seal_installed_root_identity}"
           test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
-          seal_installed_root_identity="${root_identity}"
           /usr/bin/sudo --non-interactive /usr/sbin/chown \
             -h 0:0 "${library_root}"
           /usr/bin/sudo --non-interactive /bin/chmod \
@@ -688,10 +853,13 @@ jobs:
             /usr/bin/shasum -a 256 --check
           readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"
           readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"
-          readonly framework_verifier_size="27853"
-          readonly framework_verifier_sha256="ffbf6ed2f41a35f44edda68bdd831be4d42384f9488dcdc93f8242abcfb9e218"
-          readonly framework_lock_size="4198"
-          readonly framework_lock_sha256="d5fb2f15b8e0440cdac44418c3a151605dd39f195c5a784d8d9f86b2c1623d97"
+          readonly framework_inventory="${GITHUB_WORKSPACE}/backend/packaging/python-framework-sealed-inventory.json"
+          readonly framework_verifier_size="53440"
+          readonly framework_verifier_sha256="473f5c4fb1aab54a5789a0b58e85008b49af31c84b370b2626b4118af640584a"
+          readonly framework_lock_size="4853"
+          readonly framework_lock_sha256="a6fa96bc5c7a16bb3576f14bea8e2d3b5d2a97a525cc1633e6cc57dbbff6ebac"
+          readonly framework_inventory_size="620662"
+          readonly framework_inventory_sha256="b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
           /usr/bin/env -i \
             HOME="${RUNNER_TEMP}" \
             PATH="/usr/bin:/bin" \
@@ -706,23 +874,18 @@ jobs:
           const path = require("node:path");
           const { TextDecoder } = require("node:util");
           const decoder = new TextDecoder("utf-8", { fatal: true });
-          const expectedArgumentCount = 7;
+          const expectedArgumentCount = 10;
           const argumentsValue = process.argv.slice(1);
-          if (
-            argumentsValue.length !== expectedArgumentCount ||
-            typeof fs.constants.O_NOFOLLOW !== "number"
-          ) {
-            throw new Error("Reviewed framework loader contract is unavailable");
-          }
-          const [
-            verifierPath,
-            verifierSizeText,
-            verifierSha256,
-            lockPath,
-            lockSizeText,
-            lockSha256,
-            frameworkRoot,
-          ] = argumentsValue;
+          let verifierPath;
+          let verifierSizeText;
+          let verifierSha256;
+          let lockPath;
+          let lockSizeText;
+          let lockSha256;
+          let inventoryPath;
+          let inventorySizeText;
+          let inventorySha256;
+          let frameworkRoot;
           function identity(info) {
             return [
               info.dev,
@@ -819,13 +982,80 @@ jobs:
           }
           let verifierBinding;
           let lockBinding;
+          let inventoryBinding;
+          let verifier;
+          let digest;
+          let failure;
+          function rememberFailure(error) {
+            if (failure === undefined) {
+              failure = error;
+            }
+          }
+          function reportFailure(error) {
+            let diagnostics;
+            try {
+              if (
+                verifier !== undefined &&
+                typeof verifier.VerificationError === "function" &&
+                error instanceof verifier.VerificationError &&
+                error.diagnostics !== undefined &&
+                typeof verifier.formatVerificationDiagnostics === "function"
+              ) {
+                const candidate = verifier.formatVerificationDiagnostics(
+                  error.diagnostics,
+                );
+                if (
+                  typeof candidate === "string" &&
+                  Buffer.byteLength(candidate, "utf8") <= 8192 &&
+                  !candidate.includes("\r") &&
+                  !candidate.includes("\0")
+                ) {
+                  diagnostics = candidate;
+                }
+              }
+            } catch (_diagnosticError) {
+              diagnostics = undefined;
+            }
+            let message = "lcf-reviewed-framework-verification: failed\n";
+            if (diagnostics !== undefined) {
+              message += `${diagnostics}\n`;
+            }
+            try {
+              fs.writeSync(2, message);
+            } catch (_reportError) {
+              // The fixed reporter must never surface an exception or stack.
+            }
+          }
           try {
+            if (
+              argumentsValue.length !== expectedArgumentCount ||
+              typeof fs.constants.O_NOFOLLOW !== "number"
+            ) {
+              throw new Error("Reviewed framework loader contract is unavailable");
+            }
+            [
+              verifierPath,
+              verifierSizeText,
+              verifierSha256,
+              lockPath,
+              lockSizeText,
+              lockSha256,
+              inventoryPath,
+              inventorySizeText,
+              inventorySha256,
+              frameworkRoot,
+            ] = argumentsValue;
             verifierBinding = openPinned(
               verifierPath,
               verifierSizeText,
               verifierSha256,
             );
             lockBinding = openPinned(lockPath, lockSizeText, lockSha256);
+            inventoryBinding = openPinned(
+              inventoryPath,
+              inventorySizeText,
+              inventorySha256,
+            );
             const reviewedModule = new Module(verifierPath);
             reviewedModule.filename = verifierPath;
             reviewedModule.paths = [];
@@ -833,25 +1063,57 @@ jobs:
               decoder.decode(verifierBinding.content),
               verifierPath,
             );
-            const verifier = reviewedModule.exports;
+            verifier = reviewedModule.exports;
             verifier.verifyStartupEnvironment(process.env);
             const lockValue = JSON.parse(decoder.decode(lockBinding.content));
-            const digest = verifier.verifyReviewedPythonFramework({
+            const inventoryValue = JSON.parse(
+              decoder.decode(inventoryBinding.content),
+            );
+            digest = verifier.verifyReviewedPythonFramework({
               root: frameworkRoot,
               lockValue,
+              inventoryValue,
             });
             if (!/^[0-9a-f]{64}$/.test(digest)) {
               throw new Error("Reviewed framework result is malformed");
             }
             revalidate(verifierBinding);
             revalidate(lockBinding);
-            process.stdout.write(`${digest}\n`);
+            revalidate(inventoryBinding);
+          } catch (error) {
+            rememberFailure(error);
           } finally {
+            if (inventoryBinding !== undefined) {
+              try {
+                fs.closeSync(inventoryBinding.descriptor);
+              } catch (error) {
+                rememberFailure(error);
+              }
+            }
             if (lockBinding !== undefined) {
-              fs.closeSync(lockBinding.descriptor);
+              try {
+                fs.closeSync(lockBinding.descriptor);
+              } catch (error) {
+                rememberFailure(error);
+              }
             }
             if (verifierBinding !== undefined) {
-              fs.closeSync(verifierBinding.descriptor);
+              try {
+                fs.closeSync(verifierBinding.descriptor);
+              } catch (error) {
+                rememberFailure(error);
+              }
+            }
+          }
+          if (failure !== undefined) {
+            reportFailure(failure);
+            process.exitCode = 1;
+          } else {
+            try {
+              fs.writeSync(1, `${digest}\n`);
+            } catch (error) {
+              reportFailure(error);
+              process.exitCode = 1;
             }
           }
           ' \
@@ -861,6 +1123,9 @@ jobs:
             "${framework_lock}" \
             "${framework_lock_size}" \
             "${framework_lock_sha256}" \
+            "${framework_inventory}" \
+            "${framework_inventory_size}" \
+            "${framework_inventory_sha256}" \
             "${framework_root}"
           test "$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' \
             "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \
@@ -869,20 +1134,590 @@ jobs:
             "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \
             "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \
             /usr/bin/shasum -a 256 --check
-          seal_transaction_phase="committed"
-          if test "${seal_quarantine_state}" = "active"; then
-            test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" = \
-              "${seal_quarantine_identity}"
-            /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
-              "${seal_quarantine}" -depth -delete
-            test ! -e "${seal_quarantine}"
-            test ! -L "${seal_quarantine}"
-            seal_quarantine_state="none"
-            seal_quarantine="none"
-            seal_quarantine_identity="none"
-          fi
-          seal_transaction_phase="complete"
+          test -d "${framework_root}"
+          test ! -L "${framework_root}"
+          test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = \
+            "${seal_installed_root_identity}"
+          trap '' HUP INT TERM
+          printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=committed\n' \
+            >> "${GITHUB_ENV}"
           trap - EXIT
+          seal_transaction_phase="committed"
+
+      - name: Validate reviewed Python framework transaction postcondition
+        if: ${{ always() }}
+        env:
+          LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME: ${{ steps.provision_reviewed_python.outcome }}
+          LCF_REVIEWED_FRAMEWORK_SEAL_OUTCOME: ${{ steps.seal_reviewed_python.outcome }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          readonly framework_root="/Library/Frameworks/Python.framework/Versions/3.13"
+          readonly framework_parent="${framework_root%/*}"
+          postcondition_signal="none"
+          postcondition_restore_ready="false"
+          fail_postcondition() {
+            local -r failure_class="$1"
+            trap - ERR
+            trap '' HUP INT TERM
+            printf 'lcf-framework-transaction: owner=postcondition phase=%s producer=%s seal=%s signal=%s primary=70 failure=%s cleanup=failed\n' \
+              "${postcondition_phase:-unarmed}" \
+              "${LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME:-unknown}" \
+              "${LCF_REVIEWED_FRAMEWORK_SEAL_OUTCOME:-unknown}" \
+              "${postcondition_signal}" "${failure_class}" >&2
+            exit 70
+          }
+          finish_postcondition_failure() {
+            local -r failure_class="$1"
+            local primary_status="$2"
+            trap - ERR
+            trap '' HUP INT TERM
+            if ! [[ "${primary_status}" =~ ^([1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ]]; then
+              primary_status=1
+            fi
+            printf 'lcf-framework-transaction: owner=postcondition phase=%s producer=%s seal=%s signal=%s primary=%s failure=%s cleanup=complete\n' \
+              "${postcondition_phase:-unarmed}" \
+              "${LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME:-unknown}" \
+              "${LCF_REVIEWED_FRAMEWORK_SEAL_OUTCOME:-unknown}" \
+              "${postcondition_signal}" "${primary_status}" \
+              "${failure_class}" >&2
+            exit "${primary_status}"
+          }
+          handle_postcondition_signal() {
+            postcondition_signal="$1"
+            local -r signal_status="$2"
+            trap - ERR
+            if test "${postcondition_restore_ready}" = "true"; then
+              case "${transaction_phase:-unvalidated}:${postcondition_phase:-unarmed}" in
+                pending:pending|rolled-back:rolled-back|committed:committed)
+                  trap '' HUP INT TERM
+                  trap 'fail_postcondition rollback' ERR
+                  restore_initial_state
+                  trap - ERR
+                  finish_postcondition_failure signal "${signal_status}"
+                  ;;
+              esac
+            fi
+            if test "${transaction_phase:-unvalidated}" = "complete" && \
+              test "${postcondition_phase:-unarmed}" = "complete"; then
+              finish_postcondition_failure signal "${signal_status}"
+            fi
+            fail_postcondition signal
+          }
+          trap 'fail_postcondition command' ERR
+          trap 'handle_postcondition_signal HUP 129' HUP
+          trap 'handle_postcondition_signal INT 130' INT
+          trap 'handle_postcondition_signal TERM 143' TERM
+          case "${LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME:-unknown}" in
+            success|failure|cancelled|skipped)
+              ;;
+            *)
+              fail_postcondition producer-outcome
+              ;;
+          esac
+          case "${LCF_REVIEWED_FRAMEWORK_SEAL_OUTCOME:-unknown}" in
+            success|failure|cancelled|skipped)
+              ;;
+            *)
+              fail_postcondition seal-outcome
+              ;;
+          esac
+          if test "${LCF_REVIEWED_FRAMEWORK_TRANSACTION_ARMED:-false}" != "true"; then
+            test "${LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME}" != "success"
+            trap - ERR HUP INT TERM
+            exit 0
+          fi
+          postcondition_phase="${LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE:-unvalidated}"
+          readonly transaction_phase="${postcondition_phase}"
+          readonly initial_state="${LCF_REVIEWED_FRAMEWORK_INITIAL_STATE:-unvalidated}"
+          readonly previous_root_identity="${LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY:-none}"
+          readonly candidate_root_identity="${LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY:-none}"
+          readonly framework_quarantine="${LCF_REVIEWED_FRAMEWORK_QUARANTINE:-none}"
+          readonly framework_quarantine_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY:-none}"
+          readonly quarantine_placeholder="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_PLACEHOLDER:-none}"
+          readonly quarantine_placeholder_identity="${LCF_REVIEWED_FRAMEWORK_QUARANTINE_PLACEHOLDER_IDENTITY:-none}"
+          if test "${initial_state}" = "present"; then
+            [[ "${previous_root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+            test "${framework_quarantine_identity}" = "${previous_root_identity}"
+            readonly quarantine_prefix="${framework_parent}/.lcf-python-quarantine."
+            quarantine_suffix="${framework_quarantine#"${quarantine_prefix}"}"
+            readonly quarantine_suffix
+            test "${framework_quarantine%/*}" = "${framework_parent}"
+            test "${framework_quarantine}" = \
+              "${quarantine_prefix}${quarantine_suffix}"
+            [[ "${quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]
+            test "${quarantine_placeholder}" = "${framework_quarantine}"
+            [[ "${quarantine_placeholder_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+          elif test "${initial_state}" = "absent"; then
+            test "${previous_root_identity}" = "none"
+            test "${framework_quarantine}" = "none"
+            test "${framework_quarantine_identity}" = "none"
+            test "${quarantine_placeholder}" = "none"
+            test "${quarantine_placeholder_identity}" = "none"
+          else
+            fail_postcondition initial-state
+          fi
+          root_state="absent"
+          if test -e "${framework_root}" || test -L "${framework_root}"; then
+            test -d "${framework_root}"
+            test ! -L "${framework_root}"
+            test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
+            observed_root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
+            if test "${candidate_root_identity}" != "none" && \
+              test "${observed_root_identity}" = "${candidate_root_identity}"; then
+              root_state="candidate"
+            elif test "${initial_state}" = "present" && \
+              test "${observed_root_identity}" = "${previous_root_identity}"; then
+              root_state="previous"
+            else
+              fail_postcondition root-identity
+            fi
+          fi
+          quarantine_state="absent"
+          if test "${initial_state}" = "present" && \
+            { test -e "${framework_quarantine}" || test -L "${framework_quarantine}"; }; then
+            test -d "${framework_quarantine}"
+            test ! -L "${framework_quarantine}"
+            test "$(/usr/bin/stat -f '%u' "${framework_quarantine}")" = "0"
+            test "$(/usr/bin/stat -f '%d:%i' "${framework_quarantine}")" = \
+              "${previous_root_identity}"
+            quarantine_state="previous"
+          fi
+          restore_initial_state() {
+            trap '' HUP INT TERM
+            if test "${root_state}" = "candidate"; then
+              test -d "${framework_root}"
+              test ! -L "${framework_root}"
+              test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
+              test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = \
+                "${candidate_root_identity}"
+              /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+                "${framework_root}" -depth -delete
+              test ! -e "${framework_root}"
+              test ! -L "${framework_root}"
+              root_state="absent"
+            fi
+            if test "${initial_state}" = "present"; then
+              if test "${root_state}" = "absent" && \
+                test "${quarantine_state}" = "previous"; then
+                test -d "${framework_quarantine}"
+                test ! -L "${framework_quarantine}"
+                test "$(/usr/bin/stat -f '%u' "${framework_quarantine}")" = "0"
+                test "$(/usr/bin/stat -f '%d:%i' "${framework_quarantine}")" = \
+                  "${previous_root_identity}"
+                /usr/bin/sudo --non-interactive /bin/mv \
+                  "${framework_quarantine}" "${framework_root}"
+                root_state="previous"
+                quarantine_state="absent"
+              fi
+              test "${root_state}" = "previous"
+              test "${quarantine_state}" = "absent"
+              test -d "${framework_root}"
+              test ! -L "${framework_root}"
+              test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = \
+                "${previous_root_identity}"
+              test ! -e "${framework_quarantine}"
+              test ! -L "${framework_quarantine}"
+            else
+              test "${root_state}" = "absent"
+              test "${quarantine_state}" = "absent"
+              test ! -e "${framework_root}"
+              test ! -L "${framework_root}"
+            fi
+            postcondition_phase="rolled-back"
+            printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=rolled-back\n' \
+              >> "${GITHUB_ENV}"
+          }
+          postcondition_restore_ready="true"
+          case "${transaction_phase}" in
+            pending|rolled-back)
+              trap '' HUP INT TERM
+              trap 'fail_postcondition rollback' ERR
+              restore_initial_state
+              trap - ERR
+              if test "${LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME}" = "success" && \
+                test "${LCF_REVIEWED_FRAMEWORK_SEAL_OUTCOME}" = "success"; then
+                finish_postcondition_failure successful-steps-rolled-back 1
+              fi
+              trap - ERR HUP INT TERM
+              exit 0
+              ;;
+            committed)
+              if test "${LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME}" != "success" || \
+                test "${LCF_REVIEWED_FRAMEWORK_SEAL_OUTCOME}" != "success"; then
+                trap '' HUP INT TERM
+                trap 'fail_postcondition rollback' ERR
+                restore_initial_state
+                trap - ERR
+                trap - ERR HUP INT TERM
+                exit 0
+              fi
+              [[ "${candidate_root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+              test "${root_state}" = "candidate"
+              if test "${initial_state}" = "present"; then
+                test "${quarantine_state}" = "previous"
+              else
+                test "${quarantine_state}" = "absent"
+              fi
+              ;;
+            complete)
+              test "${LCF_REVIEWED_FRAMEWORK_PRODUCER_OUTCOME}" = "success"
+              test "${LCF_REVIEWED_FRAMEWORK_SEAL_OUTCOME}" = "success"
+              [[ "${candidate_root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
+              test "${root_state}" = "candidate"
+              test "${quarantine_state}" = "absent"
+              ;;
+            *)
+              fail_postcondition transaction-phase
+              ;;
+          esac
+          handle_verification_failure() {
+            local verification_status="$?"
+            trap - ERR
+            if ! [[ "${verification_status}" =~ ^([1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ]]; then
+              verification_status=1
+            fi
+            if test "${transaction_phase}" = "committed" && \
+              test "${postcondition_phase}" = "committed"; then
+              trap '' HUP INT TERM
+              trap 'fail_postcondition rollback' ERR
+              restore_initial_state
+              trap - ERR
+              finish_postcondition_failure verification "${verification_status}"
+            fi
+            fail_postcondition verification
+          }
+          trap handle_verification_failure ERR
+          [[ "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test "$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"
+          printf '%s  %s\n' \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \
+            /usr/bin/shasum -a 256 --check
+          readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"
+          readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"
+          readonly framework_inventory="${GITHUB_WORKSPACE}/backend/packaging/python-framework-sealed-inventory.json"
+          readonly framework_verifier_size="53440"
+          readonly framework_verifier_sha256="473f5c4fb1aab54a5789a0b58e85008b49af31c84b370b2626b4118af640584a"
+          readonly framework_lock_size="4853"
+          readonly framework_lock_sha256="a6fa96bc5c7a16bb3576f14bea8e2d3b5d2a97a525cc1633e6cc57dbbff6ebac"
+          readonly framework_inventory_size="620662"
+          readonly framework_inventory_sha256="b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+          /usr/bin/env -i \
+            HOME="${RUNNER_TEMP}" \
+            PATH="/usr/bin:/bin" \
+            NODE_OPTIONS= \
+            NODE_PATH= \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" \
+            -e '
+          "use strict";
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const Module = require("node:module");
+          const path = require("node:path");
+          const { TextDecoder } = require("node:util");
+          const decoder = new TextDecoder("utf-8", { fatal: true });
+          const expectedArgumentCount = 10;
+          const argumentsValue = process.argv.slice(1);
+          let verifierPath;
+          let verifierSizeText;
+          let verifierSha256;
+          let lockPath;
+          let lockSizeText;
+          let lockSha256;
+          let inventoryPath;
+          let inventorySizeText;
+          let inventorySha256;
+          let frameworkRoot;
+          function identity(info) {
+            return [
+              info.dev,
+              info.ino,
+              info.mode,
+              info.nlink,
+              info.uid,
+              info.gid,
+              info.size,
+              info.mtimeNs,
+              info.ctimeNs,
+            ].map(String).join(":");
+          }
+          function openPinned(pathname, sizeText, expectedSha256) {
+            if (
+              typeof pathname !== "string" ||
+              !path.posix.isAbsolute(pathname) ||
+              pathname.includes("\0") ||
+              !/^[1-9][0-9]*$/.test(sizeText) ||
+              !/^[0-9a-f]{64}$/.test(expectedSha256)
+            ) {
+              throw new Error("Reviewed framework input contract is unsafe");
+            }
+            const expectedSize = BigInt(sizeText);
+            if (expectedSize > 1048576n) {
+              throw new Error("Reviewed framework input exceeds its size bound");
+            }
+            const namedBefore = fs.lstatSync(pathname, { bigint: true });
+            const unsafeMode = (namedBefore.mode & 0o7022n) !== 0n;
+            if (
+              !namedBefore.isFile() ||
+              namedBefore.isSymbolicLink() ||
+              namedBefore.uid !== BigInt(process.geteuid()) ||
+              namedBefore.nlink !== 1n ||
+              namedBefore.size !== expectedSize ||
+              unsafeMode
+            ) {
+              throw new Error("Reviewed framework input is unsafe");
+            }
+            const descriptor = fs.openSync(
+              pathname,
+              fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+            );
+            try {
+              const heldBefore = fs.fstatSync(descriptor, { bigint: true });
+              if (identity(heldBefore) !== identity(namedBefore)) {
+                throw new Error("Reviewed framework input changed before reading");
+              }
+              const content = Buffer.alloc(Number(expectedSize));
+              let offset = 0;
+              while (offset < content.length) {
+                const count = fs.readSync(
+                  descriptor,
+                  content,
+                  offset,
+                  content.length - offset,
+                  null,
+                );
+                if (count === 0) {
+                  throw new Error("Reviewed framework input was truncated");
+                }
+                offset += count;
+              }
+              const heldAfter = fs.fstatSync(descriptor, { bigint: true });
+              const namedAfter = fs.lstatSync(pathname, { bigint: true });
+              if (
+                identity(heldAfter) !== identity(heldBefore) ||
+                identity(namedAfter) !== identity(heldBefore) ||
+                crypto.createHash("sha256").update(content).digest("hex") !==
+                  expectedSha256
+              ) {
+                throw new Error("Reviewed framework input changed while reading");
+              }
+              return Object.freeze({
+                content,
+                descriptor,
+                identity: identity(heldBefore),
+                pathname,
+              });
+            } catch (error) {
+              fs.closeSync(descriptor);
+              throw error;
+            }
+          }
+          function revalidate(binding) {
+            const held = fs.fstatSync(binding.descriptor, { bigint: true });
+            const named = fs.lstatSync(binding.pathname, { bigint: true });
+            if (
+              identity(held) !== binding.identity ||
+              identity(named) !== binding.identity
+            ) {
+              throw new Error("Reviewed framework input changed during verification");
+            }
+          }
+          let verifierBinding;
+          let lockBinding;
+          let inventoryBinding;
+          let verifier;
+          let digest;
+          let failure;
+          function rememberFailure(error) {
+            if (failure === undefined) {
+              failure = error;
+            }
+          }
+          function reportFailure(error) {
+            let diagnostics;
+            try {
+              if (
+                verifier !== undefined &&
+                typeof verifier.VerificationError === "function" &&
+                error instanceof verifier.VerificationError &&
+                error.diagnostics !== undefined &&
+                typeof verifier.formatVerificationDiagnostics === "function"
+              ) {
+                const candidate = verifier.formatVerificationDiagnostics(
+                  error.diagnostics,
+                );
+                if (
+                  typeof candidate === "string" &&
+                  Buffer.byteLength(candidate, "utf8") <= 8192 &&
+                  !candidate.includes("\r") &&
+                  !candidate.includes("\0")
+                ) {
+                  diagnostics = candidate;
+                }
+              }
+            } catch (_diagnosticError) {
+              diagnostics = undefined;
+            }
+            let message = "lcf-reviewed-framework-verification: failed\n";
+            if (diagnostics !== undefined) {
+              message += `${diagnostics}\n`;
+            }
+            try {
+              fs.writeSync(2, message);
+            } catch (_reportError) {
+              // The fixed reporter must never surface an exception or stack.
+            }
+          }
+          try {
+            if (
+              argumentsValue.length !== expectedArgumentCount ||
+              typeof fs.constants.O_NOFOLLOW !== "number"
+            ) {
+              throw new Error("Reviewed framework loader contract is unavailable");
+            }
+            [
+              verifierPath,
+              verifierSizeText,
+              verifierSha256,
+              lockPath,
+              lockSizeText,
+              lockSha256,
+              inventoryPath,
+              inventorySizeText,
+              inventorySha256,
+              frameworkRoot,
+            ] = argumentsValue;
+            verifierBinding = openPinned(
+              verifierPath,
+              verifierSizeText,
+              verifierSha256,
+            );
+            lockBinding = openPinned(lockPath, lockSizeText, lockSha256);
+            inventoryBinding = openPinned(
+              inventoryPath,
+              inventorySizeText,
+              inventorySha256,
+            );
+            const reviewedModule = new Module(verifierPath);
+            reviewedModule.filename = verifierPath;
+            reviewedModule.paths = [];
+            reviewedModule._compile(
+              decoder.decode(verifierBinding.content),
+              verifierPath,
+            );
+            verifier = reviewedModule.exports;
+            verifier.verifyStartupEnvironment(process.env);
+            const lockValue = JSON.parse(decoder.decode(lockBinding.content));
+            const inventoryValue = JSON.parse(
+              decoder.decode(inventoryBinding.content),
+            );
+            digest = verifier.verifyReviewedPythonFramework({
+              root: frameworkRoot,
+              lockValue,
+              inventoryValue,
+            });
+            if (!/^[0-9a-f]{64}$/.test(digest)) {
+              throw new Error("Reviewed framework result is malformed");
+            }
+            revalidate(verifierBinding);
+            revalidate(lockBinding);
+            revalidate(inventoryBinding);
+          } catch (error) {
+            rememberFailure(error);
+          } finally {
+            if (inventoryBinding !== undefined) {
+              try {
+                fs.closeSync(inventoryBinding.descriptor);
+              } catch (error) {
+                rememberFailure(error);
+              }
+            }
+            if (lockBinding !== undefined) {
+              try {
+                fs.closeSync(lockBinding.descriptor);
+              } catch (error) {
+                rememberFailure(error);
+              }
+            }
+            if (verifierBinding !== undefined) {
+              try {
+                fs.closeSync(verifierBinding.descriptor);
+              } catch (error) {
+                rememberFailure(error);
+              }
+            }
+          }
+          if (failure !== undefined) {
+            reportFailure(failure);
+            process.exitCode = 1;
+          } else {
+            try {
+              fs.writeSync(1, `${digest}\n`);
+            } catch (error) {
+              reportFailure(error);
+              process.exitCode = 1;
+            }
+          }
+          ' \
+            "${framework_verifier}" \
+            "${framework_verifier_size}" \
+            "${framework_verifier_sha256}" \
+            "${framework_lock}" \
+            "${framework_lock_size}" \
+            "${framework_lock_sha256}" \
+            "${framework_inventory}" \
+            "${framework_inventory_size}" \
+            "${framework_inventory_sha256}" \
+            "${framework_root}"
+          trap 'fail_postcondition identity-mismatch' ERR
+          test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = \
+            "${candidate_root_identity}"
+          test "$(/usr/bin/stat -f '%d:%i:%Lp:%u:%g:%l:%z:%m' \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}")" = \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"
+          printf '%s  %s\n' \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}" \
+            "${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" | \
+            /usr/bin/shasum -a 256 --check
+          if test "${transaction_phase}" = "committed"; then
+            test -d "${framework_root}"
+            test ! -L "${framework_root}"
+            test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
+            test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = \
+              "${candidate_root_identity}"
+            if test "${initial_state}" = "present"; then
+              test -d "${framework_quarantine}"
+              test ! -L "${framework_quarantine}"
+              test "$(/usr/bin/stat -f '%u' \
+                "${framework_quarantine}")" = "0"
+              test "$(/usr/bin/stat -f '%d:%i' \
+                "${framework_quarantine}")" = "${previous_root_identity}"
+            fi
+            trap '' HUP INT TERM
+            postcondition_phase="finalizing"
+            trap 'fail_postcondition finalizing' ERR
+            printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=finalizing\n' \
+              >> "${GITHUB_ENV}"
+            if test "${initial_state}" = "present"; then
+              /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
+                "${framework_quarantine}" -depth -delete
+              test ! -e "${framework_quarantine}"
+              test ! -L "${framework_quarantine}"
+            fi
+            test -d "${framework_root}"
+            test ! -L "${framework_root}"
+            test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
+            test "$(/usr/bin/stat -f '%d:%i' "${framework_root}")" = \
+              "${candidate_root_identity}"
+            printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete\n' \
+              >> "${GITHUB_ENV}"
+            postcondition_phase="complete"
+          fi
+          trap - ERR HUP INT TERM
 
       - name: Bind exact source provenance
         shell: bash

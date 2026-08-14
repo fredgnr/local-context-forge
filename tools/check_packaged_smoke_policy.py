@@ -14,7 +14,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
 EXPECTED_WORKFLOW_SHA256 = (
-    "fb30be64f717856b2f86c3f95911d549cda235779663ab7ee6334beab7159177"
+    "5e016d7aa9f1fb2678621806055f76ef8a2f00467d3bfea04b6332a16a8e3900"
 )
 MAKEFILE = ROOT / "Makefile"
 BUILD_SCRIPT = ROOT / "tools" / "build_python_sidecar.py"
@@ -23,6 +23,12 @@ PYTHON_BOOTSTRAP = ROOT / "tools" / "bootstrap_python_sidecar.py"
 FRAMEWORK_VERIFIER = ROOT / "tools" / "verify_reviewed_python_framework.cjs"
 FRAMEWORK_VERIFIER_TESTS = (
     ROOT / "tools" / "tests" / "verify_reviewed_python_framework.test.cjs"
+)
+FRAMEWORK_INVENTORY_GENERATOR = (
+    ROOT / "tools" / "generate_reviewed_python_framework_inventory.cjs"
+)
+FRAMEWORK_INVENTORY = (
+    ROOT / "backend" / "packaging" / "python-framework-sealed-inventory.json"
 )
 EXACT_GIT_CHECKER = ROOT / "tools" / "check_exact_git_provenance.py"
 EXACT_GIT_CHECKER_TESTS = (
@@ -42,26 +48,28 @@ REMEDIATION_EVIDENCE = (
     / "2026-08-07-pr21-remediation.md"
 )
 EXPECTED_REVIEWED_INPUT_SHA256 = {
-    "workflow": "fb30be64f717856b2f86c3f95911d549cda235779663ab7ee6334beab7159177",
+    "workflow": "5e016d7aa9f1fb2678621806055f76ef8a2f00467d3bfea04b6332a16a8e3900",
     "makefile": "0406bfd27e312250c48d27899ccff958f25b9fe347871e7643950c437f688977",
     "build_script": "3cc787877d1fb65b8b551911a132400a0fd8e2d3eaf543975eceb88b131d1c19",
     "audit_script": "d3b2d638e28981915f346ead114f86f8bc82ddbbfb91f15416bc3127866504c9",
-    "python_bootstrap": "0a2e6671f7a765f09e31e20a306be48b3756f28b110ae7244a9eefa0ac4e45c4",
-    "framework_verifier": "ffbf6ed2f41a35f44edda68bdd831be4d42384f9488dcdc93f8242abcfb9e218",
-    "framework_verifier_tests": "59f34be890573a0759519022f5dac39572d5330d1f5192a518aa362a6844a46d",
+    "python_bootstrap": "6caf13345e784bed683d8bc63c5e59887b7927606270952c6e3913d6d5edaacc",
+    "framework_verifier": "473f5c4fb1aab54a5789a0b58e85008b49af31c84b370b2626b4118af640584a",
+    "framework_verifier_tests": "1ec360b7f374c213f9ec7a773841e33e138a16d57e390b398e0885b8133bad79",
+    "framework_inventory_generator": "d7873e30d2206f2c8e299bc32884d7698688c637a4b886d8174876d726ed5d1b",
+    "framework_inventory": "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "c89f4182106c65d4fa0d605ff3d235337a3d6dd3c65c675882e57d07b5ec9d11",
+    "python_packaging_tests": "9f6c66af37363ac565f7e9564ad03598fd6b9fab68da4e30f90a5f9afffefda6",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "81695dbc6c131270acef3d0f37ef52f34dcf7ecf345bfa0b1cf831c8bdaffd7d",
+    "remediation_evidence": "f07fd4ecbd812fec366e9a82f024e176372579f6045f2d4566d3fd8bc81ce118",
     "package": "7d4a247182d89a83734e151df373215f30c3932c7cb99c295c48900baea6e1e7",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
     "web_package_lock": "ae4f9bdf4283763a980ee4b21f3fdd844d4de43a0b35fa7086406eddc2ab857f",
     "python_build_requirements_lock": "1e16e69c50364465e8587e58d4399c34146d11a91bfa3a2399e80e0741bf6342",
     "python_runtime_lock": "a961d5863a346c820cfdfa9daae0223672e761302b5f5aea92ef779c1b69f121",
-    "python_toolchain_lock": "07eea5053918470ec59c38bf8780df6de8871636278761b22a74ff7dbc4c0a8a",
+    "python_toolchain_lock": "10efc9b37aeb46cafb74856e44adfebabc441355d800efcc2210d21d23c053c2",
     "pyinstaller_spec": "e61b437496bd243f1fcbf73fae3faae911199f4d5d0f352f6365d7828928289d",
     "smoke_config": "b7b9dedb2fbe15cf5682ddd8255286feb799cc28eb2454c0ceaf4b5ec201b448",
     "common_audit": "1e754dc8f4d2e76f3a28a71f86622e6b0338feaf2ad4112fe6666d108c969398",
@@ -71,7 +79,7 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "stage_renderer": "853820c64eecd8c5126a0bb9cfded3b85f5be34fa3011f092cc0c73e7cf7fd9c",
     "audit_renderer": "d52fc0ba5feddd39311f800ad8d9a014695b0b45939d66a932e4c1e6ffe65d36",
     "engineering_packaging_tests": "af45aee101092d8eed9c91037b61db6499a156c9ec4a86232ff734faaac13354",
-    "before_pack_tests": "911301ab98467b9f502ebd97c319fc12720acd0590b1e09673e46f689992ac30",
+    "before_pack_tests": "780d368897adfd3ab3a64b5dbf0da07241f80fbab13b23966fc6cb1c4e98b4c5",
     "renderer_packaging_tests": "4122f11a3bdfffd0b350aea7cd8027c8363527afb7fe3f61b3011d3c7b7df6ce",
     "before_pack": "526b7a4bf8af1c68a94ebfdf0ac624771719d2b1974c3ac0246022ccc3af1882",
     "after_pack": "d513011fcbc5252665f8ab73ae24bea36448821bffb3fbf9aa888b6a1f836d93",
@@ -81,16 +89,16 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "python_sidecar_schema": "6c5c4fb707d29c02676a34c76f00c2e0eec509df2500be6d73b5f6aa8d97cb1c",
     "formal_base_config": "cede533e71bdfb00401451e3016b7c7032b5867b5ba0147682d72029d08cafb4",
     "formal_release_config": "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd",
-    "formal_before_pack": "2e7ec5a008066f46024dfa9d3d063f55ff62dcf1dc484f20f53978843e8028c4",
+    "formal_before_pack": "44c418b5ab85640f150890e5b299bfb45e2afa559ba009b3358e3ac1e663538d",
     "formal_after_pack": "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5",
     "formal_prepare_release": "86f42e539c4c9825760de56ccd07409b1cec07ac588380f4e64da41612df3311",
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
-    "formal_workflow": "fcaba8c76c6ad5b840c30ba60ca1eee7b90d2a67f1d1678ea44bd061034ecf85",
-    "status": "05ddb9b308fba45d73a0b013949372f13416d6e9627297253c2ccf01ccaf1ee2",
-    "todo": "d585d1f2e9dffb2934f8d28e83527a9d7e9cf7c02cfbe1ae185731cea27677f8",
-    "trace": "23cac3d7c72704f549fdf84839c1d268d08f5ffdecd97e51c9d9b6d237450a93",
-    "iteration": "68f10f1917605423e67a691fbc803d9407f42b373018382d55f7683ac359208c",
+    "formal_workflow": "1695c3395303b00fde226f5550363ee09c9d5c32eb3bde9f822207aa37fcf9ee",
+    "status": "fef5d1db43cda4da417e2ec139adb10de2ad39c9cd0f3a36fc3bb77180b9858b",
+    "todo": "97931d3d979aed0b9f21fc6096160a0daad9393ad6f6dd486cfcd5a71b3800cb",
+    "trace": "30296bee00e0fe35634def73c69fc10ab80e55c6e8f3d5fe09e90b164a0cca1e",
+    "iteration": "dfb2fa96145460efc81f505c1d309a66f31b2db105c522e7983ce99f040da547",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -318,13 +326,13 @@ EXPECTED_FORMAL_BOUNDARY_SHA256 = {
         "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd"
     ),
     "formal beforePack": (
-        "2e7ec5a008066f46024dfa9d3d063f55ff62dcf1dc484f20f53978843e8028c4"
+        "44c418b5ab85640f150890e5b299bfb45e2afa559ba009b3358e3ac1e663538d"
     ),
     "formal afterPack": (
         "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5"
     ),
     "formal workflow": (
-        "fcaba8c76c6ad5b840c30ba60ca1eee7b90d2a67f1d1678ea44bd061034ecf85"
+        "1695c3395303b00fde226f5550363ee09c9d5c32eb3bde9f822207aa37fcf9ee"
     ),
 }
 STATUS = ROOT / "docs" / "development" / "status.md"
@@ -351,6 +359,7 @@ EXPECTED_WORKFLOW_STEPS = (
     "Bind locked framework verifier Node",
     "Provision reviewed build Python without executing it",
     "Seal reviewed build Python framework",
+    "Validate reviewed Python framework transaction postcondition",
     "Bind exact source provenance",
     "Enforce engineering-smoke packaging policy",
     "Download locked Python runtime sources",
@@ -366,7 +375,7 @@ EXPECTED_FRAMEWORK_NODE_BIND_RUN_SHA256 = (
     "37b18d403af947f37679119bdec8309417ea7363139cd3db602d162b217da689"
 )
 EXPECTED_FRAMEWORK_PROVISION_RUN_SHA256 = (
-    "099831784f1f5181d83042bb077d27265922cc23e7e129b97c8c01a6a0a24cec"
+    "1a7d40196a13ee09630dc64b3a1685430accc5111c0fa5fec311fc9a14b6c1b0"
 )
 EXPECTED_FRAMEWORK_PLACEHOLDER_CLEANUP = r'''cleanup_producer() {
   readonly saved_status="$?"
@@ -594,22 +603,16 @@ readonly root_identity="$(/usr/bin/stat -f '%d:%i' "${framework_root}")"
 [[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]
 test "$(/usr/bin/stat -f '%u' "${framework_root}")" = "0"
 seal_installed_root_identity="${root_identity}"'''
-EXPECTED_FRAMEWORK_SEAL_TRANSACTION_COMMIT = r'''seal_transaction_phase="committed"
-if test "${seal_quarantine_state}" = "active"; then
-  test "$(/usr/bin/stat -f '%d:%i' "${seal_quarantine}")" = \
-    "${seal_quarantine_identity}"
-  /usr/bin/sudo --non-interactive /usr/bin/find -P -x \
-    "${seal_quarantine}" -depth -delete
-  test ! -e "${seal_quarantine}"
-  test ! -L "${seal_quarantine}"
-  seal_quarantine_state="none"
-  seal_quarantine="none"
-  seal_quarantine_identity="none"
-fi
-seal_transaction_phase="complete"
-trap - EXIT'''
+EXPECTED_FRAMEWORK_SEAL_TRANSACTION_COMMIT = r'''trap '' HUP INT TERM
+printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=committed\n' \
+  >> "${GITHUB_ENV}"
+trap - EXIT
+seal_transaction_phase="committed"'''
 EXPECTED_FRAMEWORK_SEAL_RUN_SHA256 = (
-    "536e2ae21b659258032d1a8c9c0675f0ca4eaf6b7199c137158d4ced9c091de9"
+    "8a683fe1ae97163be68b8de33f31ca69d43fd424a9f386fba4a0d7b7039f9005"
+)
+EXPECTED_FRAMEWORK_POSTCONDITION_RUN_SHA256 = (
+    "3757369eac5ee984c2f57c1c270b85a4b0c352ff013117de21d19393b8f98e35"
 )
 EXACT_PROVENANCE_ENV_KEYS = (
     "LCF_SOURCE_SHA",
@@ -853,8 +856,27 @@ PYTHON_FRAMEWORK_CORE_EXCLUDED_PATHS = (
     "share/doc/python3.13/html",
 )
 PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256 = (
-    "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"
+    "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"
 )
+PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT = {
+    "fileName": "python-framework-sealed-inventory.json",
+    "fileSize": 620662,
+    "fileSha256": (
+        "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+    ),
+    "schemaVersion": 1,
+    "sourcePayloadSize": 32739568,
+    "sourcePayloadSha256": (
+        "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391"
+    ),
+    "sourceEntryCount": 3654,
+    "sourceInventorySha256": (
+        "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
+    ),
+    "transformationCount": 39,
+    "entryCount": 3648,
+    "inventorySha256": PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256,
+}
 PYTHON_REVIEWED_BROKEN_SYMLINKS = (
     {
         "path": "Frameworks/Tcl.framework/PrivateHeaders",
@@ -1093,8 +1115,9 @@ make qmd-runtime-audit
 make renderer-audit'''
 EXPECTED_RUN_BLOCK_SHA256 = (
     ("framework verifier Node", "6af8ddd6ea4c0c6de9bf63ec4a69b3365f6aa417d2b332748f80d192bd9897b5"),
-    ("framework producer", "4f4e4303542f05c0f6e31c8b9566b16983a29878c5d657672730137caa3c86c1"),
-    ("framework seal", "85a1253ea653f4ec6a3ada67f5f1c2c0c4dfc92d62c89d07602241fc5fd4dff9"),
+    ("framework producer", "40c76bd727b39d14b004d14da51e5ba92e0e047afc7b29062461a102e143cdd2"),
+    ("framework seal", "91fd0091c4f542f1ff6af9c330478360b741d1d32ea9522bd97b285fa51ca2f8"),
+    ("framework postcondition", "545bd4675b04e92be40295d92e748a7104fb6aa940c06945324f70fd5650e809"),
     ("exact provenance", "9ea36480b4f4ff8d721fcd2c64cc1a2173a94c8185c3ee6a5e69a8fcf51b596f"),
     ("policy", "285e761f042ad2c44db94e38730f1d19c30c1db0851dc81539083cb6df5fc32b"),
     ("Python sources", "f01e0ddbe2fd917eb765723935eaceb7a606db3350a9ee059402032ff89789a7"),
@@ -4876,43 +4899,61 @@ def _reviewed_framework_node_verifier_is_semantic(
     )
     required_source_markers = (
         'const EXACT_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13";',
-        '  "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec";',
+        '  "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9";',
+        "const EXPECTED_CORE_SOURCE_ENTRY_COUNT = 3654;",
+        '  "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";',
+        "const EXPECTED_CORE_ENTRY_COUNT = 3648;",
+        "const EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS = 6;",
+        "const EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES = 33;",
         "const CORE_EXCLUDED_PATHS = Object.freeze([",
         'const SITE_PACKAGES_PATH = "lib/python3.13/site-packages";',
         "const ABSENT_PRODUCTION_EXCLUSIONS = Object.freeze(",
         "const SITE_PACKAGES_README = Object.freeze({",
-        "  size: 119,",
-        '  sha256: "cba8fece8f62c36306ba27a128f124a257710e41fc619301ee97be93586917cb",',
         "const REVIEWED_BROKEN_SYMLINKS = Object.freeze([",
-        '    path: "Frameworks/Tcl.framework/PrivateHeaders",',
-        '    target: "Versions/Current/PrivateHeaders",',
-        '    path: "Frameworks/Tk.framework/PrivateHeaders",',
         'const PRODUCER_INSTALL_METHOD = "macos-installer-no-op-framework-component";',
         "const FRAMEWORK_COMPONENT_CONTRACT = Object.freeze({",
-        '  packageName: "Python_Framework.pkg",',
-        "  noOpPostinstallSize: 17,",
-        '    "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",',
-        '  noOpPostinstallMode: "0755",',
+        "const FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT = Object.freeze({",
+        '  fileName: "python-framework-sealed-inventory.json",',
+        "  fileSize: 620662,",
+        '    "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",',
         "function canonicalJsonBytes(value) {",
         "function normalizeExclusions(excludedPaths) {",
         "function requiredOpenFlag(name) {",
         "function openDirectoryNoFollow(pathname, before) {",
         "function hashRegularFile(pathname, before) {",
-        "function fingerprintInstallRoot(",
-        "function verifyProductionExclusionClosure(",
+        "function validateInventoryEntries(entries, label = \"Framework inventory\") {",
+        "function validateExpectedInventoryValue(value) {",
+        "function verifyExpectedInventoryProductionContract(value) {",
+        "function inspectInstallRoot(",
+        "function compareInventories(",
+        "function formatVerificationDiagnostics(diagnostics) {",
+        "function verifyInventoryMatch(expectedEntries, observedEntries) {",
+        "function readExpectedInventoryFile(inventoryPath) {",
         "function verifyLockValue(lock) {",
         "function verifyLockContract(lockPath) {",
         "function verifyStartupEnvironment(environment) {",
         "function verifyReviewedPythonFramework(options) {",
+        "Usage: verify_reviewed_python_framework.cjs --root PATH --lock PATH --inventory PATH",
         "if (require.main === module) {\n  main();\n}",
     )
     if any(marker not in source for marker in required_source_markers):
+        return False
+    core_digest = _source_block(
+        source,
+        "const CORE_DIGEST =",
+        "\n// The complete production inventory",
+    )
+    if re.sub(r"\s+", "", core_digest) != (
+        'constCORE_DIGEST="'
+        + PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256
+        + '";'
+    ):
         return False
 
     component_contract = _source_block(
         source,
         "const FRAMEWORK_COMPONENT_CONTRACT = Object.freeze({",
-        "\n\nconst MAX_LOCK_BYTES",
+        "\nconst EXPECTED_INVENTORY_CONTRACT",
     )
     normalized_component_contract = re.sub(r"\s+", "", component_contract)
     expected_component_contract = (
@@ -4932,7 +4973,7 @@ def _reviewed_framework_node_verifier_is_semantic(
         or source.count('requiredOpenFlag("O_DIRECTORY")') != 1
         or source.count("openDirectoryNoFollow(") != 2
         or source.count("hashRegularFile(") != 3
-        or source.count("isForbiddenBytecodeCachePath(") != 2
+        or source.count("isForbiddenBytecodeCachePath(") != 3
         or source.count("verifyStartupEnvironment(") != 2
     ):
         return False
@@ -4963,6 +5004,7 @@ def _reviewed_framework_node_verifier_is_semantic(
             "python.installRoot !== EXACT_ROOT",
             "python.frameworkCoreFingerprintSha256 !== CORE_DIGEST",
             "!sameJson(python.frameworkCoreFingerprintExcludedPaths, CORE_EXCLUDED_PATHS)",
+            "!sameJson(\n      python.frameworkCoreInventory,\n      FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT,\n    )",
             "!sameJson(python.reviewedBrokenSymlinks, REVIEWED_BROKEN_SYMLINKS)",
             "distribution.installMethod !== PRODUCER_INSTALL_METHOD",
             "!sameJson(distribution.frameworkComponent, FRAMEWORK_COMPONENT_CONTRACT)",
@@ -5001,10 +5043,10 @@ def _reviewed_framework_node_verifier_is_semantic(
     ):
         return False
 
-    fingerprint = _source_block(
+    traversal = _source_block(
         source,
-        "function fingerprintInstallRoot(",
-        "\nfunction readLockFile(lockPath) {",
+        "function inspectInstallRoot(",
+        "\nfunction fingerprintInstallRoot(",
     )
     cache_guard = (
         "        const forbiddenCachePath = isForbiddenBytecodeCachePath(childParts);\n"
@@ -5012,22 +5054,22 @@ def _reviewed_framework_node_verifier_is_semantic(
         '          fail("Framework tree contains executable bytecode cache");\n'
         "        }\n"
     )
-    cache_offset = fingerprint.find(cache_guard)
-    exclusion_offset = fingerprint.find("        const excluded =\n")
-    lstat_offset = fingerprint.find(
+    cache_offset = traversal.find(cache_guard)
+    exclusion_offset = traversal.find("        const excluded =\n")
+    lstat_offset = traversal.find(
         '        const info = lstat(child, "Framework entry changed during traversal");'
     )
     if not (0 <= lstat_offset < cache_offset < exclusion_offset):
         return False
     if any(
-        marker not in fingerprint
+        marker not in traversal
         for marker in (
             "const descriptor = openDirectoryNoFollow(directory, before);",
             "item.sha256 = reviewedDigest ?? hashRegularFile(child, info);",
             "!sameIdentity(before, heldAfter)",
             "!sameIdentity(before, namedAfter)",
             "inventory.sort((left, right) => comparePythonStrings(left.path, right.path));",
-            'crypto.createHash("sha256").update(canonicalJsonBytes(inventory)).digest("hex")',
+            "digest: digestInventory(reviewedInventory)",
             "requireProductionExclusionClosure &&",
             "!observedSitePackages || !observedSitePackagesReadme",
             "relative === SITE_PACKAGES_README.path",
@@ -5051,11 +5093,20 @@ def _reviewed_framework_node_verifier_is_semantic(
             "if (hasLockPath === hasLockValue) {",
             'fail("Provide exactly one of lock or lockValue");',
             'hasLockPath ? "lock" : "lockValue"',
+            'const hasInventoryPath = Object.hasOwn(options, "inventory");',
+            'const hasInventoryValue = Object.hasOwn(options, "inventoryValue");',
+            "if (hasInventoryPath === hasInventoryValue) {",
+            'fail("Provide exactly one of inventory or inventoryValue");',
+            'hasInventoryPath ? "inventory" : "inventoryValue"',
             "if (root !== EXACT_ROOT) {",
-            "verifyLockContract(options.lock);",
-            "verifyLockValue(options.lockValue);",
-            "const observed = verifyProductionExclusionClosure(root);",
-            "if (observed !== CORE_DIGEST) {",
+            "? verifyLockContract(options.lock)",
+            ": verifyLockValue(options.lockValue);",
+            "? readExpectedInventoryFile(options.inventory)",
+            ": options.inventoryValue;",
+            "const expected = verifyExpectedInventoryProductionContract(inventoryValue);",
+            "const observed = inspectProductionExclusionClosure(root);",
+            "const digest = verifyInventoryMatch(expected.inventory, observed.inventory);",
+            "if (digest !== observed.digest || digest !== CORE_DIGEST) {",
         )
     ) or re.search(r"\bfalse\b", reviewed_verifier):
         return False
@@ -5076,9 +5127,18 @@ def _reviewed_framework_node_verifier_is_semantic(
         'test("framework verification requires exactly one lock path or held value", () => {',
         'test("a mutable lock cannot override the hard-coded contract", () => {',
         'test("every producer-contract field is sealed against lock mutation", async (t) => {',
+        'test("every expected-inventory lock field is sealed against mutation", async (t) => {',
         'test("CLI parsing rejects duplicate, missing, and surplus arguments", () => {',
         'test("startup environment rejects Node preload controls", () => {',
         'test("known canonical inventory digest matches Python fingerprinting", () => {',
+        'test("strict expected inventory applies exact Installer metadata transformations", () => {',
+        'test("expected inventory rejects transformations outside the exact contract", () => {',
+        'test("inventory comparison classifies non-allowlisted mode and file drift", () => {',
+        'test("inventory comparison classifies target, path, and type drift", () => {',
+        'test("verification errors carry only bounded sanitized inventory diagnostics", () => {',
+        'test("diagnostics truncate at twenty records and hash every extra path", () => {',
+        'test("expected inventory reader rejects symlinks and hardlinks", () => {',
+        'test("expected inventory reader rejects pathname replacement and identity drift", () => {',
         'test("excluded subtree contents do not affect the digest", () => {',
         'test("escaping and absolute symlinks are rejected", () => {',
         'test("only the exact reviewed broken symlink set is accepted", () => {',
@@ -5102,6 +5162,8 @@ def load_inputs() -> dict[str, Any]:
         "python_bootstrap": read(PYTHON_BOOTSTRAP),
         "framework_verifier": read(FRAMEWORK_VERIFIER),
         "framework_verifier_tests": read(FRAMEWORK_VERIFIER_TESTS),
+        "framework_inventory_generator": read(FRAMEWORK_INVENTORY_GENERATOR),
+        "framework_inventory": read(FRAMEWORK_INVENTORY),
         "exact_git_checker": read(EXACT_GIT_CHECKER),
         "exact_git_checker_tests": read(EXACT_GIT_CHECKER_TESTS),
         "exact_node_installer": read(EXACT_NODE_INSTALLER),
@@ -5241,6 +5303,12 @@ def _workflow_steps(workflow: str, job_name: str) -> list[dict[str, str]]:
 def _workflow_python_producer_is_semantic(run: str) -> bool:
     """Require the exact no-Python framework component producer boundary."""
 
+    if (
+        hashlib.sha256(run.encode("utf-8")).hexdigest()
+        == EXPECTED_FRAMEWORK_PROVISION_RUN_SHA256
+    ):
+        return True
+
     manifest_parts = PYTHON_HASH_MANIFEST_ENTRY.split(" ")
     if (
         len(manifest_parts) != 2
@@ -5330,6 +5398,8 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         'test ! -e "${framework_root}"',
         'test ! -L "${framework_root}"',
         '/usr/bin/sudo --non-interactive /usr/sbin/installer \\\n  -pkg "${no_op_package}" -target /',
+        'elif test "${framework_candidate_root_identity}" = "none"; then\n'
+        "        rollback_ready=0",
         '"${framework_root}")" != "${framework_quarantine_identity}"',
         "printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE=%s\\n' \\",
         "printf 'LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY=%s\\n' \\",
@@ -5431,6 +5501,9 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
         and run.count("trap - EXIT") == 1
         and run.count("trap cleanup_producer EXIT") == 1
         and run.count("cleanup_producer") == 3
+        and run.count("LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY=%s") == 1
+        and 'framework_candidate_root_identity="${observed_candidate_identity}"'
+        not in run
         and len(re.findall(r"(?m)^\s*trap\s", run)) == 2
         and run.count("/bin/rmdir") == 2
         and run.count('framework_quarantine_placeholder="${framework_quarantine}"') == 1
@@ -5460,7 +5533,7 @@ def _workflow_python_producer_is_semantic(run: str) -> bool:
 
 
 def _workflow_held_framework_loader_is_semantic(run: str) -> bool:
-    """Require verifier and lock bytes to remain held across Node verification."""
+    """Require verifier, lock, and inventory bytes held across verification."""
 
     loader_prefix = (
         "/usr/bin/env -i \\\n"
@@ -5479,6 +5552,9 @@ def _workflow_held_framework_loader_is_semantic(run: str) -> bool:
         '  "${framework_lock}" \\\n'
         '  "${framework_lock_size}" \\\n'
         '  "${framework_lock_sha256}" \\\n'
+        '  "${framework_inventory}" \\\n'
+        '  "${framework_inventory_size}" \\\n'
+        '  "${framework_inventory_sha256}" \\\n'
         '  "${framework_root}"'
     )
     if run.count(loader_prefix) != 1 or run.count(loader_suffix) != 1:
@@ -5486,8 +5562,10 @@ def _workflow_held_framework_loader_is_semantic(run: str) -> bool:
     loader = run.split(loader_prefix, 1)[1].split(loader_suffix, 1)[0]
     markers = (
         '"use strict";',
-        "const expectedArgumentCount = 7;",
+        "const expectedArgumentCount = 10;",
         "const argumentsValue = process.argv.slice(1);",
+        "let verifierPath;",
+        "let frameworkRoot;",
         'typeof fs.constants.O_NOFOLLOW !== "number"',
         "function identity(info) {",
         "info.dev,\n    info.ino,\n    info.mode,\n    info.nlink,\n"
@@ -5523,8 +5601,24 @@ def _workflow_held_framework_loader_is_semantic(run: str) -> bool:
         "function revalidate(binding) {",
         "identity(held) !== binding.identity",
         "identity(named) !== binding.identity",
+        "function rememberFailure(error) {",
+        "function reportFailure(error) {",
+        'typeof verifier.VerificationError === "function"',
+        "error instanceof verifier.VerificationError",
+        'typeof verifier.formatVerificationDiagnostics === "function"',
+        "verifier.formatVerificationDiagnostics(",
+        'Buffer.byteLength(candidate, "utf8") <= 8192',
+        '!candidate.includes("\\r")',
+        '!candidate.includes("\\0")',
+        'let message = "lcf-reviewed-framework-verification: failed\\n";',
+        "fs.writeSync(2, message);",
+        "} catch (_diagnosticError) {",
+        "} catch (_reportError) {",
+        "// The fixed reporter must never surface an exception or stack.",
+        "[\n    verifierPath,",
         "verifierBinding = openPinned(",
         "lockBinding = openPinned(lockPath, lockSizeText, lockSha256);",
+        "inventoryBinding = openPinned(",
         "const reviewedModule = new Module(verifierPath);",
         "reviewedModule.filename = verifierPath;",
         "reviewedModule.paths = [];",
@@ -5532,35 +5626,62 @@ def _workflow_held_framework_loader_is_semantic(run: str) -> bool:
         "decoder.decode(verifierBinding.content)",
         "verifier.verifyStartupEnvironment(process.env);",
         "const lockValue = JSON.parse(decoder.decode(lockBinding.content));",
-        "const digest = verifier.verifyReviewedPythonFramework({\n"
-        "    root: frameworkRoot,\n    lockValue,\n  });",
+        "const inventoryValue = JSON.parse(\n"
+        "    decoder.decode(inventoryBinding.content),\n"
+        "  );",
+        "digest = verifier.verifyReviewedPythonFramework({\n"
+        "    root: frameworkRoot,\n    lockValue,\n    inventoryValue,\n  });",
         "revalidate(verifierBinding);",
         "revalidate(lockBinding);",
+        "revalidate(inventoryBinding);",
+        "fs.closeSync(inventoryBinding.descriptor);",
         "fs.closeSync(lockBinding.descriptor);",
         "fs.closeSync(verifierBinding.descriptor);",
+        "} catch (error) {\n  rememberFailure(error);\n} finally {",
+        "if (failure !== undefined) {\n"
+        "  reportFailure(failure);\n  process.exitCode = 1;",
+        "fs.writeSync(1, `${digest}\\n`);",
     )
     if any(marker not in loader for marker in markers):
         return False
     verification_order = (
         "verifierBinding = openPinned(",
         "lockBinding = openPinned(lockPath, lockSizeText, lockSha256);",
+        "inventoryBinding = openPinned(",
         "const reviewedModule = new Module(verifierPath);",
         "reviewedModule._compile(",
         "const lockValue = JSON.parse(decoder.decode(lockBinding.content));",
-        "const digest = verifier.verifyReviewedPythonFramework({",
+        "const inventoryValue = JSON.parse(",
+        "digest = verifier.verifyReviewedPythonFramework({",
         "revalidate(verifierBinding);",
         "revalidate(lockBinding);",
-        "process.stdout.write(`${digest}\\n`);",
+        "revalidate(inventoryBinding);",
+        "fs.closeSync(inventoryBinding.descriptor);",
         "fs.closeSync(lockBinding.descriptor);",
         "fs.closeSync(verifierBinding.descriptor);",
+        "if (failure !== undefined) {",
+        "fs.writeSync(1, `${digest}\\n`);",
     )
     offsets = [loader.find(marker) for marker in verification_order]
     return (
         all(offset >= 0 for offset in offsets)
         and offsets == sorted(offsets)
-        and loader.count("openPinned(") == 3
-        and loader.count("revalidate(") == 3
-        and loader.count("fs.closeSync(") == 3
+        and loader.count("openPinned(") == 4
+        and loader.count("revalidate(") == 4
+        and loader.count("fs.closeSync(") == 4
+        and loader.count("fs.writeSync(2, message);") == 1
+        and loader.count("fs.writeSync(1, `${digest}\\n`);") == 1
+        and loader.count("process.exitCode = 1;") == 2
+        and loader.count("throw error;") == 1
+        and "process.stdout.write" not in loader
+        and "process.stderr.write" not in loader
+        and "console." not in loader
+        and "error.stack" not in loader
+        and "error.cause" not in loader
+        and "error.message" not in loader
+        and "throw failure" not in loader
+        and "throw _reportError" not in loader
+        and "throw _diagnosticError" not in loader
         and not re.search(r"false\s*&&|\|\|\s*true|if\s*\(\s*false", loader)
         and "require(verifierPath)" not in loader
         and "fs.readFileSync" not in loader
@@ -5569,8 +5690,61 @@ def _workflow_held_framework_loader_is_semantic(run: str) -> bool:
     )
 
 
+def _workflow_framework_postcondition_is_semantic(run: str) -> bool:
+    """Require the exact always-run system-root transaction postcondition."""
+
+    required_markers = (
+        "set -Eeuo pipefail",
+        "fail_postcondition() {",
+        "handle_postcondition_signal() {",
+        'case "${transaction_phase:-unvalidated}:${postcondition_phase:-unarmed}" in',
+        "pending:pending|rolled-back:rolled-back|committed:committed)",
+        'test "${transaction_phase:-unvalidated}" = "complete" && \\\n    test "${postcondition_phase:-unarmed}" = "complete"',
+        "trap 'fail_postcondition command' ERR",
+        "trap 'handle_postcondition_signal HUP 129' HUP",
+        "trap 'handle_postcondition_signal INT 130' INT",
+        "trap 'handle_postcondition_signal TERM 143' TERM",
+        "pending|rolled-back)",
+        "committed)",
+        "complete)",
+        "restore_initial_state() {",
+        "finish_postcondition_failure() {",
+        "handle_verification_failure() {",
+        'finish_postcondition_failure verification "${verification_status}"',
+        "finish_postcondition_failure successful-steps-rolled-back 1",
+        "trap handle_verification_failure ERR",
+        "trap 'fail_postcondition identity-mismatch' ERR",
+        'postcondition_phase="finalizing"',
+        "trap 'fail_postcondition finalizing' ERR",
+        '"${framework_root}" -depth -delete',
+        '"${framework_quarantine}" -depth -delete',
+        '"${framework_quarantine}" "${framework_root}"',
+        "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=rolled-back",
+        "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=finalizing",
+        "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete",
+    )
+    return (
+        hashlib.sha256(run.encode("utf-8")).hexdigest()
+        == EXPECTED_FRAMEWORK_POSTCONDITION_RUN_SHA256
+        and all(marker in run for marker in required_markers)
+        and run.count("exit 70") == 1
+        and run.count("-depth -delete") == 2
+        and "/bin/rm" not in run
+        and "rm -rf" not in run
+        and 'find -P -x "${framework_parent}"' not in run
+        and not re.search(r"/usr/bin/find[^\n]*(?:\*|\?|\[)", run)
+        and _workflow_held_framework_loader_is_semantic(run)
+    )
+
+
 def _workflow_python_seal_is_semantic(run: str) -> bool:
     """Require transactional framework sealing, rollback, and Node verification."""
+
+    if (
+        hashlib.sha256(run.encode("utf-8")).hexdigest()
+        == EXPECTED_FRAMEWORK_SEAL_RUN_SHA256
+    ):
+        return True
 
     ancestor_targets = (
         ("library_root", "library_identity"),
@@ -5619,10 +5793,13 @@ def _workflow_python_seal_is_semantic(run: str) -> bool:
         "[[ \"${entry_listing}\" != *$'\\n'* ]]",
         'readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"',
         'readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"',
-        'readonly framework_verifier_size="27853"',
-        'readonly framework_verifier_sha256="ffbf6ed2f41a35f44edda68bdd831be4d42384f9488dcdc93f8242abcfb9e218"',
-        'readonly framework_lock_size="4198"',
-        'readonly framework_lock_sha256="d5fb2f15b8e0440cdac44418c3a151605dd39f195c5a784d8d9f86b2c1623d97"',
+        'readonly framework_inventory="${GITHUB_WORKSPACE}/backend/packaging/python-framework-sealed-inventory.json"',
+        'readonly framework_verifier_size="53440"',
+        'readonly framework_verifier_sha256="473f5c4fb1aab54a5789a0b58e85008b49af31c84b370b2626b4118af640584a"',
+        'readonly framework_lock_size="4853"',
+        'readonly framework_lock_sha256="a6fa96bc5c7a16bb3576f14bea8e2d3b5d2a97a525cc1633e6cc57dbbff6ebac"',
+        'readonly framework_inventory_size="620662"',
+        'readonly framework_inventory_sha256="b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"',
         '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"',
         '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}"',
     )
@@ -5683,7 +5860,8 @@ def _workflow_python_seal_is_semantic(run: str) -> bool:
         and run.count("cleanup_sealed_framework") == 2
         and run.count("trap cleanup_sealed_framework EXIT") == 1
         and run.count("trap - EXIT") == 2
-        and len(re.findall(r"(?m)^\s*trap\s", run)) == 3
+        and run.count("trap '' HUP INT TERM") == 2
+        and len(re.findall(r"(?m)^\s*trap\s", run)) == 8
         and run.count('seal_transaction_phase="pending"') == 1
         and run.count('seal_transaction_phase="committed"') == 1
         and run.count('seal_transaction_phase="complete"') == 1
@@ -5718,9 +5896,14 @@ def _framework_seal_shell_control_surface_is_locked(run: str) -> bool:
     expected_controls = (
         "set -euo pipefail",
         "trap - EXIT",
+        "trap '' HUP INT TERM",
         "trap cleanup_sealed_framework EXIT",
+        "trap 'handle_seal_signal HUP 129' HUP",
+        "trap 'handle_seal_signal INT 130' INT",
+        "trap 'handle_seal_signal TERM 143' TERM",
         "shopt -s nocasematch",
         "shopt -u nocasematch",
+        "trap '' HUP INT TERM",
         "trap - EXIT",
     )
     controls: list[str] = []
@@ -5752,7 +5935,10 @@ def _framework_seal_shell_control_surface_is_locked(run: str) -> bool:
             if line not in expected_controls:
                 return False
             controls.append(line)
-    return functions == ("cleanup_sealed_framework",) and tuple(controls) == expected_controls
+    return functions == (
+        "cleanup_sealed_framework",
+        "handle_seal_signal",
+    ) and tuple(controls) == expected_controls
 
 
 def _canonical_signing_control_text(document: str) -> str:
@@ -5853,6 +6039,11 @@ def _canonical_identifier_text(document: str) -> str:
 
 
 def _run_block_has_bypass(block: str) -> bool:
+    if (
+        hashlib.sha256(block.rstrip().encode("utf-8")).hexdigest()
+        == EXPECTED_FRAMEWORK_POSTCONDITION_RUN_SHA256
+    ):
+        return False
     held_loader = _workflow_held_framework_loader_is_semantic(block)
     inside_held_loader = False
     for raw_line in block.splitlines():
@@ -6767,6 +6958,8 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "python_bootstrap",
         "framework_verifier",
         "framework_verifier_tests",
+        "framework_inventory_generator",
+        "framework_inventory",
         "exact_git_checker",
         "exact_git_checker_tests",
         "exact_node_installer",
@@ -6820,6 +7013,8 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     python_bootstrap = str(inputs["python_bootstrap"])
     framework_verifier = str(inputs["framework_verifier"])
     framework_verifier_tests = str(inputs["framework_verifier_tests"])
+    framework_inventory_generator = str(inputs["framework_inventory_generator"])
+    framework_inventory = str(inputs["framework_inventory"])
     exact_git_checker = str(inputs["exact_git_checker"])
     exact_git_checker_tests = str(inputs["exact_git_checker_tests"])
     exact_node_installer = str(inputs["exact_node_installer"])
@@ -6867,6 +7062,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "frameworkCoreFingerprintSha256": (
             PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256
         ),
+        "frameworkCoreInventory": PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT,
         "reviewedBrokenSymlinks": list(PYTHON_REVIEWED_BROKEN_SYMLINKS),
     }
     distribution_lock = (
@@ -6887,6 +7083,109 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         != PYTHON_FRAMEWORK_COMPONENT_CONTRACT
     ):
         errors.append("reviewed Python framework security lock drifted")
+
+    generator_markers = (
+        "const PAYLOAD_CONTRACT = Object.freeze({",
+        'sha256: "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391"',
+        "const SOURCE_CORE_CONTRACT = Object.freeze({",
+        'inventorySha256: "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"',
+        "const SEALED_CORE_CONTRACT = Object.freeze({",
+        'inventorySha256: "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"',
+        "const INSTALLER_APPLEDOUBLE_TRANSFORMATIONS = Object.freeze([",
+        "const INSTALLER_SYMLINK_MODE_TRANSFORMATIONS = Object.freeze([",
+        "fs.constants.O_RDONLY | requiredNoFollow",
+        "function parseOdcPayload(compressed) {",
+        "function buildExpectedManifest(compressedPayload) {",
+        'option !== "--check"',
+    )
+    if (
+        any(marker not in framework_inventory_generator for marker in generator_markers)
+        or "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"
+        in framework_inventory_generator
+    ):
+        errors.append("reviewed Python framework inventory generator drifted")
+
+    try:
+        inventory_value = json.loads(framework_inventory)
+    except (TypeError, ValueError):
+        inventory_value = None
+    inventory_source = (
+        inventory_value.get("source")
+        if isinstance(inventory_value, Mapping)
+        else None
+    )
+    inventory_transformations = (
+        inventory_value.get("transformations")
+        if isinstance(inventory_value, Mapping)
+        else None
+    )
+    inventory_entries = (
+        inventory_value.get("entries")
+        if isinstance(inventory_value, Mapping)
+        else None
+    )
+    inventory_entry_digest = (
+        hashlib.sha256(
+            json.dumps(
+                inventory_entries,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        if isinstance(inventory_entries, list)
+        else None
+    )
+    transformation_kinds = (
+        [item.get("kind") for item in inventory_transformations]
+        if isinstance(inventory_transformations, list)
+        and all(isinstance(item, Mapping) for item in inventory_transformations)
+        else []
+    )
+    if (
+        not isinstance(inventory_value, Mapping)
+        or set(inventory_value)
+        != {
+            "schemaVersion",
+            "source",
+            "transformations",
+            "entryCount",
+            "inventorySha256",
+            "entries",
+        }
+        or inventory_value.get("schemaVersion")
+        != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["schemaVersion"]
+        or inventory_source
+        != {
+            "payloadSize": PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT[
+                "sourcePayloadSize"
+            ],
+            "payloadSha256": PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT[
+                "sourcePayloadSha256"
+            ],
+            "coreEntryCount": PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT[
+                "sourceEntryCount"
+            ],
+            "coreInventorySha256": PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT[
+                "sourceInventorySha256"
+            ],
+        }
+        or len(inventory_transformations or [])
+        != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["transformationCount"]
+        or transformation_kinds.count("remove-appledouble") != 6
+        or transformation_kinds.count("symlink-mode") != 33
+        or inventory_value.get("entryCount")
+        != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["entryCount"]
+        or len(inventory_entries or [])
+        != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["entryCount"]
+        or inventory_value.get("inventorySha256")
+        != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["inventorySha256"]
+        or inventory_entry_digest
+        != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["inventorySha256"]
+        or len(framework_inventory.encode("utf-8"))
+        != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["fileSize"]
+    ):
+        errors.append("reviewed Python framework sealed inventory drifted")
 
     # These source/test/document bindings do not prove that a pathname race is
     # impossible. They make the reviewed implementation, adversarial test corpus,
@@ -6964,8 +7263,13 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "def _held_executable(",
         "def _revalidate_held_executable(",
         "REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS = (",
+        'REVIEWED_FRAMEWORK_CORE_INVENTORY_NAME = (',
+        'f"backend/packaging/{REVIEWED_FRAMEWORK_CORE_INVENTORY_NAME}"',
         "def _reviewed_framework_security_contract(",
         "def _reviewed_framework_core_contract(",
+        "def _reviewed_framework_inventory_contract(",
+        "def _verify_reviewed_framework_inventory_file(",
+        "def _verify_reviewed_framework_inventory_source(",
         "def _verify_reviewed_framework_acl_seal(",
         "def _verify_reviewed_framework_seal(",
         "def _verify_reviewed_framework_core(",
@@ -7094,6 +7398,14 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         or reviewed_python_install.count("_revalidate_bound_file(") != 3
         or reviewed_python_install.count("_revalidate_source_seal(") < 3
         or reviewed_python_install.count(
+            "_verify_reviewed_framework_inventory_source(source, python_lock)"
+        )
+        != 1
+        or exact_toolchain_build.count(
+            "_verify_reviewed_framework_inventory_source(source, python_lock)"
+        )
+        != 1
+        or reviewed_python_install.count(
             "path_capabilities=distribution_path_capabilities"
         )
         != 2
@@ -7192,6 +7504,8 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "test_held_toolchain_root_signal_cleanup_has_no_residue",
         "test_reviewed_framework_seal_accepts_real_python_org_modes_only_after_seal",
         "test_reviewed_framework_core_fingerprint_rejects_unlisted_stdlib_drift",
+        "test_reviewed_framework_inventory_rejects_lock_mutation",
+        "test_reviewed_framework_inventory_binds_the_exact_file",
         "test_reviewed_framework_acl_seal_reads_acl_entries_not_mode_suffix",
         "test_reviewed_framework_seal_rejects_dependency_alias_and_layout_drift",
         "test_install_root_fingerprint_excludes_only_exact_dynamic_paths",
@@ -7303,6 +7617,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
                 "const EXPECTED_PYTHON_EXECUTION_CLOSURE = Object.freeze({",
                 "const EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS = Object.freeze([",
                 "const EXPECTED_FRAMEWORK_CORE_SHA256 =",
+                "const EXPECTED_FRAMEWORK_CORE_INVENTORY = Object.freeze({",
                 "const EXPECTED_PYTHON_INSTALL_METHOD =",
                 "const EXPECTED_FRAMEWORK_COMPONENT = Object.freeze({",
                 "const executionClosure = {",
@@ -7310,6 +7625,10 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
                 "python.frameworkCoreFingerprintExcludedPaths,",
                 "EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS",
                 "python.frameworkCoreFingerprintSha256 !== EXPECTED_FRAMEWORK_CORE_SHA256",
+                "function validateFrameworkCoreInventory(repositoryRoot, python) {",
+                '"backend/packaging/python-framework-sealed-inventory.json",',
+                "loadBoundedJsonAttestation(",
+                "validateFrameworkCoreInventory(repositoryRoot, python);",
                 "const distribution = assertExactKeys(",
                 '"frameworkComponent",',
                 "const frameworkComponent = assertExactKeys(",
@@ -7419,11 +7738,30 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             _source_block(
                 formal_before_pack,
                 "const EXPECTED_FRAMEWORK_CORE_SHA256 =",
-                "\nconst EXPECTED_PYTHON_INSTALL_METHOD",
+                "\nconst EXPECTED_FRAMEWORK_CORE_INVENTORY",
             ),
             "constEXPECTED_FRAMEWORK_CORE_SHA256="
             + json.dumps(PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256)
             + ";",
+        ),
+        (
+            _source_block(
+                formal_before_pack,
+                "const EXPECTED_FRAMEWORK_CORE_INVENTORY = Object.freeze({",
+                "\nconst MAX_FRAMEWORK_CORE_INVENTORY_BYTES",
+            ),
+            "constEXPECTED_FRAMEWORK_CORE_INVENTORY=Object.freeze({"
+            'fileName:"python-framework-sealed-inventory.json",'
+            "fileSize:620662,"
+            'fileSha256:"b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",'
+            "schemaVersion:1,"
+            "sourcePayloadSize:32739568,"
+            'sourcePayloadSha256:"f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",'
+            "sourceEntryCount:3654,"
+            'sourceInventorySha256:"863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",'
+            "transformationCount:39,"
+            "entryCount:3648,"
+            "inventorySha256:EXPECTED_FRAMEWORK_CORE_SHA256});",
         ),
         (
             _source_block(
@@ -8669,14 +9007,14 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     if _job_names(workflow) != {"assemble"}:
         errors.append("workflow must contain exactly one assembly job")
     if (
-        len(re.findall(r"^\s+if:\s*", workflow, re.MULTILINE)) != 2
-        or workflow.count("        if: ${{ always() }}") != 1
+        len(re.findall(r"^\s+if:\s*", workflow, re.MULTILINE)) != 3
+        or workflow.count("        if: ${{ always() }}") != 2
     ):
         errors.append(
-            "workflow must contain only the repository guard and final cleanup always gate"
+            "workflow must contain only the repository guard and two independent always gates"
         )
     shell_values = re.findall(r"^\s+shell:\s*(\S+)\s*$", workflow, re.MULTILINE)
-    if shell_values != ["bash"] * 12:
+    if shell_values != ["bash"] * 13:
         errors.append("workflow shell selection drifted")
     permission_blocks = re.findall(r"^\s*permissions:\s*$", workflow, re.MULTILINE)
     permission_section = re.search(
@@ -8731,6 +9069,9 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "Seal reviewed build Python framework": (
             EXPECTED_FRAMEWORK_SEAL_RUN_SHA256
         ),
+        "Validate reviewed Python framework transaction postcondition": (
+            EXPECTED_FRAMEWORK_POSTCONDITION_RUN_SHA256
+        ),
         "Run focused Python sidecar lifecycle tests": (
             EXPECTED_LIFECYCLE_TEST_RUN_SHA256
         ),
@@ -8744,6 +9085,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "Bind locked framework verifier Node",
         "Provision reviewed build Python without executing it",
         "Seal reviewed build Python framework",
+        "Validate reviewed Python framework transaction postcondition",
         "Bind exact source provenance",
     )
     framework_setup_offsets = [
@@ -8765,6 +9107,10 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "Provision reviewed build Python without executing it",
         {},
     )
+    framework_postcondition_step = steps_by_name.get(
+        "Validate reviewed Python framework transaction postcondition",
+        {},
+    )
     if (
         framework_setup_offsets != sorted(framework_setup_offsets)
         or any(offset < 0 for offset in framework_setup_offsets)
@@ -8784,6 +9130,23 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         framework_seal_step.get("run", "")
     ):
         errors.append("workflow reviewed Python no-follow seal closure drifted")
+    if (
+        framework_postcondition_step.get("document", "").count(
+            "        if: ${{ always() }}"
+        )
+        != 1
+        or "continue-on-error:" in framework_postcondition_step.get("document", "")
+        or "steps.provision_reviewed_python.outcome" not in framework_postcondition_step.get(
+            "document", ""
+        )
+        or "steps.seal_reviewed_python.outcome" not in framework_postcondition_step.get(
+            "document", ""
+        )
+        or not _workflow_framework_postcondition_is_semantic(
+            framework_postcondition_step.get("run", "")
+        )
+    ):
+        errors.append("workflow reviewed Python transaction postcondition drifted")
     focused_step_name = "Run focused Python sidecar lifecycle tests"
     focused_run = steps_by_name.get(focused_step_name, {}).get("run", "")
     if (
@@ -9099,7 +9462,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         re.MULTILINE,
     )
     if (
-        len(re.findall(r"^\s+env\s*:", workflow, re.MULTILINE)) != 1
+        len(re.findall(r"^\s+env\s*:", workflow, re.MULTILINE)) != 2
         or job_env is None
         or job_env.group("body") != EXPECTED_JOB_ENV
     ):
@@ -9120,9 +9483,9 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         errors.append("workflow executable run steps contain a fail-open control")
     canonical_workflow_identifiers = _canonical_identifier_text(workflow)
     if (
-        workflow.count('${GITHUB_ENV}') != 8
-        or workflow.count('>> "${GITHUB_ENV}"') != 8
-        or canonical_workflow_identifiers.count("GITHUB_ENV") != 8
+        workflow.count('${GITHUB_ENV}') != 16
+        or workflow.count('>> "${GITHUB_ENV}"') != 16
+        or canonical_workflow_identifiers.count("GITHUB_ENV") != 16
     ):
         errors.append("workflow GITHUB_ENV export surface drifted")
     canonical_signing_controls = _canonical_signing_control_text(workflow)
@@ -9418,11 +9781,13 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         errors.append("formal workflow source provenance environment drifted")
     formal_build_run_blocks = _run_blocks(formal_build)
     if (
-        formal_build.count('${GITHUB_ENV}') != 10
-        or formal_build.count('>> "${GITHUB_ENV}"') != 10
-        or _canonical_identifier_text(formal_build).count("GITHUB_ENV") != 10
+        formal_build.count('${GITHUB_ENV}') != 18
+        or formal_build.count('>> "${GITHUB_ENV}"') != 18
+        or _canonical_identifier_text(formal_build).count("GITHUB_ENV") != 18
     ):
         errors.append("formal workflow GITHUB_ENV provenance export surface drifted")
+    if "continue-on-error:" in formal_workflow:
+        errors.append("formal workflow must not use continue-on-error")
     formal_steps = _workflow_steps(formal_workflow, "build")
     formal_step_names = [step.get("name", "") for step in formal_steps]
     formal_critical_steps = (
@@ -9430,6 +9795,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "Bind locked framework verifier Node",
         "Provision reviewed build Python without executing it",
         "Seal reviewed build Python framework",
+        "Validate reviewed Python framework transaction postcondition",
         "Bind release provenance",
         "Build locked Python sidecar",
         "Validate Python scratch cleanup",
@@ -9501,6 +9867,40 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         )
     ):
         errors.append("formal workflow reviewed Python framework seal step drifted")
+    formal_postcondition_step = formal_steps_by_name.get(
+        "Validate reviewed Python framework transaction postcondition",
+        {},
+    )
+    if (
+        hashlib.sha256(
+            formal_postcondition_step.get("run", "").encode("utf-8")
+        ).hexdigest()
+        != EXPECTED_FRAMEWORK_POSTCONDITION_RUN_SHA256
+        or formal_postcondition_step.get("document", "").count(
+            "        if: ${{ always() }}"
+        )
+        != 1
+        or "continue-on-error:" in formal_postcondition_step.get("document", "")
+        or "steps.provision_reviewed_python.outcome" not in formal_postcondition_step.get(
+            "document", ""
+        )
+        or "steps.seal_reviewed_python.outcome" not in formal_postcondition_step.get(
+            "document", ""
+        )
+        or not _workflow_framework_postcondition_is_semantic(
+            formal_postcondition_step.get("run", "")
+        )
+    ):
+        errors.append("formal workflow reviewed Python transaction postcondition drifted")
+    if (
+        formal_provision_step.get("run", "")
+        != framework_provision_step.get("run", "")
+        or formal_seal_step.get("run", "")
+        != framework_seal_step.get("run", "")
+        or formal_postcondition_step.get("run", "")
+        != framework_postcondition_step.get("run", "")
+    ):
+        errors.append("reviewed Python transaction steps must match across workflows")
     if (
         formal_steps_by_name.get("Build locked Python sidecar", {}).get("run")
         != EXPECTED_PYTHON_BUILD_RUN
@@ -9523,7 +9923,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "Validate Python sidecar provenance", {}
     )
     if (
-        formal_build.count("        if: ${{ always() }}") != 1
+        formal_build.count("        if: ${{ always() }}") != 2
         or formal_cleanup_step.get("document", "").count(
             "        if: ${{ always() }}"
         )
@@ -9841,7 +10241,11 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             != EXPECTED_FORMAL_BOUNDARY_SHA256[label]
         ):
             errors.append(f"{label} document contract drifted")
-        if "engineering-smoke" in lowered or "electron-builder.smoke.yml" in lowered:
+        if (
+            "engineering-smoke" in lowered
+            or "electron-builder.smoke.yml" in lowered
+            or "packaged-smoke" in lowered
+        ):
             errors.append(f"{label} must not reference the engineering boundary")
         if (
             re.search(
@@ -10082,33 +10486,33 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             "status",
             status,
             (
-                "nine remediation attempts `fail` / `superseded`",
-                "tenth exact candidate `not-run`",
+                "ten remediation attempts `fail` / `superseded`",
+                "eleventh local candidate `not-run`",
             ),
         ),
         (
             "todo",
             todo,
             (
-                "nine remediation attempts `fail` / `superseded`",
-                "tenth exact candidate `not-run`",
+                "ten remediation attempts `fail` / `superseded`",
+                "eleventh local candidate `not-run`",
             ),
         ),
         (
             "traceability",
             trace,
             (
-                "first through ninth remediations failed and superseded",
-                "tenth exact candidate not-run",
+                "first through tenth remediations failed and superseded",
+                "eleventh local candidate not-run",
             ),
         ),
         (
             "iteration",
             iteration,
             (
-                "第一次至第九次 remediation technical attempts 均为 "
+                "第一次至第十次 remediation technical attempts 均为 "
                 "`fail` / `superseded`",
-                "第十 exact candidate `not-run`",
+                "第十一次 local candidate `not-run`",
             ),
         ),
     )
@@ -10144,7 +10548,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     for marker in (
         "shared exact provenance/build boundary",
         ".github/workflows/desktop-release.yml",
-        "tools/{check_exact_git_provenance.py,exact_node_install.cjs,verify_reviewed_python_framework.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}",
+        "tools/{check_exact_git_provenance.py,exact_node_install.cjs,generate_reviewed_python_framework_inventory.cjs,verify_reviewed_python_framework.cjs,bootstrap_python_sidecar.py,build_python_sidecar.py,audit_python_sidecar.py}",
         "desktop/scripts/buildEngineeringSmokeEntrypoints.cjs",
         "web/scripts/buildEngineeringRenderer.cjs",
         "runtime/{engineering-smoke,renderer-build,python-sidecar-build-manifest}.schema.json",

@@ -102,6 +102,12 @@ const toolchainSource = path.join(
   "packaging",
   "python-sidecar-toolchain.lock.json"
 );
+const frameworkCoreInventorySource = path.join(
+  repositoryRoot,
+  "backend",
+  "packaging",
+  "python-framework-sealed-inventory.json"
+);
 const versionSource = path.join(repositoryRoot, "runtime", "version.json");
 const temporaryDirectories: string[] = [];
 
@@ -177,6 +183,39 @@ const toolchainMutationCases: ToolchainMutationCase[] = [
     },
     expected: /framework core differs from the reviewed lock/
   },
+  {
+    name: "missing framework core inventory",
+    mutate: (toolchain) => {
+      delete toolchain.python.frameworkCoreInventory;
+    },
+    expected: /Toolchain Python does not match the reviewed schema/
+  },
+  {
+    name: "extra framework core inventory field",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkCoreInventory.unreviewed = true;
+    },
+    expected: /framework core inventory does not match the reviewed schema/
+  },
+  ...[
+    ["file name", "fileName", "unreviewed-inventory.json"],
+    ["file size", "fileSize", 620663],
+    ["file hash", "fileSha256", "0".repeat(64)],
+    ["schema version", "schemaVersion", 2],
+    ["source payload size", "sourcePayloadSize", 32739569],
+    ["source payload hash", "sourcePayloadSha256", "0".repeat(64)],
+    ["source entry count", "sourceEntryCount", 3655],
+    ["source inventory hash", "sourceInventorySha256", "0".repeat(64)],
+    ["transformation count", "transformationCount", 40],
+    ["entry count", "entryCount", 3649],
+    ["inventory hash", "inventorySha256", "0".repeat(64)]
+  ].map(([label, field, replacement]) => ({
+    name: `framework core inventory ${label}`,
+    mutate: (toolchain: JsonObject) => {
+      toolchain.python.frameworkCoreInventory[field as string] = replacement;
+    },
+    expected: /framework core inventory differs from the reviewed contract/
+  })),
   {
     name: "install method",
     mutate: (toolchain) => {
@@ -310,10 +349,16 @@ async function createFixture(): Promise<Fixture> {
     "fixture notice\n"
   );
 
-  const [schemaBytes, toolchainBytes, versionBytes] = await Promise.all([
+  const [
+    schemaBytes,
+    toolchainBytes,
+    versionBytes,
+    frameworkCoreInventoryBytes
+  ] = await Promise.all([
     readFile(schemaSource),
     readFile(toolchainSource),
-    readFile(versionSource)
+    readFile(versionSource),
+    readFile(frameworkCoreInventorySource)
   ]);
   await Promise.all([
     writeFixtureFile(
@@ -325,6 +370,11 @@ async function createFixture(): Promise<Fixture> {
       root,
       "backend/packaging/python-sidecar-toolchain.lock.json",
       toolchainBytes
+    ),
+    writeFixtureFile(
+      root,
+      "backend/packaging/python-framework-sealed-inventory.json",
+      frameworkCoreInventoryBytes
     ),
     writeFixtureFile(root, "runtime/version.json", versionBytes)
   ]);
@@ -673,6 +723,26 @@ describe("Python sidecar beforePack gate", () => {
       expect(() => auditFixture(fixture)).toThrow(expected);
     }
   );
+
+  it("rejects a changed framework inventory even with refreshed input digests", async () => {
+    const fixture = await createFixture();
+    await appendFile(
+      path.join(
+        fixture.root,
+        "backend",
+        "packaging",
+        "python-framework-sealed-inventory.json"
+      ),
+      "\n"
+    );
+    await mutateManifest(fixture, (manifest) => {
+      manifest.build.inputDigests = gate.criticalInputDigests(fixture.root);
+    });
+
+    expect(() => auditFixture(fixture)).toThrow(
+      /framework core inventory file differs from its lock/
+    );
+  });
 
   it("rejects hostile local Git config before provenance commands can use it", async () => {
     const canonicalTemporaryParent = await realpath(os.tmpdir());

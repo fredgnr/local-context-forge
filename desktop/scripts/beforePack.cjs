@@ -84,7 +84,24 @@ const EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS = Object.freeze([
   "share/doc/python3.13/html"
 ]);
 const EXPECTED_FRAMEWORK_CORE_SHA256 =
-  "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec";
+  "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9";
+const EXPECTED_FRAMEWORK_CORE_INVENTORY = Object.freeze({
+  fileName: "python-framework-sealed-inventory.json",
+  fileSize: 620662,
+  fileSha256:
+    "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",
+  schemaVersion: 1,
+  sourcePayloadSize: 32739568,
+  sourcePayloadSha256:
+    "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
+  sourceEntryCount: 3654,
+  sourceInventorySha256:
+    "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
+  transformationCount: 39,
+  entryCount: 3648,
+  inventorySha256: EXPECTED_FRAMEWORK_CORE_SHA256
+});
+const MAX_FRAMEWORK_CORE_INVENTORY_BYTES = 16 * 1024 * 1024;
 const EXPECTED_PYTHON_INSTALL_METHOD =
   "macos-installer-no-op-framework-component";
 const EXPECTED_FRAMEWORK_COMPONENT = Object.freeze({
@@ -132,6 +149,7 @@ const FIXED_CRITICAL_INPUTS = Object.freeze([
   "backend/packaging/lcf_sidecar.spec",
   "backend/packaging/license-policy.json",
   "backend/packaging/missing-imports-allowlist.json",
+  "backend/packaging/python-framework-sealed-inventory.json",
   "backend/packaging/python-sidecar-toolchain.lock.json",
   "backend/pyproject.toml",
   "backend/uv.lock",
@@ -319,6 +337,86 @@ function loadCanonicalJsonAttestation(filePath, label) {
   }
   return {
     value,
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex")
+  };
+}
+
+function loadBoundedJsonAttestation(filePath, label, maximumBytes) {
+  let descriptor;
+  let bytes;
+  try {
+    descriptor = fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+    );
+    const before = fs.fstatSync(descriptor);
+    if (
+      !before.isFile() ||
+      before.uid !== process.geteuid() ||
+      before.nlink !== 1 ||
+      before.size <= 0 ||
+      before.size > maximumBytes ||
+      (before.mode & 0o7022) !== 0
+    ) {
+      fail(`${label} must be a stable bounded regular file`);
+    }
+    bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    const namedAfter = fs.lstatSync(filePath);
+    if (
+      !namedAfter.isFile() ||
+      namedAfter.isSymbolicLink() ||
+      bytes.length !== before.size ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.mode !== after.mode ||
+      before.uid !== after.uid ||
+      before.gid !== after.gid ||
+      before.nlink !== after.nlink ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs ||
+      before.dev !== namedAfter.dev ||
+      before.ino !== namedAfter.ino ||
+      before.mode !== namedAfter.mode ||
+      before.uid !== namedAfter.uid ||
+      before.gid !== namedAfter.gid ||
+      before.nlink !== namedAfter.nlink ||
+      before.size !== namedAfter.size ||
+      before.mtimeMs !== namedAfter.mtimeMs ||
+      before.ctimeMs !== namedAfter.ctimeMs
+    ) {
+      fail(`${label} changed while being read`);
+    }
+  } catch (error) {
+    if (error instanceof BeforePackAuditError) {
+      throw error;
+    }
+    fail(`${label} is unreadable`);
+  } finally {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
+  }
+  let value;
+  try {
+    const text = bytes.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(bytes)) {
+      fail(`${label} is not valid UTF-8`);
+    }
+    value = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof BeforePackAuditError) {
+      throw error;
+    }
+    fail(`${label} is not valid JSON`);
+  }
+  if (!isObject(value)) {
+    fail(`${label} must be an object`);
+  }
+  return {
+    value,
+    size: bytes.length,
     sha256: crypto.createHash("sha256").update(bytes).digest("hex")
   };
 }
@@ -702,7 +800,109 @@ function criticalInputDigests(repositoryRoot) {
   return result;
 }
 
-function validateToolchainLock(toolchain) {
+function validateFrameworkCoreInventory(repositoryRoot, python) {
+  const contract = assertExactKeys(
+    python.frameworkCoreInventory,
+    [
+      "fileName",
+      "fileSize",
+      "fileSha256",
+      "schemaVersion",
+      "sourcePayloadSize",
+      "sourcePayloadSha256",
+      "sourceEntryCount",
+      "sourceInventorySha256",
+      "transformationCount",
+      "entryCount",
+      "inventorySha256"
+    ],
+    [],
+    "Toolchain Python framework core inventory"
+  );
+  if (
+    contract.fileName !== EXPECTED_FRAMEWORK_CORE_INVENTORY.fileName ||
+    !Number.isSafeInteger(contract.fileSize) ||
+    contract.fileSize <= 0 ||
+    contract.fileSize > MAX_FRAMEWORK_CORE_INVENTORY_BYTES ||
+    typeof contract.fileSha256 !== "string" ||
+    !SHA256_PATTERN.test(contract.fileSha256) ||
+    Object.entries(EXPECTED_FRAMEWORK_CORE_INVENTORY).some(
+      ([key, expected]) => contract[key] !== expected
+    ) ||
+    contract.inventorySha256 !== python.frameworkCoreFingerprintSha256
+  ) {
+    fail("Python framework core inventory differs from the reviewed contract");
+  }
+
+  const inventoryDirectory = path.join(
+    repositoryRoot,
+    "backend",
+    "packaging"
+  );
+  if (
+    requireRealDirectory(
+      inventoryDirectory,
+      "Reviewed Python framework inventory directory"
+    ) !== inventoryDirectory
+  ) {
+    fail("Reviewed Python framework inventory directory is not canonical");
+  }
+  const inventoryPath = path.join(inventoryDirectory, contract.fileName);
+  const attestation = loadBoundedJsonAttestation(
+    inventoryPath,
+    "Reviewed Python framework core inventory",
+    MAX_FRAMEWORK_CORE_INVENTORY_BYTES
+  );
+  if (
+    attestation.size !== contract.fileSize ||
+    attestation.sha256 !== contract.fileSha256
+  ) {
+    fail("Reviewed Python framework core inventory file differs from its lock");
+  }
+  const inventory = assertExactKeys(
+    attestation.value,
+    [
+      "schemaVersion",
+      "source",
+      "transformations",
+      "entryCount",
+      "inventorySha256",
+      "entries"
+    ],
+    [],
+    "Reviewed Python framework core inventory"
+  );
+  const source = assertExactKeys(
+    inventory.source,
+    [
+      "payloadSize",
+      "payloadSha256",
+      "coreEntryCount",
+      "coreInventorySha256"
+    ],
+    [],
+    "Reviewed Python framework source inventory"
+  );
+  if (
+    inventory.schemaVersion !== contract.schemaVersion ||
+    source.payloadSize !== contract.sourcePayloadSize ||
+    source.payloadSha256 !== contract.sourcePayloadSha256 ||
+    source.coreEntryCount !== contract.sourceEntryCount ||
+    source.coreInventorySha256 !== contract.sourceInventorySha256 ||
+    !Array.isArray(inventory.transformations) ||
+    inventory.transformations.length !== contract.transformationCount ||
+    inventory.entryCount !== contract.entryCount ||
+    inventory.inventorySha256 !== contract.inventorySha256 ||
+    !Array.isArray(inventory.entries) ||
+    inventory.entries.length !== contract.entryCount ||
+    sha256Bytes(Buffer.from(canonicalJson(inventory.entries), "utf8")) !==
+      contract.inventorySha256
+  ) {
+    fail("Reviewed Python framework core inventory metadata is inconsistent");
+  }
+}
+
+function validateToolchainLock(toolchain, repositoryRoot) {
   assertExactKeys(
     toolchain,
     ["schemaVersion", "target", "python", "tools", "requiredCiInputs"],
@@ -732,6 +932,7 @@ function validateToolchainLock(toolchain) {
       "frameworkBinarySha256",
       "frameworkCoreFingerprintExcludedPaths",
       "frameworkCoreFingerprintSha256",
+      "frameworkCoreInventory",
       "reviewedBrokenSymlinks",
       "distribution"
     ],
@@ -758,6 +959,7 @@ function validateToolchainLock(toolchain) {
   ) {
     fail("Python toolchain framework core differs from the reviewed lock");
   }
+  validateFrameworkCoreInventory(repositoryRoot, python);
   if (!Array.isArray(python.reviewedBrokenSymlinks)) {
     fail("Toolchain reviewed broken symlinks are malformed");
   }
@@ -1706,7 +1908,13 @@ function validateArtifacts(root, manifest, repositoryRoot) {
   validatePythonToolchainArtifact(root, manifest, repositoryRoot);
 }
 
-function validateManifestShape(manifest, versions, toolchain, schema) {
+function validateManifestShape(
+  manifest,
+  versions,
+  toolchain,
+  schema,
+  repositoryRoot
+) {
   assertExactKeys(
     manifest,
     [
@@ -1734,7 +1942,7 @@ function validateManifestShape(manifest, versions, toolchain, schema) {
   ) {
     fail("Python sidecar manifest identity is unsupported");
   }
-  validateToolchainLock(toolchain);
+  validateToolchainLock(toolchain, repositoryRoot);
   validateSchemaContract(schema, toolchain);
   validateProduct(manifest, versions);
   const target = assertExactKeys(
@@ -1828,7 +2036,13 @@ function auditPythonSidecar(options = {}) {
   );
   const manifest = manifestAttestation.value;
 
-  validateManifestShape(manifest, versions, toolchain, schema);
+  validateManifestShape(
+    manifest,
+    versions,
+    toolchain,
+    schema,
+    repositoryRoot
+  );
   validateBuild(
     manifest,
     toolchain,

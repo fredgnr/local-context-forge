@@ -46,7 +46,7 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 | TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `done` | Governance/Architecture | 无 | accepted head + independent acceptance + resulting-main source `pass` |
 | TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `done` | Governance/CI | 无 | immutable history + external closeout evidence |
 | TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `done` | CI/QMD/Sites | 无 | resulting-main run `30986208251` success |
-| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；nine remediation attempts `fail` / `superseded`；tenth exact candidate `not-run`；`VAL-PACKAGED-SMOKE-001` remains `not-run` |
+| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；ten remediation attempts `fail` / `superseded`；eleventh local candidate `not-run`；real Installer/fresh Actions/`VAL-PACKAGED-SMOKE-001` remain `not-run` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
 | TODO-DATA-BACKUP-001 | Priority-1 | W04/P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
@@ -165,8 +165,12 @@ W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建�
    `31575062814` success；Engineering `31575062796` / job `94045233041` producer success 后因
    archive symlink mode `0775` vs macOS Installer `0777` core-fingerprint fail；cleanup runner scope
    success、later skipped、artifacts `[]`、no App launch；Containers `31575062785` success/no publish。
-   第十次 exact remediation candidate 尚无 committed exact head/tree 或 fresh exact-head Actions
-   result。它保留第九候选不使用
+   第十次 exact `70b1823259590725d6f579b97fa294d3d9dcf728` / parent
+   `6eec41125b431a9fd99d8b1821362573de1b5b8a` / tree
+   `a706817f28b170bab1fe9fe6c3a6e8b673e5dc81` 同样已 `fail` / `superseded`：Desktop
+   `31580628860` success；Engineering `31580628877` / job `94062603909` framework-fingerprint fail；
+   Containers `31580628857` success/no-publish；artifacts `[]`、no App launch。第十一次 local candidate
+   尚无 committed exact head/tree 或 fresh exact-head Actions。它保留 producer 不使用
    `actions/setup-python` 或原 full pkg 的 producer：验签 exact outer pkg 后只把
    `Python_Framework.pkg` 的唯一 postinstall 替换为 locked 17-byte no-op，隔离旧 root/确认
    target absent 后 component-install，再进行 non-symlink seal、大小写无关 cache 清理和
@@ -176,16 +180,19 @@ W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建�
    运行时 `--install-reviewed-python` 只验证 distribution/framework/interpreter binding，不安装或
    调用 `sudo`；并把 manifest 真实 uppercase/single-space 整行固定在 `grep -Fxc` + count one，
    cleanup 显式区分 source-unbound zero-residue 与 source-bound strict source/repo closure；
-   fingerprint contract 只精确绑定 archive `0775` → Installer `0777` symlink-mode transformation，
-   单一 pin 落盘 fingerprint `ba58cfb…`，不放宽 target/path/type、non-symlink mode 或 core bytes。
-   locked Payload `f922c9d…` 的 canonical CPIO inventory 以 33 条 symlink `0775` 得旧 `863a6353…`；
-   仅映射 Installer `0777` 得唯一 `ba58cfb…`，同 Payload 物化后的 Node verifier 独立复算一致。
-   这不是 runtime learn-and-accept，mode/target/path/type 仍全部参与。
-   两份 workflow 的 seal transaction 以 pre-trap sentinel 开始，只在新 root/旧 quarantine exact
-   path/type/root-owner/`dev:ino` 绑定后激活；失败时匹配才删除新 root并恢复旧 root，无旧 root 只删
-   新 root，mismatch 不删且 fixed failure；verifier/held inputs 成功后 committed 只精确清 quarantine。
-   该设计本身不改变 `not-run`；
-2. packaged App launch/runtime smoke：九次 remediation 均未启动 bundle，第十 candidate 也尚未运行，
+   fingerprint contract 从 locked Payload raw `3654` / `863a6353…` 出发，只允许 `6` 个 exact
+   AppleDouble removals 与 `33` 个 exact symlink mode `0775→0777`，单一 pin sealed `3648` /
+   `fdd600…`；manifest size `620662` / SHA-256 `b8ef4275…`，不放宽 target/path/type、non-symlink
+   mode 或 core bytes。两次独立 `pkgutil --expand-full` raw materialization 都不是 installed/sealed
+   output；分别显式执行 non-symlink seal、大小写无关 cache cleanup 与 manifest-bound symlink-mode
+   normalization 后才 strict match，七类 difference count 均为 `0`。real Installer 因本机无
+   passwordless `sudo` 为 `not-run`。这不是 runtime learn-and-accept。两份 workflow 的 seal
+   transaction 以 pre-trap sentinel 开始，只在新 root/旧 quarantine exact
+   path/type/root-owner/`dev:ino` 绑定后激活；seal 只写 `committed` 并保留 quarantine，独立
+   `always()` postcondition 重验后才 `finalizing` 删除并最终 `complete`。rollback-ready phase 的
+   `HUP`/`INT`/`TERM` 精确恢复；unbound/mismatch preserve/no-delete、`finalizing` failure
+   no-rollback，均 fixed `70`，且不声称 `SIGKILL`/host-crash recovery。该设计本身不改变 `not-run`；
+2. packaged App launch/runtime smoke：十次 remediation 均未启动 bundle，第十一次 candidate 也尚未运行，
    保持 `not-run`；未来验证 renderer/preload
    handshake、Main → private UDS sidecar health/领域请求、正常退出、无 orphan、无 public INET
    listener，并以 PATH trap 证明 exercised path 不发现系统 Python/Node/Git。
@@ -241,8 +248,11 @@ absent，later skipped、artifacts `[]`、no App launch。ninth remediation exac
 `6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent `1533656…` / tree `3361f3e…` also failed：
 Desktop `31575062814` and Containers `31575062785` success/no publish；Engineering `31575062796` /
 job `94045233041` producer success then archive symlink mode `0775` vs Installer `0777` core-fingerprint
-failure；cleanup runner scope success，later skipped、artifacts `[]`、no App launch。tenth exact
-remediation technical candidate remains `not-run`（无 committed exact head/tree；无 fresh exact-head Actions），W02
+failure；cleanup runner scope success，later skipped、artifacts `[]`、no App launch。tenth remediation
+exact `70b1823…` / tree `a706817…` also failed：Desktop `31580628860` and Containers
+`31580628857` success/no-publish；Engineering `31580628877` / job `94062603909` framework-fingerprint
+failure，artifacts `[]`、no App launch。eleventh local candidate remains `not-run`（无 committed exact
+head/tree；无 fresh exact-head Actions），W02
 `in-progress`。packaged App
 launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。W10/W11 保持 locked，直至未来
 packaged 阶段在 independently accepted exact head、合入后 resulting `main` 上取得完整 smoke

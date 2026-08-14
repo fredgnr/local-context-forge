@@ -14,7 +14,7 @@
 | W01 remediation historical Checkpoint A | `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree `f059ad8bd3cfc6accac707745d5d8727bfb532bd` | 记录时刻 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [immutable schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597`；[closed schema](W01/schema-v2.json) |
 | W01 accepted remediation / W02 entry | final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`；resulting main `1786255b55dd1a78659ed92235893876175a0722`；same tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64` | PR/source、independent acceptance、merge、resulting-main source、W02 activation `pass`；packaged smoke `not-run` | [W02 entry closeout](W02/2026-08-05-entry.md)；[Actions 30986208251](https://github.com/fredgnr/local-context-forge/actions/runs/30986208251) |
 | W02 static assembly substage | `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38` | `.app` directory assembly / bundle audit `pass`；packaged launch/runtime 与 `VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [assembly record](W02/2026-08-06-08137c7-assembly.md)；[run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806)；source run `31024794734` success |
-| W02 PR #21 independent NO-GO / remediation entry | reviewed `8c5fd23206b671b768fd21d253bf292642f93a51` / tree `785f4656de8a7233b6dd632fe4815976d33468fb`；latest failed exact `6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree `3361f3e3880c926015a82abc862cb3e8334410c2` | independent `NO-GO`；first through ninth remediation technical attempts `fail` / `superseded`；tenth exact candidate `not-run`；W02 `in-progress`；`VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [append-only remediation record](W02/2026-08-07-pr21-remediation.md)；ninth Desktop source `31575062814` success；Engineering `31575062796` / job `94045233041` producer success then archive symlink mode `0775` vs Installer mode `0777` core-fingerprint failure；cleanup runner scope success / later skipped / artifacts `[]` / no App；Containers `31575062785` success/no publish |
+| W02 PR #21 independent NO-GO / remediation entry | reviewed `8c5fd23206b671b768fd21d253bf292642f93a51` / tree `785f4656de8a7233b6dd632fe4815976d33468fb`；latest failed exact `70b1823259590725d6f579b97fa294d3d9dcf728` / parent `6eec41125b431a9fd99d8b1821362573de1b5b8a` / tree `a706817f28b170bab1fe9fe6c3a6e8b673e5dc81` | independent `NO-GO`；first through tenth remediation technical attempts `fail` / `superseded`；eleventh local candidate `not-run`；W02 `in-progress`；`VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [append-only remediation record](W02/2026-08-07-pr21-remediation.md)；tenth Desktop source `31580628860` success；Engineering `31580628877` / job `94062603909` framework-fingerprint failure；artifacts `[]` / no App；Containers `31580628857` success/no publish；local root-cause contract is raw `3654` / `863a6353…` + 6 exact AppleDouble removals + 33 exact symlink modes `0775→0777` = sealed `3648` / `fdd600…`，but eleventh fresh exact-head Actions remain `not-run` |
 
 旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。W01 JSON
 冻结其记录时刻的 remediation lifecycle；后续 external acceptance/merge/main run 由新的 W02 entry
@@ -230,27 +230,32 @@ App 未启动、sidecar 未从 bundle 启动，上述 launch/runtime 观察均�
 
 [2026-08-07 PR #21 remediation record](W02/2026-08-07-pr21-remediation.md) 进一步保存最终独立
 验收对 reviewed head `8c5fd232…` / tree `785f4656…` 的 `NO-GO`。该候选的旧 exact-head runs
-以及九次 remediation executions 只能作为失败候选的历史技术证据；最新第九次 exact
-`6eec411…` / parent `1533656…` / tree `3361f3e…` 的 Desktop source `31575062814` 与
-Containers `31575062785` success/no publish，但 Engineering `31575062796` / job `94045233041`
-在 producer 成功后因 archive symlink mode `0775` 与 macOS Installer 落盘 mode `0777` 造成 core
-fingerprint 差异，以 `Reviewed Python framework core fingerprint changed` fail closed。cleanup-only
-success 仅覆盖 runner/source/repo，later stages skipped、artifacts `[]`，没有 App launch。第九候选的
-producer/seal 设计不再使用
+以及十次 remediation executions 只能作为失败候选的历史技术证据；最新第十次 exact
+`70b1823…` / parent `6eec411…` / tree `a706817…` 的 Desktop source `31580628860` 与 Containers
+`31580628857` success/no publish，但 Engineering `31580628877` / job `94062603909` 仍以
+`Reviewed Python framework core fingerprint changed` fail closed，artifacts `[]` 且没有 App launch。
+此前只映射 `33` 条 symlink mode 的 `ba58cfb…` 模型因而已被证明不完整。producer/seal 设计不使用
 `actions/setup-python` 或原 full pkg：只在 exact outer pkg 验签后以唯一 17-byte no-op 重打并
 component-install `Python_Framework.pkg`，隔离旧 root/确认 target absent 后执行 non-symlink
 seal、大小写无关 cache 清理及 O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node
 core/fresh-exclusion verification，随后才精确
 复验/清理 quarantine 并首次运行 framework Python；运行时
-install-reviewed 只验证 distribution/binding，不安装或 `sudo`。第十候选保留该边界，并要求
-fingerprint contract 显式绑定已观察到的 archive `0775` → Installer `0777` symlink-mode 转换，
-并单一 pin 落盘 core fingerprint `ba58cfb…`，不得放宽 target/path/type、non-symlink mode 或 core
-bytes。两份 workflow 的 seal cleanup 以 pre-trap sentinel 起步；新 root/旧 quarantine 经过 exact
-path/type/root-owner/`dev:ino` 绑定后才激活，失败时仅在 identity 仍匹配时删除新 root并按是否存在
-旧 root 精确恢复，mismatch 不删除且 fixed failure；verifier 与 held inputs 成功后 committed 只精确
-清理匹配的 quarantine。它尚无 committed exact head/tree 或
-fresh Actions。在新的 exact head 被 fresh Actions 和独立验收接受前，W02 保持
-`in-progress`、tenth exact remediation technical candidate 保持 `not-run`，packaged
+install-reviewed 只验证 distribution/binding，不安装或 `sudo`。第十一次 local candidate 把 locked
+Payload raw `3654` / `863a6353…` 明确转换为 sealed `3648` / `fdd600…`：只移除 `6` 个 exact
+AppleDouble entries，并把 `33` 个 exact symlink mode 从 `0775` 映射为 `0777`，target/path/type、
+non-symlink mode 与 bytes 继续严格参与；expected manifest size `620662` / SHA-256 `b8ef4275…`。
+两次独立 `pkgutil --expand-full` raw materialization 都不是 installed/sealed output；分别显式执行
+non-symlink seal、大小写无关 cache cleanup 与 manifest-bound `33` 条 symlink mode `0775→0777`
+normalization 后，verifier 才得到 `3648` / `fdd600…`，七类 difference count 均为 `0`。real Installer
+因本机无 passwordless `sudo` 仍为 `not-run`。两份 workflow 的 seal cleanup 以 pre-trap sentinel
+起步；新 root/旧 quarantine 经过 exact path/type/root-owner/`dev:ino` 绑定后才激活。seal 成功只写
+`committed` 并保留 quarantine；独立 `always()` postcondition 重验 held inputs/candidate identity 后才
+进入 `finalizing`、精确删除 quarantine 并最终 `complete`。rollback-ready phase 的
+`HUP`/`INT`/`TERM` 会精确恢复并返回 `129`/`130`/`143`；unbound/identity mismatch preserve/no-delete
+并 fixed `70`，`finalizing` failure no-rollback/fixed `70`，不声称恢复 `SIGKILL` 或 host crash。
+第十一次 local candidate 尚无 committed exact head/tree 或 fresh Actions。
+在新的 exact head 被 fresh Actions 和独立验收接受前，W02 保持
+`in-progress`、eleventh candidate 保持 `not-run`，packaged
 launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 保持 `not-run`，W10/W11 保持 locked。
 
 ### W10/W11 slice

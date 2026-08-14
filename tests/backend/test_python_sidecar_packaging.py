@@ -9236,11 +9236,59 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
         bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS
     )
     assert python_lock["frameworkCoreFingerprintSha256"] == (
-        "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"
+        "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"
     )
     assert python_lock["frameworkCoreFingerprintSha256"] != (
-        "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
+        "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"
     )
+    inventory_path = (
+        build.TOOLCHAIN_LOCK.parent
+        / python_lock["frameworkCoreInventory"]["fileName"]
+    )
+    inventory_bytes = inventory_path.read_bytes()
+    expected_inventory = json.loads(inventory_bytes.decode("utf-8"))
+    assert len(inventory_bytes) == 620662
+    assert hashlib.sha256(inventory_bytes).hexdigest() == (
+        "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+    )
+    assert python_lock["frameworkCoreInventory"] == {
+        "fileName": "python-framework-sealed-inventory.json",
+        "fileSize": 620662,
+        "fileSha256": (
+            "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+        ),
+        "schemaVersion": 1,
+        "sourcePayloadSize": 32739568,
+        "sourcePayloadSha256": (
+            "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391"
+        ),
+        "sourceEntryCount": 3654,
+        "sourceInventorySha256": (
+            "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
+        ),
+        "transformationCount": 39,
+        "entryCount": 3648,
+        "inventorySha256": (
+            "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"
+        ),
+    }
+    assert expected_inventory["schemaVersion"] == 1
+    assert expected_inventory["source"] == {
+        "payloadSize": python_lock["frameworkCoreInventory"][
+            "sourcePayloadSize"
+        ],
+        "payloadSha256": python_lock["frameworkCoreInventory"][
+            "sourcePayloadSha256"
+        ],
+        "coreEntryCount": python_lock["frameworkCoreInventory"][
+            "sourceEntryCount"
+        ],
+        "coreInventorySha256": python_lock["frameworkCoreInventory"][
+            "sourceInventorySha256"
+        ],
+    }
+    assert len(expected_inventory["transformations"]) == 39
+    assert len(expected_inventory["entries"]) == 3648
     assert python_lock["reviewedBrokenSymlinks"] == [
         {
             "path": "Frameworks/Tcl.framework/PrivateHeaders",
@@ -9273,6 +9321,93 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
     assert frozen["status"]["const"] == "pass"
     assert frozen["pathTrap"]["const"] is True
     assert frozen["checks"]["const"] == audit.EXPECTED_FROZEN_SMOKE["checks"]
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("fileName", "unreviewed-inventory.json"),
+        ("fileSize", 620663),
+        ("fileSha256", "0" * 64),
+        ("schemaVersion", 2),
+        ("sourcePayloadSize", 32739569),
+        ("sourcePayloadSha256", "0" * 64),
+        ("sourceEntryCount", 3655),
+        ("sourceInventorySha256", "0" * 64),
+        ("transformationCount", 40),
+        ("entryCount", 3649),
+        ("inventorySha256", "0" * 64),
+        ("__missing__", None),
+        ("__extra__", None),
+    ),
+)
+def test_reviewed_framework_inventory_rejects_lock_mutation(
+    field: str,
+    replacement: object,
+) -> None:
+    toolchain = json.loads(build.TOOLCHAIN_LOCK.read_text(encoding="utf-8"))
+    python_lock = copy.deepcopy(toolchain["python"])
+    inventory_lock = python_lock["frameworkCoreInventory"]
+    inventory_path = build.TOOLCHAIN_LOCK.parent / inventory_lock["fileName"]
+    bound = bootstrap._open_bound_file(
+        inventory_path,
+        maximum_size=bootstrap.MAX_FRAMEWORK_CORE_INVENTORY_BYTES,
+        error_message="fixture inventory",
+    )
+    try:
+        if field == "__missing__":
+            del inventory_lock["sourceEntryCount"]
+        elif field == "__extra__":
+            inventory_lock["unreviewed"] = True
+        else:
+            inventory_lock[field] = replacement
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="framework (?:inventory|core lock)",
+        ):
+            bootstrap._reviewed_framework_core_contract(python_lock)
+            contract = bootstrap._reviewed_framework_inventory_contract(
+                python_lock
+            )
+            bootstrap._verify_reviewed_framework_inventory_file(bound, contract)
+    finally:
+        os.close(bound.descriptor)
+
+
+def test_reviewed_framework_inventory_binds_the_exact_file(tmp_path: Path) -> None:
+    toolchain = json.loads(build.TOOLCHAIN_LOCK.read_text(encoding="utf-8"))
+    python_lock = toolchain["python"]
+    inventory_lock = python_lock["frameworkCoreInventory"]
+    source = build.TOOLCHAIN_LOCK.parent / inventory_lock["fileName"]
+    contract = bootstrap._reviewed_framework_inventory_contract(python_lock)
+    exact = bootstrap._open_bound_file(
+        source,
+        maximum_size=bootstrap.MAX_FRAMEWORK_CORE_INVENTORY_BYTES,
+        error_message="fixture inventory",
+    )
+    try:
+        bootstrap._verify_reviewed_framework_inventory_file(exact, contract)
+    finally:
+        os.close(exact.descriptor)
+    changed = tmp_path / inventory_lock["fileName"]
+    changed.write_bytes(source.read_bytes() + b"\n")
+    changed.chmod(0o600)
+    bound = bootstrap._open_bound_file(
+        changed,
+        maximum_size=bootstrap.MAX_FRAMEWORK_CORE_INVENTORY_BYTES,
+        error_message="fixture inventory",
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="inventory file is inconsistent",
+        ):
+            bootstrap._verify_reviewed_framework_inventory_file(
+                bound,
+                contract,
+            )
+    finally:
+        os.close(bound.descriptor)
 
 
 def test_frozen_smoke_source_fixture_is_a_real_dulwich_repository(
@@ -10334,6 +10469,94 @@ print(json.dumps({{"error": error, "residue": sorted(p.name for p in runner.iter
     }
 
 
+def _synthetic_framework_inventory(
+    root: Path,
+    *,
+    reviewed_broken_symlinks: Mapping[str, str] | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    exclusions = tuple(
+        PurePosixPath(item).parts
+        for item in bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS
+    )
+    reviewed_broken = dict(reviewed_broken_symlinks or {})
+    entries: list[dict[str, Any]] = []
+    for item_path in sorted(
+        root.rglob("*"),
+        key=lambda candidate: candidate.relative_to(root).as_posix(),
+    ):
+        relative_path = item_path.relative_to(root)
+        if any(
+            relative_path.parts[: len(excluded)] == excluded
+            for excluded in exclusions
+        ):
+            continue
+        info = item_path.lstat()
+        entry: dict[str, Any] = {
+            "path": relative_path.as_posix(),
+            "mode": f"{stat.S_IMODE(info.st_mode):04o}",
+        }
+        if stat.S_ISLNK(info.st_mode):
+            target = os.readlink(item_path)
+            entry.update(
+                {
+                    "type": "symlink",
+                    "target": target,
+                    "sha256": hashlib.sha256(target.encode("utf-8")).hexdigest(),
+                }
+            )
+            try:
+                item_path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                if reviewed_broken.get(entry["path"]) != target:
+                    raise AssertionError("synthetic broken symlink is not reviewed")
+                entry["broken"] = True
+        elif stat.S_ISDIR(info.st_mode):
+            entry["type"] = "directory"
+        elif stat.S_ISREG(info.st_mode):
+            payload = item_path.read_bytes()
+            entry.update(
+                {
+                    "type": "file",
+                    "size": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+            )
+        else:
+            raise AssertionError("synthetic inventory contains a special file")
+        entries.append(entry)
+    inventory_sha256 = hashlib.sha256(
+        bootstrap._canonical_json_bytes(entries)
+    ).hexdigest()
+    manifest = {
+        "schemaVersion": 1,
+        "source": {
+            "payloadSize": FRAMEWORK_COMPONENT_FIXTURE["payloadSize"],
+            "payloadSha256": FRAMEWORK_COMPONENT_FIXTURE["payloadSha256"],
+            "coreEntryCount": len(entries),
+            "coreInventorySha256": inventory_sha256,
+        },
+        "transformations": [],
+        "entryCount": len(entries),
+        "inventorySha256": inventory_sha256,
+        "entries": entries,
+    }
+    payload = bootstrap._canonical_json_bytes(manifest) + b"\n"
+    contract = {
+        "fileName": bootstrap.REVIEWED_FRAMEWORK_CORE_INVENTORY_NAME,
+        "fileSize": len(payload),
+        "fileSha256": hashlib.sha256(payload).hexdigest(),
+        "schemaVersion": 1,
+        "sourcePayloadSize": FRAMEWORK_COMPONENT_FIXTURE["payloadSize"],
+        "sourcePayloadSha256": FRAMEWORK_COMPONENT_FIXTURE["payloadSha256"],
+        "sourceEntryCount": len(entries),
+        "sourceInventorySha256": inventory_sha256,
+        "transformationCount": 0,
+        "entryCount": len(entries),
+        "inventorySha256": inventory_sha256,
+    }
+    return payload, contract
+
+
 def _synthetic_reviewed_framework(
     tmp_path: Path,
 ) -> tuple[Path, dict[str, Any]]:
@@ -10350,6 +10573,7 @@ def _synthetic_reviewed_framework(
     stdlib.mkdir(mode=0o755, parents=True)
     (stdlib / "json.py").write_text("reviewed = True\n", encoding="ascii")
     (stdlib / "json.py").chmod(0o644)
+    _inventory_payload, inventory_contract = _synthetic_framework_inventory(root)
     python_lock = {
         "interpreterRelativePath": "bin/python3.13",
         "interpreterSize": len(launcher_payload),
@@ -10364,6 +10588,7 @@ def _synthetic_reviewed_framework(
             root,
             excluded_paths=bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS,
         ),
+        "frameworkCoreInventory": inventory_contract,
         "reviewedBrokenSymlinks": [],
     }
     return root, python_lock
@@ -10570,6 +10795,12 @@ def _configure_reviewed_python_installer_fixture(
         framework_root,
         excluded_paths=bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS,
     )
+    inventory_payload, inventory_contract = _synthetic_framework_inventory(
+        framework_root
+    )
+    inventory_path = lock_path.parent / inventory_contract["fileName"]
+    inventory_path.write_bytes(inventory_payload)
+    inventory_path.chmod(0o600)
     monkeypatch.setattr(bootstrap.sys, "executable", str(interpreter))
     monkeypatch.setattr(
         bootstrap,
@@ -10599,6 +10830,7 @@ def _configure_reviewed_python_installer_fixture(
                     "frameworkCoreFingerprintSha256": (
                         framework_core_fingerprint
                     ),
+                    "frameworkCoreInventory": inventory_contract,
                     "reviewedBrokenSymlinks": [],
                     "distribution": {
                         "installerPackageName": package_name,
@@ -10627,6 +10859,11 @@ def _configure_reviewed_python_installer_fixture(
         maximum_size=bootstrap.MAX_TREE_FILE_BYTES,
         error_message="fixture lock",
     )
+    bound_inventory = bootstrap._open_bound_file(
+        inventory_path,
+        maximum_size=bootstrap.MAX_FRAMEWORK_CORE_INVENTORY_BYTES,
+        error_message="fixture inventory",
+    )
     source = bootstrap._SourceSeal(
         root=source_root,
         descriptor=source_descriptor,
@@ -10634,7 +10871,7 @@ def _configure_reviewed_python_installer_fixture(
         repository_commit="1" * 40,
         repository_tree="2" * 40,
         source_snapshot_sha256="3" * 64,
-        files=(bound_lock,),
+        files=(bound_lock, bound_inventory),
     )
     monkeypatch.setattr(bootstrap, "_validate_source_root", lambda *_args: source)
     source_revalidations = 0
@@ -10972,6 +11209,9 @@ def _configure_exact_toolchain_build_fixture(
         framework_root,
         excluded_paths=bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS,
     )
+    inventory_payload, inventory_contract = _synthetic_framework_inventory(
+        framework_root
+    )
     build_lock_path = packaging_root / "build-requirements.lock"
     build_lock_path.write_bytes(
         (PROJECT_ROOT / "backend" / "packaging" / "build-requirements.lock").read_bytes()
@@ -10979,6 +11219,8 @@ def _configure_exact_toolchain_build_fixture(
     uv_lock_path = source_root / "backend" / "uv.lock"
     uv_lock_path.write_bytes(b"version = 1\n")
     toolchain_lock_path = packaging_root / "python-sidecar-toolchain.lock.json"
+    inventory_path = packaging_root / inventory_contract["fileName"]
+    inventory_path.write_bytes(inventory_payload)
     toolchain_lock_path.write_bytes(
         bootstrap._canonical_json_bytes(
             {
@@ -11000,13 +11242,19 @@ def _configure_exact_toolchain_build_fixture(
                     "frameworkCoreFingerprintSha256": (
                         framework_core_fingerprint
                     ),
+                    "frameworkCoreInventory": inventory_contract,
                     "reviewedBrokenSymlinks": [],
                 }
             }
         )
         + b"\n"
     )
-    for path in (build_lock_path, uv_lock_path, toolchain_lock_path):
+    for path in (
+        build_lock_path,
+        uv_lock_path,
+        inventory_path,
+        toolchain_lock_path,
+    ):
         path.chmod(0o600)
     source_descriptor = os.open(
         source_root,
@@ -11018,7 +11266,12 @@ def _configure_exact_toolchain_build_fixture(
             maximum_size=bootstrap.MAX_TREE_FILE_BYTES,
             error_message="fixture source",
         )
-        for path in (build_lock_path, uv_lock_path, toolchain_lock_path)
+        for path in (
+            build_lock_path,
+            uv_lock_path,
+            inventory_path,
+            toolchain_lock_path,
+        )
     )
     source = bootstrap._SourceSeal(
         root=source_root,

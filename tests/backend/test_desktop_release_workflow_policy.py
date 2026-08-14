@@ -348,271 +348,132 @@ def test_runtime_source_urls_and_hashes_are_exactly_locked() -> None:
     assert "LCF_QMD_BUILD_PYTHON" in workflow
 
 
-def test_reviewed_framework_is_sealed_and_node_verified_before_first_python() -> None:
-    workflow = _workflow()
-    build_job = _job_slice(workflow, "build")
-    python_lock = json.loads(
-        (
-            PROJECT_ROOT
-            / "backend"
-            / "packaging"
-            / "python-sidecar-toolchain.lock.json"
-        ).read_text(encoding="utf-8")
-    )["python"]
-    distribution = python_lock["distribution"]
-    component = distribution["frameworkComponent"]
+def test_reviewed_framework_transaction_is_synchronized_and_postconditioned() -> None:
+    release_workflow = _workflow()
+    smoke_workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "packaged-smoke.yml"
+    ).read_text(encoding="utf-8")
+    release_build = _job_slice(release_workflow, "build")
+    smoke_build = _job_slice(smoke_workflow, "assemble")
+    step_names = (
+        "Provision reviewed build Python without executing it",
+        "Seal reviewed build Python framework",
+        "Validate reviewed Python framework transaction postcondition",
+    )
 
-    assert distribution["installMethod"] == (
-        "macos-installer-no-op-framework-component"
-    )
-    producer_start = build_job.index(
-        "- name: Provision reviewed build Python without executing it"
-    )
-    seal_start = build_job.index(
-        "- name: Seal reviewed build Python framework"
-    )
-    bind_start = build_job.index("- name: Bind release provenance")
-    producer = build_job[producer_start:seal_start]
-    seal = build_job[seal_start:bind_start]
+    def step_document(job: str, name: str) -> str:
+        start = job.index(f"      - name: {name}")
+        following = job.find("\n      - name: ", start + 1)
+        return job[start:] if following < 0 else job[start:following]
 
-    no_op_write = producer.index(
-        "printf '#!/bin/sh\\nexit 0\\n' > \"${no_op_postinstall}\""
-    )
-    no_op_replace = producer.index(
-        '/bin/mv -f "${no_op_postinstall}" "${postinstall}"'
-    )
-    no_op_install = producer.index(
-        "/usr/bin/sudo --non-interactive /usr/sbin/installer"
-    )
-    assert no_op_write < no_op_replace < no_op_install
-    assert '-pkg "${no_op_package}" -target /' in producer
-    assert '-pkg "${package}" -target /' not in producer
-    assert component["packageName"] in producer
-    assert str(component["postinstallSize"]) in producer
-    assert component["postinstallSha256"] in producer
-    assert str(component["noOpPostinstallSize"]) in producer
-    assert component["noOpPostinstallSha256"] in producer
-    assert f'/bin/chmod {component["noOpPostinstallMode"]} ' in producer
-    quarantine_markers = (
-        'readonly framework_quarantine_prefix="${framework_parent}/.lcf-python-quarantine."',
-        '"${framework_quarantine_prefix}XXXXXXXXXX"',
-        'framework_quarantine_suffix="${framework_quarantine#"${framework_quarantine_prefix}"}"',
-        'test "${framework_quarantine%/*}" = "${framework_parent}"',
-        '[[ "${framework_quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
-        'test -d "${framework_quarantine}"',
-        'test ! -L "${framework_quarantine}"',
-        '"${framework_quarantine}")" = "0"',
-        '"${framework_quarantine}")" = "700"',
-        '/usr/bin/sudo --non-interactive /bin/rmdir "${framework_quarantine}"',
-        'test ! -e "${framework_quarantine}"',
-        '/usr/bin/sudo --non-interactive /bin/mv \\\n'
-        '              "${framework_root}" "${framework_quarantine}"',
-    )
-    quarantine_offsets = [producer.index(marker) for marker in quarantine_markers]
-    assert quarantine_offsets == sorted(quarantine_offsets)
-    cleanup_markers = (
-        'readonly saved_status="$?"',
-        "trap - EXIT",
-        'cleanup_quarantine="${framework_quarantine_placeholder:-none}"',
-        'if test "${framework_quarantine_placeholder_identity:-none}" != "none"; then',
-        'test "$(/usr/bin/stat -f \'%d:%i\' "${cleanup_quarantine}")" = \\\n'
-        '                  "${framework_quarantine_placeholder_identity}"',
-        'cleanup_status=70',
-        '/usr/bin/find -x "${producer_root}" -depth -delete || {',
-        'if test "${saved_status}" -ne 0; then',
-        'exit "${saved_status}"',
-        'exit "${cleanup_status}"',
-        'framework_quarantine_placeholder="none"\n'
-        '          framework_quarantine_placeholder_identity="none"\n'
-        '          trap cleanup_producer EXIT',
-    )
-    cleanup_offsets = [producer.index(marker) for marker in cleanup_markers]
-    assert cleanup_offsets == sorted(cleanup_offsets)
-    active_offset = producer.index(
-        'framework_quarantine_placeholder="${framework_quarantine}"'
-    )
-    identity_offset = producer.index(
-        'framework_quarantine_placeholder_identity="$(/usr/bin/stat -f \'%d:%i\''
-    )
-    owner_offset = producer.index('"${framework_quarantine}")" = "0"')
-    clear_offset = producer.index(
-        'framework_quarantine_placeholder_identity="none"', identity_offset
-    )
-    move_offset = producer.index(
-        '/usr/bin/sudo --non-interactive /bin/mv \\\n'
-        '              "${framework_root}" "${framework_quarantine}"'
-    )
-    assert active_offset < identity_offset < owner_offset < clear_offset < move_offset
-    assert producer.count("/bin/rmdir") == 2
-    assert "readonly framework_quarantine_placeholder" not in producer
-    assert 'cd "${framework_quarantine}"' not in producer
+    for name in step_names:
+        release_step = step_document(release_build, name)
+        smoke_step = step_document(smoke_build, name)
+        release_run = release_step.split("        run: |\n", 1)[1]
+        smoke_run = smoke_step.split("        run: |\n", 1)[1]
+        assert release_run == smoke_run
 
-    verifier_payload = (
-        PROJECT_ROOT / "tools" / "verify_reviewed_python_framework.cjs"
-    ).read_bytes()
-    lock_payload = (
-        PROJECT_ROOT
-        / "backend"
-        / "packaging"
-        / "python-sidecar-toolchain.lock.json"
-    ).read_bytes()
+    producer = step_document(release_build, step_names[0])
+    seal = step_document(release_build, step_names[1])
+    postcondition = step_document(release_build, step_names[2])
+    assert "id: provision_reviewed_python" in producer
+    assert "id: seal_reviewed_python" in seal
+    assert postcondition.count("if: ${{ always() }}") == 1
+    assert "continue-on-error:" not in release_build
+    assert "steps.provision_reviewed_python.outcome" in postcondition
+    assert "steps.seal_reviewed_python.outcome" in postcondition
+    assert release_build.index(step_names[0]) < release_build.index(step_names[1])
+    assert release_build.index(step_names[1]) < release_build.index(step_names[2])
+    assert release_build.index(step_names[2]) < release_build.index(
+        "Bind release provenance"
+    )
+
+    for block in (producer, seal, postcondition):
+        for signal in ("HUP", "INT", "TERM"):
+            assert signal in block
+        assert "rm -rf" not in block
+        assert 'find -P -x "${framework_parent}"' not in block
     for marker in (
-        f'readonly framework_verifier_size="{len(verifier_payload)}"',
-        'readonly framework_verifier_sha256="'
-        f'{hashlib.sha256(verifier_payload).hexdigest()}"',
-        f'readonly framework_lock_size="{len(lock_payload)}"',
-        'readonly framework_lock_sha256="'
-        f'{hashlib.sha256(lock_payload).hexdigest()}"',
-        'typeof fs.constants.O_NOFOLLOW !== "number"',
-        "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW",
-        "reviewedModule._compile(",
-        "decoder.decode(verifierBinding.content)",
-        "const lockValue = JSON.parse(decoder.decode(lockBinding.content));",
-        "const digest = verifier.verifyReviewedPythonFramework({",
-        "root: frameworkRoot,",
-        "lockValue,",
-        "revalidate(verifierBinding);",
-        "revalidate(lockBinding);",
-        "fs.closeSync(lockBinding.descriptor);",
-        "fs.closeSync(verifierBinding.descriptor);",
+        "LCF_REVIEWED_FRAMEWORK_INITIAL_STATE",
+        "LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY",
+        "LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY",
+        "LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY",
     ):
-        assert marker in seal
-    assert (
-        '            "${framework_verifier}" \\\n'
-        '            "${framework_verifier_size}" \\\n'
-        '            "${framework_verifier_sha256}" \\\n'
-        '            "${framework_lock}" \\\n'
-        '            "${framework_lock_size}" \\\n'
-        '            "${framework_lock_sha256}" \\\n'
-        '            "${framework_root}"'
-        in seal
+        assert marker in producer
+        assert marker in postcondition
+    assert 'exit 70' in producer
+    assert 'exit 70' in seal
+    assert 'exit 70' in postcondition
+    assert '"${framework_root}" -depth -delete' in producer
+    assert '"${framework_root}" -depth -delete' in seal
+    assert '"${framework_root}" -depth -delete' in postcondition
+    assert '"${framework_quarantine}" -depth -delete' in postcondition
+    assert '"${seal_quarantine}" -depth -delete' not in seal
+    assert "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete" not in seal
+    seal_signal_mask = seal.rindex("trap '' HUP INT TERM")
+    seal_commit_journal = seal.index(
+        "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=committed",
+        seal_signal_mask,
     )
-    assert (
-        '"${framework_verifier}" \\\n'
-        '            --root "${framework_root}" \\\n'
-        '            --lock "${framework_lock}"'
-        not in seal
-    )
-    held_contract_order = [
-        seal.index("reviewedModule._compile("),
-        seal.index("decoder.decode(verifierBinding.content)"),
-        seal.index(
-            "const lockValue = JSON.parse(decoder.decode(lockBinding.content));"
-        ),
-        seal.index("const digest = verifier.verifyReviewedPythonFramework({"),
-        seal.index("revalidate(verifierBinding);"),
-        seal.index("revalidate(lockBinding);"),
-        seal.index("fs.closeSync(lockBinding.descriptor);"),
-        seal.index("fs.closeSync(verifierBinding.descriptor);"),
-    ]
-    assert held_contract_order == sorted(held_contract_order)
-
-    transaction_sentinel = (
-        'seal_transaction_phase="pending"\n'
-        '          seal_installed_root_identity="none"\n'
-        '          seal_quarantine_state="unvalidated"\n'
-        '          seal_quarantine="none"\n'
-        '          seal_quarantine_identity="none"'
-    )
-    assert transaction_sentinel in seal
-    sentinel_offset = seal.index(transaction_sentinel)
-    cleanup_function_offset = seal.index("cleanup_sealed_framework() {")
-    trap_install_offset = seal.index("trap cleanup_sealed_framework EXIT")
-    quarantine_activation_offset = seal.index(
-        'seal_quarantine_state="active"'
-    )
-    root_activation_offset = seal.index(
-        'seal_installed_root_identity="${root_identity}"'
-    )
-    assert (
-        sentinel_offset
-        < cleanup_function_offset
-        < trap_install_offset
-        < quarantine_activation_offset
-        < root_activation_offset
-    )
-    for marker in (
-        'readonly saved_status="$?"',
-        "trap - EXIT",
-        'if test "${seal_transaction_phase:-unvalidated}" = "pending"; then',
-        'test "${seal_installed_root_identity:-none}" = "none"',
-        'test "$(/usr/bin/stat -f \'%d:%i\' "${framework_root}")" != \\\n'
-        '                  "${seal_installed_root_identity}"',
-        'if test "${seal_quarantine_state:-unvalidated}" = "active"; then',
-        'test "$(/usr/bin/stat -f \'%d:%i\' "${seal_quarantine}")" != \\\n'
-        '                    "${seal_quarantine_identity}"',
-        '"${framework_root}" -depth -delete || {',
-        '"${seal_quarantine}" "${framework_root}" || {',
-        'elif test "${seal_transaction_phase:-unvalidated}" = "committed"; then',
-        'lcf-framework-transaction-cleanup: phase=%s status=%s',
-        'if test "${saved_status}" -ne 0; then',
-        'exit "${saved_status}"',
-        'exit "${cleanup_status}"',
-        '[[ "${quarantine_suffix}" =~ ^[A-Za-z0-9]{10}$ ]]',
-        '[[ "${LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY}" =~ \\\n'
-        '              ^[0-9]+:[0-9]+$ ]]',
-        'test "$(/usr/bin/stat -f \'%u\' \\\n'
-        '              "${LCF_REVIEWED_FRAMEWORK_QUARANTINE}")" = "0"',
-        '[[ "${root_identity}" =~ ^[0-9]+:[0-9]+$ ]]',
-        'test "$(/usr/bin/stat -f \'%u\' "${framework_root}")" = "0"',
-    ):
-        assert marker in seal
-    assert seal.count("cleanup_sealed_framework() {") == 1
-    assert seal.count("trap cleanup_sealed_framework EXIT") == 1
-    assert seal.count("trap - EXIT") == 2
-    assert seal.count('"${framework_root}" -depth -delete') == 1
-    assert seal.count('"${seal_quarantine}" -depth -delete') == 2
-    assert seal.count('"${seal_quarantine}" "${framework_root}"') == 1
-    assert '"${LCF_REVIEWED_FRAMEWORK_QUARANTINE}" -depth -delete' not in seal
-    assert "rm -rf" not in seal
-
-    node_loader = build_job.index(
-        '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE}" \\\n'
-        "            -e '",
-        seal_start,
-        bind_start,
-    )
-    transaction_commit = build_job.index(
+    seal_exit_handoff = seal.index("trap - EXIT", seal_commit_journal)
+    seal_local_commit = seal.index(
         'seal_transaction_phase="committed"',
-        node_loader,
-        bind_start,
+        seal_exit_handoff,
     )
-    quarantine_cleanup = build_job.index(
-        "/usr/bin/sudo --non-interactive /usr/bin/find -P -x \\\n"
-        '              "${seal_quarantine}" -depth -delete',
-        transaction_commit,
-        bind_start,
+    assert seal_signal_mask < seal_commit_journal < seal_exit_handoff < seal_local_commit
+    assert "restore_initial_state()" in postcondition
+    assert "finish_postcondition_failure()" in postcondition
+    assert "handle_verification_failure()" in postcondition
+    assert "finish_postcondition_failure verification" in postcondition
+    assert "cleanup=complete" in postcondition
+    assert 'postcondition_phase="finalizing"' in postcondition
+    assert "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=finalizing" in postcondition
+    assert "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete" in postcondition
+    assert "trap 'handle_postcondition_signal HUP 129' HUP" in postcondition
+    assert "trap 'handle_postcondition_signal INT 130' INT" in postcondition
+    assert "trap 'handle_postcondition_signal TERM 143' TERM" in postcondition
+    assert (
+        "pending:pending|rolled-back:rolled-back|committed:committed)"
+        in postcondition
     )
-    transaction_complete = build_job.index(
-        'seal_transaction_phase="complete"',
-        quarantine_cleanup,
-        bind_start,
+    verifier = postcondition.index("verifier.verifyReviewedPythonFramework({")
+    identity_recheck = postcondition.index(
+        "trap 'fail_postcondition identity-mismatch' ERR"
     )
-    trap_clear = build_job.index(
-        "trap - EXIT",
-        transaction_complete,
-        bind_start,
+    finalizing = postcondition.index('postcondition_phase="finalizing"')
+    finalizing_signal_mask = postcondition.rindex(
+        "trap '' HUP INT TERM",
+        0,
+        finalizing,
     )
-    first_framework_python = build_job.index(
-        "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 \\\n"
-        "              -I -S -c"
+    finalizing_failure_trap = postcondition.index(
+        "trap 'fail_postcondition finalizing' ERR",
+        finalizing,
+    )
+    quarantine_delete = postcondition.index(
+        '"${framework_quarantine}" -depth -delete'
+    )
+    complete = postcondition.index(
+        "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete"
     )
     assert (
-        producer_start
-        < seal_start
-        < node_loader
-        < transaction_commit
-        < quarantine_cleanup
-        < transaction_complete
-        < trap_clear
-        < bind_start
-        < first_framework_python
+        verifier
+        < identity_recheck
+        < finalizing_signal_mask
+        < finalizing
+        < finalizing_failure_trap
+        < quarantine_delete
+        < complete
     )
-    assert (
-        "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 \\\n"
-        "              -I -S -c"
-        not in build_job[:bind_start]
-    )
+    assert "restore_initial_state" not in postcondition[finalizing:complete]
+    assert postcondition.count("reviewedModule._compile(") == 1
+    assert postcondition.count("revalidate(verifierBinding);") == 1
+    assert postcondition.count("revalidate(lockBinding);") == 1
+    assert postcondition.count("revalidate(inventoryBinding);") == 1
+    assert "lcf-reviewed-framework-verification: failed" in postcondition
+    assert "error.stack" not in postcondition
+    assert "error.cause" not in postcondition
+    assert "process.stderr.write" not in postcondition
 
 
 def test_public_pins_default_fail_closed_without_breaking_source_ci() -> None:

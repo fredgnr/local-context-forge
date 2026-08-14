@@ -254,9 +254,9 @@ CURRENT_W01_TRACE_MARKER = (
 )
 W02_PHASE_MARKERS = {
     "engineering-smoke boundary/assembly：旧 static technical run 保留；PR #21 independent",
-    "acceptance `NO-GO`；第一次至第十次 remediation technical attempts 均为 `fail` / `superseded`",
-    "第十一次 local candidate `not-run`。旧 exact Draft head",
-    "packaged App launch/runtime smoke：十次 remediation 均未启动 bundle，第十一次 candidate 也尚未运行，\n"
+    "acceptance `NO-GO`；第一次至第十一次 remediation technical attempts 均为 `fail` / `superseded`",
+    "第十二次 local candidate `not-run`。旧 exact Draft head",
+    "packaged App launch/runtime smoke：十一次 remediation 均未启动 bundle，第十二次 candidate 也尚未运行，\n"
     "    当前 `not-run`",
     "W10/W11 保持 locked",
 }
@@ -410,6 +410,13 @@ W02_PR21_TENTH_REMEDIATION_ASSEMBLY_RUN = "31580628877"
 W02_PR21_TENTH_REMEDIATION_ASSEMBLY_JOB = "94062603909"
 W02_PR21_TENTH_REMEDIATION_SOURCE_RUN = "31580628860"
 W02_PR21_TENTH_REMEDIATION_CONTAINER_RUN = "31580628857"
+W02_PR21_ELEVENTH_REMEDIATION_HEAD = "095cbc12585a2c141f151389c1829bd758e8ed54"
+W02_PR21_ELEVENTH_REMEDIATION_PARENT = "8b2277a2c8027c5fbdab8f3e85506b72044dbba4"
+W02_PR21_ELEVENTH_REMEDIATION_TREE = "2eca5e8e293de444213e3aba43079802b6a0d910"
+W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_RUN = "31799645731"
+W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_JOB = "94764347264"
+W02_PR21_ELEVENTH_REMEDIATION_SOURCE_RUN = "31799645685"
+W02_PR21_ELEVENTH_REMEDIATION_CONTAINER_RUN = "31799645737"
 W02_PR21_AUTHORITY_MARKER = (
     "<!-- w02-pr21-nogo-authority: "
     f"context={W02_PR21_CONTEXT},base={W02_PR21_BASE},"
@@ -520,6 +527,16 @@ W02_PR21_TENTH_REMEDIATION_AUTHORITY_MARKER = (
     f"source-run={W02_PR21_TENTH_REMEDIATION_SOURCE_RUN},"
     f"container-run={W02_PR21_TENTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
 )
+W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-eleventh-remediation-authority: "
+    f"source={W02_PR21_ELEVENTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_ELEVENTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_ELEVENTH_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_ELEVENTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_ELEVENTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
 W02_PR21_FIFTH_ROOT_CAUSE_LIMIT_MARKER = (
     "这是高置信代码/时序归因，不是 raw log 直接输出的\n"
     "binding root cause"
@@ -545,8 +562,11 @@ W02_PR21_TENTH_NOT_RUN_MARKER = (
 W02_PR21_ELEVENTH_NOT_RUN_MARKER = (
     "第十一次 remediation technical candidate：`not-run`"
 )
+W02_PR21_TWELFTH_NOT_RUN_MARKER = (
+    "第十二次 remediation technical candidate：`not-run`"
+)
 W02_PR21_REMEDIATION_DOCUMENT_SHA256 = (
-    "f07fd4ecbd812fec366e9a82f024e176372579f6045f2d4566d3fd8bc81ce118"
+    "0a95146c480c6fe64236c665d3aec198ef6920bec50e1fb2a547d3c4f16d604d"
 )
 W02_PR21_REMEDIATION_REQUIRED_MARKERS = {
     "PR #21 independent NO-GO 与 remediation 交接",
@@ -813,6 +833,60 @@ W02_PR21_REMEDIATION_REQUIRED_MARKERS = {
     "YAML `2/2`；Bash `37/37`",
     "Markdown links `90` files；diff check pass",
     "当前汇总是十次 remediation\nattempts `fail` / `superseded` 与第十一次 local candidate `not-run`",
+    "第十一次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_ELEVENTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_ELEVENTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_ELEVENTH_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_ELEVENTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_ELEVENTH_REMEDIATION_CONTAINER_RUN}`",
+    "`fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9`",
+    "`77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10`",
+    "`mode=33`，missing、extra、type、target、size、content 均为 `0`",
+    "Installer 保持这些 symlink 的 `0775` mode",
+    "system-root transaction 进入 `rolled-back`",
+    "独立\n`always()` framework postcondition 成功",
+    "| technical result | **`fail`**；第十一次 remediation attempt 已 `superseded` |",
+    W02_PR21_TWELFTH_NOT_RUN_MARKER,
+    "`095cbc12585a2c141f151389c1829bd758e8ed54` 为 baseline 的未提交本地 worktree",
+    "唯一允许的 package\ntransformation 是移除既有列表中的 `6` 个 exact AppleDouble regular-file entries",
+    "symlink 的 path/type/target/mode 均保持 exact `0775`",
+    "文件\nsize `615969` / SHA-256",
+    "`b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f`",
+    "lock size `4852` /\nSHA-256 `9682d3112cf816944bdf34ba532ccc401c80f44a4e7c752d60ce314307894431`",
+    "verifier size `51765` /\nSHA-256 `2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe`",
+    "三个 full-expansion materialization 上都观察到",
+    "`Frameworks/Tcl.framework/Headers` 的 lstat mode 为 `0777`",
+    "错误\n模型的来源/反例，不是 `77b580…` 的正向复现",
+    "本机真实 `/Library/Frameworks` install/rollback/postcondition\n继续为 `not-run`",
+    "第十二次候选本地验证",
+    "`095cbc12585a2c141f151389c1829bd758e8ed54` baseline + 当前",
+    "`entries=3648`；inventory `77b580…`",
+    "`60 passed / 4 skipped`；4 个 skip 均为 root-only fixture",
+    "`57/57`",
+    "direct checker pass；policy mutation `86/86`；exact-Git `1/1`",
+    "`30 passed / 553 deselected`",
+    "`468 passed / 114 failed / 1 skipped` in `117.62s`",
+    "`11 passed` in `0.49s`",
+    "| Desktop engineering consumer default aggregate（initial） | "
+    "`npm --prefix desktop run test:engineering-smoke` |",
+    "exit `1`；`92 passed / 5 failed`；4 个 renderer canonical-directory failures",
+    "| Desktop engineering consumer default aggregate（isolated retry） | "
+    "`npm --prefix desktop run test:engineering-smoke` |",
+    "exit `1`；`93 passed / 4 failed`；4 个 failure 均为上述 renderer canonical "
+    "temp-dir `/tmp` vs `/private/tmp` 差异",
+    "initial 的第 5 个 timeout 未复现，故记为 concurrent-load transient",
+    "`97/97`",
+    "| Desktop build | `cd desktop && npm run build` | exit `0`；main/preload/companion build success |",
+    "direct checker pass；`61/61`",
+    "YAML `2/2`；Bash `37/37`（smoke `14` + formal `23`）",
+    "Markdown links `90` files；version/protocol sync pass；diff check pass",
+    "上述 Python aggregate failure 也不会被 focused pass 覆盖",
+    "`97/97` 不能覆盖默认 Desktop engineering aggregate initial "
+    "`92 passed / 5 failed` 与 isolated\nretry `93 passed / 4 failed` 的失败结论",
+    "first through eleventh remediation attempts `fail` / `superseded`",
+    "第十二次 local candidate\n`not-run`",
 }
 W02_PR21_REMEDIATION_FORBIDDEN_CLAIMS = {
     "decision=GO",
@@ -837,14 +911,18 @@ W02_PR21_REMEDIATION_FORBIDDEN_CLAIMS = {
     "第十次 remediation technical candidate：`pass`",
     "| PR #21 eleventh remediation technical candidate | `pass`",
     "第十一次 remediation technical candidate：`pass`",
+    "| PR #21 eleventh remediation technical attempt | `pass`",
+    "| PR #21 twelfth remediation technical candidate | `pass`",
+    "第十二次 remediation technical candidate：`pass`",
     "raw log 直接证明 binding root cause",
 }
 
 W02_STATUS_CURRENT_SUMMARY = (
     "| 当前结论 | **W02 in-progress：latest independent `NO-GO`（仅绑定旧 reviewed "
-    "head/tree）；ten remediation attempts `fail` / `superseded`；eleventh local "
+    "head/tree）；eleven remediation attempts `fail` / `superseded`；twelfth local "
     "candidate `not-run`（无 committed exact head/tree；无 fresh exact-head Actions）；"
-    "real Installer 与 packaged launch/runtime `not-run`；W10/W11 locked；public release NO-GO** |"
+    "eleventh Actions real Installer ran and rolled back，local system-root 与 packaged "
+    "launch/runtime `not-run`；W10/W11 locked；public release NO-GO** |"
 )
 
 W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
@@ -852,13 +930,15 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         "evidence/W02/2026-08-07-pr21-remediation.md",
         "reviewed `8c5fd232…` / tree `785f4656…`",
         "独立判定为 `NO-GO`",
-        "第十次 exact `70b1823…` / parent `6eec411…` / tree `a706817…`",
-        "第十次已 technical `fail` /",
-        "第十一次 local candidate `not-run`",
+        "第十一次 exact `095cbc1…` / parent `8b2277a…` / tree",
+        "第十一次已 technical",
+        "第十二次 local candidate `not-run`",
         "`3654` / `863a6353…`",
-        "`3648` / `fdd600…`",
-        "`b8ef4275…`",
-        "real Installer 因本机无",
+        "`3648` / `77b580…`",
+        "`b145fe36…`",
+        "pkgutil full-expansion materialization",
+        "来源/反例",
+        "本机 system-root reproduction 为 `not-run`",
         "pre-trap sentinel",
         "`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`",
     },
@@ -867,13 +947,14 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_REVIEWED_TREE,
         "独立判定为 `NO-GO`",
         "first remediation technical attempt `fail` / `superseded`",
-        W02_PR21_TENTH_REMEDIATION_HEAD,
-        W02_PR21_TENTH_REMEDIATION_PARENT,
-        W02_PR21_TENTH_REMEDIATION_TREE,
-        "eleventh local candidate remains `not-run`",
-        "`fdd600…`",
-        "`b8ef4275…`",
-        "real Installer 因本机",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "twelfth local candidate remains `not-run`",
+        "`77b580…`",
+        "`b145fe36…`",
+        "来源/反例",
+        "本机 system-root reproduction 为 `not-run`",
         "pre-trap sentinel",
         "W10/W11 保持 locked",
     },
@@ -881,14 +962,15 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "independent `NO-GO`",
-        W02_PR21_TENTH_REMEDIATION_HEAD,
-        W02_PR21_TENTH_REMEDIATION_PARENT,
-        W02_PR21_TENTH_REMEDIATION_TREE,
-        "first through tenth remediations technical `fail` / `superseded`",
-        "eleventh local",
-        "`fdd600…`",
-        "`b8ef4275…`",
-        "real Installer",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "first through eleventh remediations technical `fail` / `superseded`",
+        "twelfth local",
+        "`77b580…`",
+        "`b145fe36…`",
+        "full expansion 是旧\nnormalization 模型的来源/反例",
+        "本机 real Installer/system-root",
         "pre-trap",
         "W10/W11 locked",
     },
@@ -896,14 +978,19 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "latest independent `NO-GO`",
-        W02_PR21_TENTH_REMEDIATION_HEAD,
-        W02_PR21_TENTH_REMEDIATION_PARENT,
-        W02_PR21_TENTH_REMEDIATION_TREE,
-        "同样 technical `fail` / `superseded`；第十一次",
-        "PR #21 eleventh local candidate",
-        "`fdd600…`",
-        "`b8ef4275…`",
-        "passwordless `sudo` 仍为 `not-run`",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "technical `fail` / `superseded`；第十二次",
+        "PR #21 twelfth local candidate",
+        "`77b580…`",
+        "`b145fe36…`",
+        "来源/反例",
+        "本机 system-root reproduction 仍为 `not-run`",
+        "Desktop default initial `92 pass / 5 fail`",
+        "isolated retry `93 pass / 4 fail`",
+        "timeout 未复现并记为 concurrent-load transient",
+        "显式 `TMPDIR=/private/tmp` 后 `97/97` 但不覆盖 default failure",
         "在 trap 前设置 sentinel",
         "W10/W11 保持 locked",
     },
@@ -911,14 +998,15 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "latest independent `NO-GO`",
-        W02_PR21_TENTH_REMEDIATION_HEAD,
-        W02_PR21_TENTH_REMEDIATION_PARENT,
-        W02_PR21_TENTH_REMEDIATION_TREE,
-        "ten remediation attempts `fail` / `superseded`",
-        "eleventh local candidate `not-run`",
-        "`fdd600…`",
-        "`b8ef4275…`",
-        "real Installer",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "eleven remediation attempts `fail` / `superseded`",
+        "twelfth local candidate `not-run`",
+        "`77b580…`",
+        "`b145fe36…`",
+        "来源/反例",
+        "eleventh Actions real Installer ran and rolled back",
         "pre-trap sentinel",
         "W10/W11 locked",
         "public release NO-GO",
@@ -927,26 +1015,28 @@ W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
         W02_PR21_REVIEWED_HEAD,
         W02_PR21_REVIEWED_TREE,
         "independent `NO-GO`",
-        "first through tenth remediation technical attempts `fail` / `superseded`",
-        W02_PR21_TENTH_REMEDIATION_HEAD,
-        W02_PR21_TENTH_REMEDIATION_PARENT,
-        W02_PR21_TENTH_REMEDIATION_TREE,
-        "eleventh local candidate `not-run`",
-        "`fdd600…`",
-        "`b8ef4275…`",
-        "real Installer",
+        "first through eleventh remediation technical attempts `fail` / `superseded`",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "twelfth local candidate `not-run`",
+        "`77b580…`",
+        "`b145fe36…`",
+        "来源/反例",
+        "本机 system-root install/rollback/postcondition 仍为",
         "pre-trap sentinel",
         "W10/W11 locked",
     },
     "parent iteration": {
         "reviewed `8c5fd232…` / tree `785f4656…`",
         "independent `NO-GO`",
-        "first through tenth attempts `fail` / `superseded`",
-        "eleventh local candidate `not-run`",
-        "latest failed `70b1823…` / parent `6eec411…` / tree `a706817…`",
-        "`fdd600…`",
-        "`b8ef4275…`",
-        "real Installer/packaged launch/runtime `not-run`",
+        "first through eleventh attempts `fail` / `superseded`",
+        "twelfth local candidate `not-run`",
+        "latest failed `095cbc1…` / parent `8b2277a…` / tree `2eca5e8…`",
+        "`77b580…`",
+        "`b145fe36…`",
+        "pkgutil full-expansion `0777` is a counterexample",
+        "本机 real Installer/\nsystem-root reproduction 仍为 `not-run`",
         "pre-trap sentinel",
         "W10/W11 locked",
     },
@@ -1271,6 +1361,10 @@ def validate_documents(
         errors.append(
             "W02 PR #21 remediation must contain the exact tenth-attempt authority marker once"
         )
+    if w02_remediation.count(W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact eleventh-attempt authority marker once"
+        )
     if (
         hashlib.sha256(w02_remediation.encode("utf-8")).hexdigest()
         != W02_PR21_REMEDIATION_DOCUMENT_SHA256
@@ -1299,7 +1393,7 @@ def validate_documents(
                 errors.append(f"{label} missing current PR #21 NO-GO marker: {marker}")
     if status.count(W02_STATUS_CURRENT_SUMMARY) != 1:
         errors.append(
-            "status must contain the exact ten-failure/eleventh-candidate summary once"
+            "status must contain the exact eleven-failure/twelfth-candidate summary once"
         )
 
     r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)

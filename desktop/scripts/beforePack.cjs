@@ -84,12 +84,12 @@ const EXPECTED_FRAMEWORK_CORE_EXCLUDED_PATHS = Object.freeze([
   "share/doc/python3.13/html"
 ]);
 const EXPECTED_FRAMEWORK_CORE_SHA256 =
-  "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9";
+  "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10";
 const EXPECTED_FRAMEWORK_CORE_INVENTORY = Object.freeze({
   fileName: "python-framework-sealed-inventory.json",
-  fileSize: 620662,
+  fileSize: 615969,
   fileSha256:
-    "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",
+    "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f",
   schemaVersion: 1,
   sourcePayloadSize: 32739568,
   sourcePayloadSha256:
@@ -97,11 +97,12 @@ const EXPECTED_FRAMEWORK_CORE_INVENTORY = Object.freeze({
   sourceEntryCount: 3654,
   sourceInventorySha256:
     "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
-  transformationCount: 39,
+  transformationCount: 6,
   entryCount: 3648,
   inventorySha256: EXPECTED_FRAMEWORK_CORE_SHA256
 });
 const MAX_FRAMEWORK_CORE_INVENTORY_BYTES = 16 * 1024 * 1024;
+const MAX_FRAMEWORK_CORE_ENTRY_BYTES = 256 * 1024 * 1024;
 const EXPECTED_PYTHON_INSTALL_METHOD =
   "macos-installer-no-op-framework-component";
 const EXPECTED_FRAMEWORK_COMPONENT = Object.freeze({
@@ -800,6 +801,105 @@ function criticalInputDigests(repositoryRoot) {
   return result;
 }
 
+function validateFrameworkCoreInventoryPayload(inventoryValue, contract) {
+  const inventory = assertExactKeys(
+    inventoryValue,
+    [
+      "schemaVersion",
+      "source",
+      "transformations",
+      "entryCount",
+      "inventorySha256",
+      "entries"
+    ],
+    [],
+    "Reviewed Python framework core inventory"
+  );
+  const source = assertExactKeys(
+    inventory.source,
+    [
+      "payloadSize",
+      "payloadSha256",
+      "coreEntryCount",
+      "coreInventorySha256"
+    ],
+    [],
+    "Reviewed Python framework source inventory"
+  );
+  if (!Array.isArray(inventory.transformations)) {
+    fail("Reviewed Python framework core inventory metadata is inconsistent");
+  }
+  const transformationPaths = [];
+  for (const rawTransformation of inventory.transformations) {
+    const transformation = assertExactKeys(
+      rawTransformation,
+      ["kind", "path", "type", "mode", "size", "sha256"],
+      [],
+      "Reviewed Python framework inventory transformation"
+    );
+    const relative = safeRelativePath(
+      transformation.path,
+      "Reviewed Python framework inventory transformation"
+    );
+    const parts = relative.split("/");
+    const basename = parts.at(-1);
+    if (
+      parts.some((part) => part === "" || part === ".") ||
+      transformation.kind !== "remove-appledouble" ||
+      transformation.type !== "file" ||
+      transformation.mode !== "0664" ||
+      !Number.isSafeInteger(transformation.size) ||
+      transformation.size < 0 ||
+      transformation.size > MAX_FRAMEWORK_CORE_ENTRY_BYTES ||
+      typeof transformation.sha256 !== "string" ||
+      !SHA256_PATTERN.test(transformation.sha256) ||
+      typeof basename !== "string" ||
+      !basename.startsWith("._") ||
+      basename === "._"
+    ) {
+      fail("Reviewed Python framework inventory transformation is malformed");
+    }
+    if (
+      transformationPaths.length > 0 &&
+      compareCodePoints(
+        transformationPaths[transformationPaths.length - 1],
+        relative
+      ) >= 0
+    ) {
+      fail(
+        "Reviewed Python framework inventory transformations are not strictly ordered"
+      );
+    }
+    transformationPaths.push(relative);
+  }
+  const finalEntryPaths = new Set(
+    Array.isArray(inventory.entries)
+      ? inventory.entries
+          .filter((entry) => isObject(entry) && typeof entry.path === "string")
+          .map((entry) => entry.path)
+      : []
+  );
+  if (
+    inventory.schemaVersion !== contract.schemaVersion ||
+    source.payloadSize !== contract.sourcePayloadSize ||
+    source.payloadSha256 !== contract.sourcePayloadSha256 ||
+    source.coreEntryCount !== contract.sourceEntryCount ||
+    source.coreInventorySha256 !== contract.sourceInventorySha256 ||
+    inventory.transformations.length !== contract.transformationCount ||
+    source.coreEntryCount !==
+      contract.entryCount + contract.transformationCount ||
+    transformationPaths.some((relative) => finalEntryPaths.has(relative)) ||
+    inventory.entryCount !== contract.entryCount ||
+    inventory.inventorySha256 !== contract.inventorySha256 ||
+    !Array.isArray(inventory.entries) ||
+    inventory.entries.length !== contract.entryCount ||
+    sha256Bytes(Buffer.from(canonicalJson(inventory.entries), "utf8")) !==
+      contract.inventorySha256
+  ) {
+    fail("Reviewed Python framework core inventory metadata is inconsistent");
+  }
+}
+
 function validateFrameworkCoreInventory(repositoryRoot, python) {
   const contract = assertExactKeys(
     python.frameworkCoreInventory,
@@ -859,47 +959,7 @@ function validateFrameworkCoreInventory(repositoryRoot, python) {
   ) {
     fail("Reviewed Python framework core inventory file differs from its lock");
   }
-  const inventory = assertExactKeys(
-    attestation.value,
-    [
-      "schemaVersion",
-      "source",
-      "transformations",
-      "entryCount",
-      "inventorySha256",
-      "entries"
-    ],
-    [],
-    "Reviewed Python framework core inventory"
-  );
-  const source = assertExactKeys(
-    inventory.source,
-    [
-      "payloadSize",
-      "payloadSha256",
-      "coreEntryCount",
-      "coreInventorySha256"
-    ],
-    [],
-    "Reviewed Python framework source inventory"
-  );
-  if (
-    inventory.schemaVersion !== contract.schemaVersion ||
-    source.payloadSize !== contract.sourcePayloadSize ||
-    source.payloadSha256 !== contract.sourcePayloadSha256 ||
-    source.coreEntryCount !== contract.sourceEntryCount ||
-    source.coreInventorySha256 !== contract.sourceInventorySha256 ||
-    !Array.isArray(inventory.transformations) ||
-    inventory.transformations.length !== contract.transformationCount ||
-    inventory.entryCount !== contract.entryCount ||
-    inventory.inventorySha256 !== contract.inventorySha256 ||
-    !Array.isArray(inventory.entries) ||
-    inventory.entries.length !== contract.entryCount ||
-    sha256Bytes(Buffer.from(canonicalJson(inventory.entries), "utf8")) !==
-      contract.inventorySha256
-  ) {
-    fail("Reviewed Python framework core inventory metadata is inconsistent");
-  }
+  validateFrameworkCoreInventoryPayload(attestation.value, contract);
 }
 
 function validateToolchainLock(toolchain, repositoryRoot) {
@@ -2189,3 +2249,5 @@ module.exports.inspectMachOWithLipo = inspectMachOWithLipo;
 module.exports.inspectRepositoryProvenance = inspectRepositoryProvenance;
 module.exports.inspectSourceFiles = inspectSourceFiles;
 module.exports.normalizedInventorySha256 = normalizedInventorySha256;
+module.exports.validateFrameworkCoreInventoryPayload =
+  validateFrameworkCoreInventoryPayload;

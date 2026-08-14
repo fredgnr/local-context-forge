@@ -87,7 +87,12 @@
   `pending`。第十次 exact `70b1823…` / parent `6eec411…` / tree `a706817…` 的 Desktop
   `31580628860` success；Engineering `31580628877` / job `94062603909` framework-fingerprint fail；
   Containers `31580628857` success/no-publish；artifacts `[]`、no App。第十次已 technical `fail` /
-  `superseded`、independent `pending`。第十一次 local candidate `not-run`（无 committed exact
+  `superseded`、independent `pending`。第十一次 exact `095cbc1…` / parent `8b2277a…` / tree
+  `2eca5e8…` 的 Desktop `31799645685` success；Engineering `31799645731` / job `94764347264`
+  producer success、真实 Installer 后 seal expected `3648` / `fdd600…` vs observed `3648` /
+  `77b580…`、only mode diff `33`，rollback/framework postcondition/scratch cleanup success，later
+  skipped、artifacts `[]`、no App；Containers `31799645737` success/no-publish。第十一次已 technical
+  `fail` / `superseded`、independent `pending`。第十二次 local candidate `not-run`（无 committed exact
   head/tree 或 fresh exact-head Actions）。它继承 producer 不使用
   `actions/setup-python` / 原 full pkg；exact outer pkg 验签后只以唯一 17-byte no-op 重打并安装
   `Python_Framework.pkg`，隔离旧 root/确认 target absent，再完成 non-symlink seal、大小写无关
@@ -97,18 +102,19 @@
   distribution/binding，不安装或 `sudo`；同时把 manifest 真实整行固定为 `grep -Fxc` + count one，
   cleanup 分成 source-unbound zero-residue 与 source-bound strict source/repo closure，并要求
   privileged quarantine 在 ordinary runner 访问前完成 canonical binding、cleanup gate 显式证明
-  identity-bound exact framework quarantine zero-residue。fingerprint contract 从 locked Payload raw
-  `3654` / `863a6353…` 出发，只允许 `6` 个 exact AppleDouble removals 与 `33` 个 exact symlink
-  mode `0775→0777`，单一 pin sealed `3648` / `fdd600…`；manifest size `620662` / SHA-256
-  `b8ef4275…`，不放宽其他 seal。两次独立 pkgutil raw materialization 均不是 installed/sealed
-  output；分别显式执行 non-symlink seal、cache cleanup 与 manifest-bound symlink-mode normalization
-  后才 strict match，七类 difference count 均为 `0`。real Installer 因本机无 passwordless `sudo`
-  为 `not-run`；不是 runtime learn-and-accept，mode/target/path/type/bytes 均参与。两份 workflow 以
+  identity-bound exact framework quarantine zero-residue。fingerprint contract 从 locked compressed
+  Payload raw `3654` / `863a6353…` 出发，只允许 `6` 个 exact AppleDouble removals；`33` 个 exact
+  symlink mode 保持 `0775`，单一 pin sealed `3648` / `77b580…`；manifest `615969` /
+  `b145fe36…`、lock `4852` / `9682d311…`、verifier `51765` / `2dbd1f36…`，不放宽其他 seal。
+  三个 pkgutil full-expansion materialization 的代表性 symlink 都是 `0777`，所以它们是旧
+  normalization 模型的来源/反例，不是 `77b580…` positive reproduction。第十一次 Actions 已运行
+  real Installer；本机因无 passwordless `sudo`，本机 system-root reproduction 为 `not-run`；不是
+  runtime learn-and-accept，mode/target/path/type/bytes 均参与。两份 workflow 以
   pre-trap sentinel 起步；新 root/旧 quarantine exact identity 绑定后才激活。seal 只写
   `committed` 并保留 quarantine，独立 `always()` postcondition 重验后才 `finalizing` 删除并最终
   `complete`；rollback-ready phase 的 `HUP`/`INT`/`TERM` 精确恢复，unbound/mismatch
   preserve/no-delete、`finalizing` failure no-rollback，均 fixed `70`，且不声称 `SIGKILL`/host-crash
-  recovery。十次失败均未启动 assembled App，
+  recovery。十一次失败均未启动 assembled App，
   packaged App launch/runtime 与
   `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限

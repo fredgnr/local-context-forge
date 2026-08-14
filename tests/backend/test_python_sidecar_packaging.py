@@ -9236,7 +9236,7 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
         bootstrap.REVIEWED_FRAMEWORK_CORE_EXCLUDED_PATHS
     )
     assert python_lock["frameworkCoreFingerprintSha256"] == (
-        "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"
+        "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"
     )
     assert python_lock["frameworkCoreFingerprintSha256"] != (
         "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"
@@ -9247,15 +9247,15 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
     )
     inventory_bytes = inventory_path.read_bytes()
     expected_inventory = json.loads(inventory_bytes.decode("utf-8"))
-    assert len(inventory_bytes) == 620662
+    assert len(inventory_bytes) == 615969
     assert hashlib.sha256(inventory_bytes).hexdigest() == (
-        "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+        "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f"
     )
     assert python_lock["frameworkCoreInventory"] == {
         "fileName": "python-framework-sealed-inventory.json",
-        "fileSize": 620662,
+        "fileSize": 615969,
         "fileSha256": (
-            "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+            "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f"
         ),
         "schemaVersion": 1,
         "sourcePayloadSize": 32739568,
@@ -9266,10 +9266,10 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
         "sourceInventorySha256": (
             "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
         ),
-        "transformationCount": 39,
+        "transformationCount": 6,
         "entryCount": 3648,
         "inventorySha256": (
-            "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"
+            "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"
         ),
     }
     assert expected_inventory["schemaVersion"] == 1
@@ -9287,7 +9287,16 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
             "sourceInventorySha256"
         ],
     }
-    assert len(expected_inventory["transformations"]) == 39
+    assert len(expected_inventory["transformations"]) == 6
+    assert all(
+        set(transformation)
+        == {"kind", "path", "type", "mode", "size", "sha256"}
+        and transformation["kind"] == "remove-appledouble"
+        and transformation["type"] == "file"
+        and transformation["mode"] == "0664"
+        and PurePosixPath(transformation["path"]).name.startswith("._")
+        for transformation in expected_inventory["transformations"]
+    )
     assert len(expected_inventory["entries"]) == 3648
     assert python_lock["reviewedBrokenSymlinks"] == [
         {
@@ -9327,14 +9336,14 @@ def test_manifest_schema_loads_with_reviewed_fail_closed_constants() -> None:
     ("field", "replacement"),
     (
         ("fileName", "unreviewed-inventory.json"),
-        ("fileSize", 620663),
+        ("fileSize", 615970),
         ("fileSha256", "0" * 64),
         ("schemaVersion", 2),
         ("sourcePayloadSize", 32739569),
         ("sourcePayloadSha256", "0" * 64),
         ("sourceEntryCount", 3655),
         ("sourceInventorySha256", "0" * 64),
-        ("transformationCount", 40),
+        ("transformationCount", 7),
         ("entryCount", 3649),
         ("inventorySha256", "0" * 64),
         ("__missing__", None),
@@ -9406,6 +9415,92 @@ def test_reviewed_framework_inventory_binds_the_exact_file(tmp_path: Path) -> No
                 bound,
                 contract,
             )
+    finally:
+        os.close(bound.descriptor)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "symlink-mode",
+        "extra-field",
+        "non-appledouble-path",
+        "unsafe-path",
+        "reverse-order",
+        "duplicate-path",
+        "retained-removal",
+        "source-count",
+    ),
+)
+def test_reviewed_framework_inventory_rejects_transformation_schema_mutation(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    toolchain = json.loads(build.TOOLCHAIN_LOCK.read_text(encoding="utf-8"))
+    contract = copy.deepcopy(toolchain["python"]["frameworkCoreInventory"])
+    source = build.TOOLCHAIN_LOCK.parent / contract["fileName"]
+    inventory = json.loads(source.read_text(encoding="utf-8"))
+
+    if mutation == "symlink-mode":
+        inventory["transformations"][0] = {
+            "kind": "symlink-mode",
+            "path": "Frameworks/Tcl.framework/Headers",
+            "type": "symlink",
+            "target": "Versions/Current/Headers",
+            "fromMode": "0775",
+            "toMode": "0777",
+        }
+    elif mutation == "extra-field":
+        inventory["transformations"][0]["unreviewed"] = True
+    elif mutation == "non-appledouble-path":
+        inventory["transformations"][0]["path"] = (
+            "Frameworks/Tcl.framework/Versions/8.6/tclConfig.sh"
+        )
+    elif mutation == "unsafe-path":
+        inventory["transformations"][0]["path"] = "../._outside"
+    elif mutation == "reverse-order":
+        inventory["transformations"].reverse()
+    elif mutation == "duplicate-path":
+        inventory["transformations"][1] = copy.deepcopy(
+            inventory["transformations"][0]
+        )
+    elif mutation == "retained-removal":
+        removal = inventory["transformations"][0]
+        inventory["entries"][0] = {
+            "path": removal["path"],
+            "mode": "0644",
+            "type": "file",
+            "size": removal["size"],
+            "sha256": removal["sha256"],
+        }
+        digest = hashlib.sha256(
+            bootstrap._canonical_json_bytes(inventory["entries"])
+        ).hexdigest()
+        inventory["inventorySha256"] = digest
+        contract["inventorySha256"] = digest
+    elif mutation == "source-count":
+        inventory["source"]["coreEntryCount"] += 1
+        contract["sourceEntryCount"] += 1
+    else:  # pragma: no cover - exhaustive fixture guard
+        raise AssertionError(f"unsupported mutation: {mutation}")
+
+    payload = bootstrap._canonical_json_bytes(inventory) + b"\n"
+    contract["fileSize"] = len(payload)
+    contract["fileSha256"] = hashlib.sha256(payload).hexdigest()
+    changed = tmp_path / contract["fileName"]
+    changed.write_bytes(payload)
+    changed.chmod(0o600)
+    bound = bootstrap._open_bound_file(
+        changed,
+        maximum_size=bootstrap.MAX_FRAMEWORK_CORE_INVENTORY_BYTES,
+        error_message="fixture inventory",
+    )
+    try:
+        with pytest.raises(
+            bootstrap.ToolchainBootstrapError,
+            match="inventory file is inconsistent",
+        ):
+            bootstrap._verify_reviewed_framework_inventory_file(bound, contract)
     finally:
         os.close(bound.descriptor)
 

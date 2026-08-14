@@ -1499,8 +1499,13 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         )
         source_mutations = (
             (
-                "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9",
+                "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10",
                 "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec",
+            ),
+            (
+                "const EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS = 6;",
+                "const EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS = 6;\n"
+                "const EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES = 33;",
             ),
             (
                 "python.installRoot !== EXACT_ROOT",
@@ -1616,9 +1621,44 @@ class PackagedSmokePolicyTests(unittest.TestCase):
         current = inputs()
         changed(
             current,
+            "framework_inventory_generator",
+            "const INSTALLER_APPLEDOUBLE_TRANSFORMATIONS = Object.freeze([",
+            "const INSTALLER_SYMLINK_MODE_TRANSFORMATIONS = Object.freeze([]);\n"
+            "const INSTALLER_APPLEDOUBLE_TRANSFORMATIONS = Object.freeze([",
+        )
+        with synchronized_reviewed_input_summaries(
+            current,
+            "framework_inventory_generator",
+        ):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "reviewed Python framework inventory generator drifted",
+            errors,
+        )
+
+        current = inputs()
+        changed(
+            current,
             "framework_inventory",
-            '"inventorySha256":"fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"',
+            '"inventorySha256":"77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"',
             '"inventorySha256":"ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"',
+        )
+        with synchronized_reviewed_input_summaries(
+            current,
+            "framework_inventory",
+        ):
+            errors = CHECKER.validate_policy(current)
+        self.assertIn(
+            "reviewed Python framework sealed inventory drifted",
+            errors,
+        )
+
+        current = inputs()
+        changed(
+            current,
+            "framework_inventory",
+            '"kind":"remove-appledouble"',
+            '"kind":"symlink-mode"',
         )
         with synchronized_reviewed_input_summaries(
             current,
@@ -2749,13 +2789,23 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             ),
             (
                 "status",
-                "eleventh local candidate `not-run`",
-                "eleventh local candidate `pass`",
+                "twelfth local candidate `not-run`",
+                "twelfth local candidate `pass`",
             ),
             (
                 "trace",
+                "first through eleventh remediations failed and superseded",
                 "first through tenth remediations failed and superseded",
-                "first through ninth remediations failed and superseded",
+            ),
+            (
+                "todo",
+                "eleven remediation attempts `fail` / `superseded`",
+                "ten remediation attempts `fail` / `superseded`",
+            ),
+            (
+                "iteration",
+                "第十二次 local candidate `not-run`",
+                "第十二次 local candidate `pass`",
             ),
             (
                 "iteration",
@@ -3548,8 +3598,8 @@ class PackagedSmokePolicyTests(unittest.TestCase):
             "revalidate(lockBinding);",
             "revalidate(inventoryBinding);",
             'readonly framework_inventory="${GITHUB_WORKSPACE}/backend/packaging/python-framework-sealed-inventory.json"',
-            'readonly framework_inventory_size="620662"',
-            'readonly framework_inventory_sha256="b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"',
+            'readonly framework_inventory_size="615969"',
+            'readonly framework_inventory_sha256="b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f"',
             'let message = "lcf-reviewed-framework-verification: failed\\n";',
             "error instanceof verifier.VerificationError",
             "verifier.formatVerificationDiagnostics(",

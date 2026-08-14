@@ -2032,6 +2032,8 @@ def _verify_reviewed_framework_inventory_file(
         != contract["sourceInventorySha256"]
         or not isinstance(transformations, list)
         or len(transformations) != contract["transformationCount"]
+        or source.get("coreEntryCount")
+        != contract["entryCount"] + contract["transformationCount"]
         or value.get("entryCount") != contract["entryCount"]
         or value.get("inventorySha256") != contract["inventorySha256"]
         or not isinstance(entries, list)
@@ -2039,6 +2041,67 @@ def _verify_reviewed_framework_inventory_file(
         or hashlib.sha256(_canonical_json_bytes(entries)).hexdigest()
         != contract["inventorySha256"]
     ):
+        raise ToolchainBootstrapError(error_message)
+    _validate_reviewed_framework_transformations(
+        transformations,
+        entries,
+        error_message=error_message,
+    )
+
+
+def _validate_reviewed_framework_transformations(
+    transformations: list[Any],
+    entries: list[Any],
+    *,
+    error_message: str,
+) -> None:
+    """Require the exact Installer metadata-removal schema consumed by the seal."""
+
+    previous_path: str | None = None
+    transformation_paths: set[str] = set()
+    for transformation in transformations:
+        if (
+            not isinstance(transformation, dict)
+            or set(transformation)
+            != {"kind", "path", "type", "mode", "size", "sha256"}
+        ):
+            raise ToolchainBootstrapError(error_message)
+        raw_path = transformation.get("path")
+        if not isinstance(raw_path, str):
+            raise ToolchainBootstrapError(error_message)
+        relative = PurePosixPath(raw_path)
+        size = transformation.get("size")
+        if (
+            not raw_path
+            or raw_path.startswith("/")
+            or "\\" in raw_path
+            or "\x00" in raw_path
+            or relative.as_posix() != raw_path
+            or not relative.parts
+            or any(part in {"", ".", ".."} for part in relative.parts)
+            or transformation.get("kind") != "remove-appledouble"
+            or transformation.get("type") != "file"
+            or transformation.get("mode") != "0664"
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or size > MAX_TREE_FILE_BYTES
+            or not isinstance(transformation.get("sha256"), str)
+            or SHA256_PATTERN.fullmatch(transformation["sha256"]) is None
+            or not relative.name.startswith("._")
+            or relative.name == "._"
+            or (previous_path is not None and previous_path >= raw_path)
+        ):
+            raise ToolchainBootstrapError(error_message)
+        previous_path = raw_path
+        transformation_paths.add(raw_path)
+
+    final_paths = {
+        item.get("path")
+        for item in entries
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    if transformation_paths & final_paths:
         raise ToolchainBootstrapError(error_message)
 
 

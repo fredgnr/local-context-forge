@@ -854,12 +854,12 @@ jobs:
           readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"
           readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"
           readonly framework_inventory="${GITHUB_WORKSPACE}/backend/packaging/python-framework-sealed-inventory.json"
-          readonly framework_verifier_size="53440"
-          readonly framework_verifier_sha256="473f5c4fb1aab54a5789a0b58e85008b49af31c84b370b2626b4118af640584a"
-          readonly framework_lock_size="4853"
-          readonly framework_lock_sha256="a6fa96bc5c7a16bb3576f14bea8e2d3b5d2a97a525cc1633e6cc57dbbff6ebac"
-          readonly framework_inventory_size="620662"
-          readonly framework_inventory_sha256="b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+          readonly framework_verifier_size="51765"
+          readonly framework_verifier_sha256="2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe"
+          readonly framework_lock_size="4852"
+          readonly framework_lock_sha256="9682d3112cf816944bdf34ba532ccc401c80f44a4e7c752d60ce314307894431"
+          readonly framework_inventory_size="615969"
+          readonly framework_inventory_sha256="b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f"
           /usr/bin/env -i \
             HOME="${RUNNER_TEMP}" \
             PATH="/usr/bin:/bin" \
@@ -1400,12 +1400,12 @@ jobs:
           readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"
           readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"
           readonly framework_inventory="${GITHUB_WORKSPACE}/backend/packaging/python-framework-sealed-inventory.json"
-          readonly framework_verifier_size="53440"
-          readonly framework_verifier_sha256="473f5c4fb1aab54a5789a0b58e85008b49af31c84b370b2626b4118af640584a"
-          readonly framework_lock_size="4853"
-          readonly framework_lock_sha256="a6fa96bc5c7a16bb3576f14bea8e2d3b5d2a97a525cc1633e6cc57dbbff6ebac"
-          readonly framework_inventory_size="620662"
-          readonly framework_inventory_sha256="b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+          readonly framework_verifier_size="51765"
+          readonly framework_verifier_sha256="2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe"
+          readonly framework_lock_size="4852"
+          readonly framework_lock_sha256="9682d3112cf816944bdf34ba532ccc401c80f44a4e7c752d60ce314307894431"
+          readonly framework_inventory_size="615969"
+          readonly framework_inventory_sha256="b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f"
           /usr/bin/env -i \
             HOME="${RUNNER_TEMP}" \
             PATH="/usr/bin:/bin" \

@@ -353,6 +353,59 @@ def test_reviewed_framework_transaction_is_synchronized_and_postconditioned() ->
     smoke_workflow = (
         PROJECT_ROOT / ".github" / "workflows" / "packaged-smoke.yml"
     ).read_text(encoding="utf-8")
+    framework_inputs = {
+        "verifier": (
+            PROJECT_ROOT / "tools" / "verify_reviewed_python_framework.cjs"
+        ),
+        "lock": (
+            PROJECT_ROOT
+            / "backend"
+            / "packaging"
+            / "python-sidecar-toolchain.lock.json"
+        ),
+        "inventory": (
+            PROJECT_ROOT
+            / "backend"
+            / "packaging"
+            / "python-framework-sealed-inventory.json"
+        ),
+    }
+    for workflow in (release_workflow, smoke_workflow):
+        for name, pathname in framework_inputs.items():
+            content = pathname.read_bytes()
+            size_marker = f'readonly framework_{name}_size="{len(content)}"'
+            digest_marker = (
+                f'readonly framework_{name}_sha256="'
+                f'{hashlib.sha256(content).hexdigest()}"'
+            )
+            assert workflow.count(size_marker) == 2
+            assert workflow.count(digest_marker) == 2
+
+    inventory = json.loads(
+        framework_inputs["inventory"].read_text(encoding="utf-8")
+    )
+    transformations = inventory["transformations"]
+    assert len(transformations) == 6
+    assert {item["kind"] for item in transformations} == {"remove-appledouble"}
+    symlink_entries = [
+        item for item in inventory["entries"] if item["type"] == "symlink"
+    ]
+    assert len(symlink_entries) == 33
+    assert {item["mode"] for item in symlink_entries} == {"0775"}
+    python_lock = json.loads(
+        framework_inputs["lock"].read_text(encoding="utf-8")
+    )
+    python_contract = python_lock["python"]
+    assert python_contract["frameworkCoreFingerprintSha256"] == (
+        inventory["inventorySha256"]
+    )
+    assert python_contract["frameworkCoreInventory"]["transformationCount"] == 6
+    for pathname in (
+        framework_inputs["verifier"],
+        PROJECT_ROOT / "tools" / "generate_reviewed_python_framework_inventory.cjs",
+    ):
+        assert "SYMLINK_MODE" not in pathname.read_text(encoding="utf-8")
+
     release_build = _job_slice(release_workflow, "build")
     smoke_build = _job_slice(smoke_workflow, "assemble")
     step_names = (

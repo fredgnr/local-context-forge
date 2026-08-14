@@ -37,6 +37,26 @@ workflow results. Fresh workflows on the handoff head may reproduce the same Eng
 expected because this commit contains no technical fix. Source or Containers success must never compensate
 for an Engineering failure.
 
+## Post-handoff correction（2026-08-14）
+
+以下是交接后取得的新 authority；本文其余部分继续原样保留当时的调查假设和操作入口，不应再把
+其中“Installer 把 33 条 symlink mode 从 `0775` 改成 `0777`”读作当前事实。
+
+第十一次 exact head `095cbc12585a2c141f151389c1829bd758e8ed54` / tree
+`2eca5e8e293de444213e3aba43079802b6a0d910` 的 Engineering
+[run `31799645731` / job `94764347264`](https://github.com/fredgnr/local-context-forge/actions/runs/31799645731/job/94764347264)
+实际运行 macOS Installer。seal expected `3648` / `fdd600…`，observed `3648` / `77b580…`，七类
+difference count 只有 mode `33`；这 33 条 symlink 实际保持 `0775`。失败后 identity-bound rollback、
+独立 framework postcondition 与 scratch cleanup 均成功，later stages skipped、artifacts `[]`，App
+没有启动。完整 append-only authority 见
+[PR #21 remediation record](2026-08-07-pr21-remediation.md)。
+
+第十二次 corrected contract 只从 compressed Payload canonical raw `3654` / `863a6353…` 移除 6 个
+exact AppleDouble entries，得到单一 sealed `3648` / `77b580…`；不执行 symlink-mode normalization。
+三个 `pkgutil --expand-full` materialization 的代表性 symlink mode 均为 `0777`，所以 full expansion
+是旧模型的来源/反例，不是 corrected contract 的正向复现。第十二次 candidate 当前仍是未提交
+local worktree，fresh exact-head Actions `not-run`。
+
 ## 2. 最新失败事实
 
 The pre-handoff Engineering run completed exact archive, hash-manifest, signed outer package,

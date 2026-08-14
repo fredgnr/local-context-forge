@@ -27,19 +27,19 @@
       "lib/python3.13/site-packages",
       "share/doc/python3.13/html"
     ],
-    "frameworkCoreFingerprintSha256": "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9",
+    "frameworkCoreFingerprintSha256": "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10",
     "frameworkCoreInventory": {
       "fileName": "python-framework-sealed-inventory.json",
-      "fileSize": 620662,
-      "fileSha256": "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",
+      "fileSize": 615969,
+      "fileSha256": "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f",
       "schemaVersion": 1,
       "sourcePayloadSize": 32739568,
       "sourcePayloadSha256": "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
       "sourceEntryCount": 3654,
       "sourceInventorySha256": "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
-      "transformationCount": 39,
+      "transformationCount": 6,
       "entryCount": 3648,
-      "inventorySha256": "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"
+      "inventorySha256": "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"
     },
     "reviewedBrokenSymlinks": [
       {

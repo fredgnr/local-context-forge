@@ -46,7 +46,7 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 | TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `done` | Governance/Architecture | 无 | accepted head + independent acceptance + resulting-main source `pass` |
 | TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `done` | Governance/CI | 无 | immutable history + external closeout evidence |
 | TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `done` | CI/QMD/Sites | 无 | resulting-main run `30986208251` success |
-| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；ten remediation attempts `fail` / `superseded`；eleventh local candidate `not-run`；real Installer/fresh Actions/`VAL-PACKAGED-SMOKE-001` remain `not-run` |
+| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；eleven remediation attempts `fail` / `superseded`；twelfth local candidate `not-run`；eleventh Actions real Installer ran/rolled back，local system-root/fresh twelfth Actions/`VAL-PACKAGED-SMOKE-001` remain `not-run` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
 | TODO-DATA-BACKUP-001 | Priority-1 | W04/P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
@@ -169,8 +169,15 @@ W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建�
    `6eec41125b431a9fd99d8b1821362573de1b5b8a` / tree
    `a706817f28b170bab1fe9fe6c3a6e8b673e5dc81` 同样已 `fail` / `superseded`：Desktop
    `31580628860` success；Engineering `31580628877` / job `94062603909` framework-fingerprint fail；
-   Containers `31580628857` success/no-publish；artifacts `[]`、no App launch。第十一次 local candidate
-   尚无 committed exact head/tree 或 fresh exact-head Actions。它保留 producer 不使用
+   Containers `31580628857` success/no-publish；artifacts `[]`、no App launch。第十一次 exact
+   `095cbc12585a2c141f151389c1829bd758e8ed54` / parent
+   `8b2277a2c8027c5fbdab8f3e85506b72044dbba4` / tree
+   `2eca5e8e293de444213e3aba43079802b6a0d910` 同样已 `fail` / `superseded`：Desktop
+   `31799645685` success；Engineering `31799645731` / job `94764347264` producer success、真实
+   Installer 后 seal expected `3648` / `fdd600…` vs observed `3648` / `77b580…`，only mode diff
+   `33`；rollback、独立 framework postcondition 与 scratch cleanup success，later skipped、artifacts
+   `[]`、no App；Containers `31799645737` success/no-publish。第十二次 local candidate 尚无 committed
+   exact head/tree 或 fresh exact-head Actions。它保留 producer 不使用
    `actions/setup-python` 或原 full pkg 的 producer：验签 exact outer pkg 后只把
    `Python_Framework.pkg` 的唯一 postinstall 替换为 locked 17-byte no-op，隔离旧 root/确认
    target absent 后 component-install，再进行 non-symlink seal、大小写无关 cache 清理和
@@ -180,19 +187,20 @@ W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建�
    运行时 `--install-reviewed-python` 只验证 distribution/framework/interpreter binding，不安装或
    调用 `sudo`；并把 manifest 真实 uppercase/single-space 整行固定在 `grep -Fxc` + count one，
    cleanup 显式区分 source-unbound zero-residue 与 source-bound strict source/repo closure；
-   fingerprint contract 从 locked Payload raw `3654` / `863a6353…` 出发，只允许 `6` 个 exact
-   AppleDouble removals 与 `33` 个 exact symlink mode `0775→0777`，单一 pin sealed `3648` /
-   `fdd600…`；manifest size `620662` / SHA-256 `b8ef4275…`，不放宽 target/path/type、non-symlink
-   mode 或 core bytes。两次独立 `pkgutil --expand-full` raw materialization 都不是 installed/sealed
-   output；分别显式执行 non-symlink seal、大小写无关 cache cleanup 与 manifest-bound symlink-mode
-   normalization 后才 strict match，七类 difference count 均为 `0`。real Installer 因本机无
-   passwordless `sudo` 为 `not-run`。这不是 runtime learn-and-accept。两份 workflow 的 seal
+   fingerprint contract 从 locked compressed Payload raw `3654` / `863a6353…` 出发，只允许 `6`
+   个 exact AppleDouble removals；`33` 个 exact symlink mode 保持 `0775`，单一 pin sealed `3648` /
+   `77b580…`；manifest `615969` / `b145fe36…`、lock `4852` / `9682d311…`、verifier `51765` /
+   `2dbd1f36…`，不放宽 target/path/type、non-symlink mode 或 core bytes。三个
+   `pkgutil --expand-full` materialization 的代表性 symlink 均为 `0777`，所以它们是旧 normalization
+   模型的来源/反例，不是 `77b580…` positive reproduction。第十一次 Actions 已运行 real Installer；
+   本机因无 passwordless `sudo`，本机 system-root reproduction 为 `not-run`。这不是 runtime
+   learn-and-accept。两份 workflow 的 seal
    transaction 以 pre-trap sentinel 开始，只在新 root/旧 quarantine exact
    path/type/root-owner/`dev:ino` 绑定后激活；seal 只写 `committed` 并保留 quarantine，独立
    `always()` postcondition 重验后才 `finalizing` 删除并最终 `complete`。rollback-ready phase 的
    `HUP`/`INT`/`TERM` 精确恢复；unbound/mismatch preserve/no-delete、`finalizing` failure
    no-rollback，均 fixed `70`，且不声称 `SIGKILL`/host-crash recovery。该设计本身不改变 `not-run`；
-2. packaged App launch/runtime smoke：十次 remediation 均未启动 bundle，第十一次 candidate 也尚未运行，
+2. packaged App launch/runtime smoke：十一次 remediation 均未启动 bundle，第十二次 candidate 也尚未运行，
    保持 `not-run`；未来验证 renderer/preload
    handshake、Main → private UDS sidecar health/领域请求、正常退出、无 orphan、无 public INET
    listener，并以 PATH trap 证明 exercised path 不发现系统 Python/Node/Git。
@@ -251,8 +259,12 @@ job `94045233041` producer success then archive symlink mode `0775` vs Installer
 failure；cleanup runner scope success，later skipped、artifacts `[]`、no App launch。tenth remediation
 exact `70b1823…` / tree `a706817…` also failed：Desktop `31580628860` and Containers
 `31580628857` success/no-publish；Engineering `31580628877` / job `94062603909` framework-fingerprint
-failure，artifacts `[]`、no App launch。eleventh local candidate remains `not-run`（无 committed exact
-head/tree；无 fresh exact-head Actions），W02
+failure，artifacts `[]`、no App launch。eleventh remediation exact `095cbc1…` / tree `2eca5e8…` also
+failed：Desktop `31799645685` and Containers `31799645737` success/no publish；Engineering
+`31799645731` / job `94764347264` real-Installer seal expected `fdd600…` vs observed `77b580…` with
+33 mode-only diffs，rollback/postcondition/scratch cleanup success，later skipped、artifacts `[]`、no
+App launch。twelfth local candidate remains `not-run`（无 committed exact head/tree；无 fresh
+exact-head Actions），W02
 `in-progress`。packaged App
 launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。W10/W11 保持 locked，直至未来
 packaged 阶段在 independently accepted exact head、合入后 resulting `main` 上取得完整 smoke

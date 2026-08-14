@@ -1110,3 +1110,122 @@ W10/W11、tag/upload/Draft/Release/promotion 均保持 `not-run` / pending。当
 attempts `fail` / `superseded` 与第十一次 local candidate `not-run`；latest independent verdict 仍是旧
 reviewed `8c5fd232…` / `785f4656…` 的 `NO-GO`，canonical activation `blocked`，W02
 `in-progress`，`VAL-PACKAGED-SMOKE-001 not-run`，W10/W11 locked，public release `NO-GO`。
+
+## 第十一次 remediation 技术执行：`fail` / `superseded`
+
+上一节保留第十一次候选提交前的本地根因模型、验证结果和 `not-run` 状态；本节只追加该模型
+随后在真实 macOS Installer 路径上的 exact-head Actions 结果，不回写或删除旧记录。
+
+| 字段 | 值 |
+| --- | --- |
+| exact head | `095cbc12585a2c141f151389c1829bd758e8ed54` |
+| exact parent | `8b2277a2c8027c5fbdab8f3e85506b72044dbba4` |
+| exact tree | `2eca5e8e293de444213e3aba43079802b6a0d910` |
+| exact-head Desktop source run | [run `31799645685`](https://github.com/fredgnr/local-context-forge/actions/runs/31799645685) / `success`；push duplicate `31799642016` 也为 `success` |
+| engineering-smoke run / job | [run `31799645731`](https://github.com/fredgnr/local-context-forge/actions/runs/31799645731) / job `94764347264` / `failure` |
+| Containers run | [run `31799645737`](https://github.com/fredgnr/local-context-forge/actions/runs/31799645737) / `success`；PR path no publish |
+| remote engineering product artifacts | `[]` |
+| technical result | **`fail`**；第十一次 remediation attempt 已 `superseded` |
+| independent acceptance | `pending`；latest binding independent verdict 仍是旧 reviewed head/tree 的 `NO-GO` |
+| canonical activation | `blocked` |
+
+<!-- w02-pr21-eleventh-remediation-authority: source=095cbc12585a2c141f151389c1829bd758e8ed54,parent=8b2277a2c8027c5fbdab8f3e85506b72044dbba4,tree=2eca5e8e293de444213e3aba43079802b6a0d910,assembly-run=31799645731,assembly-job=94764347264,source-run=31799645685,container-run=31799645737,result=fail -->
+
+Engineering producer 已完成并进入真实 Installer 后的 reviewed framework seal。第十一次 manifest
+期待 `3648` entries / core SHA-256
+`fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9`，同一次 held
+physical/no-follow traversal 实际观察到 `3648` entries / core SHA-256
+`77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10`；七类比较中只有
+`mode=33`，missing、extra、type、target、size、content 均为 `0`。这项真实 Installer 证据证明
+`6` 个 exact AppleDouble entries 确实不作为普通文件落盘，但先前假定的 `33` 条 symlink mode
+`0775→0777` normalization 不存在：Installer 保持这些 symlink 的 `0775` mode。verifier 按单一
+expected inventory fail closed，没有接受 observed digest、忽略 mode 或降级为 warning。
+
+失败后 system-root transaction 进入 `rolled-back`，identity-bound rollback cleanup 完成，独立
+`always()` framework postcondition 成功；runner/source/repository scratch cleanup 也成功。该结果
+证明本次 Actions 运行的初始 framework 状态已按合同恢复，不等于本机手工 system-root 复现，也
+不宣称覆盖 `SIGKILL`、host crash 或 VM disappearance。source provenance 之后的 sidecar、renderer、
+Desktop profile、`.app` static assembly、bundle audit 与 focused lifecycle stages 均 skipped；assembled
+App 未启动，remote engineering product artifacts 为 `[]`。Desktop source 与 Containers
+success/no-publish 不能抵消 Engineering failure，也不能提升 packaged/runtime、independent acceptance
+或 release gate。
+
+## 第十二次 remediation technical candidate：`not-run`
+
+当前修复继续使用同一 Draft PR #21 / branch、W02、TODO-PACKAGED-SMOKE-001、
+REQ-PACKAGED-SMOKE-001、ADR-0016、ITER-0008/I01 与 VAL-PACKAGED-SMOKE-001；没有创建新的稳定
+Work/Requirement/TODO/Validation ID。当前只有以第十一次 failed exact head
+`095cbc12585a2c141f151389c1829bd758e8ed54` 为 baseline 的未提交本地 worktree，没有第十二次
+candidate commit/tree 或 fresh exact-head Source/Engineering/Containers Actions，因此 technical result
+严格保持 `not-run`。
+
+第十二次 contract 采用第十一次真实 Installer observed inventory，而不是继续猜测 symlink metadata
+转换：locked Payload raw core 仍是 `3654` entries /
+`863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d`；唯一允许的 package
+transformation 是移除既有列表中的 `6` 个 exact AppleDouble regular-file entries，`33` 条 reviewed
+symlink 的 path/type/target/mode 均保持 exact `0775`。最终单一 sealed inventory 因而是 `3648`
+entries / SHA-256
+`77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10`。expected inventory 文件
+size `615969` / SHA-256
+`b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f`；lock size `4852` /
+SHA-256 `9682d3112cf816944bdf34ba532ccc401c80f44a4e7c752d60ce314307894431`；verifier size `51765` /
+SHA-256 `2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe`。
+
+第十二次 expected inventory 的正向来源只绑定 compressed Payload 的 canonical raw inventory 加上述
+`6` 个 exact removals，以及第十一次真实 Installer observed inventory。`pkgutil --expand-full` 不是
+Installer/system-root materialization：新的只读复核在三个 full-expansion materialization 上都观察到
+代表性 symlink `Frameworks/Tcl.framework/Headers` 的 lstat mode 为 `0777`（其中一份仍有 `198`
+个 cache entries，另外两份 cache count 为 `0`）。因此 full expansion 是此前 `0775→0777` 错误
+模型的来源/反例，不是 `77b580…` 的正向复现，不得用它替代第十二次 fresh exact-head Actions。
+本机仍无 passwordless `sudo`，所以本机真实 `/Library/Frameworks` install/rollback/postcondition
+继续为 `not-run`；“real Installer 已运行”只绑定上述第十一次 Actions。
+
+两份 workflow 继续保留 identity-bound transaction、rollback-ready signal recovery、独立
+`always()` postcondition、`finalizing` no-rollback/fixed `70` 与 unbound/mismatch preserve/no-delete
+边界。
+
+### 第十二次候选本地验证
+
+以下结果只绑定 2026-08-14 的 `095cbc12585a2c141f151389c1829bd758e8ed54` baseline + 当前
+未提交 scoped worktree，以及本机 `macOS 26.2 (25C56) arm64` / Node `v24.10.0` / npm
+`11.6.0` / Python `3.14.6`。它们不是 committed exact-head Actions、独立验收、packaged App
+launch/runtime 或本机 privileged system-root evidence。
+
+| Gate | 实际命令/范围 | 结果 |
+| --- | --- | --- |
+| reviewed inventory generator | `node tools/generate_reviewed_python_framework_inventory.cjs --payload /private/tmp/lcf-python-framework.l6UeS4KPrs/expanded/Python_Framework.pkg/Payload --check backend/packaging/python-framework-sealed-inventory.json` | exit `0`；`entries=3648`；inventory `77b580…` |
+| reviewed framework verifier | `node --test tools/tests/verify_reviewed_python_framework.test.cjs` | exit `0`；`60 passed / 4 skipped`；4 个 skip 均为 root-only fixture |
+| Desktop beforePack focused | `cd desktop && ./node_modules/.bin/vitest run tests/beforePack.test.ts` | exit `0`；`57/57` |
+| packaged-smoke policy aggregate | `PYTHONDONTWRITEBYTECODE=1 make packaged-smoke-policy-check` | exit `0`；direct checker pass；policy mutation `86/86`；exact-Git `1/1` |
+| Python packaging focused | `PYTHONPATH=/private/tmp/lcf-python313-compat PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' backend/.venv/bin/python -B -m pytest -q tests/backend/test_python_sidecar_packaging.py -k 'manifest_schema_loads_with_reviewed_fail_closed_constants or reviewed_framework_inventory or reviewed_framework_core_fingerprint or reviewed_python_verification_uses_only_audit_commands or exact_toolchain'` | exit `0`；`30 passed / 553 deselected`；temporary compatibility path 是 host Python workaround |
+| Python packaging aggregate | `PYTHONPATH=/private/tmp/lcf-python313-compat PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider --tb=no' make python-sidecar-packaging-test` | exit `2`；`468 passed / 114 failed / 1 skipped` in `117.62s`；失败仍绑定 macOS 26.2 `/dev/fd/<n>` + `O_DIRECTORY` `ENOTDIR` host limitation，aggregate 不得记为 pass |
+| formal workflow policy | `PYTHONPATH=/private/tmp/lcf-python313-compat PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' backend/.venv/bin/python -B -m pytest -q tests/backend/test_desktop_release_workflow_policy.py` | exit `0`；`11 passed` in `0.49s` |
+| Desktop engineering consumer default aggregate（initial） | `npm --prefix desktop run test:engineering-smoke` | exit `1`；`92 passed / 5 failed`；4 个 renderer canonical-directory failures 来自 sandbox `confstr` fallback `/tmp` 与真实 `/private/tmp` 不同；1 个 exact-node replacement test 在 `5s` timeout，当时尚未执行 product assertion；该 aggregate 为 `fail` |
+| Desktop engineering consumer default aggregate（isolated retry） | `npm --prefix desktop run test:engineering-smoke` | exit `1`；`93 passed / 4 failed`；4 个 failure 均为上述 renderer canonical temp-dir `/tmp` vs `/private/tmp` 差异；initial 的第 5 个 timeout 未复现，故记为 concurrent-load transient，而 default aggregate failure 稳定复现 |
+| Desktop engineering consumer | `TMPDIR=/private/tmp npm --prefix desktop run test:engineering-smoke` | exit `0`；`97/97` |
+| Desktop typecheck | `npm --prefix desktop run typecheck` | exit `0`；pass |
+| Desktop build | `cd desktop && npm run build` | exit `0`；main/preload/companion build success |
+| pre-1 governance | `python3 -B tools/check_pre1_work_plan.py`；`python3 -B -m unittest tools.tests.test_check_pre1_work_plan` | exit `0`；direct checker pass；`61/61` |
+| workflow/static | PyYAML parse 两份 workflow；把全部 workflow `run` blocks 送入 `/bin/bash -n` | exit `0`；YAML `2/2`；Bash `37/37`（smoke `14` + formal `23`） |
+| documentation/version/diff | `python3 -B tools/check_markdown_links.py`；`python3 -B tools/check_version_sync.py`；`git diff --check` | exit `0`；Markdown links `90` files；version/protocol sync pass；diff check pass |
+
+上述 Python aggregate failure 也不会被 focused pass 覆盖；同样，显式 `TMPDIR=/private/tmp` 的
+`97/97` 不能覆盖默认 Desktop engineering aggregate initial `92 passed / 5 failed` 与 isolated
+retry `93 passed / 4 failed` 的失败结论。
+
+| 项目 | 当前结论 |
+| --- | --- |
+| PR #21 eleventh remediation technical attempt | `fail` / `superseded`（绑定 `095cbc1…` / parent `8b2277a…` / tree `2eca5e8…` 与 `31799645685` / `31799645731` / `31799645737`） |
+| PR #21 twelfth remediation technical candidate | `not-run`（无 committed exact head/tree；无 fresh exact-head Actions） |
+| latest independent acceptance | `NO-GO`（仍只绑定旧 `8c5fd…` / `785f46…`）；eleventh/twelfth candidates `pending` |
+| canonical activation | `blocked` |
+| W02 | `in-progress` |
+| `VAL-PACKAGED-SMOKE-001` | `not-run` |
+| W10/W11 | `locked` |
+| packaged App / bundle sidecar launch | `not-run` |
+| public release | `NO-GO` |
+
+第十一次失败和第十二次本地候选均没有提供 assembled App launch/runtime evidence。当前汇总是
+first through eleventh remediation attempts `fail` / `superseded`，第十二次 local candidate
+`not-run`；latest independent `NO-GO`、canonical activation `blocked`、W02 `in-progress`、
+`VAL-PACKAGED-SMOKE-001 not-run`、W10/W11 locked 与 public release `NO-GO` 均保持不变。

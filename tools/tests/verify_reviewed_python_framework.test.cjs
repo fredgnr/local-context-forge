@@ -196,9 +196,8 @@ test("hard-coded constants exactly match the repository lock", () => {
       "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
     installedEntryCount: 3648,
     installedInventorySha256:
-      "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9",
+      "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10",
     appleDoubleRemovals: 6,
-    symlinkModeChanges: 33,
   });
 });
 
@@ -222,6 +221,21 @@ test("the production expected inventory satisfies its exact file and schema cont
   assert.equal(validated.sourceInventory.length, 3654);
   assert.equal(validated.inventory.length, 3648);
   assert.equal(validated.inventorySha256, verifier.CORE_DIGEST);
+  assert.equal(validated.transformations.length, 6);
+  assert.ok(
+    validated.transformations.every(
+      (transformation) => transformation.kind === "remove-appledouble",
+    ),
+  );
+  assert.equal(
+    validated.inventory.filter((entry) => entry.type === "symlink").length,
+    33,
+  );
+  assert.ok(
+    validated.inventory
+      .filter((entry) => entry.type === "symlink")
+      .every((entry) => entry.mode === "0775"),
+  );
 });
 
 test("framework verification requires exactly one lock path or held value", () => {
@@ -463,7 +477,7 @@ test("strict expected inventory accepts an exact synthetic manifest", () => {
   );
 });
 
-test("strict expected inventory applies exact Installer metadata transformations", () => {
+test("strict expected inventory removes only exact Installer AppleDouble metadata", () => {
   const target = "Versions/Current/Headers";
   const source = sortEntries([
     fileEntry("Frameworks/Tcl.framework/._carrier", "appledouble\n"),
@@ -484,14 +498,6 @@ test("strict expected inventory applies exact Installer metadata transformations
       size: carrier.size,
       sha256: carrier.sha256,
     },
-    {
-      kind: "symlink-mode",
-      path: "Frameworks/Tcl.framework/Headers",
-      type: "symlink",
-      target,
-      fromMode: "0775",
-      toMode: "0777",
-    },
   ].sort((left, right) =>
     verifier.comparePythonStrings(left.path, right.path),
   );
@@ -501,7 +507,7 @@ test("strict expected inventory applies exact Installer metadata transformations
   assert.equal(validated.inventory.length, 2);
   assert.equal(
     validated.inventory.find((entry) => entry.type === "symlink").mode,
-    "0777",
+    "0775",
   );
   assert.equal(
     validated.inventory.some((entry) => entry.path === carrier.path),
@@ -521,10 +527,10 @@ test("expected inventory rejects transformations outside the exact contract", ()
           type: "symlink",
           target,
           fromMode: "0775",
-          toMode: "0755",
+          toMode: "0777",
         },
       ]),
-    /symlink-mode transformation is malformed/,
+    /transformation kind is unsupported/,
   );
   assert.throws(
     () =>

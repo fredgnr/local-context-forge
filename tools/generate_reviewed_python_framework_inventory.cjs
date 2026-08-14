@@ -21,7 +21,7 @@ const SOURCE_CORE_CONTRACT = Object.freeze({
 });
 const SEALED_CORE_CONTRACT = Object.freeze({
   entryCount: 3648,
-  inventorySha256: "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9",
+  inventorySha256: "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10",
 });
 const MAX_CPIO_ENTRIES = 100_000;
 const MAX_CPIO_NAME_BYTES = 16 * 1024;
@@ -81,52 +81,8 @@ const INSTALLER_APPLEDOUBLE_TRANSFORMATIONS = Object.freeze([
   }),
 ]);
 
-const INSTALLER_SYMLINK_MODE_TRANSFORMATIONS = Object.freeze([
-  ["Frameworks/Tcl.framework/Headers", "Versions/Current/Headers"],
-  ["Frameworks/Tcl.framework/PrivateHeaders", "Versions/Current/PrivateHeaders"],
-  ["Frameworks/Tcl.framework/Resources", "Versions/Current/Resources"],
-  ["Frameworks/Tcl.framework/Tcl", "Versions/Current/Tcl"],
-  ["Frameworks/Tcl.framework/Versions/Current", "8.6"],
-  ["Frameworks/Tcl.framework/libtclstub8.6.a", "Versions/8.6/libtclstub8.6.a"],
-  ["Frameworks/Tcl.framework/tclConfig.sh", "Versions/Current/tclConfig.sh"],
-  ["Frameworks/Tk.framework/Headers", "Versions/Current/Headers"],
-  ["Frameworks/Tk.framework/PrivateHeaders", "Versions/Current/PrivateHeaders"],
-  ["Frameworks/Tk.framework/Resources", "Versions/Current/Resources"],
-  ["Frameworks/Tk.framework/Tk", "Versions/Current/Tk"],
-  ["Frameworks/Tk.framework/Versions/Current", "8.6"],
-  ["Frameworks/Tk.framework/libtkstub8.6.a", "Versions/8.6/libtkstub8.6.a"],
-  ["Frameworks/Tk.framework/tkConfig.sh", "Versions/Current/tkConfig.sh"],
-  ["Headers", "include/python3.13"],
-  ["bin/idle3", "idle3.13"],
-  ["bin/pydoc3", "pydoc3.13"],
-  ["bin/python3", "python3.13"],
-  ["bin/python3-config", "python3.13-config"],
-  ["bin/python3-intel64", "python3.13-intel64"],
-  ["lib/libcrypto.dylib", "libcrypto.3.dylib"],
-  ["lib/libcurses.dylib", "libncurses.6.dylib"],
-  ["lib/libform.dylib", "libform.6.dylib"],
-  ["lib/libmenu.dylib", "libmenu.6.dylib"],
-  ["lib/libncurses.dylib", "libncurses.6.dylib"],
-  ["lib/libpanel.dylib", "libpanel.6.dylib"],
-  ["lib/libpython3.13.dylib", "../Python"],
-  ["lib/libssl.dylib", "libssl.3.dylib"],
-  ["lib/pkgconfig/python3-embed.pc", "python-3.13-embed.pc"],
-  ["lib/pkgconfig/python3.pc", "python-3.13.pc"],
-  ["lib/python3.13/config-3.13-darwin/libpython3.13.a", "../../../Python"],
-  ["lib/python3.13/config-3.13-darwin/libpython3.13.dylib", "../../../Python"],
-  ["share/man/man1/python3.1", "python3.13.1"],
-].map(([entryPath, target]) => Object.freeze({
-  kind: "symlink-mode",
-  path: entryPath,
-  type: "symlink",
-  target,
-  fromMode: "0775",
-  toMode: "0777",
-})));
-
 const TRANSFORMATION_CONTRACT = Object.freeze([
   ...INSTALLER_APPLEDOUBLE_TRANSFORMATIONS,
-  ...INSTALLER_SYMLINK_MODE_TRANSFORMATIONS,
 ].sort((left, right) => {
   const pathOrder = left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
   if (pathOrder !== 0) {
@@ -390,11 +346,7 @@ function buildExpectedManifest(compressedPayload) {
   const appleDouble = new Map(
     INSTALLER_APPLEDOUBLE_TRANSFORMATIONS.map((entry) => [entry.path, entry]),
   );
-  const symlinkModes = new Map(
-    INSTALLER_SYMLINK_MODE_TRANSFORMATIONS.map((entry) => [entry.path, entry]),
-  );
   const observedAppleDouble = new Set();
-  const observedSymlinkModes = new Set();
   const reviewedBroken = new Map(
     verifier.REVIEWED_BROKEN_SYMLINKS.map((entry) => [entry.path, entry.target]),
   );
@@ -457,16 +409,6 @@ function buildExpectedManifest(compressedPayload) {
     const item = { ...sourceItem };
     if (raw.type === "symlink") {
       const target = sourceItem.target;
-      const symlinkRule = symlinkModes.get(relativePath);
-      if (
-        symlinkRule === undefined ||
-        raw.mode !== symlinkRule.fromMode ||
-        target !== symlinkRule.target
-      ) {
-        fail("Installer symlink-mode transformation source changed");
-      }
-      item.mode = symlinkRule.toMode;
-      observedSymlinkModes.add(relativePath);
       if (reviewedBroken.get(relativePath) === target) {
         item.broken = true;
         observedBroken.set(relativePath, target);
@@ -478,8 +420,6 @@ function buildExpectedManifest(compressedPayload) {
   if (
     observedAppleDouble.size !== appleDouble.size ||
     [...appleDouble.keys()].some((entryPath) => !observedAppleDouble.has(entryPath)) ||
-    observedSymlinkModes.size !== symlinkModes.size ||
-    [...symlinkModes.keys()].some((entryPath) => !observedSymlinkModes.has(entryPath)) ||
     observedBroken.size !== reviewedBroken.size ||
     [...reviewedBroken].some(
       ([entryPath, target]) => observedBroken.get(entryPath) !== target,
@@ -586,7 +526,6 @@ function main() {
 
 module.exports = Object.freeze({
   INSTALLER_APPLEDOUBLE_TRANSFORMATIONS,
-  INSTALLER_SYMLINK_MODE_TRANSFORMATIONS,
   PAYLOAD_CONTRACT,
   SEALED_CORE_CONTRACT,
   SOURCE_CORE_CONTRACT,

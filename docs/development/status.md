@@ -29,8 +29,9 @@
 | W02 eighth remediation attempt | exact `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / parent `aaf3f51f69dfded82b8237e03a871017317e7158` / tree `66779e9ca8df445fb413e93faed4d265899fb1ec`；Desktop source `31570734560` success；Engineering `31570734636` / job `94031972543` root-owned quarantine canonical `cd` permission fail after manifest/component checks passed；cleanup success did not prove framework quarantine residue absent；Containers `31570734580` success/no publish；technical `fail` / `superseded`；independent `pending`；activation `blocked` |
 | W02 ninth remediation attempt | exact `6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree `3361f3e3880c926015a82abc862cb3e8334410c2`；Desktop source `31575062814` success；Engineering `31575062796` / job `94045233041` producer success then archive symlink mode `0775` vs Installer `0777` core-fingerprint fail；cleanup runner scope success；Containers `31575062785` success/no publish；technical `fail` / `superseded`；independent `pending`；activation `blocked` |
 | W02 tenth remediation attempt | exact `70b1823259590725d6f579b97fa294d3d9dcf728` / parent `6eec41125b431a9fd99d8b1821362573de1b5b8a` / tree `a706817f28b170bab1fe9fe6c3a6e8b673e5dc81`；Desktop `31580628860` success；Engineering `31580628877` / job `94062603909` framework-fingerprint fail；Containers `31580628857` success/no publish；artifacts `[]`；technical `fail` / `superseded`；independent `pending`；activation `blocked` |
-| W02 eleventh local candidate | handoff `8b2277a…` / tree `dd74107…` + uncommitted worktree；无 candidate commit/tree 或 fresh exact-head Actions；technical `not-run`；independent `pending`；activation `blocked` |
-| 当前结论 | **W02 in-progress：latest independent `NO-GO`（仅绑定旧 reviewed head/tree）；ten remediation attempts `fail` / `superseded`；eleventh local candidate `not-run`（无 committed exact head/tree；无 fresh exact-head Actions）；real Installer 与 packaged launch/runtime `not-run`；W10/W11 locked；public release NO-GO** |
+| W02 eleventh remediation attempt | exact `095cbc12585a2c141f151389c1829bd758e8ed54` / parent `8b2277a2c8027c5fbdab8f3e85506b72044dbba4` / tree `2eca5e8e293de444213e3aba43079802b6a0d910`；Desktop `31799645685` success；Engineering `31799645731` / job `94764347264` real-Installer seal expected `fdd600…` vs observed `77b580…` with only 33 mode diffs，rollback/postcondition/scratch cleanup success；Containers `31799645737` success/no publish；artifacts `[]`；technical `fail` / `superseded`；independent `pending`；activation `blocked` |
+| W02 twelfth local candidate | baseline `095cbc1…` / tree `2eca5e8…` + uncommitted worktree；无 candidate commit/tree 或 fresh exact-head Actions；technical `not-run`；independent `pending`；activation `blocked` |
+| 当前结论 | **W02 in-progress：latest independent `NO-GO`（仅绑定旧 reviewed head/tree）；eleven remediation attempts `fail` / `superseded`；twelfth local candidate `not-run`（无 committed exact head/tree；无 fresh exact-head Actions）；eleventh Actions real Installer ran and rolled back，local system-root 与 packaged launch/runtime `not-run`；W10/W11 locked；public release NO-GO** |
 
 PR #20 的旧 final candidate 已被独立验收拒绝；remediation exact final
 `36885e04df09c4789d8ec3c9dc5c5e78a381a634` 已通过 PR/source 与独立验收并合入 canonical
@@ -226,22 +227,28 @@ Containers `31575062785` success/no publish。第九次为 technical `fail` / `s
 seal 报 framework fingerprint change，artifacts `[]` / no App；technical `fail` / `superseded`。这证明
 单一 `ba58cfb…` 与“只映射 33 条 symlink mode”的模型不完整。
 
-第十一次 local candidate 把 locked Payload raw `3654` / `863a6353…` 通过 `6` 个 exact
-AppleDouble removals 与 `33` 个 exact symlink mode `0775→0777` 转成唯一 sealed `3648` /
-`fdd600…`；expected manifest size `620662` / SHA-256 `b8ef4275…`。两次独立
-`pkgutil --expand-full` raw materialization 都不是 installed/sealed output；分别显式执行
-non-symlink seal、大小写无关 cache cleanup 与 manifest-bound symlink-mode normalization 后才 strict
-match，七类 difference count 均为 `0`。real Installer 因本机无 passwordless `sudo` 为 `not-run`，
-host `/Library/Frameworks/Python.framework/Versions/3.13` 未修改。该 local candidate 不是 runtime
+第十一次 exact `095cbc1…` / parent `8b2277a…` / tree `2eca5e8…` 的 Desktop `31799645685` 与
+Containers `31799645737` success/no-publish；Engineering `31799645731` / job `94764347264` 在真实
+Installer 后观察到 `3648` / `77b580…`，与 expected `3648` / `fdd600…` 只有 33 条 mode diff，
+随后 rollback、独立 framework postcondition 与 scratch cleanup success，later skipped、artifacts
+`[]`、no App。该轮 technical `fail` / `superseded`，证明 Installer 保持 33 条 symlink mode `0775`。
+第十二次 local candidate 把 compressed Payload raw `3654` / `863a6353…` 只通过 `6` 个 exact
+AppleDouble removals 转成唯一 sealed `3648` / `77b580…`；expected manifest `615969` /
+`b145fe36…`、lock `4852` / `9682d311…`、verifier `51765` / `2dbd1f36…`。三个
+`pkgutil --expand-full` materialization 的代表性 symlink 都是 `0777`，所以 full expansion 是旧
+normalization 模型的来源/反例，不是 `77b580…` 的正向复现。本机因无 passwordless `sudo`，本机
+system-root reproduction 为 `not-run`，host `/Library/Frameworks/Python.framework/Versions/3.13`
+未修改。该 local candidate 不是 runtime
 learn-and-accept，mode/target/path/type/bytes 仍参与。seal transaction 从 pre-trap sentinel 开始，
 只在新 root/旧 quarantine exact path/type/root-owner/`dev:ino` 绑定后激活；seal 成功只写
 `committed` 并保留 quarantine，独立 `always()` postcondition 重验后才 `finalizing` 删除并最终
 `complete`。rollback-ready phase 的 `HUP`/`INT`/`TERM` 精确恢复；unbound/mismatch
 preserve/no-delete、`finalizing` failure no-rollback，均 fixed `70`，且不声称 `SIGKILL`/host-crash
-recovery。当前没有第十一次 commit/tree 或 fresh Actions，因此 technical/independent/activation
+recovery。当前没有第十二次 commit/tree 或 fresh Actions，因此 technical/independent/activation
 均不提升。
 
-2026-08-14 macOS 26.2 arm64 本地 worktree 验证中，policy mutation `86/86`、exact-Git `1/1`、verifier
+第十一次 pre-commit 的 2026-08-14 macOS 26.2 arm64 本地 worktree 验证中，policy mutation
+`86/86`、exact-Git `1/1`、verifier
 `60 passed / 4 root-only skipped`、beforePack `50/50`、temporary pyexpat compatibility path 下的
 focused Python `22 passed`、formal workflow `11 passed`、pre-1 `59/59`、YAML `2/2`、Bash
 `37/37`、Markdown links `90` files/diff、Desktop typecheck/build 均通过。Desktop
@@ -249,7 +256,17 @@ focused Python `22 passed`、formal workflow `11 passed`、pre-1 `59/59`、YAML 
 `TMPDIR=/private/tmp` 后为 `90/90`。无 compatibility path 的 Python collection 被 Homebrew
 `pyexpat` missing symbol 阻断；临时 `PYTHONPATH=/private/tmp/lcf-python313-compat` 下 full packaging
 仍为 `460 passed / 114 failed / 1 skipped`，失败绑定 macOS 26.2 `/dev/fd` + `O_DIRECTORY`
-`ENOTDIR` host limitation。以上计数都不是 real Installer 或 fresh exact-head authority。
+`ENOTDIR` host limitation。以上计数是第十一次 pre-commit local history，不是第十二次 fresh
+validation。
+
+第十二次当前本地 worktree 已取得 generator check `3648` / `77b580…`、verifier `60 pass / 4
+root-only skip`、beforePack `57/57`、Python focused `30 pass / 553 deselected`、formal workflow
+policy `11/11`、Desktop engineering `97/97` 与 typecheck、pre-1 direct + `61/61`、Markdown links
+`90` files、version/diff pass。Python packaging aggregate 仍为 `468 pass / 114 fail / 1 skip`
+（exit `2`），失败绑定同一 `/dev/fd` + `O_DIRECTORY` host limitation；packaged policy direct、
+mutation `86/86` 与 focused `3/3` 通过，YAML `2/2`、Bash `37/37`（smoke `14` + formal `23`）
+通过；Desktop build main/preload/companion success。真实 Installer authority 只绑定第十一次 Actions；
+第十二次 fresh exact-head Actions 仍为 `not-run`。
 
 更早 PR #17 证据包括：
 
@@ -267,7 +284,7 @@ packaged/physical gate。
 | 路径 | 当前可用性 | 适用对象 | 主要限制 |
 | --- | --- | --- | --- |
 | Electron 源码模式 | 可用于开发和 source 验证 | 开发者 | 借用开发机 Python/Node；不是正式包 |
-| 最小 packaged smoke | old static assembly technical `pass`；latest independent `NO-GO`；ten remediation attempts `fail` / `superseded`；eleventh local candidate `not-run`；real Installer 与 packaged launch/runtime `not-run` | W02 removal feedback | old/failed exact Draft runs 与 local pkgutil evidence cannot prove a later exact candidate；没有启动 assembled App，不完成 `VAL-PACKAGED-SMOKE-001` |
+| 最小 packaged smoke | old static assembly technical `pass`；latest independent `NO-GO`；eleven remediation attempts `fail` / `superseded`；twelfth local candidate `not-run`；eleventh Actions real Installer ran/rolled back，local system-root 与 packaged launch/runtime `not-run` | W02 removal feedback | old/failed exact Draft runs 与 pkgutil full-expansion evidence cannot prove a later exact candidate；没有启动 assembled App，不完成 `VAL-PACKAGED-SMOKE-001` |
 | 完整 engineering test package | `planned` / `not-run` | W04–W12 工程物理验证 | 只能从 W10/W11 cleaned tree 构建；UNOFFICIAL、无 production trust/tag/upload |
 | Electron 正式 DMG | `not-run` / 不推荐 | 将来的普通用户 | trust pins、签名、真机和 promotion 未完成 |
 | Legacy Docker/Web | 已弃用、unsupported、待删除 | 仅用于解释当前仓库残留 | 不承诺修复、迁移、兼容窗口或继续可用 |
@@ -289,7 +306,7 @@ ITER-0008 的 W10/W11 slices 移除。此状态变化不自动停止现有容器
 | P4 Desktop 数据、模型 | `planned` | 标准路径部分落地 | Desktop backup/restore、完整模型供应链、unknown layout fail-closed |
 | P5 DMG 与发布 | `planned` / 后置 W14–W16 | 两阶段 workflow/source policy | W13、GitHub settings、trust pins、签名 Draft、clean-user |
 | P6 更新实机门禁 | `planned` | signed check/download/open-DMG source client | 真实 `N-1 → N`、失败注入；automatic apply 尚未设计 |
-| P7 Electron-only 退出 | `in-progress` | W01 已闭环；W02 old static assembly/audit 是历史技术结果，PR #21 latest independent verdict `NO-GO`，first through tenth remediation technical attempts `fail` / `superseded`；ADR-0015/0016、W01–W16 与严格删除计划 | PR #21 eleventh exact remediation candidate、W02 packaged runtime smoke、W10/W11 slices、W03 engineering package、W13 final gates |
+| P7 Electron-only 退出 | `in-progress` | W01 已闭环；W02 old static assembly/audit 是历史技术结果，PR #21 latest independent verdict `NO-GO`，first through eleventh remediation technical attempts `fail` / `superseded`；ADR-0015/0016、W01–W16 与严格删除计划 | PR #21 twelfth exact remediation candidate、W02 packaged runtime smoke、W10/W11 slices、W03 engineering package、W13 final gates |
 
 P2/P3 的实现依赖 P1 已冻结的 source IPC contract，而不是 P1 的完整 packaged gate。
 P5/P6 的 source foundation 提前落地，不代表可以绕过 P4 或对应物理退出门禁。
@@ -327,7 +344,7 @@ settings、signing、Release gate。
 | `VAL-UPDATE-CLIENT-001` | `pass` | manifest、cache、IPC、verified DMG source 合同 |
 | `VAL-LOCAL-SOURCE-001/002` | `pass` | grant/path 与 Backend 双层 source policy |
 
-W02 historical static assembly、ten remediation failures 与 eleventh local candidate（均不等于 packaged runtime gate）：
+W02 historical static assembly、eleven remediation failures 与 twelfth local candidate（均不等于 packaged runtime gate）：
 
 | Substage | 结果 | 证据与限制 |
 | --- | --- | --- |
@@ -345,7 +362,9 @@ W02 historical static assembly、ten remediation failures 与 eleventh local can
 | ninth remediation exact candidate | `fail` / `superseded` | exact `6eec411…` / parent `1533656…` / tree `3361f3e…`；Desktop source `31575062814` success；Engineering `31575062796` / job `94045233041` producer success 后 archive symlink mode `0775` vs Installer `0777` core-fingerprint fail；cleanup runner scope success / later skipped / artifacts `[]` / no App launch；Containers `31575062785` success/no publish；independent pending / activation blocked；[record](evidence/W02/2026-08-07-pr21-remediation.md) |
 | historical tenth pre-commit candidate | historical `not-run` | 当时尚无 committed exact head/tree 或 fresh Actions；旧 `ba58cfb…` design 保留为 append-only history |
 | tenth remediation exact candidate | `fail` / `superseded` | exact `70b1823…` / parent `6eec411…` / tree `a706817…`；Desktop `31580628860` success；Engineering `31580628877` / job `94062603909` framework-fingerprint fail；Containers `31580628857` success/no publish；artifacts `[]` / no App；independent pending / activation blocked；[record](evidence/W02/2026-08-07-pr21-remediation.md) |
-| eleventh local candidate | `not-run` | handoff `8b2277a…` / tree `dd74107…` + uncommitted worktree；raw `3654` / `863a6353…` + 6 AppleDouble removals + 33 symlink modes = sealed `3648` / `fdd600…`；two pkgutil raw materializations only match after explicit seal/cache cleanup/symlink-mode normalization，seven diff classes zero；real Installer/fresh exact-head Actions/independent acceptance `not-run` |
+| historical eleventh local candidate | historical `not-run` | handoff `8b2277a…` / tree `dd74107…` + uncommitted worktree；当时的 raw + 6 removals + 33 symlink normalization → `fdd600…` 模型与 pkgutil evidence 保留为历史，已被真实 Installer supersede |
+| eleventh remediation exact candidate | `fail` / `superseded` | exact `095cbc1…` / parent `8b2277a…` / tree `2eca5e8…`；Desktop `31799645685` success；Engineering `31799645731` / job `94764347264` real-Installer seal expected `fdd600…` vs observed `77b580…`、33 mode-only diffs；rollback/postcondition/scratch cleanup success，later skipped、artifacts `[]` / no App；Containers `31799645737` success/no publish |
+| twelfth local candidate | `not-run` | baseline `095cbc1…` / tree `2eca5e8…` + uncommitted worktree；compressed raw `3654` / `863a6353…` + only 6 AppleDouble removals = sealed `3648` / `77b580…`，33 symlink modes stay `0775`；manifest `615969` / `b145fe36…`；pkgutil full-expansion `0777` is a counterexample；fresh exact-head Actions/independent acceptance `not-run` |
 | packaged App launch/runtime | `not-run` | `VAL-PACKAGED-SMOKE-001` 仍未运行，W10/W11 locked |
 
 ### 必须保持 `not-run`
@@ -403,10 +422,15 @@ W02 historical static assembly、ten remediation failures 与 eleventh local can
    success/no publish；第九次也已 `fail` / `superseded`。第十次 `70b1823…` / tree `a706817…` 的
    Desktop `31580628860` success，Engineering `31580628877` / job `94062603909` framework fingerprint
    fail，Containers `31580628857` success/no-publish，artifacts `[]`；第十次也已 `fail` /
-   `superseded`。十次 remediation independent acceptance 均为 `pending`，不改变只绑定旧 reviewed
-   head/tree 的 independent `NO-GO`。必须在同一 branch/PR 为第十一次 exact candidate 取得 fresh
+   `superseded`。第十一次 `095cbc1…` / tree `2eca5e8…` 的 Desktop `31799645685` success，
+   Engineering `31799645731` / job `94764347264` 在真实 Installer 后以 expected `fdd600…` vs
+   observed `77b580…`、33 条 mode-only diff fail，rollback/framework postcondition/scratch cleanup
+   success；Containers `31799645737` success/no-publish，artifacts `[]`、no App；第十一次也已
+   `fail` / `superseded`。十一次 remediation independent acceptance 均为 `pending`，不改变只绑定
+   旧 reviewed head/tree 的 independent `NO-GO`。必须在同一 branch/PR 为第十二次 exact candidate 取得 fresh
    source/Engineering/Containers Actions；旧 `310269*`、`311819*`、`311844*`、`312581*`、
-   `313583*`、`314548*`、`314605*`、`315594*`、`315707*`、`315750*` 与 `315806*` runs 都不能迁移为 remediation `pass`。
+   `313583*`、`314548*`、`314605*`、`315594*`、`315707*`、`315750*`、`315806*` 与 `317996*`
+   runs 都不能迁移为 remediation `pass`。
 2. packaged App launch/runtime harness 仍未实现或运行，assembled App 未启动、sidecar 未从
    bundle 启动，`VAL-PACKAGED-SMOKE-001=not-run`；因此 W10/W11 destructive slices 继续 locked。
 3. W10/W11 的 decouple/deploy/transport/provider/release/docs slice 均未执行，container/GHCR
@@ -432,7 +456,7 @@ W02 historical static assembly、ten remediation failures 与 eleventh local can
 
 ### Ready now：无需外部管理员或物理候选
 
-1. 在 Draft PR #21 现有 branch 上形成第十一次 exact remediation candidate：保留不用
+1. 在 Draft PR #21 现有 branch 上形成第十二次 exact remediation candidate：保留不用
    `actions/setup-python` / 原 full pkg、component-only 17-byte no-op producer/seal 边界；把 locked
    hashes manifest 的真实 uppercase/single-space 整行继续以 `grep -Fxc` + count one 绑定，并把
    cleanup 分成 source-unbound zero-residue 与 source-bound strict source/repo closure。继续先校验
@@ -441,12 +465,13 @@ W02 historical static assembly、ten remediation failures 与 eleventh local can
    non-symlink seal，大小写无关清理 cache，再以 Node verifier 绑定 core/fresh exclusions，且在
    verifier 后精确复验/清理 quarantine、首次 framework Python 前完成。运行时 install-reviewed
    只验证 distribution/binding，不安装或
-   `sudo`。fingerprint contract 只允许 locked Payload raw `3654` / `863a6353…` 中 `6` 个 exact
-   AppleDouble entries 被 metadata 消费，并把 `33` 个 exact symlink mode 从 `0775` 变为 `0777`，
-   单一 pin sealed `3648` / `fdd600…`；继续严格检查 target/path/type、non-symlink mode 与 core
-   bytes。expected manifest size `620662` / SHA-256 `b8ef4275…`；两次 pkgutil raw materialization
-   仅在显式 seal/cache cleanup/symlink-mode normalization 后 strict match 且七类 diff 为 `0`，real
-   Installer/system-root transaction 仍须在 fresh Engineering Actions 运行。两份 workflow 使用
+   `sudo`。fingerprint contract 只允许 locked compressed Payload raw `3654` / `863a6353…` 中 `6`
+   个 exact AppleDouble entries 被 metadata 消费；`33` 个 exact symlink mode 保持 `0775`，单一 pin
+   sealed `3648` / `77b580…`；继续严格检查 target/path/type、non-symlink mode 与 core bytes。
+   expected manifest `615969` / `b145fe36…`、lock `4852` / `9682d311…`、verifier `51765` /
+   `2dbd1f36…`。pkgutil full expansion 的 `0777` mode 是旧模型来源/反例，不是 positive reproduction；
+   第十一次 Actions 已运行 real Installer 并按失败路径 rollback/postcondition，第十二次仍须在 fresh
+   Engineering Actions 重验 corrected inventory。两份 workflow 使用
    pre-trap sentinel；identity-bound activation 后，seal 只写 `committed` 并保留 quarantine，独立
    `always()` postcondition 重验后才 `finalizing` 删除并最终 `complete`。unbound/mismatch
    preserve/no-delete、`finalizing` failure no-rollback，均 fixed `70`；只声明 rollback-ready phase 的

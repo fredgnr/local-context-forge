@@ -8,7 +8,7 @@ const { TextDecoder } = require("node:util");
 
 const EXACT_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13";
 const CORE_DIGEST =
-  "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9";
+  "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10";
 // The complete production inventory is generated and pinned separately.  These
 // constants bind the reviewed shape without embedding thousands of payload
 // entries in executable verifier code.
@@ -18,9 +18,8 @@ const EXPECTED_CORE_SOURCE_INVENTORY_SHA256 =
   "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";
 const EXPECTED_CORE_ENTRY_COUNT = 3648;
 const EXPECTED_CORE_INVENTORY_SHA256 =
-  "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9";
+  "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10";
 const EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS = 6;
-const EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES = 33;
 const CORE_EXCLUDED_PATHS = Object.freeze([
   "Resources/English.lproj/Documentation",
   "bin/pip",
@@ -83,21 +82,18 @@ const EXPECTED_INVENTORY_CONTRACT = Object.freeze({
   installedEntryCount: EXPECTED_CORE_ENTRY_COUNT,
   installedInventorySha256: EXPECTED_CORE_INVENTORY_SHA256,
   appleDoubleRemovals: EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS,
-  symlinkModeChanges: EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES,
 });
 const FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT = Object.freeze({
   fileName: "python-framework-sealed-inventory.json",
-  fileSize: 620662,
+  fileSize: 615969,
   fileSha256:
-    "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",
+    "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f",
   schemaVersion: EXPECTED_INVENTORY_SCHEMA_VERSION,
   sourcePayloadSize: FRAMEWORK_COMPONENT_CONTRACT.payloadSize,
   sourcePayloadSha256: FRAMEWORK_COMPONENT_CONTRACT.payloadSha256,
   sourceEntryCount: EXPECTED_CORE_SOURCE_ENTRY_COUNT,
   sourceInventorySha256: EXPECTED_CORE_SOURCE_INVENTORY_SHA256,
-  transformationCount:
-    EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS +
-    EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES,
+  transformationCount: EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS,
   entryCount: EXPECTED_CORE_ENTRY_COUNT,
   inventorySha256: EXPECTED_CORE_INVENTORY_SHA256,
 });
@@ -722,36 +718,6 @@ function normalizeExpectedTransformations(transformations) {
       continue;
     }
 
-    if (transformation.kind === "symlink-mode") {
-      if (
-        !hasExactKeys(transformation, [
-          "fromMode",
-          "kind",
-          "path",
-          "target",
-          "toMode",
-          "type",
-        ]) ||
-        transformation.type !== "symlink" ||
-        transformation.fromMode !== "0775" ||
-        transformation.toMode !== "0777" ||
-        !isSafeSymlinkTarget(transformation.target)
-      ) {
-        fail("Expected symlink-mode transformation is malformed");
-      }
-      result.push(
-        Object.freeze({
-          kind: "symlink-mode",
-          path: transformation.path,
-          type: "symlink",
-          target: transformation.target,
-          fromMode: "0775",
-          toMode: "0777",
-        }),
-      );
-      continue;
-    }
-
     fail("Expected framework inventory transformation kind is unsupported");
   }
   return Object.freeze(result);
@@ -787,14 +753,7 @@ function applyNormalizedExpectedInventoryTransformations(
       byPath.delete(transformation.path);
       continue;
     }
-    if (
-      transformation.kind !== "symlink-mode" ||
-      entry.mode !== transformation.fromMode ||
-      entry.target !== transformation.target
-    ) {
-      fail("Expected framework inventory transformation source metadata changed");
-    }
-    entry.mode = transformation.toMode;
+    fail("Expected framework inventory transformation kind is unsupported");
   }
   const transformed = [...byPath.values()].sort((left, right) =>
     comparePythonStrings(left.path, right.path),
@@ -831,16 +790,7 @@ function reconstructSourceInventory(installedInventory, transformations) {
       });
       continue;
     }
-    if (
-      transformation.kind !== "symlink-mode" ||
-      installed === undefined ||
-      installed.type !== "symlink" ||
-      installed.mode !== transformation.toMode ||
-      installed.target !== transformation.target
-    ) {
-      fail("Expected installed symlink transformation metadata changed");
-    }
-    installed.mode = transformation.fromMode;
+    fail("Expected framework inventory transformation kind is unsupported");
   }
   return validateInventoryEntries(
     [...byPath.values()].sort((left, right) =>
@@ -928,9 +878,6 @@ function verifyExpectedInventoryProductionContract(value) {
   const removalCount = validated.transformations.filter(
     (item) => item.kind === "remove-appledouble",
   ).length;
-  const symlinkModeCount = validated.transformations.filter(
-    (item) => item.kind === "symlink-mode",
-  ).length;
   if (
     validated.source.payloadSize !== EXPECTED_INVENTORY_CONTRACT.payloadSize ||
     validated.source.payloadSha256 !== EXPECTED_INVENTORY_CONTRACT.payloadSha256 ||
@@ -940,8 +887,7 @@ function verifyExpectedInventoryProductionContract(value) {
     validated.entryCount !== EXPECTED_INVENTORY_CONTRACT.installedEntryCount ||
     validated.inventorySha256 !==
       EXPECTED_INVENTORY_CONTRACT.installedInventorySha256 ||
-    removalCount !== EXPECTED_INVENTORY_CONTRACT.appleDoubleRemovals ||
-    symlinkModeCount !== EXPECTED_INVENTORY_CONTRACT.symlinkModeChanges
+    removalCount !== EXPECTED_INVENTORY_CONTRACT.appleDoubleRemovals
   ) {
     fail("Expected framework inventory differs from the production contract");
   }
@@ -1646,7 +1592,6 @@ module.exports = Object.freeze({
   EXPECTED_CORE_SOURCE_ENTRY_COUNT,
   EXPECTED_CORE_SOURCE_INVENTORY_SHA256,
   EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS,
-  EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES,
   EXPECTED_INVENTORY_CONTRACT,
   EXPECTED_INVENTORY_SCHEMA_VERSION,
   FRAMEWORK_COMPONENT_CONTRACT,

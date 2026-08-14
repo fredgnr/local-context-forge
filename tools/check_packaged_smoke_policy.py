@@ -14,7 +14,7 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "packaged-smoke.yml"
 EXPECTED_WORKFLOW_SHA256 = (
-    "5e016d7aa9f1fb2678621806055f76ef8a2f00467d3bfea04b6332a16a8e3900"
+    "c6420386981b74fe13eb9510c9c5eb09f425048b9fe195312e7920e664149050"
 )
 MAKEFILE = ROOT / "Makefile"
 BUILD_SCRIPT = ROOT / "tools" / "build_python_sidecar.py"
@@ -48,28 +48,28 @@ REMEDIATION_EVIDENCE = (
     / "2026-08-07-pr21-remediation.md"
 )
 EXPECTED_REVIEWED_INPUT_SHA256 = {
-    "workflow": "5e016d7aa9f1fb2678621806055f76ef8a2f00467d3bfea04b6332a16a8e3900",
+    "workflow": "c6420386981b74fe13eb9510c9c5eb09f425048b9fe195312e7920e664149050",
     "makefile": "0406bfd27e312250c48d27899ccff958f25b9fe347871e7643950c437f688977",
     "build_script": "3cc787877d1fb65b8b551911a132400a0fd8e2d3eaf543975eceb88b131d1c19",
     "audit_script": "d3b2d638e28981915f346ead114f86f8bc82ddbbfb91f15416bc3127866504c9",
-    "python_bootstrap": "6caf13345e784bed683d8bc63c5e59887b7927606270952c6e3913d6d5edaacc",
-    "framework_verifier": "473f5c4fb1aab54a5789a0b58e85008b49af31c84b370b2626b4118af640584a",
-    "framework_verifier_tests": "1ec360b7f374c213f9ec7a773841e33e138a16d57e390b398e0885b8133bad79",
-    "framework_inventory_generator": "d7873e30d2206f2c8e299bc32884d7698688c637a4b886d8174876d726ed5d1b",
-    "framework_inventory": "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",
+    "python_bootstrap": "893cc9282bc69c66177c1546bafa2ade7d22f5e745be7ddfda822c91c07b2b82",
+    "framework_verifier": "2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe",
+    "framework_verifier_tests": "545cef438af7bd19f2368e6fee450b5e60b6cf008b91c01825ac96f5625c6f2a",
+    "framework_inventory_generator": "9678f405fe79a5eb1ae41054098c725233a10835b6b3ba236d4ca23023fe7c53",
+    "framework_inventory": "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f",
     "exact_git_checker": "aa28265267e99f6fea379401783d6b7fbe76f43f0a6cf9f15485ebfcce057aac",
     "exact_git_checker_tests": "4e5afe7d4eefedd9e47a25c3dc1bb77ebc1977b0325382d3f766784e57fdf0d4",
     "exact_node_installer": "9c551014e06a3315d386eb1f418a6548fe6c92b653767da914b6ddaa99cb0849",
-    "python_packaging_tests": "9f6c66af37363ac565f7e9564ad03598fd6b9fab68da4e30f90a5f9afffefda6",
+    "python_packaging_tests": "7452969d94e29e975a96a01e0278c042746e6a7da56f0df227b0f86c90a1febf",
     "gitignore": "eee9ec14df0b6a9cc4a6ede3020c5ab84373f6199e36ff3eafbaac832ecc1c1c",
-    "remediation_evidence": "f07fd4ecbd812fec366e9a82f024e176372579f6045f2d4566d3fd8bc81ce118",
+    "remediation_evidence": "0a95146c480c6fe64236c665d3aec198ef6920bec50e1fb2a547d3c4f16d604d",
     "package": "7d4a247182d89a83734e151df373215f30c3932c7cb99c295c48900baea6e1e7",
     "desktop_package_lock": "10f0dafcd0aecd24985c313209ff42e2759aabe3cdcf2b4e71ed6b6bbd317f60",
     "web_package": "0270e22c0745542be7ab5d792adef4a3d60b3565b85ec037db668e27c1a8e621",
     "web_package_lock": "ae4f9bdf4283763a980ee4b21f3fdd844d4de43a0b35fa7086406eddc2ab857f",
     "python_build_requirements_lock": "1e16e69c50364465e8587e58d4399c34146d11a91bfa3a2399e80e0741bf6342",
     "python_runtime_lock": "a961d5863a346c820cfdfa9daae0223672e761302b5f5aea92ef779c1b69f121",
-    "python_toolchain_lock": "10efc9b37aeb46cafb74856e44adfebabc441355d800efcc2210d21d23c053c2",
+    "python_toolchain_lock": "28f8ec67c33228fa467af00a4fda458a7bfb47ae3e349bbe5dcee75491da026e",
     "pyinstaller_spec": "e61b437496bd243f1fcbf73fae3faae911199f4d5d0f352f6365d7828928289d",
     "smoke_config": "b7b9dedb2fbe15cf5682ddd8255286feb799cc28eb2454c0ceaf4b5ec201b448",
     "common_audit": "1e754dc8f4d2e76f3a28a71f86622e6b0338feaf2ad4112fe6666d108c969398",
@@ -79,7 +79,7 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "stage_renderer": "853820c64eecd8c5126a0bb9cfded3b85f5be34fa3011f092cc0c73e7cf7fd9c",
     "audit_renderer": "d52fc0ba5feddd39311f800ad8d9a014695b0b45939d66a932e4c1e6ffe65d36",
     "engineering_packaging_tests": "af45aee101092d8eed9c91037b61db6499a156c9ec4a86232ff734faaac13354",
-    "before_pack_tests": "780d368897adfd3ab3a64b5dbf0da07241f80fbab13b23966fc6cb1c4e98b4c5",
+    "before_pack_tests": "34b8dad317e473dcd67530a48c93cdb93f502af2fe0b9e751b8b7a74835574e0",
     "renderer_packaging_tests": "4122f11a3bdfffd0b350aea7cd8027c8363527afb7fe3f61b3011d3c7b7df6ce",
     "before_pack": "526b7a4bf8af1c68a94ebfdf0ac624771719d2b1974c3ac0246022ccc3af1882",
     "after_pack": "d513011fcbc5252665f8ab73ae24bea36448821bffb3fbf9aa888b6a1f836d93",
@@ -89,16 +89,16 @@ EXPECTED_REVIEWED_INPUT_SHA256 = {
     "python_sidecar_schema": "6c5c4fb707d29c02676a34c76f00c2e0eec509df2500be6d73b5f6aa8d97cb1c",
     "formal_base_config": "cede533e71bdfb00401451e3016b7c7032b5867b5ba0147682d72029d08cafb4",
     "formal_release_config": "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd",
-    "formal_before_pack": "44c418b5ab85640f150890e5b299bfb45e2afa559ba009b3358e3ac1e663538d",
+    "formal_before_pack": "2a2a2721fc4d92f698a0d82865d59320a544725f39b09cfc54691ca4e5e1febb",
     "formal_after_pack": "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5",
     "formal_prepare_release": "86f42e539c4c9825760de56ccd07409b1cec07ac588380f4e64da41612df3311",
     "formal_reseal": "ef9292505be5ced0fb5b464cc9f075d48a20f8b8ee41aa08a6c4c0fbbbd1091e",
     "formal_release_policy_tests": "73b336688aba5319407672bf80d235430fdcb427d5e32e2f0581e854ba8d7ead",
-    "formal_workflow": "1695c3395303b00fde226f5550363ee09c9d5c32eb3bde9f822207aa37fcf9ee",
-    "status": "fef5d1db43cda4da417e2ec139adb10de2ad39c9cd0f3a36fc3bb77180b9858b",
-    "todo": "97931d3d979aed0b9f21fc6096160a0daad9393ad6f6dd486cfcd5a71b3800cb",
-    "trace": "30296bee00e0fe35634def73c69fc10ab80e55c6e8f3d5fe09e90b164a0cca1e",
-    "iteration": "dfb2fa96145460efc81f505c1d309a66f31b2db105c522e7983ce99f040da547",
+    "formal_workflow": "1f63550d0f1e86d4c639b5705a6048a0179de327e2f67465d47b21f24d36ec00",
+    "status": "5b18246e4f3860112c708f5d6df0c786140d584d2ba50d9af8f46a5cf4254cf7",
+    "todo": "c88f2de4cc0ba82d41fcd06d1ac83553d34f42a47182b962e139ea1c8c6e724d",
+    "trace": "14bf4bd54ded8e4347a8b5db8d3ebd80c72baff7762b727918652c8e4fa4f172",
+    "iteration": "334b017d324f166d3132c41787cf75a70b01b632ac27772e9e716e3382c0e0e0",
 }
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 DESKTOP_PACKAGE_LOCK = ROOT / "desktop" / "package-lock.json"
@@ -326,13 +326,13 @@ EXPECTED_FORMAL_BOUNDARY_SHA256 = {
         "72a80df25946ad9526a021efcf9f3295d2075c622f576508d7d400394adfdfcd"
     ),
     "formal beforePack": (
-        "44c418b5ab85640f150890e5b299bfb45e2afa559ba009b3358e3ac1e663538d"
+        "2a2a2721fc4d92f698a0d82865d59320a544725f39b09cfc54691ca4e5e1febb"
     ),
     "formal afterPack": (
         "30cc9387e456f09f5402a9fc551d115396150259f9e926bf82d6ba74660d23c5"
     ),
     "formal workflow": (
-        "1695c3395303b00fde226f5550363ee09c9d5c32eb3bde9f822207aa37fcf9ee"
+        "1f63550d0f1e86d4c639b5705a6048a0179de327e2f67465d47b21f24d36ec00"
     ),
 }
 STATUS = ROOT / "docs" / "development" / "status.md"
@@ -609,10 +609,10 @@ printf 'LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=committed\n' \
 trap - EXIT
 seal_transaction_phase="committed"'''
 EXPECTED_FRAMEWORK_SEAL_RUN_SHA256 = (
-    "8a683fe1ae97163be68b8de33f31ca69d43fd424a9f386fba4a0d7b7039f9005"
+    "695f6a5258b981a220886af4d64b98195e25bd365962b551620fb1d797c43285"
 )
 EXPECTED_FRAMEWORK_POSTCONDITION_RUN_SHA256 = (
-    "3757369eac5ee984c2f57c1c270b85a4b0c352ff013117de21d19393b8f98e35"
+    "bf90a3d5fc8c64461e6eb9072e70cc424e185ac9b498e80254066207e83607bd"
 )
 EXACT_PROVENANCE_ENV_KEYS = (
     "LCF_SOURCE_SHA",
@@ -856,13 +856,13 @@ PYTHON_FRAMEWORK_CORE_EXCLUDED_PATHS = (
     "share/doc/python3.13/html",
 )
 PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256 = (
-    "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"
+    "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"
 )
 PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT = {
     "fileName": "python-framework-sealed-inventory.json",
-    "fileSize": 620662,
+    "fileSize": 615969,
     "fileSha256": (
-        "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"
+        "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f"
     ),
     "schemaVersion": 1,
     "sourcePayloadSize": 32739568,
@@ -873,7 +873,7 @@ PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT = {
     "sourceInventorySha256": (
         "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"
     ),
-    "transformationCount": 39,
+    "transformationCount": 6,
     "entryCount": 3648,
     "inventorySha256": PYTHON_FRAMEWORK_CORE_FINGERPRINT_SHA256,
 }
@@ -1116,8 +1116,8 @@ make renderer-audit'''
 EXPECTED_RUN_BLOCK_SHA256 = (
     ("framework verifier Node", "6af8ddd6ea4c0c6de9bf63ec4a69b3365f6aa417d2b332748f80d192bd9897b5"),
     ("framework producer", "40c76bd727b39d14b004d14da51e5ba92e0e047afc7b29062461a102e143cdd2"),
-    ("framework seal", "91fd0091c4f542f1ff6af9c330478360b741d1d32ea9522bd97b285fa51ca2f8"),
-    ("framework postcondition", "545bd4675b04e92be40295d92e748a7104fb6aa940c06945324f70fd5650e809"),
+    ("framework seal", "7a5d532cffc6d07967da683a78618f948ebbffaf623d5d5c182c5282dfc6e472"),
+    ("framework postcondition", "519f03570f1f8b7f2fdfd483e04b93865d625d626ef6d5b1c2c3f3d0ca9f012c"),
     ("exact provenance", "9ea36480b4f4ff8d721fcd2c64cc1a2173a94c8185c3ee6a5e69a8fcf51b596f"),
     ("policy", "285e761f042ad2c44db94e38730f1d19c30c1db0851dc81539083cb6df5fc32b"),
     ("Python sources", "f01e0ddbe2fd917eb765723935eaceb7a606db3350a9ee059402032ff89789a7"),
@@ -4899,12 +4899,11 @@ def _reviewed_framework_node_verifier_is_semantic(
     )
     required_source_markers = (
         'const EXACT_ROOT = "/Library/Frameworks/Python.framework/Versions/3.13";',
-        '  "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9";',
+        '  "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10";',
         "const EXPECTED_CORE_SOURCE_ENTRY_COUNT = 3654;",
         '  "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d";',
         "const EXPECTED_CORE_ENTRY_COUNT = 3648;",
         "const EXPECTED_INSTALLER_APPLEDOUBLE_REMOVALS = 6;",
-        "const EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES = 33;",
         "const CORE_EXCLUDED_PATHS = Object.freeze([",
         'const SITE_PACKAGES_PATH = "lib/python3.13/site-packages";',
         "const ABSENT_PRODUCTION_EXCLUSIONS = Object.freeze(",
@@ -4914,8 +4913,8 @@ def _reviewed_framework_node_verifier_is_semantic(
         "const FRAMEWORK_COMPONENT_CONTRACT = Object.freeze({",
         "const FRAMEWORK_CORE_INVENTORY_LOCK_CONTRACT = Object.freeze({",
         '  fileName: "python-framework-sealed-inventory.json",',
-        "  fileSize: 620662,",
-        '    "b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",',
+        "  fileSize: 615969,",
+        '    "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f",',
         "function canonicalJsonBytes(value) {",
         "function normalizeExclusions(excludedPaths) {",
         "function requiredOpenFlag(name) {",
@@ -4936,7 +4935,10 @@ def _reviewed_framework_node_verifier_is_semantic(
         "Usage: verify_reviewed_python_framework.cjs --root PATH --lock PATH --inventory PATH",
         "if (require.main === module) {\n  main();\n}",
     )
-    if any(marker not in source for marker in required_source_markers):
+    if (
+        any(marker not in source for marker in required_source_markers)
+        or "EXPECTED_INSTALLER_SYMLINK_MODE_CHANGES" in source
+    ):
         return False
     core_digest = _source_block(
         source,
@@ -5131,7 +5133,7 @@ def _reviewed_framework_node_verifier_is_semantic(
         'test("CLI parsing rejects duplicate, missing, and surplus arguments", () => {',
         'test("startup environment rejects Node preload controls", () => {',
         'test("known canonical inventory digest matches Python fingerprinting", () => {',
-        'test("strict expected inventory applies exact Installer metadata transformations", () => {',
+        'test("strict expected inventory removes only exact Installer AppleDouble metadata", () => {',
         'test("expected inventory rejects transformations outside the exact contract", () => {',
         'test("inventory comparison classifies non-allowlisted mode and file drift", () => {',
         'test("inventory comparison classifies target, path, and type drift", () => {',
@@ -5794,12 +5796,12 @@ def _workflow_python_seal_is_semantic(run: str) -> bool:
         'readonly framework_verifier="${GITHUB_WORKSPACE}/tools/verify_reviewed_python_framework.cjs"',
         'readonly framework_lock="${GITHUB_WORKSPACE}/backend/packaging/python-sidecar-toolchain.lock.json"',
         'readonly framework_inventory="${GITHUB_WORKSPACE}/backend/packaging/python-framework-sealed-inventory.json"',
-        'readonly framework_verifier_size="53440"',
-        'readonly framework_verifier_sha256="473f5c4fb1aab54a5789a0b58e85008b49af31c84b370b2626b4118af640584a"',
-        'readonly framework_lock_size="4853"',
-        'readonly framework_lock_sha256="a6fa96bc5c7a16bb3576f14bea8e2d3b5d2a97a525cc1633e6cc57dbbff6ebac"',
-        'readonly framework_inventory_size="620662"',
-        'readonly framework_inventory_sha256="b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec"',
+        'readonly framework_verifier_size="51765"',
+        'readonly framework_verifier_sha256="2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe"',
+        'readonly framework_lock_size="4852"',
+        'readonly framework_lock_sha256="9682d3112cf816944bdf34ba532ccc401c80f44a4e7c752d60ce314307894431"',
+        'readonly framework_inventory_size="615969"',
+        'readonly framework_inventory_sha256="b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f"',
         '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_IDENTITY}"',
         '"${LCF_REVIEWED_FRAMEWORK_VERIFIER_NODE_SHA256}"',
     )
@@ -7090,9 +7092,8 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         "const SOURCE_CORE_CONTRACT = Object.freeze({",
         'inventorySha256: "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d"',
         "const SEALED_CORE_CONTRACT = Object.freeze({",
-        'inventorySha256: "fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9"',
+        'inventorySha256: "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"',
         "const INSTALLER_APPLEDOUBLE_TRANSFORMATIONS = Object.freeze([",
-        "const INSTALLER_SYMLINK_MODE_TRANSFORMATIONS = Object.freeze([",
         "fs.constants.O_RDONLY | requiredNoFollow",
         "function parseOdcPayload(compressed) {",
         "function buildExpectedManifest(compressedPayload) {",
@@ -7100,6 +7101,8 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
     )
     if (
         any(marker not in framework_inventory_generator for marker in generator_markers)
+        or "INSTALLER_SYMLINK_MODE_TRANSFORMATIONS"
+        in framework_inventory_generator
         or "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec"
         in framework_inventory_generator
     ):
@@ -7173,7 +7176,7 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
         or len(inventory_transformations or [])
         != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["transformationCount"]
         or transformation_kinds.count("remove-appledouble") != 6
-        or transformation_kinds.count("symlink-mode") != 33
+        or any(kind != "remove-appledouble" for kind in transformation_kinds)
         or inventory_value.get("entryCount")
         != PYTHON_FRAMEWORK_CORE_INVENTORY_CONTRACT["entryCount"]
         or len(inventory_entries or [])
@@ -7752,14 +7755,14 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             ),
             "constEXPECTED_FRAMEWORK_CORE_INVENTORY=Object.freeze({"
             'fileName:"python-framework-sealed-inventory.json",'
-            "fileSize:620662,"
-            'fileSha256:"b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec",'
+            "fileSize:615969,"
+            'fileSha256:"b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f",'
             "schemaVersion:1,"
             "sourcePayloadSize:32739568,"
             'sourcePayloadSha256:"f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",'
             "sourceEntryCount:3654,"
             'sourceInventorySha256:"863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",'
-            "transformationCount:39,"
+            "transformationCount:6,"
             "entryCount:3648,"
             "inventorySha256:EXPECTED_FRAMEWORK_CORE_SHA256});",
         ),
@@ -10486,33 +10489,33 @@ def validate_policy(inputs: Mapping[str, Any]) -> list[str]:
             "status",
             status,
             (
-                "ten remediation attempts `fail` / `superseded`",
-                "eleventh local candidate `not-run`",
+                "eleven remediation attempts `fail` / `superseded`",
+                "twelfth local candidate `not-run`",
             ),
         ),
         (
             "todo",
             todo,
             (
-                "ten remediation attempts `fail` / `superseded`",
-                "eleventh local candidate `not-run`",
+                "eleven remediation attempts `fail` / `superseded`",
+                "twelfth local candidate `not-run`",
             ),
         ),
         (
             "traceability",
             trace,
             (
-                "first through tenth remediations failed and superseded",
-                "eleventh local candidate not-run",
+                "first through eleventh remediations failed and superseded",
+                "twelfth local candidate not-run",
             ),
         ),
         (
             "iteration",
             iteration,
             (
-                "第一次至第十次 remediation technical attempts 均为 "
+                "第一次至第十一次 remediation technical attempts 均为 "
                 "`fail` / `superseded`",
-                "第十一次 local candidate `not-run`",
+                "第十二次 local candidate `not-run`",
             ),
         ),
     )

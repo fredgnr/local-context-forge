@@ -88,6 +88,10 @@ const gate = require("../scripts/beforePack.cjs") as {
     files: JsonObject[],
     native: JsonObject[]
   ): string;
+  validateFrameworkCoreInventoryPayload(
+    inventory: JsonObject,
+    contract: JsonObject
+  ): void;
 };
 
 const repositoryRoot = path.resolve(__dirname, "..", "..");
@@ -199,14 +203,14 @@ const toolchainMutationCases: ToolchainMutationCase[] = [
   },
   ...[
     ["file name", "fileName", "unreviewed-inventory.json"],
-    ["file size", "fileSize", 620663],
+    ["file size", "fileSize", 615970],
     ["file hash", "fileSha256", "0".repeat(64)],
     ["schema version", "schemaVersion", 2],
     ["source payload size", "sourcePayloadSize", 32739569],
     ["source payload hash", "sourcePayloadSha256", "0".repeat(64)],
     ["source entry count", "sourceEntryCount", 3655],
     ["source inventory hash", "sourceInventorySha256", "0".repeat(64)],
-    ["transformation count", "transformationCount", 40],
+    ["transformation count", "transformationCount", 7],
     ["entry count", "entryCount", 3649],
     ["inventory hash", "inventorySha256", "0".repeat(64)]
   ].map(([label, field, replacement]) => ({
@@ -704,6 +708,102 @@ describe("Python sidecar beforePack gate", () => {
     expect(summary.files).toBeGreaterThan(5);
     expect(inspected).toEqual(["lcf-service"]);
   });
+
+  it("accepts only the six ordered AppleDouble removal transformations", async () => {
+    const [inventory, toolchain] = await Promise.all([
+      readJson(frameworkCoreInventorySource),
+      readJson(toolchainSource)
+    ]);
+    const contract = toolchain.python.frameworkCoreInventory as JsonObject;
+
+    expect(inventory.transformations).toHaveLength(6);
+    expect(
+      inventory.transformations.every(
+        (transformation: JsonObject) =>
+          transformation.kind === "remove-appledouble" &&
+          transformation.type === "file" &&
+          transformation.mode === "0664" &&
+          path.posix.basename(transformation.path).startsWith("._")
+      )
+    ).toBe(true);
+    expect(inventory.entries).toHaveLength(3648);
+    expect(inventory.inventorySha256).toBe(
+      "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"
+    );
+    expect(() =>
+      gate.validateFrameworkCoreInventoryPayload(inventory, contract)
+    ).not.toThrow();
+  });
+
+  it.each([
+    {
+      name: "unsupported symlink-mode",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[0] = {
+          kind: "symlink-mode",
+          path: "Frameworks/Tcl.framework/Headers",
+          type: "symlink",
+          target: "Versions/Current/Headers",
+          fromMode: "0775",
+          toMode: "0777"
+        };
+      },
+      expected: /does not match the reviewed schema/
+    },
+    {
+      name: "extra removal field",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[0].unreviewed = true;
+      },
+      expected: /does not match the reviewed schema/
+    },
+    {
+      name: "non-AppleDouble removal path",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[0].path =
+          "Frameworks/Tcl.framework/Versions/8.6/tclConfig.sh";
+      },
+      expected: /transformation is malformed/
+    },
+    {
+      name: "unsafe removal path",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[0].path = "../._outside";
+      },
+      expected: /path is unsafe/
+    },
+    {
+      name: "out-of-order removals",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations.reverse();
+      },
+      expected: /not strictly ordered/
+    },
+    {
+      name: "duplicate removal",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[1] = structuredClone(
+          inventory.transformations[0]
+        );
+      },
+      expected: /not strictly ordered/
+    }
+  ])(
+    "rejects framework inventory transformation mutation: $name",
+    async ({ mutate, expected }) => {
+      const [inventory, toolchain] = await Promise.all([
+        readJson(frameworkCoreInventorySource),
+        readJson(toolchainSource)
+      ]);
+      mutate(inventory);
+      expect(() =>
+        gate.validateFrameworkCoreInventoryPayload(
+          inventory,
+          toolchain.python.frameworkCoreInventory
+        )
+      ).toThrow(expected);
+    }
+  );
 
   it.each(toolchainMutationCases)(
     "rejects reviewed Python toolchain mutation: $name",

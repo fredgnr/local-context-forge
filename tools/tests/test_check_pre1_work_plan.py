@@ -258,8 +258,9 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "(evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging "
             "smoke 不替代 packaged launch/runtime gate；[current PR #21 record]"
             "(evidence/W02/2026-08-07-pr21-remediation.md) binds latest independent `NO-GO`、"
-            "ten remediation technical failures / superseded states and eleventh local "
-            "candidate；real Installer、fresh exact-head Actions、App launch/runtime 均未执行 |"
+            "eleven remediation technical failures / superseded states and twelfth local "
+            "candidate；eleventh real Installer seal/rollback/postcondition 已执行但 full "
+            "Engineering failed，twelfth fresh exact-head Actions 与 App launch/runtime 均未执行 |"
         )
         self.assertIn(original, docs[2])
         docs[2] = replace_once(self, docs[2], original, original.replace("`not-run`", "`pass`"))
@@ -295,7 +296,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
     def test_w02_launch_phase_must_remain_not_run(self) -> None:
         docs = documents()
         marker = (
-            "packaged App launch/runtime smoke：十次 remediation 均未启动 bundle，第十一次 candidate 也尚未运行，\n"
+            "packaged App launch/runtime smoke：十一次 remediation 均未启动 bundle，第十二次 candidate 也尚未运行，\n"
             "    当前 `not-run`"
         )
         docs[3] = replace_once(self, docs[3], marker, marker.replace("`not-run`", "`pass`"))
@@ -312,13 +313,13 @@ class Pre1WorkPlanTests(unittest.TestCase):
     def test_w02_static_assembly_phase_marker_is_required(self) -> None:
         docs = documents()
         marker = (
-            "acceptance `NO-GO`；第一次至第十次 remediation technical attempts 均为 `fail` / `superseded`"
+            "acceptance `NO-GO`；第一次至第十一次 remediation technical attempts 均为 `fail` / `superseded`"
         )
         docs[3] = replace_once(
             self,
             docs[3],
             marker,
-            "acceptance `pass`；十次 remediation technical attempts `pass`",
+            "acceptance `pass`；十一次 remediation technical attempts `pass`",
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
@@ -755,6 +756,41 @@ class Pre1WorkPlanTests(unittest.TestCase):
         docs[12] += f"\n{CHECKER.W02_PR21_TENTH_REMEDIATION_AUTHORITY_MARKER}\n"
         self.assertIn(expected, CHECKER.validate_documents(*docs))
 
+    def test_w02_pr21_eleventh_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_HEAD, "0" * 40),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_PARENT, "1" * 40),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_TREE, "2" * 40),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_RUN, "31799645732"),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_JOB, "94764347265"),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_SOURCE_RUN, "31799645686"),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_CONTAINER_RUN, "31799645738"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact eleventh-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original, replacement
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
     def test_w02_pr21_historical_sixth_precommit_state_is_preserved(self) -> None:
         docs = documents()
         marker = CHECKER.W02_PR21_SIXTH_PRECOMMIT_NOT_RUN_MARKER
@@ -880,7 +916,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
                     CHECKER.validate_documents(*docs),
                 )
 
-    def test_w02_pr21_eleventh_candidate_must_remain_not_run(self) -> None:
+    def test_w02_pr21_historical_eleventh_precommit_state_is_preserved(self) -> None:
         docs = documents()
         marker = CHECKER.W02_PR21_ELEVENTH_NOT_RUN_MARKER
         docs[12] = replace_once(
@@ -899,7 +935,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "第十一次 remediation technical candidate：`pass`",
             errors,
         )
-        current_required_markers = (
+        historical_required_markers = (
             "raw materialization 都只作为 seal 输入",
             "七类 difference count 全部为 `0`",
             "committed` 状态继续保留旧 quarantine",
@@ -912,7 +948,7 @@ class Pre1WorkPlanTests(unittest.TestCase):
             "YAML `2/2`；Bash `37/37`",
             "Markdown links `90` files；diff check pass",
         )
-        for required_marker in current_required_markers:
+        for required_marker in historical_required_markers:
             with self.subTest(required_marker=required_marker):
                 self.assertIn(
                     required_marker,
@@ -929,33 +965,98 @@ class Pre1WorkPlanTests(unittest.TestCase):
                     CHECKER.validate_documents(*docs),
                 )
 
-    def test_current_summary_cannot_regress_ten_failures_to_nine(self) -> None:
+    def test_w02_pr21_twelfth_candidate_and_corrected_contract_remain_not_run(self) -> None:
         docs = documents()
-        marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
-        docs[6] = replace_once(
+        marker = CHECKER.W02_PR21_TWELFTH_NOT_RUN_MARKER
+        docs[12] = replace_once(
             self,
-            docs[6],
+            docs[12],
             marker,
-            marker.replace("ten remediation attempts", "nine remediation attempts"),
+            marker.replace("`not-run`", "`pass`"),
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(
-            "status must contain the exact ten-failure/eleventh-candidate summary once",
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "第十二次 remediation technical candidate：`pass`",
             errors,
         )
 
-    def test_current_summary_cannot_regress_eleventh_candidate_to_tenth(self) -> None:
+        corrected_contract_markers = (
+            "`77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10`",
+            "symlink 的 path/type/target/mode 均保持 exact `0775`",
+            "`b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f`",
+            "lock size `4852` /\nSHA-256 `9682d3112cf816944bdf34ba532ccc401c80f44a4e7c752d60ce314307894431`",
+            "verifier size `51765` /\nSHA-256 `2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe`",
+            "三个 full-expansion materialization 上都观察到",
+            "`Frameworks/Tcl.framework/Headers` 的 lstat mode 为 `0777`",
+            "错误\n模型的来源/反例，不是 `77b580…` 的正向复现",
+            "本机真实 `/Library/Frameworks` install/rollback/postcondition\n继续为 `not-run`",
+            "`entries=3648`；inventory `77b580…`",
+            "direct checker pass；policy mutation `86/86`；exact-Git `1/1`",
+            "`468 passed / 114 failed / 1 skipped` in `117.62s`",
+            "| Desktop engineering consumer default aggregate（initial） | "
+            "`npm --prefix desktop run test:engineering-smoke` |",
+            "exit `1`；`92 passed / 5 failed`；4 个 renderer canonical-directory failures",
+            "| Desktop engineering consumer default aggregate（isolated retry） | "
+            "`npm --prefix desktop run test:engineering-smoke` |",
+            "exit `1`；`93 passed / 4 failed`；4 个 failure 均为上述 renderer canonical "
+            "temp-dir `/tmp` vs `/private/tmp` 差异",
+            "initial 的第 5 个 timeout 未复现，故记为 concurrent-load transient",
+            "| Desktop build | `cd desktop && npm run build` | exit `0`；main/preload/companion build success |",
+            "direct checker pass；`61/61`",
+            "YAML `2/2`；Bash `37/37`（smoke `14` + formal `23`）",
+            "上述 Python aggregate failure 也不会被 focused pass 覆盖",
+            "`97/97` 不能覆盖默认 Desktop engineering aggregate initial "
+            "`92 passed / 5 failed` 与 isolated\nretry `93 passed / 4 failed` 的失败结论",
+        )
+        for required_marker in corrected_contract_markers:
+            with self.subTest(required_marker=required_marker):
+                self.assertIn(
+                    required_marker,
+                    CHECKER.W02_PR21_REMEDIATION_REQUIRED_MARKERS,
+                )
+                docs = documents()
+                self.assertIn(required_marker, docs[12])
+                docs[12] = docs[12].replace(
+                    required_marker, "removed-twelfth-corrected-contract-marker"
+                )
+                self.assertIn(
+                    "W02 PR #21 remediation missing required marker: "
+                    f"{required_marker}",
+                    CHECKER.validate_documents(*docs),
+                )
+
+    def test_current_summary_cannot_regress_eleven_failures_to_ten(self) -> None:
         docs = documents()
         marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
         docs[6] = replace_once(
             self,
             docs[6],
             marker,
-            marker.replace("eleventh local candidate", "tenth local candidate"),
+            marker.replace("eleven remediation attempts", "ten remediation attempts"),
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertIn(
-            "status must contain the exact ten-failure/eleventh-candidate summary once",
+            "status must contain the exact eleven-failure/twelfth-candidate summary once",
+            errors,
+        )
+
+    def test_current_summary_cannot_regress_twelfth_candidate_to_eleventh(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
+        docs[6] = replace_once(
+            self,
+            docs[6],
+            marker,
+            marker.replace("twelfth local candidate", "eleventh local candidate"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "status must contain the exact eleven-failure/twelfth-candidate summary once",
             errors,
         )
 

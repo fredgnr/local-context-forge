@@ -8,6 +8,43 @@
 - two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
 - Electron-only planning merge：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
 - Pre-1.0 planning merge / W01 基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
+- W01 accepted remediation：`36885e04df09c4789d8ec3c9dc5c5e78a381a634` / tree
+  `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64`
+- W02 实施基线：`main@1786255b55dd1a78659ed92235893876175a0722` / same tree；source run
+  `30986208251` success
+- W02 PR #21 current independent verdict：reviewed
+  `8c5fd23206b671b768fd21d253bf292642f93a51` / tree
+  `785f4656de8a7233b6dd632fe4815976d33468fb`，latest independent `NO-GO`；same branch/PR first
+  remediation `9f7d5d11225517ff5b1643d4bb71983346358ae0` / tree
+  `ea8e62e9b76c3270d60135a8633f56db025ad921` technical `fail` / `superseded`；second remediation
+  `9ecf0effaa48a8b010ff46ffb42afc57e0f3d948` / tree
+  `ee82712c7874155eba038d1ce05d374416ed34e5` technical `fail` / `superseded`；third remediation
+  `2665ec61712fe410608ac50c7a6d44fa35746092` / tree
+  `c3cd1706838f7050533e2812dfdcad482aaedde5` technical `fail` / `superseded`；fourth remediation
+  `c2be665f5832c15064cae87c694a782e51351e7c` / tree
+  `f90b527b4de1a422f63c4bfeb01f9c1010e22b7d` technical `fail` / `superseded`；fifth remediation
+  `c04fe9fce2bc2f0f4350e080f7f02c44699c975d` / parent
+  `c2be665f5832c15064cae87c694a782e51351e7c` / tree
+  `2f8b3aceb4caa2d71537cd51c3b3b985c55a3db5` technical `fail` / `superseded`；sixth remediation
+  `cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` / parent
+  `c04fe9fce2bc2f0f4350e080f7f02c44699c975d` / tree
+  `911e91d6849266fa75b0efde794ae9b5236f5504` technical `fail` / `superseded`；seventh remediation
+  `aaf3f51f69dfded82b8237e03a871017317e7158` / parent
+  `cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` / tree
+  `60c2c6c2553ff8d10c2faee47ec838b34e378fc5` technical `fail` / `superseded`；eighth remediation
+  `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / parent
+  `aaf3f51f69dfded82b8237e03a871017317e7158` / tree
+  `66779e9ca8df445fb413e93faed4d265899fb1ec` technical `fail` / `superseded`；ninth remediation
+  `6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent
+  `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree
+  `3361f3e3880c926015a82abc862cb3e8334410c2` technical `fail` / `superseded`；tenth remediation
+  `70b1823259590725d6f579b97fa294d3d9dcf728` / parent
+  `6eec41125b431a9fd99d8b1821362573de1b5b8a` / tree
+  `a706817f28b170bab1fe9fe6c3a6e8b673e5dc81` technical `fail` / `superseded`；eleventh remediation
+  `095cbc12585a2c141f151389c1829bd758e8ed54` / parent
+  `8b2277a2c8027c5fbdab8f3e85506b72044dbba4` / tree
+  `2eca5e8e293de444213e3aba43079802b6a0d910` technical `fail` / `superseded`；twelfth local
+  candidate `not-run`（无 committed exact head/tree；无 fresh exact-head Actions）
 - 活动父迭代：[ITER-0002](iterations/0002-bundled-runtimes.md)
 - 路线图：[P0–P7](roadmap.md)
 - 工作包顺序：[W01–W16](work-plan.md)
@@ -22,16 +59,17 @@ REQ -> ADR -> ITER/task -> owned paths -> VAL -> evidence
 
 `Accepted` ADR 表示决策已确定，不表示实现或验证已完成。验证只有 `pass`、`fail`、
 `not-run` 三种结果；`source 子门禁 pass` 不能替代要求 packaged/physical 环境的完整门禁。
-R07–R13 是 ITER-0002 的追加记录；R12 的规划纵切已完成，R13/W01 因旧 candidate 独立验收
-`fail` 而继续 `in-progress`，父迭代也仍为 `in-progress`。
+R07–R13 是 ITER-0002 的追加记录；R12/R13 已完成。旧 W01 candidate 的 independent `fail` 仍是
+历史事实；remediation exact final 已独立接受、合入并在 resulting main 完成 source coverage。
+父 ITER-0002 因既有 packaged/physical 门禁继续开放，ITER-0008/W02 当前 `in-progress`。
 
 ## 需求与映射
 
 | 需求 ID | 验收目标 | 决策 | 任务 | Owned paths | 验证 | 当前状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ-GOV-001 | 每项变更有 active iteration、owner、稳定 task/VAL 和 commit-bound evidence | 现有治理规则；架构变化另由 ADR-0015/REQ-ELECTRON-ONLY 承载 | ITER-0001/T01；[R11](iterations/0002-r11-documentation-handoff.md)；[R12](iterations/0002-r12-legacy-retirement-scope.md)；[R13](iterations/0002-r13-pre1-incremental-retirement.md) W01 remediation | `AGENTS.md`、`.agents/skills/**`、`docs/development/**`、PR template、W01 machine evidence | VAL-GOV-001、VAL-DOC-HANDOFF-001、VAL-LEGACY-SCOPE-001 | 旧 final `2b762946…` technical `pass` 但 independent `fail` / activation `not-eligible`；修复 candidate technical `pass` / independent `pending` / activation `blocked` |
-| REQ-PRE1-SEQUENCING-001 | 固定 smoke → slices → cleaned engineering package → physical → final cutover/absence → production release 的顺序 | [ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md) | [R13](iterations/0002-r13-pre1-incremental-retirement.md)；[work plan](work-plan.md)；TODO-PRE1-SEQUENCING/GOV-EVIDENCE/CI-COVERAGE-001 | `docs/adr/0016-*`、`docs/development/{work-plan,todo,traceability,roadmap,status}.md`、plan checker | VAL-PRE1-SEQUENCE-001、VAL-GOV-001、VAL-CI-COVERAGE-001 | Accepted policy；修复 PR/source、independent acceptance、canonical-main source 与 activation 分开；W02 保持 locked |
-| REQ-PACKAGED-SMOKE-001 | W01 technical PR/source、independent acceptance、accepted merge 与 resulting-main source 全部完成后、任何 destructive slice 前，提供最小且明确 non-release 的 packaged feedback loop | [ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md) | ITER-0008/I01；TODO-PACKAGED-SMOKE-001 | future engineering-smoke config/harness/evidence；不修改 formal release path | VAL-PACKAGED-SMOKE-001 | `not-run`；W01 修复 candidate 与三项外部 activation 条件尚未完成，且当前仓库无可用 harness |
+| REQ-GOV-001 | 每项变更有 active iteration、owner、稳定 task/VAL 和 commit-bound evidence | 现有治理规则；架构变化另由 ADR-0015/REQ-ELECTRON-ONLY 承载 | ITER-0001/T01；[R11](iterations/0002-r11-documentation-handoff.md)；[R12](iterations/0002-r12-legacy-retirement-scope.md)；[R13](iterations/0002-r13-pre1-incremental-retirement.md) W01 closeout；ITER-0008/W02 | `AGENTS.md`、`.agents/skills/**`、`docs/development/**`、PR template、immutable W01 history + W02 entry/assembly/PR21-NO-GO evidence | VAL-GOV-001、VAL-DOC-HANDOFF-001、VAL-LEGACY-SCOPE-001 | 旧 W01 final `2b762946…` technical `pass` 但 independent `fail` / activation `not-eligible`；accepted W01 remediation/main/run 闭环 `pass`；W02 old static evidence preserved；PR #21 reviewed `8c5fd232…` independent `NO-GO` append-only；first through eleventh remediations technical `fail` / `superseded` appended，latest eleventh `095cbc1…`；twelfth local candidate `not-run` |
+| REQ-PRE1-SEQUENCING-001 | 固定 smoke → slices → cleaned engineering package → physical → final cutover/absence → production release 的顺序 | [ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md) | [R13](iterations/0002-r13-pre1-incremental-retirement.md)；[work plan](work-plan.md)；TODO-PRE1-SEQUENCING/GOV-EVIDENCE/CI-COVERAGE-001 | `docs/adr/0016-*`、`docs/development/{work-plan,todo,traceability,roadmap,status}.md`、plan checker | VAL-PRE1-SEQUENCE-001、VAL-GOV-001、VAL-CI-COVERAGE-001 | W01 exact accepted head、independent acceptance、merge 与 resulting-main source `pass`；W02 active，W10/W11 locked |
+| REQ-PACKAGED-SMOKE-001 | W01 technical PR/source、independent acceptance、accepted merge 与 resulting-main source 全部完成后、任何 destructive slice 前，提供最小且明确 non-release 的 packaged feedback loop | [ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md) | ITER-0008/I01；TODO-PACKAGED-SMOKE-001 | `.github/workflows/packaged-smoke.yml`、`desktop/electron-builder.smoke.yml`、reviewed framework generator/lock/expected inventory/verifier、engineering smoke prepare/beforePack/afterPack/audit scripts、exact Git/Node/Python provenance helpers、shared renderer/Python consumers 与 schemas、formal build job 的同源 provenance 加固、policy checker/tests/evidence；legacy Web continuity 仅含 `web/Dockerfile`、container workflow/policy test；不触发 formal Draft/promotion/publish | VAL-PACKAGED-SMOKE-001 | old Draft static run historical technical `pass`；reviewed `8c5fd232…` / tree `785f4656…` independent `NO-GO`；first through eleventh remediations technical `fail` / `superseded`（latest eleventh `095cbc1…` / `2eca5e8…`：Desktop `31799645685` success；Engineering `31799645731` / job `94764347264` real-Installer seal expected `fdd600…` vs observed `77b580…`、only 33 mode diffs，rollback/postcondition/scratch cleanup success，artifacts `[]` / no App；Containers `31799645737` success/no publish）；twelfth local contract compressed raw `3654` / `863a6353…` + only 6 AppleDouble removals = sealed `3648` / `77b580…`，33 symlink modes stay `0775`，pkgutil full-expansion `0777` is a counterexample；fresh twelfth exact-head Actions `not-run`；formal package/App/credentials/publish/promotion 与 packaged App launch/runtime 均 `not-run`；W02 remains `in-progress` |
 | REQ-LEGACY-SLICE-001 | 每个 legacy slice 独立完成 owner/split、affected replacement 或受限 pure-legacy unsupported disposition、before/after package、focused regression、absence/presence 与 data non-effect | [ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md) | ITER-0008/I02–I07；TODO-LEGACY-DECOUPLE/REMOVE-* | [strict manifest](legacy-retirement.md)、slice-owned paths、protected paths、evidence | VAL-LEGACY-DECOUPLE/DEPLOY/TRANSPORT/PROVIDER/RELEASE/DOCS-001 | 均 `not-run` |
 | REQ-ENGINEERING-PACKAGE-001 | 从 W10/W11 cleaned tree 生成完整 non-release 工程包，作为 W04–W12 载体，不接触 production trust/release | [ADR-0016](../adr/0016-pre1-incremental-retirement-engineering-package.md) | ITER-0008/I08；TODO-PACK-ENGINEERING-001 | future engineering package config、cleaned runtime staging、inventory/SBOM/notices/test entry | VAL-ENGINEERING-PACKAGE-001 | `not-run` |
 | REQ-DOC-001 | 新贡献者可从权威状态、系统设计、部署、开发、TODO 和 evidence 独立接手 | R11 基线组合 ADR-0001–0014；R12 的新 Electron-only 决策单独映射到 REQ-ELECTRON-ONLY/PRE1-BREAKING | [R11](iterations/0002-r11-documentation-handoff.md)；[R12](iterations/0002-r12-legacy-retirement-scope.md) 同步当前权威入口 | `README.md`、`TODO.md`、`docs/{README,17-*,18-*}.md`、`docs/development/**`、component READMEs | VAL-DOC-HANDOFF-001、VAL-LEGACY-SCOPE-001 | [`625db76` R11 checkpoint](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) 与 [`64ec3c2` R12 scope checkpoint](evidence/VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) `pass`；最终 PR CI 待完成 |
@@ -61,6 +99,39 @@ R07–R13 是 ITER-0002 的追加记录；R12 的规划纵切已完成，R13/W01
 | REQ-DATA-001 | 标准 macOS 路径；当前 Desktop 数据 backup/restore；unknown/legacy layout fail closed，不自动删除 | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md)、[ADR-0015](../adr/0015-electron-only-legacy-retirement.md) | ITER-0003/D01–D03；TODO-DATA-LAYOUT/BACKUP-001 | runtime layout/version、Desktop backup/restore、reset UX | VAL-DATA-001 | Application Support/Caches/temp 部分实现；完整 gate `not-run`；legacy migration 部分 `superseded` |
 | REQ-LEGACY-001 | 历史：Docker 暂留 legacy，迁移成功且另行决策后才弃用 | [ADR-0004](../adr/0004-runtime-paths-legacy-data-migration.md)；由 [ADR-0015](../adr/0015-electron-only-legacy-retirement.md) 取代 | [ITER-0006](iterations/0006-legacy-exit.md)；TODO-LEGACY-CONTROL/EXIT-001 | 历史 Docker paths/docs/installer/migration controls | VAL-LEGACY-CONTROL-001、VAL-LEGACY-001 | `superseded`；两个验证保持 `not-run` |
 
+REQ-PACKAGED-SMOKE-001 / TODO-PACKAGED-SMOKE-001 的 producer/seal 设计不再让
+`actions/setup-python` 或原完整 product pkg 生产 reviewed framework：只在原 exact outer pkg
+验签后重打/install `Python_Framework.pkg`，以唯一 locked 17-byte no-op 取代 component
+postinstall；先隔离旧 root 并断言 target absent，再做 non-symlink seal、大小写无关 cache cleanup
+与 O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node core/fresh-exclusion verification。
+首次 framework Python 必须位于 verifier 后，
+且必须先完成 exact quarantine validation/cleanup；运行时 `--install-reviewed-python` 只验证
+distribution/framework/interpreter binding，不安装也不
+调用 `sudo`。第八候选通过 manifest/component checks 后，在 ordinary runner canonical `cd` 进入
+root-owned `0700` empty quarantine 时 permission denied；cleanup-only success 未覆盖
+`/Library/Frameworks/**`，所以 quarantine residue absence 是 `not-proven`。第九候选关闭该 blocker
+并让 producer 成功，但 archive symlink mode `0775` 与 macOS Installer 落盘 `0777` 导致 core
+fingerprint change。第十次 exact `70b1823…` 的 Engineering `31580628877` / job `94062603909`
+又证明只映射 `33` 条 symlink 得 `ba58cfb…` 的模型不完整，technical `fail` / `superseded`；同一
+head 的 Desktop `31580628860` 与 Containers `31580628857` success/no-publish 不能抵消。
+第十一次 exact `095cbc1…` 的 Engineering `31799645731` / job `94764347264` 在真实 Installer
+之后观察到 `3648` / `77b580…`，与 expected `3648` / `fdd600…` 只有 `33` 条 mode diff；rollback、
+独立 framework postcondition 与 scratch cleanup 成功，later skipped、artifacts `[]`、no App。同一
+head 的 Desktop `31799645685` 与 Containers `31799645737` success/no-publish 不能抵消。第十二次
+local candidate 将 locked compressed Payload `f922c9d…` raw `3654` / `863a6353…` 只通过 `6` 个
+exact AppleDouble removals 转为唯一 sealed `3648` / `77b580…`，`33` 个 symlink mode 保持 `0775`；
+manifest `615969` / `b145fe36…`、lock `4852` / `9682d311…`、verifier `51765` / `2dbd1f36…`。
+三个 `pkgutil --expand-full` materialization 的代表性 symlink 都是 `0777`，因此 full expansion 是旧
+normalization 模型的来源/反例，不是 positive reproduction。本机 real Installer/system-root
+reproduction 因无 passwordless `sudo` 仍为 `not-run`。这不是 runtime learn-and-accept，
+mode/target/path/type/bytes 仍参与。两份 workflow 以 pre-trap sentinel 起步，只在新 root/旧
+quarantine exact path/type/root-owner/`dev:ino` 绑定后激活；seal 成功只写 `committed` 并保留
+quarantine，独立 `always()` postcondition 重验后才 `finalizing` 删除并最终 `complete`。
+rollback-ready phase 的 `HUP`/`INT`/`TERM` 精确恢复；unbound/mismatch preserve/no-delete、
+`finalizing` failure no-rollback，均 fixed `70`，且不声称 `SIGKILL`/host-crash recovery。第十二次
+candidate 尚无 committed exact head/tree 或 fresh Actions，故映射仍是 twelfth `not-run`、
+VAL-PACKAGED-SMOKE-001 `not-run`、W10/W11 locked、activation `blocked`。
+
 ## TODO 任务映射
 
 本表稳定映射 [TODO 总览](todo.md)中的每个 Task ID。它记录预期 owner surface 和最低 gate，
@@ -69,10 +140,10 @@ R07–R13 是 ITER-0002 的追加记录；R12 的规划纵切已完成，R13/W01
 
 | Task ID | Roadmap | 当前状态 | Requirement / decision | Owned paths / artifact | VAL / gate |
 | --- | --- | --- | --- | --- | --- |
-| TODO-PRE1-SEQUENCING-001 | W01 | `in-progress` | REQ-PRE1-SEQUENCING-001；ADR-0016 | ADR/work plan/R13/TODO/traceability/authority docs、`tools/check_pre1_work_plan.py`、negative unit fixtures、`ci-python` hook | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` |
-| TODO-GOV-EVIDENCE-001 | W01/P0 | `in-progress` | REQ-GOV-001、REQ-PRE1-SEQUENCING-001；现有 evidence 治理规则 | `docs/development/{evidence/**,iterations/**,status.md,traceability.md}`、immutable history + exact-head payload/provenance | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` |
-| TODO-CI-COVERAGE-001 | W01/P0 | `in-progress` | REQ-GOV-001、REQ-CI-001、REQ-PRE1-SEQUENCING-001；ADR-0009/0014 的 source/release CI 边界 | `Makefile`、`.github/{ci,workflows}/**`、QMD safe runner、guide-site exclusion、coverage checker/docs | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` |
-| TODO-PACKAGED-SMOKE-001 | W02 | `planned` | REQ-PACKAGED-SMOKE-001；ADR-0016 | future isolated engineering-smoke packaging mode、launch/UDS/no-listener harness、commit/digest evidence | VAL-PACKAGED-SMOKE-001 `not-run` |
+| TODO-PRE1-SEQUENCING-001 | W01 | `done` | REQ-PRE1-SEQUENCING-001；ADR-0016 | ADR/work plan/R13/TODO/traceability/authority docs、`tools/check_pre1_work_plan.py`、negative unit fixtures、`ci-python` hook | accepted final/independent/merge/resulting-main source/activation `pass` |
+| TODO-GOV-EVIDENCE-001 | W01/P0 | `done` | REQ-GOV-001、REQ-PRE1-SEQUENCING-001；现有 evidence 治理规则 | `docs/development/{evidence/**,iterations/**,status.md,traceability.md}`、immutable W01 history + W02 external entry | accepted final `36885e04…` / main `1786255b…` / tree `1b9f3a34…` closed |
+| TODO-CI-COVERAGE-001 | W01/P0 | `done` | REQ-GOV-001、REQ-CI-001、REQ-PRE1-SEQUENCING-001；ADR-0009/0014 的 source/release CI 边界 | `Makefile`、`.github/{ci,workflows}/**`、QMD safe runner、guide-site exclusion、coverage checker/docs | resulting-main run `30986208251` attempt 1 / five jobs `success` |
+| TODO-PACKAGED-SMOKE-001 | W02 | `in-progress` | REQ-PACKAGED-SMOKE-001；ADR-0016 | isolated engineering-smoke config、reviewed framework generator/lock/expected inventory/verifier、staging/bundle audit、capability/provenance/cleanup policy and adversarial tests；future launch/UDS/no-listener harness | [old static assembly/audit](evidence/W02/2026-08-06-08137c7-assembly.md) technical `pass`；[PR #21 remediation](evidence/W02/2026-08-07-pr21-remediation.md) latest independent `NO-GO` / eleven attempts `fail` / `superseded` / twelfth local candidate `not-run`；VAL-PACKAGED-SMOKE-001 `not-run` |
 | TODO-PACK-ENGINEERING-001 | W03 | `planned` | REQ-ENGINEERING-PACKAGE-001；ADR-0016 | future cleaned-tree full engineering package、inventory/SBOM/notices/test entry | VAL-ENGINEERING-PACKAGE-001 `not-run` |
 | TODO-LEGACY-CONTROL-001 | historical | `superseded` | REQ-LEGACY-001；ADR-0004，由 ADR-0015 取代 | 历史 legacy instance-control 计划；不再实施 | VAL-LEGACY-CONTROL-001 `not-run (superseded)` |
 | TODO-DATA-LAYOUT-001 | W04/P4 | `planned` | REQ-DATA-001；ADR-0004 | Desktop runtime path/layout modules、layout manifest/version、Logs/cache/uninstall docs | VAL-DATA-001 layout foundation `not-run` |
@@ -114,16 +185,16 @@ R07–R13 是 ITER-0002 的追加记录；R12 的规划纵切已完成，R13/W01
 
 | 验证 ID | 所需证据 / 最低环境 | 当前结果 |
 | --- | --- | --- |
-| VAL-GOV-001 | exact source checkout；Python/MCP/Host Runner/demo SDK/Web/Desktop/QMD/governance commands、counts/skips/environment 与 evidence binding；Markdown links | 旧候选 technical source `pass`；independent acceptance `fail`；canonical activation `not-eligible`；修复候选 PR/source `pass`；independent acceptance `pending`；canonical-main source `not-run`；canonical activation `blocked` |
+| VAL-GOV-001 | exact source checkout；Python/MCP/Host Runner/demo SDK/Web/Desktop/QMD/governance commands、counts/skips/environment 与 evidence binding；Markdown links | 旧候选 technical source `pass`；independent acceptance `fail`；canonical activation `not-eligible`；accepted final `36885e04df09c4789d8ec3c9dc5c5e78a381a634` / tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64`：PR/source、independent acceptance、canonical merge 与 resulting-main source 均 `pass` |
 | VAL-GOV-002 | repository checkout；两个项目 `SKILL.md` 结构 | `pass`（继承已发布检查点） |
 | VAL-DOC-HANDOFF-001 | clean checkout；权威入口、命令模式、task owner/dependency/gate 和 PR handoff 可执行性 | 首轮三路审计 `fail`；修复后 [`625db76` commit-bound checkpoint](evidence/VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) `pass`；最终 PR head `not-run` |
 | VAL-P1-CONTRACT-001 | Linux source；Main/preload/Web/sidecar 纯源码合同 | `pass`（继承 ITER-0001） |
 | VAL-P1-SOURCE-001 | Linux/macOS source；真实 AF_UNIX bind 和 source jobs | `pass`（[Actions 30550023917](https://github.com/fredgnr/local-context-forge/actions/runs/30550023917)） |
 | VAL-P1-REGRESSION-001 | source checkout；Backend/Desktop/Web/Host Runner 全量 | `pass`（当前 Desktop 245/7 skip、Backend 322/1 skip；Web 51、Host 8 继承无代码变化基线） |
 | VAL-CI-001 | public GitHub Actions；普通 job 最小权限 | `pass`（继承 Actions；release policy source 另列） |
-| VAL-CI-COVERAGE-001 | exact source checkout + 最终 PR head CI；manifest 与 Make/workflow/QMD safety/guide-site external-blocked 反向一致；QMD 无 lifecycle build、test external network 或模型文件 | 旧候选 technical source `pass`；independent acceptance `fail`；canonical activation `not-eligible`；修复候选 PR/source `pass`；independent acceptance `pending`；canonical-main source `not-run`；canonical activation `blocked` |
-| VAL-PRE1-SEQUENCE-001 | exact source checkout；`make pre1-work-plan-check` + links/version；W01–W16 rank/mapping/state、formal not-run、W02 canonical activation | 旧候选 technical source `pass`；independent acceptance `fail`；canonical activation `not-eligible`；修复候选 PR/source `pass`；independent acceptance `pending`；canonical-main source `not-run`；canonical activation `blocked` |
-| VAL-PACKAGED-SMOKE-001 | macOS arm64 engineering-smoke App；exact commit/digest/inventory、launch、renderer/preload、Main→private UDS health/domain request、quit/no orphan、无 public INET、exercised path 无系统 Python/Node/Git discovery、updater unavailable/no-network | `not-run`；当前没有 harness，且不得用 legacy `make smoke` 冒充 |
+| VAL-CI-COVERAGE-001 | exact source checkout + 最终 PR head CI；manifest 与 Make/workflow/QMD safety/guide-site external-blocked 反向一致；QMD 无 lifecycle build、test external network 或模型文件 | 旧候选 technical source `pass`；independent acceptance `fail`；canonical activation `not-eligible`；accepted final `36885e04df09c4789d8ec3c9dc5c5e78a381a634` / tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64`：PR/source、independent acceptance、canonical merge 与 resulting-main source 均 `pass` |
+| VAL-PRE1-SEQUENCE-001 | exact source checkout；`make pre1-work-plan-check` + links/version；W01–W16 rank/mapping/state、formal not-run、W02 canonical activation | 旧候选 technical source `pass`；independent acceptance `fail`；canonical activation `not-eligible`；accepted final `36885e04df09c4789d8ec3c9dc5c5e78a381a634` / tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64`：PR/source、independent acceptance、canonical merge 与 resulting-main source 均 `pass` |
+| VAL-PACKAGED-SMOKE-001 | macOS arm64 engineering-smoke App；exact commit/digest/inventory、launch、renderer/preload、Main→private UDS health/domain request、quit/no orphan、无 public INET、exercised path 无系统 Python/Node/Git discovery、updater unavailable/no-network | `not-run`；[old static assembly/audit](evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging smoke 不替代 packaged launch/runtime gate；[current PR #21 record](evidence/W02/2026-08-07-pr21-remediation.md) binds latest independent `NO-GO`、eleven remediation technical failures / superseded states and twelfth local candidate；eleventh real Installer seal/rollback/postcondition 已执行但 full Engineering failed，twelfth fresh exact-head Actions 与 App launch/runtime 均未执行 |
 | VAL-LEGACY-DECOUPLE-001 | exact slice baseline/head；caller inventory、split-first、affected replacement 或受限 pure-legacy unsupported disposition、aggregate source、before/after packaged smoke、protected-path presence | `not-run` |
 | VAL-LEGACY-DEPLOY-001 | exact deploy slice；Docker/Compose/Nginx/install/ops paths absent；before/after smoke；Electron build/presence；无 user/external data side effect | `not-run` |
 | VAL-LEGACY-TRANSPORT-001 | exact transport slice；public TCP/CORS/browser HTTP/legacy MCP absent；private UDS + bundled companion present；before/after package regression | `not-run` |
@@ -203,7 +274,8 @@ release source contract 通过不证明 GitHub 控制面或物理发行：两个
 Immutable Releases、真实签名/promotion 和物理 Mac 证据继续 `not-run`。repository owner、
 contents writer/可改 workflow 的主体与 settings admin 仍是根信任；GitHub Draft 无资产 CAS，
 verify→fixed-ID PATCH 竞态只能后验检测。当前结论是
-**W01 remediation in progress / PR merge blocked / release NO-GO**。
+**W01 closed / W02 PR #21 first through eleventh remediations failed and superseded after independent NO-GO /
+twelfth local candidate not-run / release NO-GO**。
 
 ## ADR—迭代—验证映射
 
@@ -246,5 +318,7 @@ verify→fixed-ID PATCH 竞态只能后验检测。当前结论是
 | `docs/adr/0016-*`、`docs/development/{work-plan,legacy-retirement,todo,roadmap,status,traceability,iterations/0002-r13-*,iterations/0007-*,iterations/0008-*}.md`、authority docs/skills、`Makefile`、`tools/check_pre1_work_plan.py`、`tools/tests/test_check_pre1_work_plan.py` | 接受 minimal smoke → incremental slices → cleaned engineering package → final gates → production release 的新顺序；本纵切不删除 runtime、不实现 package、不改 GitHub | REQ-PRE1-SEQUENCING/PACKAGED-SMOKE/LEGACY-SLICE/ENGINEERING-PACKAGE-001；R13/ITER-0008 | 规划 source 纳入 W01 checkpoint；runtime/packaged/physical/settings/release gate 均保持 `not-run` |
 | `.github/{ci/source-coverage.json,workflows/desktop-ci.yml}`、`Makefile`、`tools/{check_ci_coverage,check_w01_evidence,render_source_coverage_evidence,run_qmd_source_ci}.py`、QMD network trap/package script、W01 docs/evidence | 历史 W01 source aggregate、旧 C1→C2 closeout 与 premature canonical output；不实现 W02/legacy deletion/package/control plane | TODO-PRE1-SEQUENCING/GOV-EVIDENCE/CI-COVERAGE-001；R13-06；PR #20 | 旧 checkpoint `8573f608…` / run 30927840380 与 final `2b762946…` / run 30929070329 technical `pass`；独立验收 `fail`，canonical activation `not-eligible`；旧 artifacts 保留 |
 | `.github/{ci/source-coverage.json,workflows/desktop-ci.yml}`、`tools/{check_ci_coverage,check_w01_evidence,render_source_coverage_evidence,render_source_coverage_provenance,run_qmd_source_ci}.py`、schema v2、QMD trap/tests 与 W01 lifecycle docs | W01 remediation：historical evidence 与 current HEAD 解耦；payload/provenance 无自引用；PR/branch/main lifecycle 分相；QMD scope 诚实 | TODO-PRE1-SEQUENCING/GOV-EVIDENCE/CI-COVERAGE-001；R13-07；PR #20 remediation | Checkpoint A `f4074a31…` / run `30980342634` PR/source `pass`；payload `8919891304` / provenance `8919891597`；independent acceptance `pending`；canonical-main source `not-run`；canonical activation `blocked`；W02 locked |
+| `docs/development/evidence/W02/2026-08-05-entry.md`、R13/TODO/status/traceability/iteration indexes、`tools/check_pre1_work_plan.py` 与 tests | 追加 W01 外部 closure，不改写历史 W01 JSON；把 current authority 迁移到 W02 entry | TODO-PRE1-SEQUENCING/GOV-EVIDENCE/CI-COVERAGE-001；R13-08；PR #20 accepted remediation | final `36885e04…` / main `1786255b…` / tree `1b9f3a34…`；run `30986208251` five jobs success；W01 tasks `done`，R13 `completed` |
+| `.github/workflows/{packaged-smoke,desktop-release,container-images}.yml` 的 engineering assembly/formal build/legacy container continuity jobs、`web/Dockerfile`、exact Git checker、exact Node installer/builders、reviewed framework inventory generator/manifest/lock/pre-Python verifier、Python build/auditor、shared renderer/Python consumers 与 schemas、engineering-smoke staging/audit scripts、`desktop/src/{contracts,main/distribution,main/index,main/updateClient}.ts`、`web/src/desktopBridge.ts`、packaging/container policy tests 与 W02 governance/evidence | W02 不触发 formal 发布；共享 build provenance 同步加固，legacy container 修复保持 PR no-login/no-push 与 dual-platform target，但 formal Draft/promotion、distribution/publish semantics、production credentials/settings 均保持既有状态；本 Work 不启动 assembled App | TODO-PACKAGED-SMOKE-001；ITER-0008/I01；W02-A implementation stage（非稳定 ID） | old exact `08137c7…` static run technical `pass`；reviewed `8c5fd232…` / tree `785f4656…` independent `NO-GO`；first through eleventh remediations technical `fail` / `superseded`；latest eleventh `095cbc1…` / `2eca5e8…` failed after real Installer，observed `3648` / `77b580…` with 33 mode-only diffs，rollback/postcondition success；twelfth local contract pins compressed raw `3654` / `863a6353…` + only 6 exact AppleDouble removals to final `3648` / `77b580…` while 33 symlink modes remain `0775`；pkgutil full-expansion `0777` is a counterexample；fresh twelfth exact-head Actions remain `not-run`；formal package/App/credentials/publish/promotion、packaged launch 与 VAL-PACKAGED-SMOKE-001 均 `not-run`；W10/W11 locked |
 
 后续变更应追加或更新本节，不删除已发布证据；实现路径变化时在同一变更中修正 owned paths。

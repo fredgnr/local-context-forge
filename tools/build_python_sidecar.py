@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import ctypes
 import errno
 import hashlib
@@ -29,6 +30,8 @@ import os
 import platform
 import re
 import secrets
+import selectors
+import signal
 import shutil
 import socket
 import sqlite3
@@ -38,13 +41,13 @@ import subprocess
 import sys
 import sysconfig
 import tarfile
-import tempfile
 import threading
 import time
 import tomllib
 import uuid
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -74,8 +77,37 @@ MAX_ARCHIVE_TOTAL_BYTES = 384 * 1024 * 1024
 MAX_SMOKE_BROKER_REQUEST_BYTES = 262_144
 MAX_SMOKE_BROKER_COLLECTIONS = 256
 MAX_SMOKE_BROKER_REVISION = 2**53 - 1
+MAX_FROZEN_START_LOG_BYTES = 1024 * 1024
+MAX_FROZEN_UDS_PATH_BYTES = 100
+MAX_SOURCE_SNAPSHOT_FILES = 100_000
+MAX_SOURCE_SNAPSHOT_FILE_BYTES = 256 * 1024 * 1024
+MAX_SOURCE_SNAPSHOT_TOTAL_BYTES = 1024 * 1024 * 1024
+SOURCE_ARCHIVE_TIMEOUT_SECONDS = 300
+MAX_EVIDENCE_FILES = 2
+MAX_EVIDENCE_DIRECTORIES = 16
+MAX_EVIDENCE_FILE_BYTES = 16 * 1024 * 1024
+MAX_EVIDENCE_TOTAL_BYTES = 24 * 1024 * 1024
+SCRATCH_PARENT_NAME = "python-sidecar-build"
+SOURCE_SNAPSHOT_NAME = "source-snapshot"
+UV_CACHE_NAME = "uv-cache"
+FROZEN_UDS_CHECKS = frozenset(
+    {
+        "handshake",
+        "health",
+        "library-create",
+        "library-ingest",
+        "job-status",
+        "pages",
+        "lint",
+        "library-publish",
+        "post-publish-health",
+    }
+)
 EXPECTED_MISSING_IMPORT_PATTERN = re.compile(
     r"^missing module named ['\"]?([^ '\"(),]+)['\"]?"
+)
+SAFE_MISSING_IMPORT_NAME_PATTERN = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_.]{0,127}$"
 )
 WHEEL_REQUIREMENT_PATTERN = re.compile(
     r"^([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)\s+"
@@ -83,10 +115,768 @@ WHEEL_REQUIREMENT_PATTERN = re.compile(
 )
 SAFE_COMPONENT_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 SMOKE_COLLECTION_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,118}")
+TOOLCHAIN_EVIDENCE_ARTIFACT = "python-build-toolchain.json"
+BUILD_TOOL_EVIDENCE_KEYS = {
+    "altgraph": "altgraphVersion",
+    "macholib": "macholibVersion",
+    "packaging": "packagingVersion",
+    "pyinstaller": "pyinstallerVersion",
+    "pyinstaller-hooks-contrib": "pyinstallerHooksContribVersion",
+    "setuptools": "setuptoolsVersion",
+    "uv": "uvVersion",
+}
+INNER_BUILD_DIAGNOSTIC_FD_ENV = "LCF_INNER_BUILD_DIAGNOSTIC_FD"
+INNER_PRIMARY_CATEGORIES = frozenset(
+    {
+        "preflight",
+        "scratch-create",
+        "repository-state",
+        "source-materialize",
+        "source-revalidate",
+        "toolchain-contract",
+        "distribution",
+        "installed-toolchain",
+        "uv-lock",
+        "runtime-lock",
+        "pyinstaller",
+        "frozen-smoke",
+        "component-assembly",
+        "compliance-assembly",
+        "normalize",
+        "manifest",
+        "final-audit",
+        "publish",
+        "none",
+        "unclassified",
+    }
+)
+INNER_CLEANUP_CATEGORIES = frozenset(
+    {
+        "poisoned-preserved",
+        "capability-revalidation",
+        "retained-publish",
+        "bundle-close",
+        "evidence-close",
+        "source-close",
+        "build-root-quarantine",
+        "scratch-root-quarantine",
+        "descriptor-close",
+        "evidence-preserve",
+        "none",
+        "unclassified",
+    }
+)
+
+# The locked runner receives canonical paths only after the outer owner has
+# bound each private path to a held descriptor.  Darwin fdesc child traversal
+# is deliberately not part of the contract.  The wrapper is self-contained
+# because isolated mode ignores PYTHONPATH and sitecustomize.
+PYINSTALLER_CAPABILITY_RUNNER = r"""
+import os
+import signal
+import stat
+import sys
+
+for signal_number in {
+    signal.SIGINT,
+    signal.SIGTERM,
+    getattr(signal, "SIGHUP", signal.SIGTERM),
+}:
+    signal.signal(signal_number, signal.SIG_DFL)
+if not hasattr(signal, "pthread_sigmask"):
+    raise RuntimeError("signal mask control is unavailable")
+signal.pthread_sigmask(
+    signal.SIG_UNBLOCK,
+    {
+        signal.SIGINT,
+        signal.SIGTERM,
+        getattr(signal, "SIGHUP", signal.SIGTERM),
+    },
+)
+
+source_descriptor = int(sys.argv.pop(1))
+bundle_descriptor = int(sys.argv.pop(1))
+dist_descriptor = int(sys.argv.pop(1))
+work_descriptor = int(sys.argv.pop(1))
+config_descriptor = int(sys.argv.pop(1))
+temp_descriptor = int(sys.argv.pop(1))
+source_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+bundle_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+dist_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+work_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+config_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+temp_root = os.path.abspath(os.path.normpath(sys.argv.pop(1)))
+capability_roots = (
+    source_root,
+    bundle_root,
+    dist_root,
+    work_root,
+    config_root,
+    temp_root,
+)
+capability_descriptors = (
+    source_descriptor,
+    bundle_descriptor,
+    dist_descriptor,
+    work_descriptor,
+    config_descriptor,
+    temp_descriptor,
+)
+
+for capability_descriptor, capability_root in zip(
+    capability_descriptors,
+    capability_roots,
+    strict=True,
+):
+    held = os.fstat(capability_descriptor)
+    observed = os.lstat(capability_root)
+    probe = os.open(
+        capability_root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
+    try:
+        opened = os.fstat(probe)
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or stat.S_ISLNK(observed.st_mode)
+            or (held.st_dev, held.st_ino) != (observed.st_dev, observed.st_ino)
+            or (held.st_dev, held.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise RuntimeError("PyInstaller directory capability is unavailable")
+    finally:
+        os.close(probe)
+    os.set_inheritable(capability_descriptor, False)
+
+os.fchdir(source_descriptor)
+entered_source = os.stat(".", follow_symlinks=False)
+held_source = os.fstat(source_descriptor)
+if (
+    (entered_source.st_dev, entered_source.st_ino)
+    != (held_source.st_dev, held_source.st_ino)
+):
+    raise RuntimeError("PyInstaller source capability could not be entered")
+
+held_bundle = os.fstat(bundle_descriptor)
+observed_bundle = os.stat(bundle_root)
+held_dist = os.fstat(dist_descriptor)
+observed_dist = os.stat(dist_root)
+expected_output = dist_root + "/lcf-service"
+observed_output = os.stat(expected_output)
+if (
+    not stat.S_ISDIR(held_bundle.st_mode)
+    or not stat.S_ISDIR(held_dist.st_mode)
+    or (held_bundle.st_dev, held_bundle.st_ino)
+    != (observed_bundle.st_dev, observed_bundle.st_ino)
+    or (held_dist.st_dev, held_dist.st_ino)
+    != (observed_dist.st_dev, observed_dist.st_ino)
+    or (held_bundle.st_dev, held_bundle.st_ino)
+    != (observed_output.st_dev, observed_output.st_ino)
+):
+    raise RuntimeError("PyInstaller bundle capability is unavailable")
+
+def required_option(name):
+    matches = []
+    prefix = name + "="
+    for index, argument in enumerate(sys.argv[1:], start=1):
+        if argument == name:
+            if index + 1 >= len(sys.argv):
+                raise RuntimeError("PyInstaller capability option is incomplete")
+            matches.append(sys.argv[index + 1])
+        elif argument.startswith(prefix):
+            matches.append(argument[len(prefix):])
+    if len(matches) != 1:
+        raise RuntimeError("PyInstaller capability option is ambiguous")
+    return os.path.abspath(os.path.normpath(matches[0]))
+
+if required_option("--distpath") != dist_root:
+    raise RuntimeError("PyInstaller dist capability is unexpected")
+if required_option("--workpath") != work_root:
+    raise RuntimeError("PyInstaller work capability is unexpected")
+if os.environ.get("PYINSTALLER_CONFIG_DIR") != config_root:
+    raise RuntimeError("PyInstaller config capability is unexpected")
+if os.environ.get("TMPDIR") != temp_root:
+    raise RuntimeError("PyInstaller temporary capability is unexpected")
+os.environ["LCF_PYINSTALLER_SOURCE_FD"] = str(source_descriptor)
+os.environ["LCF_PYINSTALLER_SOURCE_ROOT"] = source_root
+
+from PyInstaller.lib.modulegraph import modulegraph
+
+original_os = modulegraph.os
+
+class CapabilityPathProxy:
+    def __init__(self, delegate):
+        self._delegate = delegate
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def realpath(self, value, *args, **kwargs):
+        raw = os.fspath(value)
+        normalized = self._delegate.abspath(self._delegate.normpath(raw))
+        for capability_root in capability_roots:
+            if normalized == capability_root or normalized.startswith(
+                capability_root + os.sep
+            ):
+                return normalized
+        return self._delegate.realpath(value, *args, **kwargs)
+
+class CapabilityOsProxy:
+    def __init__(self, delegate):
+        self._delegate = delegate
+        self.path = CapabilityPathProxy(delegate.path)
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+modulegraph.os = CapabilityOsProxy(original_os)
+
+from PyInstaller.building import api as building_api
+
+original_collect_init = building_api.COLLECT.__init__
+original_make_clean_directory = building_api._make_clean_directory
+
+def capability_collect_init(self, *args, **kwargs):
+    requested_name = kwargs.get("name")
+    if os.path.basename(os.fspath(requested_name)) != "lcf-service":
+        raise RuntimeError("PyInstaller bundle output is unexpected")
+    from PyInstaller.config import CONF
+    configured_dist = CONF.get("distpath")
+    if os.path.abspath(os.path.normpath(configured_dist)) != dist_root:
+        raise RuntimeError("PyInstaller dist capability is unexpected")
+    kwargs["name"] = os.path.basename(bundle_root)
+    CONF["distpath"] = os.path.dirname(bundle_root)
+    try:
+        original_collect_init(self, *args, **kwargs)
+    finally:
+        CONF["distpath"] = configured_dist
+    if os.path.abspath(os.path.normpath(self.name)) != bundle_root:
+        raise RuntimeError("PyInstaller bundle output is unexpected")
+
+def capability_make_clean_directory(path):
+    normalized = os.path.abspath(os.path.normpath(path))
+    if normalized != bundle_root:
+        return original_make_clean_directory(path)
+    before = os.fstat(bundle_descriptor)
+    relative = os.stat(expected_output)
+    if (
+        (before.st_dev, before.st_ino) != (relative.st_dev, relative.st_ino)
+        or os.listdir(bundle_descriptor)
+    ):
+        raise RuntimeError("PyInstaller bundle capability changed before assembly")
+
+building_api.COLLECT.__init__ = capability_collect_init
+building_api._make_clean_directory = capability_make_clean_directory
+
+import PyInstaller.__main__
+PyInstaller.__main__.run()
+""".strip()
 
 
 class BuildError(RuntimeError):
     """Raised when a release build cannot prove a required invariant."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        primary_category: str | None = None,
+        cleanup_category: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.primary_category = primary_category
+        self.cleanup_category = cleanup_category
+
+
+def _bind_failure_categories(
+    error: BaseException,
+    *,
+    primary: str | None = None,
+    cleanup: str | None = None,
+) -> BaseException:
+    """Attach only fixed diagnostic enums without changing error text."""
+
+    if isinstance(error, BuildError):
+        if error.primary_category is None and primary in INNER_PRIMARY_CATEGORIES:
+            error.primary_category = primary
+        if error.cleanup_category is None and cleanup in INNER_CLEANUP_CATEGORIES:
+            error.cleanup_category = cleanup
+        return error
+    if (
+        primary in INNER_PRIMARY_CATEGORIES
+        and not isinstance(error, (KeyboardInterrupt, SystemExit))
+    ):
+        wrapped = BuildError(
+            "Python sidecar build failed",
+            primary_category=primary,
+        )
+        wrapped.__cause__ = error
+        return wrapped
+    return error
+
+
+def _write_inner_build_diagnostic(error: BaseException) -> None:
+    """Write one bounded, fixed-enum record to the owner's dedicated pipe."""
+
+    raw_descriptor = os.environ.get(INNER_BUILD_DIAGNOSTIC_FD_ENV)
+    if raw_descriptor is None or re.fullmatch(r"[0-9]+", raw_descriptor) is None:
+        return
+    descriptor = int(raw_descriptor, 10)
+    if descriptor < 3 or str(descriptor) != raw_descriptor:
+        return
+    primary = getattr(error, "primary_category", None) or "unclassified"
+    cleanup = getattr(error, "cleanup_category", None) or "none"
+    if (
+        primary not in INNER_PRIMARY_CATEGORIES
+        or cleanup not in INNER_CLEANUP_CATEGORIES
+    ):
+        primary = "unclassified"
+        cleanup = "unclassified"
+    payload = (
+        f"lcf-inner-build: primary={primary} cleanup={cleanup}\n"
+    ).encode("ascii", errors="strict")
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISFIFO(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or len(payload) > 128
+        ):
+            return
+        os.write(descriptor, payload)
+    except OSError:
+        return
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+class _CapabilityDriftError(BuildError):
+    """Raised when a held path name no longer denotes its captured object."""
+
+
+class _CleanupBlockedError(BuildError):
+    """Raised when deletion must be refused to preserve a replacement."""
+
+
+class _DeferredSignalError(BuildError):
+    """Raised after a cleanup-critical region has reached a stable state."""
+
+
+@dataclass(frozen=True)
+class _DirectorySnapshot:
+    """Complete metadata captured from one held directory descriptor."""
+
+    device: int
+    inode: int
+    mode: int
+    uid: int
+    gid: int
+    links: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    entries: tuple[str, ...]
+
+
+@dataclass
+class _EvidenceCapability:
+    """Held authority for the exact sanitized failure-evidence directory."""
+
+    path: Path
+    name: str
+    parent_descriptor: int
+    descriptor: int
+    snapshot: _DirectorySnapshot
+    tree_snapshot: tuple[tuple[Any, ...], ...]
+    content_snapshot: tuple[tuple[str, str], ...]
+    closed: bool = False
+
+
+@dataclass
+class _BundleCapability:
+    """Held authority for the PyInstaller candidate from first inspection."""
+
+    path: Path
+    name: str
+    parent_path: Path
+    parent_name: str
+    parent_descriptor: int
+    parent_snapshot: _DirectorySnapshot
+    descriptor: int
+    snapshot: _DirectorySnapshot
+    tree_snapshot: tuple[tuple[Any, ...], ...]
+    closed: bool = False
+
+
+@dataclass
+class _ProducerDirectoryCapability:
+    """Held authority for one PyInstaller producer-owned directory."""
+
+    path: Path
+    capability_path: Path
+    name: str
+    descriptor: int
+    snapshot: _DirectorySnapshot
+    tree_snapshot: tuple[tuple[Any, ...], ...]
+
+
+@dataclass
+class _PyInstallerProducerCapabilities:
+    """Retained work/config/tmp roots and their immutable parent binding."""
+
+    parent_snapshot: _DirectorySnapshot
+    directories: dict[str, _ProducerDirectoryCapability]
+    closed: bool = False
+
+
+@dataclass
+class _RetainedPublishedDirectory:
+    """Held authority for an exchanged old destination kept in scratch."""
+
+    parent_path: Path
+    name: str
+    parent_descriptor: int
+    descriptor: int
+    snapshot: _DirectorySnapshot
+    tree_snapshot: tuple[tuple[Any, ...], ...]
+    owns_parent_descriptor: bool
+    closed: bool = False
+
+
+@dataclass
+class _ScratchCapability:
+    """Held authority for one exact build scratch lifecycle.
+
+    Paths are retained only for tools that cannot consume a directory
+    descriptor. Every destructive or publish operation is instead performed
+    relative to the held descriptors and rebinds the path entry to the
+    captured device/inode before it acts.
+    """
+
+    destination_parent: Path
+    destination_parent_descriptor: int
+    destination_parent_snapshot: _DirectorySnapshot
+    scratch_parent: Path
+    scratch_parent_name: str
+    scratch_parent_descriptor: int
+    scratch_parent_snapshot: _DirectorySnapshot
+    build_root: Path
+    build_root_name: str
+    build_root_descriptor: int
+    build_root_snapshot: _DirectorySnapshot
+    source_snapshot: Path | None = None
+    source_snapshot_descriptor: int | None = None
+    source_snapshot_metadata: _DirectorySnapshot | None = None
+    source_inventory: tuple[_TreeEntry, ...] | None = None
+    source_tree_metadata: tuple[tuple[Any, ...], ...] | None = None
+    evidence: _EvidenceCapability | None = None
+    bundle: _BundleCapability | None = None
+    retained_published_directories: list[_RetainedPublishedDirectory] = field(
+        default_factory=list
+    )
+    poisoned: bool = False
+    closed: bool = False
+
+
+@dataclass(frozen=True)
+class _TreeEntry:
+    path: str
+    mode: str
+    object_type: str
+    object_id: str
+
+
+@dataclass
+class _PublishCapability:
+    candidate: Path
+    candidate_name: str
+    candidate_parent: Path
+    candidate_parent_descriptor: int
+    candidate_parent_snapshot: _DirectorySnapshot
+    candidate_descriptor: int
+    candidate_snapshot: _DirectorySnapshot
+    candidate_tree_snapshot: tuple[tuple[Any, ...], ...]
+    destination: Path
+    destination_name: str
+    destination_parent: Path
+    destination_parent_descriptor: int
+    destination_parent_snapshot: _DirectorySnapshot
+    existing_destination_descriptor: int | None
+    existing_destination_snapshot: _DirectorySnapshot | None
+    existing_destination_tree_snapshot: tuple[tuple[Any, ...], ...] | None
+
+
+@dataclass
+class _PublishOwnershipTransfer:
+    """Owned publication callbacks; commit/rollback perform no system calls."""
+
+    prepare: Callable[[_PublishCapability], None]
+    commit: Callable[[_PublishCapability], None]
+    apply: Callable[[_PublishCapability], tuple[int, ...]]
+    rollback: Callable[[_PublishCapability], None]
+    retain_previous_in_scratch: bool
+
+
+_SIGNAL_TRANSLATION_STATE = threading.local()
+_SIGNAL_DEFERRAL_STATE = threading.local()
+_INTERRUPTED_ERROR = (
+    "Python sidecar operation was interrupted after reaching a safe state"
+)
+
+
+def _cleanup_signals() -> frozenset[signal.Signals]:
+    values = {signal.SIGINT, signal.SIGTERM}
+    if hasattr(signal, "SIGHUP"):
+        values.add(signal.SIGHUP)
+    return frozenset(values)
+
+
+def _latch_cleanup_cancellation() -> None:
+    """Latch one cancellation and keep later cleanup signals blocked.
+
+    The translation owner is process-lifecycle state, not merely a temporary
+    Python exception handler.  Once the first cleanup signal is observed, no
+    later INT/TERM/HUP may interrupt process-group cleanup, publish rollback,
+    or scratch/fd teardown.  The outermost translation scope drains pending
+    signals and restores the caller's mask only after those owners are stable.
+    """
+
+    _SIGNAL_TRANSLATION_STATE.cancelled = True
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, _cleanup_signals())
+    except (OSError, ValueError) as exc:
+        _SIGNAL_TRANSLATION_STATE.latch_error = exc
+
+
+def _raise_cleanup_signal(_number: int, _frame: Any) -> None:
+    already_latched = bool(
+        getattr(_SIGNAL_TRANSLATION_STATE, "cancelled", False)
+    )
+    _latch_cleanup_cancellation()
+    latch_error = getattr(_SIGNAL_TRANSLATION_STATE, "latch_error", None)
+    if latch_error is not None:
+        raise BuildError(
+            "Python sidecar cancellation could not be latched"
+        ) from latch_error
+    if already_latched or int(
+        getattr(_SIGNAL_DEFERRAL_STATE, "depth", 0)
+    ):
+        return
+    raise _DeferredSignalError(_INTERRUPTED_ERROR)
+
+
+def _drain_pending_cleanup_signals(
+    blocked: frozenset[signal.Signals],
+    *,
+    error_message: str,
+) -> bool:
+    """Consume process-directed signals while they are still blocked."""
+
+    if not hasattr(signal, "sigpending") or not hasattr(signal, "sigwait"):
+        raise BuildError(error_message)
+    observed = False
+    try:
+        while True:
+            pending = set(signal.sigpending()).intersection(blocked)
+            if not pending:
+                return observed
+            signal.sigwait(pending)
+            observed = True
+    except BaseException as exc:
+        raise BuildError(error_message) from exc
+
+
+@contextlib.contextmanager
+def _translate_cleanup_signals() -> Any:
+    """Translate TERM/HUP/INT under one outermost lifecycle owner.
+
+    Nested callers borrow the outer handlers. The final owner restores the
+    caller's handlers while cleanup signals are blocked; once it releases the
+    old mask, later signals again follow the caller's disposition. This scope
+    does not defer cancellation during its body.
+    """
+
+    depth = int(getattr(_SIGNAL_TRANSLATION_STATE, "depth", 0))
+    if depth:
+        _SIGNAL_TRANSLATION_STATE.depth = depth + 1
+        try:
+            yield
+        finally:
+            _SIGNAL_TRANSLATION_STATE.depth = depth
+        return
+
+    error_message = "Python sidecar signal translation could not be installed"
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "pthread_sigmask")
+    ):
+        raise BuildError(error_message)
+    blocked = _cleanup_signals()
+    previous_mask: set[signal.Signals] | None = None
+    previous_handlers: dict[signal.Signals, Any] = {}
+    _SIGNAL_TRANSLATION_STATE.depth = 1
+    _SIGNAL_TRANSLATION_STATE.cancelled = False
+    _SIGNAL_TRANSLATION_STATE.latch_error = None
+    try:
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
+        for item in blocked:
+            previous_handlers[item] = signal.getsignal(item)
+            signal.signal(item, _raise_cleanup_signal)
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+    except BaseException as exc:
+        if previous_mask is not None:
+            try:
+                signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
+                for item, handler in previous_handlers.items():
+                    signal.signal(item, handler)
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            except BaseException:
+                pass
+        _SIGNAL_TRANSLATION_STATE.depth = 0
+        _SIGNAL_TRANSLATION_STATE.cancelled = False
+        _SIGNAL_TRANSLATION_STATE.latch_error = None
+        raise BuildError(error_message) from exc
+
+    active_error: BaseException | None = None
+    deferred = False
+    try:
+        yield
+    except BaseException as exc:
+        active_error = exc
+        raise
+    finally:
+        restore_error: BaseException | None = None
+        try:
+            signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
+            deferred = _drain_pending_cleanup_signals(
+                blocked,
+                error_message="Python sidecar signal translation cleanup failed",
+            )
+            deferred = deferred or bool(
+                getattr(_SIGNAL_TRANSLATION_STATE, "cancelled", False)
+            )
+            transition_observed = False
+
+            def record_transition_signal(_number: int, _frame: Any) -> None:
+                nonlocal transition_observed
+                transition_observed = True
+
+            for item in blocked:
+                signal.signal(item, record_transition_signal)
+            if previous_mask is None:  # pragma: no cover - guarded by setup
+                raise BuildError(
+                    "Python sidecar signal translation cleanup failed"
+                )
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
+            deferred = deferred or transition_observed
+            deferred = deferred or _drain_pending_cleanup_signals(
+                blocked,
+                error_message="Python sidecar signal translation cleanup failed",
+            )
+            for item, handler in previous_handlers.items():
+                signal.signal(item, handler)
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        except BaseException as exc:
+            restore_error = exc
+        latch_error = getattr(_SIGNAL_TRANSLATION_STATE, "latch_error", None)
+        _SIGNAL_TRANSLATION_STATE.depth = 0
+        _SIGNAL_TRANSLATION_STATE.cancelled = False
+        _SIGNAL_TRANSLATION_STATE.latch_error = None
+        if restore_error is not None:
+            if active_error is not None:
+                raise BuildError(
+                    "Python sidecar operation failed and signal cleanup failed"
+                ) from active_error
+            raise BuildError(
+                "Python sidecar signal translation cleanup failed"
+            ) from restore_error
+        if latch_error is not None:
+            if active_error is not None:
+                raise BuildError(
+                    "Python sidecar operation failed and cancellation cleanup failed"
+                ) from active_error
+            raise BuildError(
+                "Python sidecar cancellation cleanup failed"
+            ) from latch_error
+        if deferred and not isinstance(active_error, _DeferredSignalError):
+            raise _DeferredSignalError(_INTERRUPTED_ERROR) from active_error
+
+
+@contextlib.contextmanager
+def _defer_publish_signals(
+    *,
+    preserve_error: BaseException | None = None,
+) -> Any:
+    """Defer cleanup signals across a bounded mutation transaction."""
+
+    depth = int(getattr(_SIGNAL_DEFERRAL_STATE, "depth", 0))
+    if depth:
+        _SIGNAL_DEFERRAL_STATE.depth = depth + 1
+        try:
+            yield
+        finally:
+            _SIGNAL_DEFERRAL_STATE.depth = depth
+        return
+
+    error_message = "Atomic staging signal deferral is unavailable"
+    if not hasattr(signal, "pthread_sigmask"):
+        raise BuildError(error_message)
+    blocked = _cleanup_signals()
+    cancelled_at_entry = bool(
+        getattr(_SIGNAL_TRANSLATION_STATE, "cancelled", False)
+    )
+    _SIGNAL_DEFERRAL_STATE.depth = 1
+    try:
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
+    except (OSError, ValueError) as exc:
+        _SIGNAL_DEFERRAL_STATE.depth = 0
+        raise BuildError(error_message) from exc
+    active_error: BaseException | None = None
+    deferred = False
+    try:
+        yield
+    except BaseException as exc:
+        active_error = exc
+        raise
+    finally:
+        restore_error: BaseException | None = None
+        try:
+            deferred = _drain_pending_cleanup_signals(
+                blocked,
+                error_message="Atomic staging signal deferral cleanup failed",
+            )
+            translation_active = bool(
+                getattr(_SIGNAL_TRANSLATION_STATE, "depth", 0)
+            )
+            cancellation_latched = bool(
+                getattr(_SIGNAL_TRANSLATION_STATE, "cancelled", False)
+            )
+            deferred = deferred or (
+                cancellation_latched and not cancelled_at_entry
+            )
+            if deferred and translation_active:
+                _latch_cleanup_cancellation()
+                cancellation_latched = True
+            restore_mask = set(previous)
+            if cancellation_latched:
+                restore_mask.update(blocked)
+            signal.pthread_sigmask(signal.SIG_SETMASK, restore_mask)
+        except BaseException as exc:
+            restore_error = exc
+        _SIGNAL_DEFERRAL_STATE.depth = 0
+        if restore_error is not None:
+            if active_error is not None:
+                raise BuildError(
+                    "Atomic staging failed and signal cleanup failed"
+                ) from active_error
+            raise BuildError(
+                "Atomic staging signal deferral cleanup failed"
+            ) from restore_error
+        if deferred and active_error is None and preserve_error is None:
+            raise _DeferredSignalError(_INTERRUPTED_ERROR)
 
 
 def _load_json(path: Path, label: str) -> dict[str, Any]:
@@ -134,6 +924,113 @@ def _canonical_json_bytes(value: Any) -> bytes:
 
 def _write_canonical_json(path: Path, value: Any) -> None:
     path.write_bytes(_canonical_json_bytes(value) + b"\n")
+
+
+def _verify_exact_toolchain_environment(
+    environment: Mapping[str, str],
+) -> tuple[dict[str, Any], bytes]:
+    """Revalidate the sealed installed tree before any installed code use."""
+
+    try:
+        import bootstrap_python_sidecar as bootstrap
+    except ImportError as exc:
+        raise BuildError("Python toolchain verifier cannot be imported") from exc
+    try:
+        verifier_path = Path(bootstrap.__file__).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError) as exc:
+        raise BuildError("Python toolchain verifier path is unavailable") from exc
+    if verifier_path != TOOLS_ROOT / "bootstrap_python_sidecar.py":
+        raise BuildError("Python toolchain verifier path is unexpected")
+    try:
+        evidence, payload = bootstrap.verify_toolchain_environment(environment)
+    except bootstrap.ToolchainBootstrapError as exc:
+        raise BuildError("Installed Python toolchain seal is invalid") from exc
+    if payload != _canonical_json_bytes(evidence) + b"\n":
+        raise BuildError("Python toolchain evidence is not canonical")
+    return evidence, payload
+
+
+def _validate_toolchain_evidence_against_source(
+    evidence: Mapping[str, Any],
+    *,
+    build_versions: Mapping[str, str],
+    packaging_root: Path,
+    backend_root: Path,
+) -> None:
+    expected_tools = {
+        BUILD_TOOL_EVIDENCE_KEYS[name]: version
+        for name, version in sorted(build_versions.items())
+    }
+    if (
+        set(build_versions) != set(BUILD_TOOL_EVIDENCE_KEYS)
+        or evidence.get("buildRequirementsLockSha256")
+        != _sha256_file(packaging_root / "build-requirements.lock")
+        or evidence.get("runtimeLockSha256")
+        != _sha256_file(backend_root / "uv.lock")
+        or evidence.get("buildTools") != expected_tools
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(evidence.get("runtimeRequirementsSha256", "")),
+        )
+        is None
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(evidence.get("installedTreeContentSha256", "")),
+        )
+        is None
+    ):
+        raise BuildError("Python toolchain evidence differs from exact source locks")
+
+
+def _write_toolchain_evidence_artifact(
+    bundle: Path,
+    payload: bytes,
+) -> str:
+    destination = bundle / TOOLCHAIN_EVIDENCE_ARTIFACT
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_NOFOLLOW
+            | os.O_CLOEXEC,
+            0o600,
+        )
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise BuildError("Python toolchain evidence could not be written")
+            remaining = remaining[written:]
+        os.fsync(descriptor)
+        os.fchmod(descriptor, 0o644)
+        final = os.fstat(descriptor)
+        observed = destination.lstat()
+        if (
+            not stat.S_ISREG(final.st_mode)
+            or stat.S_ISLNK(observed.st_mode)
+            or final.st_uid != os.geteuid()
+            or final.st_nlink != 1
+            or final.st_size != len(payload)
+            or _stat_metadata(final) != _stat_metadata(observed)
+        ):
+            raise BuildError("Python toolchain evidence artifact is unsafe")
+    except BuildError:
+        raise
+    except OSError as exc:
+        raise BuildError("Python toolchain evidence could not be written") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise BuildError(
+                        "Python toolchain evidence descriptor could not be closed"
+                    ) from exc
+    return TOOLCHAIN_EVIDENCE_ARTIFACT
 
 
 def _real_regular_file(
@@ -301,7 +1198,8 @@ def verify_distribution_files(
     if (
         expected_members.get(str(package_name), (None, None))[1]
         != distribution.get("installerPackageSha256")
-        or distribution.get("installMethod") != "macos-installer-pkg-direct"
+        or distribution.get("installMethod")
+        != "macos-installer-no-op-framework-component"
     ):
         raise BuildError("Python installer package evidence is inconsistent")
 
@@ -401,7 +1299,7 @@ def extract_reviewed_installer_package(
         ):
             raise BuildError("Extracted installer package differs from its lock")
         os.replace(temporary, output)
-    except Exception:
+    except BaseException:
         try:
             temporary.unlink()
         except FileNotFoundError:
@@ -420,7 +1318,554 @@ def _contained(root: Path, candidate: Path) -> bool:
     return True
 
 
-def fingerprint_install_root(root: Path) -> str:
+def _stat_metadata(info: os.stat_result) -> tuple[int, ...]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_gid,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _stable_directory_identity(
+    value: _DirectorySnapshot | os.stat_result,
+) -> tuple[int, ...]:
+    if isinstance(value, _DirectorySnapshot):
+        return (
+            value.device,
+            value.inode,
+            value.mode,
+            value.uid,
+            value.gid,
+        )
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_uid,
+        value.st_gid,
+    )
+
+
+def _snapshot_from_stat(
+    info: os.stat_result,
+    entries: tuple[str, ...],
+) -> _DirectorySnapshot:
+    return _DirectorySnapshot(
+        device=info.st_dev,
+        inode=info.st_ino,
+        mode=info.st_mode,
+        uid=info.st_uid,
+        gid=info.st_gid,
+        links=info.st_nlink,
+        size=info.st_size,
+        mtime_ns=info.st_mtime_ns,
+        ctime_ns=info.st_ctime_ns,
+        entries=entries,
+    )
+
+
+def _capture_bound_directory(
+    descriptor: int,
+    path: Path,
+    *,
+    parent_descriptor: int | None,
+    relative_name: str | None,
+    expected: _DirectorySnapshot | None,
+    expected_mode: int | None,
+    exact_entries: tuple[str, ...] | None,
+    error_message: str,
+) -> _DirectorySnapshot:
+    """Bind a canonical path entry to one held directory descriptor."""
+
+    try:
+        if not path.is_absolute() or path.resolve(strict=True) != path:
+            raise BuildError(error_message)
+        fd_before = os.fstat(descriptor)
+        path_before = path.lstat()
+        relative_before = (
+            os.stat(
+                relative_name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if parent_descriptor is not None and relative_name is not None
+            else path_before
+        )
+        if (
+            not stat.S_ISDIR(fd_before.st_mode)
+            or not stat.S_ISDIR(path_before.st_mode)
+            or not stat.S_ISDIR(relative_before.st_mode)
+            or stat.S_ISLNK(path_before.st_mode)
+            or stat.S_ISLNK(relative_before.st_mode)
+            or fd_before.st_uid != os.geteuid()
+            or path_before.st_uid != os.geteuid()
+            or relative_before.st_uid != os.geteuid()
+            or _stat_metadata(fd_before) != _stat_metadata(path_before)
+            or _stat_metadata(fd_before) != _stat_metadata(relative_before)
+            or (
+                expected_mode is not None
+                and stat.S_IMODE(fd_before.st_mode) != expected_mode
+            )
+            or (
+                expected is not None
+                and _stable_directory_identity(fd_before)
+                != _stable_directory_identity(expected)
+            )
+        ):
+            raise BuildError(error_message)
+        entries = tuple(sorted(os.listdir(descriptor)))
+        fd_after = os.fstat(descriptor)
+        path_after = path.lstat()
+        relative_after = (
+            os.stat(
+                relative_name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if parent_descriptor is not None and relative_name is not None
+            else path_after
+        )
+        if (
+            _stat_metadata(fd_after) != _stat_metadata(fd_before)
+            or _stat_metadata(path_after) != _stat_metadata(fd_before)
+            or _stat_metadata(relative_after) != _stat_metadata(fd_before)
+            or (exact_entries is not None and entries != exact_entries)
+        ):
+            raise BuildError(error_message)
+        return _snapshot_from_stat(fd_after, entries)
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+
+
+def _create_bound_child_directory(
+    *,
+    parent_descriptor: int,
+    parent_path: Path,
+    name: str,
+    mode: int,
+    error_message: str,
+) -> tuple[int, _DirectorySnapshot]:
+    """Create, snapshot, open, and bind one child without an interrupt gap.
+
+    Once mkdir succeeds, any failure preserves the untrusted namespace state;
+    callers must poison the owning lifecycle instead of deleting by name.
+    """
+
+    descriptor: int | None = None
+    created = False
+    try:
+        with _defer_publish_signals():
+            os.mkdir(name, mode=mode, dir_fd=parent_descriptor)
+            created = True
+            created_info = os.stat(
+                name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            parent_info = os.fstat(parent_descriptor)
+            if (
+                not stat.S_ISDIR(created_info.st_mode)
+                or stat.S_ISLNK(created_info.st_mode)
+                or created_info.st_uid != os.geteuid()
+                or stat.S_IMODE(created_info.st_mode) != mode
+                or created_info.st_dev != parent_info.st_dev
+            ):
+                raise _CleanupBlockedError(error_message)
+            created_snapshot = _snapshot_from_stat(created_info, ())
+            descriptor = os.open(
+                name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=parent_descriptor,
+            )
+            snapshot = _capture_bound_directory(
+                descriptor,
+                parent_path / name,
+                parent_descriptor=parent_descriptor,
+                relative_name=name,
+                expected=created_snapshot,
+                expected_mode=mode,
+                exact_entries=(),
+                error_message=error_message,
+            )
+        result = descriptor
+        descriptor = None
+        return result, snapshot
+    except BaseException as exc:
+        if created:
+            raise _CleanupBlockedError(error_message) from exc
+        if isinstance(exc, BuildError):
+            raise
+        raise BuildError(error_message) from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _tree_metadata_snapshot(
+    descriptor: int,
+    *,
+    error_message: str,
+    maximum_entries: int = MAX_SOURCE_SNAPSHOT_FILES,
+) -> tuple[tuple[Any, ...], ...]:
+    """Capture descriptor-relative inode metadata for a complete tree."""
+
+    records: list[tuple[Any, ...]] = []
+
+    def visit(directory_descriptor: int, prefix: str, depth: int) -> None:
+        if depth > 128:
+            raise BuildError(error_message)
+        try:
+            names = tuple(sorted(os.listdir(directory_descriptor)))
+        except OSError as exc:
+            raise BuildError(error_message) from exc
+        for name in names:
+            if not name or "/" in name or "\x00" in name:
+                raise BuildError(error_message)
+            try:
+                before = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise BuildError(error_message) from exc
+            relative = f"{prefix}/{name}" if prefix else name
+            link_target: str | None = None
+            if stat.S_ISLNK(before.st_mode):
+                try:
+                    link_target = os.readlink(name, dir_fd=directory_descriptor)
+                except OSError as exc:
+                    raise BuildError(error_message) from exc
+            records.append((relative, *_stat_metadata(before), link_target))
+            if len(records) > maximum_entries:
+                raise BuildError(error_message)
+            if stat.S_ISDIR(before.st_mode) and not stat.S_ISLNK(before.st_mode):
+                child_descriptor: int | None = None
+                try:
+                    child_descriptor = os.open(
+                        name,
+                        os.O_RDONLY
+                        | os.O_DIRECTORY
+                        | os.O_NOFOLLOW
+                        | os.O_CLOEXEC,
+                        dir_fd=directory_descriptor,
+                    )
+                    opened = os.fstat(child_descriptor)
+                    relative_now = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stat_metadata(opened) != _stat_metadata(before)
+                        or _stat_metadata(relative_now) != _stat_metadata(before)
+                    ):
+                        raise BuildError(error_message)
+                    visit(child_descriptor, relative, depth + 1)
+                    after = os.fstat(child_descriptor)
+                    relative_after = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stat_metadata(after) != _stat_metadata(opened)
+                        or _stat_metadata(relative_after) != _stat_metadata(opened)
+                    ):
+                        raise BuildError(error_message)
+                except BuildError:
+                    raise
+                except OSError as exc:
+                    raise BuildError(error_message) from exc
+                finally:
+                    if child_descriptor is not None:
+                        try:
+                            os.close(child_descriptor)
+                        except OSError as exc:
+                            raise BuildError(error_message) from exc
+
+    visit(descriptor, "", 0)
+    return tuple(records)
+
+
+def _remove_tree_contents(
+    descriptor: int,
+    *,
+    error_message: str,
+    depth: int = 0,
+) -> None:
+    """Quarantine captured leaves and refuse every observable identity drift.
+
+    Destructive calls use a held parent and an unpredictable quarantine name;
+    the original leaf name is never passed to ``unlink``/``rmdir``.  Identity
+    is rechecked in the final deletion wrapper, and an observed replacement is
+    restored no-replace and retained.  Portable POSIX has no unlink-by-fd, so
+    this does not claim protection from an unobservable same-UID namespace
+    write in the final syscall interval.
+    """
+
+    if depth > 128:
+        raise BuildError(error_message)
+    try:
+        names = tuple(sorted(os.listdir(descriptor)))
+    except OSError as exc:
+        raise BuildError(error_message) from exc
+    for name in names:
+        if not name or "/" in name or "\x00" in name:
+            raise BuildError(error_message)
+        quarantine = f".lcf-delete-{secrets.token_hex(16)}"
+        try:
+            before = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            if stat.S_ISDIR(before.st_mode) and not stat.S_ISLNK(before.st_mode):
+                child_descriptor = os.open(
+                    name,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    dir_fd=descriptor,
+                )
+                try:
+                    opened = os.fstat(child_descriptor)
+                    relative = os.stat(
+                        name,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stat_metadata(opened) != _stat_metadata(before)
+                        or _stat_metadata(relative) != _stat_metadata(before)
+                        or opened.st_uid != os.geteuid()
+                        or stat.S_IMODE(opened.st_mode) & 0o022
+                    ):
+                        raise BuildError(error_message)
+                    # Darwin authorizes a directory rename with VWRITE on the
+                    # directory being moved.  Exact source snapshots are
+                    # deliberately sealed 0500, so restore only owner access
+                    # through the already-held descriptor before asking the
+                    # kernel for the no-replace quarantine rename.  Rebind the
+                    # original name after chmod so a replacement is never
+                    # renamed or removed.
+                    os.fchmod(child_descriptor, 0o700)
+                    opened = os.fstat(child_descriptor)
+                    relative = os.stat(
+                        name,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        (opened.st_dev, opened.st_ino)
+                        != (before.st_dev, before.st_ino)
+                        or _stat_metadata(relative) != _stat_metadata(opened)
+                        or opened.st_uid != os.geteuid()
+                        or opened.st_gid != os.getegid()
+                        or stat.S_IMODE(opened.st_mode) != 0o700
+                    ):
+                        raise _CleanupBlockedError(error_message)
+                    _rename_noreplace_at(
+                        descriptor,
+                        name,
+                        descriptor,
+                        quarantine,
+                    )
+                    quarantined = os.stat(
+                        quarantine,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stable_directory_identity(quarantined)
+                        != _stable_directory_identity(opened)
+                    ):
+                        try:
+                            _rename_noreplace_at(
+                                descriptor,
+                                quarantine,
+                                descriptor,
+                                name,
+                            )
+                        except BaseException as restore_error:
+                            raise _CleanupBlockedError(error_message) from restore_error
+                        raise _CleanupBlockedError(error_message)
+                    relative = os.stat(
+                        quarantine,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stable_directory_identity(relative)
+                        != _stable_directory_identity(opened)
+                    ):
+                        raise BuildError(error_message)
+                    _remove_tree_contents(
+                        child_descriptor,
+                        error_message=error_message,
+                        depth=depth + 1,
+                    )
+                    if os.listdir(child_descriptor):
+                        raise BuildError(error_message)
+                    after = os.fstat(child_descriptor)
+                    relative_after = os.stat(
+                        quarantine,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stable_directory_identity(after)
+                        != _stable_directory_identity(opened)
+                        or _stable_directory_identity(relative_after)
+                        != _stable_directory_identity(opened)
+                    ):
+                        raise BuildError(error_message)
+                    _remove_verified_quarantine_leaf(
+                        descriptor,
+                        original_name=name,
+                        quarantine_name=quarantine,
+                        expected=after,
+                        directory=True,
+                        error_message=error_message,
+                    )
+                finally:
+                    os.close(child_descriptor)
+            elif (
+                stat.S_ISREG(before.st_mode)
+                or stat.S_ISLNK(before.st_mode)
+                or stat.S_ISSOCK(before.st_mode)
+            ):
+                _rename_noreplace_at(
+                    descriptor,
+                    name,
+                    descriptor,
+                    quarantine,
+                )
+                relative = os.stat(
+                    quarantine,
+                    dir_fd=descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    _stable_directory_identity(relative)
+                    != _stable_directory_identity(before)
+                ):
+                    try:
+                        _rename_noreplace_at(
+                            descriptor,
+                            quarantine,
+                            descriptor,
+                            name,
+                        )
+                    except BaseException as restore_error:
+                        raise _CleanupBlockedError(error_message) from restore_error
+                    raise _CleanupBlockedError(error_message)
+                _remove_verified_quarantine_leaf(
+                    descriptor,
+                    original_name=name,
+                    quarantine_name=quarantine,
+                    expected=before,
+                    directory=False,
+                    error_message=error_message,
+                )
+            else:
+                raise BuildError(error_message)
+        except BuildError:
+            raise
+        except OSError as exc:
+            raise BuildError(error_message) from exc
+
+
+def _remove_verified_quarantine_leaf(
+    parent_descriptor: int,
+    *,
+    original_name: str,
+    quarantine_name: str,
+    expected: os.stat_result,
+    directory: bool,
+    error_message: str,
+) -> None:
+    """Final observable identity gate before a quarantine name is removed."""
+
+    try:
+        current = os.stat(
+            quarantine_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if _stable_directory_identity(current) != _stable_directory_identity(expected):
+            try:
+                _rename_noreplace_at(
+                    parent_descriptor,
+                    quarantine_name,
+                    parent_descriptor,
+                    original_name,
+                )
+            except BaseException as restore_error:
+                raise _CleanupBlockedError(error_message) from restore_error
+            raise _CleanupBlockedError(error_message)
+        if directory:
+            os.rmdir(quarantine_name, dir_fd=parent_descriptor)
+        else:
+            os.unlink(quarantine_name, dir_fd=parent_descriptor)
+    except _CleanupBlockedError:
+        raise
+    except OSError as exc:
+        raise BuildError(error_message) from exc
+
+
+def _reviewed_broken_symlinks(
+    python_lock: Mapping[str, Any],
+) -> dict[str, str]:
+    raw_entries = python_lock.get("reviewedBrokenSymlinks")
+    if not isinstance(raw_entries, list):
+        raise BuildError("Python toolchain lock omits reviewed broken symlinks")
+    result: dict[str, str] = {}
+    for raw_entry in raw_entries:
+        entry = _mapping(raw_entry, "Reviewed Python broken symlink")
+        if set(entry) != {"path", "target"}:
+            raise BuildError("Reviewed Python broken symlink entry is malformed")
+        relative = entry.get("path")
+        target = entry.get("target")
+        if not isinstance(relative, str) or not isinstance(target, str):
+            raise BuildError("Reviewed Python broken symlink entry is malformed")
+        relative_path = PurePosixPath(relative)
+        target_path = PurePosixPath(target)
+        if (
+            not relative
+            or relative_path.is_absolute()
+            or relative_path.as_posix() != relative
+            or any(part in {"", ".", ".."} for part in relative_path.parts)
+            or "\\" in relative
+            or "\x00" in relative
+            or not target
+            or target_path.is_absolute()
+            or any(part in {"", ".", ".."} for part in target_path.parts)
+            or "\\" in target
+            or "\x00" in target
+            or relative in result
+        ):
+            raise BuildError("Reviewed Python broken symlink entry is unsafe")
+        result[relative] = target
+    if list(result) != sorted(result):
+        raise BuildError("Reviewed Python broken symlinks are not ordered")
+    return result
+
+
+def fingerprint_install_root(
+    root: Path,
+    *,
+    reviewed_broken_symlinks: Mapping[str, str] | None = None,
+    excluded_paths: Sequence[str] = (),
+) -> str:
     """Fingerprint immutable framework content without runtime bytecode caches."""
 
     try:
@@ -430,13 +1875,50 @@ def fingerprint_install_root(root: Path) -> str:
     if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
         raise BuildError("Pinned Python install root must be a real directory")
     root = root.resolve(strict=True)
+    normalized_exclusions: list[tuple[str, ...]] = []
+    exclusion_names: list[str] = []
+    for raw_path in excluded_paths:
+        name = str(raw_path)
+        relative_path = PurePosixPath(name)
+        if (
+            not name
+            or relative_path.is_absolute()
+            or relative_path.as_posix() != name
+            or any(part in {"", ".", ".."} for part in relative_path.parts)
+            or "\\" in name
+            or "\x00" in name
+        ):
+            raise BuildError("Python install root fingerprint exclusion is unsafe")
+        exclusion_names.append(name)
+        normalized_exclusions.append(relative_path.parts)
+    if exclusion_names != sorted(exclusion_names) or len(
+        exclusion_names
+    ) != len(set(exclusion_names)):
+        raise BuildError("Python install root fingerprint exclusions are not ordered")
+    if any(
+        candidate[: len(parent)] == parent
+        for index, parent in enumerate(normalized_exclusions)
+        for candidate in normalized_exclusions[index + 1 :]
+    ):
+        raise BuildError("Python install root fingerprint exclusions overlap")
+    reviewed_broken = dict(reviewed_broken_symlinks or {})
+    observed_broken: dict[str, str] = {}
     inventory: list[dict[str, Any]] = []
     for path in sorted(
         root.rglob("*"),
         key=lambda candidate: candidate.relative_to(root).as_posix(),
     ):
         relative = path.relative_to(root)
-        if "__pycache__" in relative.parts or path.suffix in {".pyc", ".pyo"}:
+        if any(
+            relative.parts[: len(excluded)] == excluded
+            for excluded in normalized_exclusions
+        ):
+            continue
+        folded_parts = tuple(part.casefold() for part in relative.parts)
+        if (
+            "__pycache__" in folded_parts
+            or path.name.casefold().endswith((".pyc", ".pyo"))
+        ):
             continue
         try:
             item_info = path.lstat()
@@ -453,7 +1935,34 @@ def fingerprint_install_root(root: Path) -> str:
             try:
                 resolved = path.resolve(strict=True)
             except (OSError, RuntimeError) as exc:
-                raise BuildError("Python install root contains a broken symlink") from exc
+                try:
+                    unresolved_target = (path.parent / target).resolve(strict=False)
+                except (OSError, RuntimeError) as target_exc:
+                    raise BuildError(
+                        "Python install root contains an unsafe broken symlink"
+                    ) from target_exc
+                relative_name = relative.as_posix()
+                if (
+                    not _contained(root, unresolved_target)
+                    or reviewed_broken.get(relative_name) != target
+                ):
+                    raise BuildError(
+                        "Python install root contains an unreviewed broken symlink: "
+                        f"{relative_name!r} -> {target!r}"
+                    ) from exc
+                observed_broken[relative_name] = target
+                item.update(
+                    {
+                        "type": "symlink",
+                        "target": target,
+                        "broken": True,
+                        "sha256": hashlib.sha256(
+                            target.encode("utf-8")
+                        ).hexdigest(),
+                    }
+                )
+                inventory.append(item)
+                continue
             if not _contained(root, resolved):
                 raise BuildError("Python install root symlink escapes the framework")
             item.update(
@@ -476,6 +1985,8 @@ def fingerprint_install_root(root: Path) -> str:
         else:
             raise BuildError("Python install root contains a special file")
         inventory.append(item)
+    if observed_broken != reviewed_broken:
+        raise BuildError("Reviewed Python broken symlink set changed")
     if not inventory:
         raise BuildError("Python install root fingerprint is empty")
     return hashlib.sha256(_canonical_json_bytes(inventory)).hexdigest()
@@ -494,7 +2005,7 @@ def verify_python_install_binding(
     executable: Path | None = None,
     cache_tag: str | None = None,
     gil_disabled: bool | None = None,
-    fingerprint: Callable[[Path], str] = fingerprint_install_root,
+    fingerprint: Callable[[Path], str] | None = None,
 ) -> str:
     """Bind the active interpreter/venv to the reviewed Python.org framework."""
 
@@ -565,7 +2076,13 @@ def verify_python_install_binding(
             settings,
         ):
             raise BuildError("Build venv inherits system site-packages")
-    return fingerprint(canonical_root)
+    if fingerprint is not None:
+        return fingerprint(canonical_root)
+    reviewed_broken = _reviewed_broken_symlinks(python_lock)
+    return fingerprint_install_root(
+        canonical_root,
+        reviewed_broken_symlinks=reviewed_broken,
+    )
 
 
 def parse_build_requirements(path: Path = BUILD_REQUIREMENTS_LOCK) -> dict[str, str]:
@@ -650,32 +2167,1010 @@ def _run_checked(
     arguments: Sequence[str],
     *,
     cwd: Path = REPOSITORY_ROOT,
+    cwd_descriptor: int | None = None,
     env: Mapping[str, str] | None = None,
     timeout: int = 120,
     label: str,
+    path_capabilities: Sequence[tuple[int, str, bool]] = (),
 ) -> str:
-    try:
-        completed = subprocess.run(
-            list(arguments),
-            cwd=cwd,
-            env=dict(env) if env is not None else None,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise BuildError(f"{label} failed") from exc
+    completed = _run_owned_command(
+        arguments,
+        cwd=cwd,
+        cwd_descriptor=cwd_descriptor,
+        environment=(
+            dict(env)
+            if env is not None
+            else {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
+        ),
+        timeout=timeout,
+        label=label,
+        path_capabilities=path_capabilities,
+    )
+    if completed.returncode != 0:
+        raise BuildError(f"{label} failed")
     return completed.stdout.strip()
 
 
-def _git_output(*arguments: str) -> str:
+def _run_owned_command(
+    arguments: Sequence[str],
+    *,
+    cwd: Path,
+    environment: Mapping[str, str],
+    timeout: int,
+    label: str,
+    cwd_descriptor: int | None = None,
+    pass_fds: Sequence[int] = (),
+    launcher_python: Path | None = None,
+    path_capabilities: Sequence[tuple[int, str, bool]] = (),
+) -> subprocess.CompletedProcess[str]:
+    """Run one exact executable from a held cwd under the shared owner."""
+
+    error_message = f"{label} failed"
+    owned_descriptor: int | None = None
+    active_descriptor = cwd_descriptor
+    before: _DirectorySnapshot | None = None
+    result: subprocess.CompletedProcess[str] | None = None
+    primary_error: BaseException | None = None
+    try:
+        if active_descriptor is None:
+            active_descriptor = os.open(
+                cwd,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            owned_descriptor = active_descriptor
+        before = _capture_bound_directory(
+            active_descriptor,
+            cwd,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if (
+            before.gid != os.getegid()
+            or stat.S_IMODE(before.mode) & 0o022
+        ):
+            raise BuildError(error_message)
+        try:
+            import bootstrap_python_sidecar as bootstrap
+
+            observed_result = bootstrap._run_owned_process(
+                tuple(arguments),
+                cwd=cwd,
+                environment=environment,
+                pass_fds=pass_fds,
+                timeout=timeout,
+                label=label,
+                build=sys.modules[__name__],
+                cwd_descriptor=active_descriptor,
+                launcher_python=launcher_python or Path(sys.executable),
+                check=False,
+                path_capabilities=path_capabilities,
+            )
+        except ImportError as exc:
+            raise BuildError(error_message) from exc
+        if not isinstance(observed_result, subprocess.CompletedProcess):
+            raise BuildError(error_message)
+        result = observed_result
+        if result.returncode == 126:
+            category = bootstrap._held_cwd_failure_category(result.stderr)
+            if category != "unclassified":
+                raise BuildError(
+                    f"{label} failed (category={category})"
+                )
+    except BaseException as exc:
+        primary_error = exc
+
+    postcheck_error: BaseException | None = None
+    if active_descriptor is not None and before is not None:
+        try:
+            after = _capture_bound_directory(
+                active_descriptor,
+                cwd,
+                parent_descriptor=None,
+                relative_name=None,
+                expected=before,
+                expected_mode=None,
+                exact_entries=before.entries,
+                error_message=error_message,
+            )
+            if after != before:
+                raise BuildError(error_message)
+        except BaseException as exc:
+            postcheck_error = exc
+    if owned_descriptor is not None:
+        try:
+            os.close(owned_descriptor)
+        except OSError as exc:
+            postcheck_error = postcheck_error or exc
+
+    if primary_error is not None:
+        if postcheck_error is not None:
+            raise BuildError(
+                f"{label} failed and its cwd capability could not be verified"
+            ) from primary_error
+        if isinstance(primary_error, (BuildError, KeyboardInterrupt, SystemExit)):
+            raise primary_error
+        raise BuildError(error_message) from primary_error
+    if postcheck_error is not None:
+        if isinstance(postcheck_error, (KeyboardInterrupt, SystemExit)):
+            raise postcheck_error
+        raise BuildError(error_message) from postcheck_error
+    if result is None:
+        raise BuildError(error_message)
+    return result
+
+
+def _isolated_git_environment() -> dict[str, str]:
+    return {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_ATTR_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
+def _isolated_git_command(
+    *arguments: str,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> list[str]:
+    error_message = "Git provenance repository boundary is unsafe"
+    git_directory = repository_root / ".git"
+    try:
+        root_info = repository_root.lstat()
+        git_info = git_directory.lstat()
+        if (
+            not repository_root.is_absolute()
+            or repository_root.resolve(strict=True) != repository_root
+            or not stat.S_ISDIR(root_info.st_mode)
+            or stat.S_ISLNK(root_info.st_mode)
+            or root_info.st_uid != os.geteuid()
+            or stat.S_IMODE(root_info.st_mode) & 0o022
+            or not stat.S_ISDIR(git_info.st_mode)
+            or stat.S_ISLNK(git_info.st_mode)
+            or git_info.st_uid != os.geteuid()
+            or git_directory.resolve(strict=True) != git_directory
+            or stat.S_IMODE(git_info.st_mode) & 0o022
+        ):
+            raise BuildError(error_message)
+    except BuildError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise BuildError(error_message) from exc
+    return [
+        "/usr/bin/git",
+        "--git-dir=.git",
+        "--work-tree=.",
+        "-c",
+        "core.bare=false",
+        "-c",
+        "core.worktree=.",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+        "-c",
+        "core.excludesFile=/dev/null",
+        "-c",
+        "core.attributesFile=/dev/null",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fileMode=true",
+        "-c",
+        "core.symlinks=true",
+        "-c",
+        "status.showUntrackedFiles=all",
+        "-c",
+        "diff.ignoreSubmodules=none",
+        *arguments,
+    ]
+
+
+def _git_output(
+    *arguments: str,
+    repository_root: Path = REPOSITORY_ROOT,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
+) -> str:
     return _run_checked(
-        ("/usr/bin/git", *arguments),
-        env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+        _isolated_git_command(*arguments, repository_root=repository_root),
+        cwd=repository_root,
+        cwd_descriptor=repository_descriptor,
+        env=_isolated_git_environment(),
         label="Git provenance check",
+        path_capabilities=(
+            ((git_descriptor, ".git", False),)
+            if git_descriptor is not None
+            else ()
+        ),
     )
+
+
+def _git_bytes(
+    *arguments: str,
+    repository_root: Path = REPOSITORY_ROOT,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
+) -> bytes:
+    completed = _run_owned_command(
+        _isolated_git_command(*arguments, repository_root=repository_root),
+        cwd=repository_root,
+        cwd_descriptor=repository_descriptor,
+        environment=_isolated_git_environment(),
+        timeout=120,
+        label="Git provenance check",
+        path_capabilities=(
+            ((git_descriptor, ".git", False),)
+            if git_descriptor is not None
+            else ()
+        ),
+    )
+    if completed.returncode != 0:
+        raise BuildError("Git provenance check failed")
+    return completed.stdout.encode("utf-8", errors="strict")
+
+
+def _selected_source_commit(environment: Mapping[str, str]) -> str:
+    """Return the explicit reviewed checkout SHA; never use event metadata."""
+
+    repository_commit = environment.get("LCF_SOURCE_SHA", "").lower()
+    if re.fullmatch(r"[0-9a-f]{40}", repository_commit) is None:
+        raise BuildError("LCF_SOURCE_SHA must be a full Git commit SHA")
+    return repository_commit
+
+
+def _selected_source_tree(environment: Mapping[str, str]) -> str:
+    repository_tree = environment.get("LCF_SOURCE_TREE", "").lower()
+    if re.fullmatch(r"[0-9a-f]{40}", repository_tree) is None:
+        raise BuildError("LCF_SOURCE_TREE must be a full Git tree SHA")
+    return repository_tree
+
+
+def _repository_tree_inventory(
+    repository_commit: str,
+    *,
+    repository_root: Path = REPOSITORY_ROOT,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
+) -> tuple[_TreeEntry, ...]:
+    """Return the exact safe blob inventory for one commit tree."""
+
+    raw = _git_bytes(
+        "ls-tree",
+        "-r",
+        "-z",
+        "--full-tree",
+        repository_commit,
+        repository_root=repository_root,
+        repository_descriptor=repository_descriptor,
+        git_descriptor=git_descriptor,
+    )
+    result: list[_TreeEntry] = []
+    seen: set[str] = set()
+    for encoded in raw.split(b"\0"):
+        if not encoded:
+            continue
+        try:
+            header, raw_path = encoded.split(b"\t", 1)
+            mode, object_type, object_id = header.decode("ascii").split(" ")
+            path = raw_path.decode("utf-8", errors="strict")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise BuildError("Git source tree inventory is malformed") from exc
+        pure = PurePosixPath(path)
+        if (
+            object_type != "blob"
+            or mode not in {"100644", "100755", "120000"}
+            or re.fullmatch(r"[0-9a-f]{40}", object_id) is None
+            or not path
+            or pure.is_absolute()
+            or pure.as_posix() != path
+            or any(part in {"", ".", "..", ".git"} for part in pure.parts)
+            or "\\" in path
+            or any(ord(character) < 0x20 for character in path)
+            or path in seen
+        ):
+            raise BuildError("Git source tree inventory is unsafe")
+        seen.add(path)
+        result.append(
+            _TreeEntry(
+                path=path,
+                mode=mode,
+                object_type=object_type,
+                object_id=object_id,
+            )
+        )
+        if len(result) > MAX_SOURCE_SNAPSHOT_FILES:
+            raise BuildError("Git source tree inventory exceeds its file bound")
+    if not result:
+        raise BuildError("Git source tree inventory is empty")
+    return tuple(sorted(result, key=lambda item: item.path))
+
+
+def _source_snapshot_sha256(entries: Sequence[_TreeEntry]) -> str:
+    payload = [
+        {
+            "mode": entry.mode,
+            "objectId": entry.object_id,
+            "path": entry.path,
+            "type": entry.object_type,
+        }
+        for entry in entries
+    ]
+    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+
+
+def _validate_local_git_configuration(
+    *,
+    repository_root: Path,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
+) -> None:
+    """Reject repository-local configuration that can execute or hide input."""
+
+    error_message = "Git repository local configuration is unsafe"
+    config = repository_root / ".git" / "config"
+    active_git_descriptor = git_descriptor
+    owned_git_descriptor: int | None = None
+    config_descriptor: int | None = None
+    try:
+        if repository_descriptor is None:
+            raise BuildError(error_message)
+        if active_git_descriptor is None:
+            active_git_descriptor = os.open(
+                ".git",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=repository_descriptor,
+            )
+            owned_git_descriptor = active_git_descriptor
+        config_descriptor = os.open(
+            "config",
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=active_git_descriptor,
+        )
+        info = os.fstat(config_descriptor)
+        relative_info = os.stat(
+            "config",
+            dir_fd=active_git_descriptor,
+            follow_symlinks=False,
+        )
+        path_info = config.lstat()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or stat.S_ISLNK(relative_info.st_mode)
+            or _stat_metadata(info) != _stat_metadata(relative_info)
+            or _stat_metadata(info) != _stat_metadata(path_info)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or info.st_size > 1024 * 1024
+            or stat.S_IMODE(info.st_mode) & 0o022
+        ):
+            raise BuildError(error_message)
+        completed = _run_owned_command(
+            (
+                "/usr/bin/git",
+                "--git-dir=.git",
+                "config",
+                "--file=.git/config",
+                "--no-includes",
+                "--null",
+                "--list",
+            ),
+            cwd=repository_root,
+            cwd_descriptor=repository_descriptor,
+            environment=_isolated_git_environment(),
+            timeout=30,
+            label="Git local configuration check",
+            path_capabilities=(
+                (active_git_descriptor, ".git", False),
+                (config_descriptor, ".git/config", False),
+            ),
+        )
+        if completed.returncode != 0:
+            raise BuildError(error_message)
+        if (
+            _stat_metadata(os.fstat(config_descriptor)) != _stat_metadata(info)
+            or _stat_metadata(
+                os.stat(
+                    "config",
+                    dir_fd=active_git_descriptor,
+                    follow_symlinks=False,
+                )
+            )
+            != _stat_metadata(info)
+            or _stat_metadata(config.lstat()) != _stat_metadata(info)
+        ):
+            raise BuildError(error_message)
+    except BuildError:
+        raise
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        close_error: OSError | None = None
+        for descriptor in (config_descriptor, owned_git_descriptor):
+            if descriptor is None:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                close_error = close_error or exc
+        if close_error is not None and sys.exception() is None:
+            raise BuildError(error_message) from close_error
+    allowed_values: dict[str, frozenset[str] | None] = {
+        "core.repositoryformatversion": frozenset({"0"}),
+        "core.filemode": frozenset({"true", "false"}),
+        "core.bare": frozenset({"false"}),
+        "core.logallrefupdates": frozenset({"true"}),
+        "core.ignorecase": frozenset({"true", "false"}),
+        "core.precomposeunicode": frozenset({"true", "false"}),
+        "core.symlinks": frozenset({"true", "false"}),
+        "extensions.objectformat": frozenset({"sha1"}),
+        "gc.auto": frozenset({"0"}),
+        "user.name": None,
+        "user.email": None,
+    }
+    try:
+        records: list[tuple[str, str]] = []
+        for raw in completed.stdout.encode("utf-8", errors="strict").split(b"\0"):
+            if not raw:
+                continue
+            encoded_key, separator, encoded_value = raw.partition(b"\n")
+            if not separator:
+                raise BuildError(error_message)
+            records.append(
+                (
+                    encoded_key.decode("utf-8", errors="strict").lower(),
+                    encoded_value.decode("utf-8", errors="strict"),
+                )
+            )
+    except UnicodeDecodeError as exc:
+        raise BuildError(error_message) from exc
+    for key, value in records:
+        allowed_pattern = (
+            re.fullmatch(r"remote\..+\.(?:url|pushurl|fetch)", key)
+            or re.fullmatch(r"branch\..+\.(?:remote|merge|description)", key)
+        )
+        reviewed_values = allowed_values.get(key)
+        if (
+            key in allowed_values
+            and (reviewed_values is None or value.lower() in reviewed_values)
+        ):
+            continue
+        if allowed_pattern is None:
+            raise BuildError(error_message)
+
+
+def _validate_git_info_overrides(*, repository_root: Path) -> None:
+    """Reject local info files that can alter visibility or object lookup."""
+
+    error_message = "Git repository local attributes or excludes are unsafe"
+    comment_only = (Path("info") / "attributes", Path("info") / "exclude")
+    must_be_empty = (
+        Path("info") / "grafts",
+        Path("objects") / "info" / "alternates",
+        Path("objects") / "info" / "http-alternates",
+    )
+    for relative in (*comment_only, *must_be_empty):
+        path = repository_root / ".git" / relative
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise BuildError(error_message) from exc
+        try:
+            before = os.fstat(descriptor)
+            path_info = path.lstat()
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or stat.S_ISLNK(path_info.st_mode)
+                or _stat_metadata(before) != _stat_metadata(path_info)
+                or before.st_uid != os.geteuid()
+                or before.st_nlink != 1
+                or before.st_size > 1024 * 1024
+                or stat.S_IMODE(before.st_mode) & 0o022
+            ):
+                raise BuildError(error_message)
+            payload = bytearray()
+            while len(payload) <= 1024 * 1024:
+                chunk = os.read(descriptor, min(65536, 1024 * 1024 + 1 - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            after = os.fstat(descriptor)
+            path_after = path.lstat()
+            if (
+                len(payload) > 1024 * 1024
+                or _stat_metadata(after) != _stat_metadata(before)
+                or _stat_metadata(path_after) != _stat_metadata(before)
+            ):
+                raise BuildError(error_message)
+            if relative in must_be_empty:
+                if payload:
+                    raise BuildError(error_message)
+            else:
+                try:
+                    lines = payload.decode("utf-8", errors="strict").splitlines()
+                except UnicodeDecodeError as exc:
+                    raise BuildError(error_message) from exc
+                if any(
+                    line.strip() and not line.lstrip().startswith("#")
+                    for line in lines
+                ):
+                    raise BuildError(error_message)
+        except OSError as exc:
+            raise BuildError(error_message) from exc
+        finally:
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError as exc:
+                    if sys.exception() is None:
+                        raise BuildError(error_message) from exc
+
+
+def _validate_git_index(
+    inventory: Sequence[_TreeEntry],
+    *,
+    repository_root: Path,
+    repository_descriptor: int | None = None,
+    git_descriptor: int | None = None,
+) -> None:
+    """Require a stage-zero index with no hidden per-entry flags."""
+
+    error_message = "Git index state is unsafe"
+    expected = {
+        entry.path: (entry.mode, entry.object_id)
+        for entry in inventory
+    }
+    staged: dict[str, tuple[str, str]] = {}
+    raw_stage = _git_bytes(
+        "ls-files",
+        "--stage",
+        "-z",
+        repository_root=repository_root,
+        repository_descriptor=repository_descriptor,
+        git_descriptor=git_descriptor,
+    )
+    for raw in raw_stage.split(b"\0"):
+        if not raw:
+            continue
+        try:
+            header, encoded_path = raw.split(b"\t", 1)
+            mode, object_id, stage = header.decode("ascii").split(" ")
+            path = encoded_path.decode("utf-8", errors="strict")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise BuildError(error_message) from exc
+        if (
+            stage != "0"
+            or path in staged
+            or re.fullmatch(r"[0-9a-f]{40}", object_id) is None
+        ):
+            raise BuildError(error_message)
+        staged[path] = (mode, object_id)
+    if staged != expected:
+        raise BuildError(error_message)
+    raw_flags = _git_bytes(
+        "ls-files",
+        "-v",
+        "-z",
+        repository_root=repository_root,
+        repository_descriptor=repository_descriptor,
+        git_descriptor=git_descriptor,
+    )
+    flagged_paths: set[str] = set()
+    for raw in raw_flags.split(b"\0"):
+        if not raw:
+            continue
+        if not raw.startswith(b"H "):
+            raise BuildError(error_message)
+        try:
+            path = raw[2:].decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise BuildError(error_message) from exc
+        if path in flagged_paths:
+            raise BuildError(error_message)
+        flagged_paths.add(path)
+    if flagged_paths != set(expected):
+        raise BuildError(error_message)
+
+
+def _validate_tracked_worktree(
+    inventory: Sequence[_TreeEntry],
+    *,
+    repository_root: Path,
+    repository_descriptor: int | None = None,
+) -> None:
+    """Compare tracked no-follow bytes and modes directly with commit blobs."""
+
+    error_message = "Tracked worktree differs from the selected commit"
+    root_descriptor: int | None = None
+    total_size = 0
+
+    def validate_directory(info: os.stat_result) -> None:
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o022
+        ):
+            raise BuildError(error_message)
+
+    try:
+        root_before = repository_root.lstat()
+        validate_directory(root_before)
+        root_descriptor = (
+            os.dup(repository_descriptor)
+            if repository_descriptor is not None
+            else os.open(
+                repository_root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+        )
+        root_opened = os.fstat(root_descriptor)
+        validate_directory(root_opened)
+        if _stat_metadata(root_opened) != _stat_metadata(root_before):
+            raise BuildError(error_message)
+        for entry in inventory:
+            pure = PurePosixPath(entry.path)
+            directory_descriptor = os.dup(root_descriptor)
+            open_directories = [directory_descriptor]
+            bindings: list[tuple[int, str, int, tuple[int, ...]]] = []
+            try:
+                if len(pure.parts) > 128:
+                    raise BuildError(error_message)
+                for part in pure.parts[:-1]:
+                    before_child = os.stat(
+                        part,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    validate_directory(before_child)
+                    child = os.open(
+                        part,
+                        os.O_RDONLY
+                        | os.O_DIRECTORY
+                        | os.O_NOFOLLOW
+                        | os.O_CLOEXEC,
+                        dir_fd=directory_descriptor,
+                    )
+                    child_opened = os.fstat(child)
+                    relative_child = os.stat(
+                        part,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    validate_directory(child_opened)
+                    if (
+                        _stat_metadata(child_opened) != _stat_metadata(before_child)
+                        or _stat_metadata(relative_child)
+                        != _stat_metadata(before_child)
+                    ):
+                        os.close(child)
+                        raise BuildError(error_message)
+                    bindings.append(
+                        (
+                            directory_descriptor,
+                            part,
+                            child,
+                            _stat_metadata(child_opened),
+                        )
+                    )
+                    open_directories.append(child)
+                    directory_descriptor = child
+                parent_before = os.fstat(directory_descriptor)
+                validate_directory(parent_before)
+                leaf = pure.name
+                before = os.stat(
+                    leaf,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                if entry.mode == "120000":
+                    if not stat.S_ISLNK(before.st_mode) or before.st_uid != os.geteuid():
+                        raise BuildError(error_message)
+                    payload = os.fsencode(os.readlink(leaf, dir_fd=directory_descriptor))
+                    payload_chunks: Sequence[bytes] = (payload,)
+                    payload_size = len(payload)
+                    total_size += len(payload)
+                    after = os.stat(
+                        leaf,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if _stat_metadata(after) != _stat_metadata(before):
+                        raise BuildError(error_message)
+                else:
+                    expected_mode = 0o755 if entry.mode == "100755" else 0o644
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or stat.S_ISLNK(before.st_mode)
+                        or before.st_uid != os.geteuid()
+                        or before.st_nlink != 1
+                        or before.st_size > MAX_SOURCE_SNAPSHOT_FILE_BYTES
+                        or stat.S_IMODE(before.st_mode) != expected_mode
+                    ):
+                        raise BuildError(error_message)
+                    total_size += before.st_size
+                    descriptor = os.open(
+                        leaf,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=directory_descriptor,
+                    )
+                    try:
+                        opened = os.fstat(descriptor)
+                        if _stat_metadata(opened) != _stat_metadata(before):
+                            raise BuildError(error_message)
+                        chunks: list[bytes] = []
+                        remaining = opened.st_size
+                        while remaining:
+                            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+                            if not chunk:
+                                raise BuildError(error_message)
+                            chunks.append(chunk)
+                            remaining -= len(chunk)
+                        if os.read(descriptor, 1):
+                            raise BuildError(error_message)
+                        after = os.fstat(descriptor)
+                        relative_after = os.stat(
+                            leaf,
+                            dir_fd=directory_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (
+                            _stat_metadata(after) != _stat_metadata(opened)
+                            or _stat_metadata(relative_after) != _stat_metadata(opened)
+                        ):
+                            raise BuildError(error_message)
+                        payload_chunks = chunks
+                        payload_size = opened.st_size
+                    finally:
+                        os.close(descriptor)
+                if total_size > MAX_SOURCE_SNAPSHOT_TOTAL_BYTES:
+                    raise BuildError(error_message)
+                if _git_blob_digest(payload_size, payload_chunks) != entry.object_id:
+                    raise BuildError(error_message)
+                if _stat_metadata(os.fstat(directory_descriptor)) != _stat_metadata(
+                    parent_before
+                ):
+                    raise BuildError(error_message)
+                for parent, name, child, expected_child in reversed(bindings):
+                    if (
+                        _stat_metadata(os.fstat(child)) != expected_child
+                        or _stat_metadata(
+                            os.stat(
+                                name,
+                                dir_fd=parent,
+                                follow_symlinks=False,
+                            )
+                        )
+                        != expected_child
+                    ):
+                        raise BuildError(error_message)
+                if (
+                    _stat_metadata(os.fstat(root_descriptor))
+                    != _stat_metadata(root_opened)
+                    or _stat_metadata(repository_root.lstat())
+                    != _stat_metadata(root_opened)
+                ):
+                    raise BuildError(error_message)
+            finally:
+                close_error: OSError | None = None
+                for descriptor in reversed(open_directories):
+                    try:
+                        os.close(descriptor)
+                    except OSError as exc:
+                        close_error = close_error or exc
+                if close_error is not None and sys.exception() is None:
+                    raise BuildError(error_message) from close_error
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        if root_descriptor is not None:
+            try:
+                os.close(root_descriptor)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise BuildError(error_message) from exc
+
+
+def _validate_repository_state(
+    environment: Mapping[str, str],
+    *,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> dict[str, Any]:
+    repository_commit = _selected_source_commit(environment)
+    repository_tree = _selected_source_tree(environment)
+    error_message = "Git provenance repository capability is unsafe"
+    repository_descriptor: int | None = None
+    repository_binding: _DirectorySnapshot | None = None
+    git_descriptor: int | None = None
+    git_identity: tuple[Any, ...] | None = None
+    try:
+        repository_descriptor = os.open(
+            repository_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        repository_binding = _capture_bound_directory(
+            repository_descriptor,
+            repository_root,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if (
+            repository_binding.gid != os.getegid()
+            or stat.S_IMODE(repository_binding.mode) & 0o022
+        ):
+            raise BuildError(error_message)
+        git_descriptor = os.open(
+            ".git",
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=repository_descriptor,
+        )
+        held_git = os.fstat(git_descriptor)
+        relative_git = os.stat(
+            ".git",
+            dir_fd=repository_descriptor,
+            follow_symlinks=False,
+        )
+        path_git = (repository_root / ".git").lstat()
+        git_identity = _stat_metadata(held_git)
+        if (
+            not stat.S_ISDIR(held_git.st_mode)
+            or stat.S_ISLNK(relative_git.st_mode)
+            or git_identity != _stat_metadata(relative_git)
+            or git_identity != _stat_metadata(path_git)
+            or held_git.st_uid != os.geteuid()
+            or held_git.st_gid != os.getegid()
+            or stat.S_IMODE(held_git.st_mode) & 0o022
+        ):
+            raise BuildError(error_message)
+        _validate_local_git_configuration(
+            repository_root=repository_root,
+            repository_descriptor=repository_descriptor,
+            git_descriptor=git_descriptor,
+        )
+        _validate_git_info_overrides(repository_root=repository_root)
+
+        def git_output(*arguments: str) -> str:
+            return _git_output(
+                *arguments,
+                repository_root=repository_root,
+                repository_descriptor=repository_descriptor,
+                git_descriptor=git_descriptor,
+            )
+
+        if (
+            git_output("rev-parse", "HEAD").lower() != repository_commit
+            or git_output("rev-parse", "HEAD^{tree}").lower()
+            != repository_tree
+            or git_output(
+                "rev-parse",
+                f"{repository_commit}^{{tree}}",
+            ).lower()
+            != repository_tree
+        ):
+            raise BuildError(
+                "Selected Git commit/tree does not identify the checkout"
+            )
+        inventory = _repository_tree_inventory(
+            repository_commit,
+            repository_root=repository_root,
+            repository_descriptor=repository_descriptor,
+            git_descriptor=git_descriptor,
+        )
+        _validate_git_index(
+            inventory,
+            repository_root=repository_root,
+            repository_descriptor=repository_descriptor,
+            git_descriptor=git_descriptor,
+        )
+        _validate_tracked_worktree(
+            inventory,
+            repository_root=repository_root,
+            repository_descriptor=repository_descriptor,
+        )
+        if git_output(
+            "status",
+            "--porcelain=v2",
+            "--untracked-files=all",
+        ):
+            raise BuildError("Source changes must be committed before packaging")
+        if git_output("submodule", "status", "--recursive"):
+            # Exact snapshot materialization intentionally has no implicit
+            # submodule network or secondary-checkout contract.
+            raise BuildError(
+                "Git submodules are not supported by the exact source snapshot"
+            )
+        source_date_epoch = int(
+            git_output("show", "-s", "--format=%ct", "HEAD")
+        )
+        repository_after = _capture_bound_directory(
+            repository_descriptor,
+            repository_root,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=repository_binding,
+            expected_mode=None,
+            exact_entries=repository_binding.entries,
+            error_message=error_message,
+        )
+        if repository_after != repository_binding:
+            raise BuildError(error_message)
+        return {
+            "repositoryCommit": repository_commit,
+            "repositoryTree": repository_tree,
+            "sourceSnapshotSha256": _source_snapshot_sha256(inventory),
+            "sourceInventory": inventory,
+            "sourceDateEpoch": source_date_epoch,
+        }
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        active_error = sys.exception()
+        binding_error: BaseException | None = None
+        if repository_descriptor is not None and repository_binding is not None:
+            try:
+                repository_after = _capture_bound_directory(
+                    repository_descriptor,
+                    repository_root,
+                    parent_descriptor=None,
+                    relative_name=None,
+                    expected=repository_binding,
+                    expected_mode=None,
+                    exact_entries=repository_binding.entries,
+                    error_message=error_message,
+                )
+                if repository_after != repository_binding:
+                    raise BuildError(error_message)
+                if git_descriptor is not None and git_identity is not None:
+                    if (
+                        _stat_metadata(os.fstat(git_descriptor)) != git_identity
+                        or _stat_metadata(
+                            os.stat(
+                                ".git",
+                                dir_fd=repository_descriptor,
+                                follow_symlinks=False,
+                            )
+                        )
+                        != git_identity
+                        or _stat_metadata((repository_root / ".git").lstat())
+                        != git_identity
+                    ):
+                        raise BuildError(error_message)
+            except BaseException as exc:
+                binding_error = exc
+        if git_descriptor is not None:
+            try:
+                os.close(git_descriptor)
+            except OSError as exc:
+                binding_error = binding_error or exc
+        if repository_descriptor is not None:
+            try:
+                os.close(repository_descriptor)
+            except OSError as exc:
+                binding_error = binding_error or exc
+        if binding_error is not None:
+            raise BuildError(error_message) from (active_error or binding_error)
 
 
 def validate_release_environment(
@@ -710,21 +3205,15 @@ def validate_release_environment(
     ) not in {"0", ""}:
         raise BuildError("Python sidecar must not build under Rosetta")
 
-    repository_commit = environment["GITHUB_SHA"].lower()
-    if (
-        re.fullmatch(r"[0-9a-f]{40}", repository_commit) is None
-        or _git_output("rev-parse", "HEAD").lower() != repository_commit
-    ):
-        raise BuildError("GITHUB_SHA does not identify the checked-out source")
-    if _git_output("status", "--porcelain", "--untracked-files=all"):
-        raise BuildError("Source changes must be committed before packaging")
+    repository_state = _validate_repository_state(environment)
+    repository_commit = str(repository_state["repositoryCommit"])
     try:
         source_epoch = int(environment["LCF_SOURCE_DATE_EPOCH"])
     except ValueError as exc:
         raise BuildError("LCF_SOURCE_DATE_EPOCH must be an integer") from exc
     if (
         source_epoch < 100_000_000
-        or int(_git_output("show", "-s", "--format=%ct", "HEAD")) != source_epoch
+        or repository_state.get("sourceDateEpoch") != source_epoch
     ):
         raise BuildError("SOURCE_DATE_EPOCH differs from the source commit timestamp")
 
@@ -747,10 +3236,13 @@ def validate_release_environment(
     if re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,2}", sdk_version) is None:
         raise BuildError("macOS SDK version output is malformed")
     install_root = Path(environment["LCF_PYTHON_INSTALL_ROOT"])
-    if install_root != Path(str(_mapping(toolchain.get("python")).get("installRoot"))):
+    locked_python = _mapping(toolchain.get("python"), "toolchain Python")
+    if install_root != Path(str(locked_python.get("installRoot"))):
         raise BuildError("LCF_PYTHON_INSTALL_ROOT differs from the reviewed lock")
     return {
         "repositoryCommit": repository_commit,
+        "repositoryTree": repository_state["repositoryTree"],
+        "sourceSnapshotSha256": repository_state["sourceSnapshotSha256"],
         "sourceDateEpoch": source_epoch,
         "runnerImage": target.get("runnerLabel"),
         "runnerImageVersion": runner_version,
@@ -761,12 +3253,15 @@ def validate_release_environment(
 
 
 def verify_repository_provenance(release: Mapping[str, Any]) -> None:
+    environment = {
+        "LCF_SOURCE_SHA": str(release.get("repositoryCommit", "")),
+        "LCF_SOURCE_TREE": str(release.get("repositoryTree", "")),
+    }
+    state = _validate_repository_state(environment)
     if (
-        _git_output("rev-parse", "HEAD").lower()
-        != release.get("repositoryCommit")
-        or _git_output("status", "--porcelain", "--untracked-files=all")
-        or int(_git_output("show", "-s", "--format=%ct", "HEAD"))
-        != release.get("sourceDateEpoch")
+        state.get("sourceSnapshotSha256")
+        != release.get("sourceSnapshotSha256")
+        or state.get("sourceDateEpoch") != release.get("sourceDateEpoch")
     ):
         raise BuildError("Repository provenance changed during packaging")
 
@@ -881,31 +3376,250 @@ def verify_runtime_dependencies(expected: Mapping[str, str]) -> None:
             raise BuildError(f"Installed runtime dependency {name} differs from uv.lock")
 
 
-def verify_uv_lock(uv_executable: Path) -> None:
+def _uv_lock_failure_category(stderr: str) -> str:
+    """Return a stable, non-sensitive category for uv lock failures."""
+
+    normalized = stderr.lower()
+    if (
+        re.search(
+            r"(?:lockfile|lock file)[^\n]{0,200}needs to be updated",
+            normalized,
+        )
+        or "no `uv.lock` found" in normalized
+        or "uv.lock is missing" in normalized
+    ):
+        return "lock-drift"
+    if any(
+        marker in normalized
+        for marker in (
+            "no interpreter found",
+            "python interpreter was not found",
+            "no python installation found",
+        )
+    ):
+        return "interpreter-unavailable"
+    if any(
+        marker in normalized
+        for marker in (
+            "network was disabled",
+            "not found in the cache",
+            "offline mode",
+        )
+    ):
+        return "offline-resolution"
+    if "unexpected argument" in normalized or "usage: uv lock" in normalized:
+        return "cli-contract"
+    return "unclassified"
+
+
+def verify_uv_lock(
+    uv_executable: Path,
+    *,
+    backend_root: Path,
+    cache_directory: Path,
+    cache_parent_descriptor: int | None = None,
+    cache_descriptor: int | None = None,
+    cache_snapshot: _DirectorySnapshot | None = None,
+    source_descriptor: int | None = None,
+) -> None:
     if not uv_executable.is_absolute():
         raise BuildError("uv executable path must be absolute")
+    active_python = Path(sys.executable)
+    if not active_python.is_absolute():
+        raise BuildError("Build venv Python path must be absolute")
+    backend_descriptor: int | None = None
+    backend_identity: tuple[int, ...] | None = None
+    captured_cache: _DirectorySnapshot | None = None
     try:
+        uv_path_info = uv_executable.lstat()
         resolved = uv_executable.resolve(strict=True)
         info = resolved.lstat()
-    except OSError as exc:
+        uv_bin = uv_executable.parent.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
         raise BuildError("uv executable is missing") from exc
-    if not stat.S_ISREG(info.st_mode) or not (stat.S_IMODE(info.st_mode) & 0o111):
+    try:
+        active_info = active_python.lstat()
+        resolved_python = active_python.resolve(strict=True)
+        resolved_python_info = resolved_python.lstat()
+        python_bin = active_python.parent.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise BuildError("Build venv Python is missing") from exc
+    if (
+        not stat.S_ISREG(uv_path_info.st_mode)
+        or stat.S_ISLNK(uv_path_info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or not (stat.S_IMODE(info.st_mode) & 0o111)
+    ):
         raise BuildError("uv executable is not a regular executable")
-    with tempfile.TemporaryDirectory(prefix="lcf-uv-lock-cache-") as cache:
-        _run_checked(
-            (str(resolved), "lock", "--check"),
-            cwd=BACKEND_ROOT,
-            env={
+    if (
+        uv_bin != python_bin
+        or (
+            not stat.S_ISREG(active_info.st_mode)
+            and not stat.S_ISLNK(active_info.st_mode)
+        )
+        or not stat.S_ISREG(resolved_python_info.st_mode)
+        or not (stat.S_IMODE(resolved_python_info.st_mode) & 0o111)
+    ):
+        raise BuildError("uv and Python must come from the same build venv")
+    active_cache_descriptor = cache_descriptor
+    owns_cache_descriptor = False
+    try:
+        if source_descriptor is not None:
+            try:
+                held_source = os.fstat(source_descriptor)
+                source_path = backend_root.parent
+                path_source = source_path.lstat()
+                if (
+                    not source_path.is_absolute()
+                    or backend_root != source_path / "backend"
+                    or stat.S_ISLNK(path_source.st_mode)
+                    or _stat_metadata(held_source) != _stat_metadata(path_source)
+                ):
+                    raise BuildError("uv source capability is unavailable")
+                backend_descriptor = os.open(
+                    "backend",
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    dir_fd=source_descriptor,
+                )
+                held_backend = os.fstat(backend_descriptor)
+                relative_backend = os.stat(
+                    "backend",
+                    dir_fd=source_descriptor,
+                    follow_symlinks=False,
+                )
+                path_backend = backend_root.lstat()
+                backend_identity = _stat_metadata(held_backend)
+                if (
+                    not stat.S_ISDIR(held_backend.st_mode)
+                    or backend_identity != _stat_metadata(relative_backend)
+                    or backend_identity != _stat_metadata(path_backend)
+                    or held_backend.st_uid != os.geteuid()
+                    or stat.S_IMODE(held_backend.st_mode) & 0o022
+                ):
+                    raise BuildError("uv source capability is unavailable")
+            except BuildError:
+                raise
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise BuildError("uv source capability is unavailable") from exc
+        if active_cache_descriptor is None:
+            active_cache_descriptor = os.open(
+                cache_directory,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            owns_cache_descriptor = True
+        elif cache_snapshot is None:
+            raise BuildError("uv cache capability is unsafe")
+        captured_cache = _capture_bound_directory(
+            active_cache_descriptor,
+            cache_directory,
+            parent_descriptor=cache_parent_descriptor,
+            relative_name=(
+                cache_directory.name
+                if cache_parent_descriptor is not None
+                else None
+            ),
+            expected=cache_snapshot,
+            expected_mode=0o700,
+            exact_entries=(),
+            error_message="uv cache capability is unsafe",
+        )
+        command = (
+            str(resolved),
+            "lock",
+            "--check",
+            "--no-cache",
+            "--python",
+            str(resolved_python),
+        )
+        if backend_descriptor is None:
+            raise BuildError("uv source capability is unavailable")
+        completed = _run_owned_command(
+            command,
+            cwd=backend_root,
+            cwd_descriptor=backend_descriptor,
+            environment={
                 "PATH": "/usr/bin:/bin",
                 "LANG": "C",
                 "LC_ALL": "C",
-                "UV_CACHE_DIR": cache,
+                "UV_NO_CONFIG": "1",
                 "UV_NO_PROGRESS": "1",
                 "UV_OFFLINE": "1",
                 "UV_PYTHON_DOWNLOADS": "never",
             },
             timeout=180,
             label="uv lock check",
+            launcher_python=resolved_python,
+        )
+    except BuildError:
+        raise
+    except OSError as exc:
+        raise BuildError("uv lock check could not start") from exc
+    finally:
+        active_error = sys.exception()
+        capability_error: BaseException | None = None
+        if backend_descriptor is not None and backend_identity is not None:
+            try:
+                if (
+                    backend_identity
+                    != _stat_metadata(os.fstat(backend_descriptor))
+                    or backend_identity != _stat_metadata(backend_root.lstat())
+                    or source_descriptor is None
+                    or backend_identity
+                    != _stat_metadata(
+                        os.stat(
+                            "backend",
+                            dir_fd=source_descriptor,
+                            follow_symlinks=False,
+                        )
+                    )
+                ):
+                    raise BuildError(
+                        "uv source capability changed during lock verification"
+                    )
+            except BaseException as exc:
+                capability_error = exc
+        if active_cache_descriptor is not None and captured_cache is not None:
+            try:
+                _capture_bound_directory(
+                    active_cache_descriptor,
+                    cache_directory,
+                    parent_descriptor=cache_parent_descriptor,
+                    relative_name=(
+                        cache_directory.name
+                        if cache_parent_descriptor is not None
+                        else None
+                    ),
+                    expected=captured_cache,
+                    expected_mode=0o700,
+                    exact_entries=None,
+                    error_message=(
+                        "uv cache capability changed during lock verification"
+                    ),
+                )
+            except BaseException as exc:
+                capability_error = capability_error or exc
+        if backend_descriptor is not None:
+            try:
+                os.close(backend_descriptor)
+            except OSError as exc:
+                capability_error = capability_error or exc
+        if owns_cache_descriptor and active_cache_descriptor is not None:
+            try:
+                os.close(active_cache_descriptor)
+            except OSError as exc:
+                capability_error = capability_error or exc
+        if capability_error is not None:
+            raise BuildError(
+                "uv capability could not be verified after lock verification"
+            ) from (active_error or capability_error)
+    if completed.returncode != 0:
+        category = _uv_lock_failure_category(completed.stderr)
+        raise BuildError(
+            "uv lock check failed "
+            f"(exit={completed.returncode}; category={category})"
         )
 
 
@@ -914,9 +3628,11 @@ def _sanitize_text(
     *,
     build_root: Path,
     install_root: Path,
+    source_root: Path,
 ) -> str:
     replacements = [
         (str(REPOSITORY_ROOT), "$REPOSITORY_ROOT"),
+        (str(source_root), "$SOURCE_SNAPSHOT"),
         (str(build_root), "$BUILD_ROOT"),
         (str(install_root), "$PYTHON_INSTALL_ROOT"),
     ]
@@ -925,9 +3641,417 @@ def _sanitize_text(
         sanitized = sanitized.replace(raw, replacement)
     # A CI evidence file must not retain a runner home/workspace path even if a
     # tool printed a path we did not anticipate above.
-    if re.search(r"/Users/runner/|/Users/[^/\s]+/work/", sanitized):
+    sensitive_path = (
+        r"/(?:Users/[^/\s]+|private|var/folders|workspace|tmp)"
+        r"/[^\s\"'<>]*"
+    )
+    sanitized = re.sub(sensitive_path, "$REDACTED_PATH", sanitized)
+    if re.search(sensitive_path, sanitized):
         raise BuildError("PyInstaller evidence contains an unsanitized runner path")
     return sanitized
+
+
+def _read_held_evidence_tree(
+    evidence: _EvidenceCapability,
+    *,
+    expected_tree: tuple[tuple[Any, ...], ...],
+    expected_content: tuple[tuple[str, str], ...] | None,
+    error_message: str,
+) -> tuple[dict[str, bytes], tuple[tuple[str, str], ...]]:
+    """Read a sealed evidence tree only through its held directory fd.
+
+    Every leaf is opened descriptor-relative and matched to the metadata that
+    was sealed before it is read.  A pathname replacement of the evidence root
+    therefore cannot affect either allowlist validation or the bundled copy.
+    """
+
+    expected: dict[str, tuple[Any, ...]] = {}
+    for record in expected_tree:
+        if (
+            len(record) != 11
+            or not isinstance(record[0], str)
+            or record[0] in expected
+        ):
+            raise BuildError(error_message)
+        expected[record[0]] = record
+    expected_digests = dict(expected_content or ())
+    files: dict[str, bytes] = {}
+    observed: set[str] = set()
+    directories = 0
+    total_size = 0
+
+    def visit(directory_descriptor: int, prefix: str, depth: int) -> None:
+        nonlocal directories, total_size
+        if depth > 128:
+            raise BuildError(error_message)
+        try:
+            names = tuple(sorted(os.listdir(directory_descriptor)))
+        except OSError as exc:
+            raise BuildError(error_message) from exc
+        for name in names:
+            if not name or "/" in name or "\x00" in name:
+                raise BuildError(error_message)
+            relative = f"{prefix}/{name}" if prefix else name
+            record = expected.get(relative)
+            if record is None or relative in observed:
+                raise BuildError(error_message)
+            observed.add(relative)
+            try:
+                before = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise BuildError(error_message) from exc
+            if tuple(record[1:10]) != _stat_metadata(before) or record[10] is not None:
+                raise BuildError(error_message)
+            if stat.S_ISDIR(before.st_mode) and not stat.S_ISLNK(before.st_mode):
+                directories += 1
+                if (
+                    directories > MAX_EVIDENCE_DIRECTORIES
+                    or stat.S_IMODE(before.st_mode) & 0o022
+                ):
+                    raise BuildError(error_message)
+                child_descriptor: int | None = None
+                try:
+                    child_descriptor = os.open(
+                        name,
+                        os.O_RDONLY
+                        | os.O_DIRECTORY
+                        | os.O_NOFOLLOW
+                        | os.O_CLOEXEC,
+                        dir_fd=directory_descriptor,
+                    )
+                    opened = os.fstat(child_descriptor)
+                    if _stat_metadata(opened) != _stat_metadata(before):
+                        raise BuildError(error_message)
+                    visit(child_descriptor, relative, depth + 1)
+                    after = os.fstat(child_descriptor)
+                    relative_after = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stat_metadata(after) != _stat_metadata(opened)
+                        or _stat_metadata(relative_after) != _stat_metadata(opened)
+                    ):
+                        raise BuildError(error_message)
+                except BuildError:
+                    raise
+                except OSError as exc:
+                    raise BuildError(error_message) from exc
+                finally:
+                    if child_descriptor is not None:
+                        try:
+                            os.close(child_descriptor)
+                        except OSError as exc:
+                            raise BuildError(error_message) from exc
+                continue
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or stat.S_ISLNK(before.st_mode)
+                or before.st_nlink != 1
+                or before.st_size <= 0
+                or before.st_size > MAX_EVIDENCE_FILE_BYTES
+                or stat.S_IMODE(before.st_mode) & 0o022
+            ):
+                raise BuildError(error_message)
+            total_size += before.st_size
+            if (
+                len(files) >= MAX_EVIDENCE_FILES
+                or total_size > MAX_EVIDENCE_TOTAL_BYTES
+            ):
+                raise BuildError(error_message)
+            file_descriptor: int | None = None
+            try:
+                file_descriptor = os.open(
+                    name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=directory_descriptor,
+                )
+                opened = os.fstat(file_descriptor)
+                relative_opened = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    _stat_metadata(opened) != _stat_metadata(before)
+                    or _stat_metadata(relative_opened) != _stat_metadata(before)
+                ):
+                    raise BuildError(error_message)
+                raw = bytearray()
+                while len(raw) < opened.st_size:
+                    chunk = os.read(
+                        file_descriptor,
+                        min(1024 * 1024, opened.st_size - len(raw)),
+                    )
+                    if not chunk:
+                        raise BuildError(error_message)
+                    raw.extend(chunk)
+                if os.read(file_descriptor, 1):
+                    raise BuildError(error_message)
+                after = os.fstat(file_descriptor)
+                relative_after = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    _stat_metadata(after) != _stat_metadata(opened)
+                    or _stat_metadata(relative_after) != _stat_metadata(opened)
+                ):
+                    raise BuildError(error_message)
+            except BuildError:
+                raise
+            except OSError as exc:
+                raise BuildError(error_message) from exc
+            finally:
+                if file_descriptor is not None:
+                    try:
+                        os.close(file_descriptor)
+                    except OSError as exc:
+                        raise BuildError(error_message) from exc
+            payload = bytes(raw)
+            digest = hashlib.sha256(payload).hexdigest()
+            if expected_content is not None and expected_digests.get(relative) != digest:
+                raise BuildError(error_message)
+            files[relative] = payload
+
+    try:
+        if evidence.closed:
+            raise BuildError(error_message)
+        visit(evidence.descriptor, "", 0)
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+    if (
+        observed != set(expected)
+        or not 1 <= len(files) <= MAX_EVIDENCE_FILES
+        or (
+            expected_content is not None
+            and set(files) != set(expected_digests)
+        )
+    ):
+        raise BuildError(error_message)
+    content = tuple(
+        (relative, hashlib.sha256(payload).hexdigest())
+        for relative, payload in sorted(files.items())
+    )
+    return files, content
+
+
+def _create_failure_evidence_capability(
+    scratch: _ScratchCapability,
+) -> _EvidenceCapability:
+    """Create and bind evidence before any producer writes through its name."""
+
+    error_message = "Sanitized PyInstaller evidence capability could not be created"
+    if scratch.evidence is not None or scratch.closed or scratch.poisoned:
+        raise _CleanupBlockedError(error_message)
+    _validate_source_snapshot(scratch)
+    _refresh_scratch_capability(scratch)
+    path = scratch.build_root / "evidence"
+    descriptor: int | None = None
+    snapshot: _DirectorySnapshot | None = None
+    evidence: _EvidenceCapability | None = None
+    initial_parent_snapshot = scratch.build_root_snapshot
+    attempted = False
+    try:
+        # A pending signal cannot land between first bind and owner
+        # registration.  The outer transaction covers the helper's nested
+        # deferral, scratch.evidence transfer, and the post-bind validation.
+        with _defer_publish_signals():
+            attempted = True
+            descriptor, snapshot = _create_bound_child_directory(
+                parent_descriptor=scratch.build_root_descriptor,
+                parent_path=scratch.build_root,
+                name="evidence",
+                mode=0o700,
+                error_message=error_message,
+            )
+            attempted = False
+            evidence = _EvidenceCapability(
+                path=path,
+                name="evidence",
+                parent_descriptor=scratch.build_root_descriptor,
+                descriptor=descriptor,
+                snapshot=snapshot,
+                tree_snapshot=(),
+                content_snapshot=(),
+            )
+            scratch.evidence = evidence
+            scratch.build_root_snapshot = _capture_bound_directory(
+                scratch.build_root_descriptor,
+                scratch.build_root,
+                parent_descriptor=scratch.scratch_parent_descriptor,
+                relative_name=scratch.build_root_name,
+                expected=scratch.build_root_snapshot,
+                expected_mode=0o700,
+                exact_entries=None,
+                error_message=error_message,
+            )
+            _validate_source_snapshot(scratch)
+        return evidence
+    except BaseException as exc:
+        ambiguous = False
+        if attempted:
+            try:
+                os.stat(
+                    "evidence",
+                    dir_fd=scratch.build_root_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            except OSError:
+                ambiguous = True
+            else:
+                ambiguous = True
+        active_descriptor = (
+            evidence.descriptor if evidence is not None else descriptor
+        )
+        active_snapshot = evidence.snapshot if evidence is not None else snapshot
+        cleanup_failed = ambiguous
+        if active_descriptor is not None and active_snapshot is not None:
+            try:
+                with _defer_publish_signals(preserve_error=exc):
+                    _rollback_bound_directory(
+                        parent_descriptor=scratch.build_root_descriptor,
+                        parent_path=scratch.build_root,
+                        name="evidence",
+                        descriptor=active_descriptor,
+                        snapshot=active_snapshot,
+                        error_message=error_message,
+                    )
+                    os.close(active_descriptor)
+                    if evidence is not None:
+                        evidence.closed = True
+                    scratch.evidence = None
+                    scratch.build_root_snapshot = _capture_bound_directory(
+                        scratch.build_root_descriptor,
+                        scratch.build_root,
+                        parent_descriptor=scratch.scratch_parent_descriptor,
+                        relative_name=scratch.build_root_name,
+                        expected=initial_parent_snapshot,
+                        expected_mode=0o700,
+                        exact_entries=initial_parent_snapshot.entries,
+                        error_message=error_message,
+                    )
+            except BaseException:
+                cleanup_failed = True
+        elif active_descriptor is not None:
+            try:
+                os.close(active_descriptor)
+            except OSError:
+                cleanup_failed = True
+        if cleanup_failed:
+            scratch.poisoned = True
+            raise _CleanupBlockedError(error_message) from exc
+        scratch.poisoned = False
+        raise
+
+
+def _seal_failure_evidence_capability(
+    scratch: _ScratchCapability,
+) -> _EvidenceCapability:
+    """Freeze evidence tree metadata after proving source and scratch binding."""
+
+    error_message = "Sanitized PyInstaller evidence capability changed"
+    evidence = scratch.evidence
+    if evidence is None or evidence.closed or scratch.poisoned:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message)
+    try:
+        _validate_source_snapshot(scratch)
+        _refresh_scratch_capability(scratch)
+        before = _capture_bound_directory(
+            evidence.descriptor,
+            evidence.path,
+            parent_descriptor=evidence.parent_descriptor,
+            relative_name=evidence.name,
+            expected=evidence.snapshot,
+            expected_mode=0o700,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        tree = _tree_metadata_snapshot(
+            evidence.descriptor,
+            error_message=error_message,
+        )
+        _files, content = _read_held_evidence_tree(
+            evidence,
+            expected_tree=tree,
+            expected_content=None,
+            error_message=error_message,
+        )
+        after = _capture_bound_directory(
+            evidence.descriptor,
+            evidence.path,
+            parent_descriptor=evidence.parent_descriptor,
+            relative_name=evidence.name,
+            expected=before,
+            expected_mode=0o700,
+            exact_entries=before.entries,
+            error_message=error_message,
+        )
+        if before != after:
+            raise _CapabilityDriftError(error_message)
+        evidence.snapshot = after
+        evidence.tree_snapshot = tree
+        evidence.content_snapshot = content
+        _validate_source_snapshot(scratch)
+        return evidence
+    except BaseException as exc:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message) from exc
+
+
+def _revalidate_failure_evidence_capability(
+    scratch: _ScratchCapability,
+    *,
+    error_message: str,
+) -> _EvidenceCapability:
+    evidence = scratch.evidence
+    if evidence is None or evidence.closed or scratch.poisoned:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message)
+    try:
+        _validate_source_snapshot(scratch)
+        _refresh_scratch_capability(scratch)
+        current = _capture_bound_directory(
+            evidence.descriptor,
+            evidence.path,
+            parent_descriptor=evidence.parent_descriptor,
+            relative_name=evidence.name,
+            expected=evidence.snapshot,
+            expected_mode=0o700,
+            exact_entries=evidence.snapshot.entries,
+            error_message=error_message,
+        )
+        if (
+            current != evidence.snapshot
+            or _tree_metadata_snapshot(
+                evidence.descriptor,
+                error_message=error_message,
+            )
+            != evidence.tree_snapshot
+        ):
+            raise _CapabilityDriftError(error_message)
+        _read_held_evidence_tree(
+            evidence,
+            expected_tree=evidence.tree_snapshot,
+            expected_content=evidence.content_snapshot,
+            error_message=error_message,
+        )
+        _validate_source_snapshot(scratch)
+        return evidence
+    except BaseException as exc:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message) from exc
 
 
 def _collect_pyinstaller_evidence(
@@ -937,43 +4061,79 @@ def _collect_pyinstaller_evidence(
     destination: Path,
     build_root: Path,
     install_root: Path,
-) -> None:
-    destination.mkdir(parents=True, exist_ok=False)
-    (destination / "pyinstaller.log").write_text(
-        _sanitize_text(
-            log_text,
-            build_root=build_root,
-            install_root=install_root,
-        ),
-        encoding="utf-8",
+    source_root: Path,
+    scratch: _ScratchCapability | None = None,
+) -> _EvidenceCapability | None:
+    evidence = (
+        _create_failure_evidence_capability(scratch)
+        if scratch is not None
+        else None
     )
-    if not work_root.exists():
-        return
-    for source in sorted(work_root.rglob("*")):
-        if (
-            not source.is_file()
-            or source.is_symlink()
-            or source.suffix.lower() not in {".txt", ".html", ".toc"}
-        ):
-            continue
-        info = source.stat()
-        if info.st_size > 16 * 1024 * 1024:
-            raise BuildError("PyInstaller evidence file exceeds its size bound")
-        relative = source.relative_to(work_root)
-        target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            raw = source.read_text(encoding="utf-8", errors="strict")
-        except (OSError, UnicodeDecodeError) as exc:
-            raise BuildError("PyInstaller evidence must be UTF-8 text") from exc
-        target.write_text(
+    if evidence is not None and destination != evidence.path:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(
+            "Sanitized PyInstaller evidence destination is not capability-bound"
+        )
+    if evidence is None:
+        destination.mkdir(parents=True, exist_ok=False)
+
+    primary_error: BaseException | None = None
+    try:
+        (destination / "pyinstaller.log").write_text(
             _sanitize_text(
-                raw,
+                log_text,
                 build_root=build_root,
                 install_root=install_root,
+                source_root=source_root,
             ),
             encoding="utf-8",
         )
+        if work_root.exists():
+            for source in sorted(work_root.rglob("*")):
+                if (
+                    not source.is_file()
+                    or source.is_symlink()
+                    or source.suffix.lower() != ".txt"
+                    or not source.name.startswith("warn-")
+                ):
+                    continue
+                info = source.stat()
+                if info.st_size > 16 * 1024 * 1024:
+                    raise BuildError(
+                        "PyInstaller evidence file exceeds its size bound"
+                    )
+                relative = source.relative_to(work_root)
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    raw = source.read_text(encoding="utf-8", errors="strict")
+                except (OSError, UnicodeDecodeError) as exc:
+                    raise BuildError(
+                        "PyInstaller evidence must be UTF-8 text"
+                    ) from exc
+                target.write_text(
+                    _sanitize_text(
+                        raw,
+                        build_root=build_root,
+                        install_root=install_root,
+                        source_root=source_root,
+                    ),
+                    encoding="utf-8",
+                )
+    except BaseException as exc:
+        primary_error = exc
+    if scratch is not None:
+        try:
+            evidence = _seal_failure_evidence_capability(scratch)
+        except BaseException as binding_error:
+            if primary_error is not None:
+                raise _CleanupBlockedError(
+                    "Sanitized PyInstaller evidence collection lost its capability"
+                ) from primary_error
+            raise binding_error
+    if primary_error is not None:
+        raise primary_error
+    return evidence
 
 
 def _warn_file(evidence: Path) -> Path:
@@ -983,44 +4143,1108 @@ def _warn_file(evidence: Path) -> Path:
     return matches[0]
 
 
-def validate_missing_imports(
-    warning_file: Path,
+def _validate_missing_import_text(
+    warning_text: str,
     *,
     allowlist_path: Path = MISSING_IMPORTS_ALLOWLIST,
+    toolchain_path: Path = TOOLCHAIN_LOCK,
 ) -> set[str]:
     allowlist = _load_json(allowlist_path, "Missing-import allowlist")
-    if allowlist.get("schemaVersion") != 1:
+    if set(allowlist) != {
+        "schemaVersion",
+        "target",
+        "pyinstallerVersion",
+        "pyinstallerHooksContribVersion",
+        "modules",
+    } or allowlist.get("schemaVersion") != 2:
         raise BuildError("Missing-import allowlist schema is unsupported")
+    toolchain = _load_json(toolchain_path, "Python toolchain lock")
+    target = _mapping(toolchain.get("target"), "toolchain target")
+    python = _mapping(toolchain.get("python"), "Python toolchain entry")
+    tools = _mapping(toolchain.get("tools"), "toolchain tools")
+    if allowlist.get("target") != {
+        "os": target.get("os"),
+        "architecture": target.get("architecture"),
+        "pythonVersion": python.get("version"),
+    }:
+        raise BuildError("Missing-import allowlist target differs from the toolchain")
+    if (
+        allowlist.get("pyinstallerVersion") != tools.get("pyinstaller")
+        or allowlist.get("pyinstallerHooksContribVersion")
+        != tools.get("pyinstallerHooksContrib")
+    ):
+        raise BuildError("Missing-import allowlist tool versions differ from the toolchain")
     modules = allowlist.get("modules")
     if not isinstance(modules, Mapping) or not all(
-        isinstance(name, str) and isinstance(reason, str) and reason
+        isinstance(name, str)
+        and SAFE_MISSING_IMPORT_NAME_PATTERN.fullmatch(name)
+        and isinstance(reason, str)
+        and reason
         for name, reason in modules.items()
     ):
         raise BuildError("Missing-import allowlist is malformed")
-    try:
-        lines = warning_file.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError) as exc:
-        raise BuildError("PyInstaller warning file is unreadable") from exc
+    lines = warning_text.splitlines()
     observed: set[str] = set()
     for line in lines:
         match = EXPECTED_MISSING_IMPORT_PATTERN.match(line.strip())
         if match:
-            observed.add(match.group(1))
+            module = match.group(1)
+            if not SAFE_MISSING_IMPORT_NAME_PATTERN.fullmatch(module):
+                raise BuildError(
+                    "PyInstaller warning evidence contains a malformed module name"
+                )
+            observed.add(module)
+            if len(observed) > 256:
+                raise BuildError("PyInstaller warning evidence exceeds its module bound")
     unexpected = observed - set(modules)
-    if unexpected:
-        raise BuildError("PyInstaller reported a non-allowlisted missing import")
+    missing = set(modules) - observed
+    if unexpected or missing:
+        def safe_names(values: set[str]) -> str:
+            names = ",".join(sorted(values))
+            if len(names) <= 2048:
+                return names
+            return "sha256:" + hashlib.sha256(names.encode("ascii")).hexdigest()
+
+        differences = []
+        if unexpected:
+            differences.append(f"unexpected={safe_names(unexpected)}")
+        if missing:
+            differences.append(f"missing={safe_names(missing)}")
+        raise BuildError(
+            "PyInstaller missing-import inventory differs from the reviewed target "
+            f"(observed={len(observed)}; reviewed={len(modules)}; "
+            + "; ".join(differences)
+            + ")"
+        )
     return observed
+
+
+def validate_missing_imports(
+    warning_file: Path,
+    *,
+    allowlist_path: Path = MISSING_IMPORTS_ALLOWLIST,
+    toolchain_path: Path = TOOLCHAIN_LOCK,
+) -> set[str]:
+    """Validate a standalone warning path for non-capability callers/tests."""
+
+    try:
+        warning_text = warning_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise BuildError("PyInstaller warning file is unreadable") from exc
+    return _validate_missing_import_text(
+        warning_text,
+        allowlist_path=allowlist_path,
+        toolchain_path=toolchain_path,
+    )
+
+
+def _consume_failure_evidence(
+    scratch: _ScratchCapability,
+    evidence: _EvidenceCapability,
+    *,
+    error_message: str,
+) -> dict[str, bytes]:
+    """Return sealed evidence bytes without rediscovering its pathname."""
+
+    if scratch.evidence is not evidence:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message)
+    try:
+        held = _revalidate_failure_evidence_capability(
+            scratch,
+            error_message=error_message,
+        )
+        files, _content = _read_held_evidence_tree(
+            held,
+            expected_tree=held.tree_snapshot,
+            expected_content=held.content_snapshot,
+            error_message=error_message,
+        )
+        _revalidate_failure_evidence_capability(
+            scratch,
+            error_message=error_message,
+        )
+        return files
+    except BaseException as exc:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message) from exc
+
+
+def _copy_evidence_bytes_to_bundle(
+    files: Mapping[str, bytes],
+    destination: Path,
+) -> None:
+    """Create a private evidence copy from already-held immutable bytes."""
+
+    error_message = "Bundled PyInstaller evidence could not be materialized"
+    descriptor: int | None = None
+    try:
+        destination.mkdir(mode=0o700)
+        descriptor = os.open(
+            destination,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        directory_descriptors: dict[str, int] = {"": descriptor}
+        try:
+            directories = sorted(
+                {
+                    parent.as_posix()
+                    for relative in files
+                    for parent in PurePosixPath(relative).parents
+                    if parent.as_posix() != "."
+                },
+                key=lambda value: (len(PurePosixPath(value).parts), value),
+            )
+            for relative in directories:
+                pure = PurePosixPath(relative)
+                parent = pure.parent.as_posix()
+                if parent == ".":
+                    parent = ""
+                os.mkdir(
+                    pure.name,
+                    mode=0o700,
+                    dir_fd=directory_descriptors[parent],
+                )
+                child = os.open(
+                    pure.name,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    dir_fd=directory_descriptors[parent],
+                )
+                directory_descriptors[relative] = child
+            for relative, payload in sorted(files.items()):
+                pure = PurePosixPath(relative)
+                if (
+                    pure.is_absolute()
+                    or pure.as_posix() != relative
+                    or any(part in {"", ".", ".."} for part in pure.parts)
+                ):
+                    raise BuildError(error_message)
+                parent = pure.parent.as_posix()
+                if parent == ".":
+                    parent = ""
+                file_descriptor = os.open(
+                    pure.name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=directory_descriptors[parent],
+                )
+                try:
+                    remaining = memoryview(payload)
+                    while remaining:
+                        written = os.write(file_descriptor, remaining)
+                        if written <= 0:
+                            raise BuildError(error_message)
+                        remaining = remaining[written:]
+                    os.fsync(file_descriptor)
+                    if os.fstat(file_descriptor).st_size != len(payload):
+                        raise BuildError(error_message)
+                finally:
+                    os.close(file_descriptor)
+        finally:
+            for relative, child in sorted(
+                directory_descriptors.items(),
+                key=lambda item: len(PurePosixPath(item[0]).parts),
+                reverse=True,
+            ):
+                if relative:
+                    os.close(child)
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise BuildError(error_message) from exc
+
+
+def _bundle_capability_path(bundle: _BundleCapability) -> Path:
+    error_message = "Python sidecar bundle capability is unavailable"
+    if bundle.closed:
+        raise _CleanupBlockedError(error_message)
+    path = Path("/dev/fd") / str(bundle.descriptor)
+    probe: int | None = None
+    try:
+        held = os.fstat(bundle.descriptor)
+        observed = os.stat(path)
+        probe = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        opened = os.fstat(probe)
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or _stable_directory_identity(held)
+            != _stable_directory_identity(bundle.snapshot)
+            or _stable_directory_identity(observed)
+            != _stable_directory_identity(held)
+            or _stable_directory_identity(opened)
+            != _stable_directory_identity(held)
+        ):
+            raise _CleanupBlockedError(error_message)
+        return path
+    except _CleanupBlockedError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise _CleanupBlockedError(error_message) from exc
+    finally:
+        if probe is not None:
+            try:
+                os.close(probe)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise _CleanupBlockedError(error_message) from exc
+
+
+def _create_bundle_capability(
+    scratch: _ScratchCapability,
+    *,
+    dist_root: Path,
+    dist_descriptor: int,
+    dist_snapshot: _DirectorySnapshot,
+    descriptor: int,
+    created_snapshot: _DirectorySnapshot,
+) -> _BundleCapability:
+    """Bind PyInstaller's output before any build consumer inspects it."""
+
+    error_message = "PyInstaller bundle capability could not be acquired"
+    try:
+        if scratch.bundle is not None or scratch.poisoned or scratch.closed:
+            raise _CleanupBlockedError(error_message)
+        _validate_source_snapshot(scratch)
+        _refresh_scratch_capability(scratch)
+        parent_snapshot = _capture_bound_directory(
+            dist_descriptor,
+            dist_root,
+            parent_descriptor=scratch.build_root_descriptor,
+            relative_name="dist",
+            expected=dist_snapshot,
+            expected_mode=0o700,
+            exact_entries=("lcf-service",),
+            error_message=error_message,
+        )
+        path = dist_root / "lcf-service"
+        snapshot = _capture_bound_directory(
+            descriptor,
+            path,
+            parent_descriptor=dist_descriptor,
+            relative_name="lcf-service",
+            expected=created_snapshot,
+            expected_mode=0o700,
+            exact_entries=(),
+            error_message=error_message,
+        )
+        if stat.S_IMODE(snapshot.mode) & 0o022:
+            raise _CleanupBlockedError(error_message)
+        tree = _tree_metadata_snapshot(descriptor, error_message=error_message)
+        bundle = _BundleCapability(
+            path=path,
+            name="lcf-service",
+            parent_path=dist_root,
+            parent_name="dist",
+            parent_descriptor=dist_descriptor,
+            parent_snapshot=parent_snapshot,
+            descriptor=descriptor,
+            snapshot=snapshot,
+            tree_snapshot=tree,
+        )
+        _bundle_capability_path(bundle)
+        _validate_source_snapshot(scratch)
+        # Ownership transfers only after every fallible acquisition check.
+        # Before this assignment the caller remains the sole fd owner.
+        scratch.bundle = bundle
+        return bundle
+    except BaseException as exc:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message) from exc
+
+
+def _validate_bundle_capability(
+    scratch: _ScratchCapability,
+    *,
+    accept_tree_changes: bool = False,
+    error_message: str = "Python sidecar bundle capability changed",
+) -> Path:
+    """Validate or intentionally advance one held candidate-tree snapshot."""
+
+    bundle = scratch.bundle
+    if bundle is None or bundle.closed or scratch.poisoned or scratch.closed:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message)
+    try:
+        _validate_source_snapshot(scratch)
+        _refresh_scratch_capability(scratch)
+        parent = _capture_bound_directory(
+            bundle.parent_descriptor,
+            bundle.parent_path,
+            parent_descriptor=scratch.build_root_descriptor,
+            relative_name=bundle.parent_name,
+            expected=bundle.parent_snapshot,
+            expected_mode=0o700,
+            exact_entries=(bundle.name,),
+            error_message=error_message,
+        )
+        current = _capture_bound_directory(
+            bundle.descriptor,
+            bundle.path,
+            parent_descriptor=bundle.parent_descriptor,
+            relative_name=bundle.name,
+            expected=bundle.snapshot,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        tree = _tree_metadata_snapshot(
+            bundle.descriptor,
+            error_message=error_message,
+        )
+        if not accept_tree_changes and (
+            parent != bundle.parent_snapshot
+            or current != bundle.snapshot
+            or tree != bundle.tree_snapshot
+        ):
+            raise _CapabilityDriftError(error_message)
+        bundle.parent_snapshot = parent
+        bundle.snapshot = current
+        bundle.tree_snapshot = tree
+        _validate_source_snapshot(scratch)
+        return _bundle_capability_path(bundle)
+    except BaseException as exc:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message) from exc
+
+
+def _verify_held_bundle_tree(
+    bundle: _BundleCapability,
+    *,
+    error_message: str,
+) -> Path:
+    """Verify the sealed candidate through its fd, independent of its name."""
+
+    try:
+        path = _bundle_capability_path(bundle)
+        if (
+            _stable_directory_identity(os.fstat(bundle.descriptor))
+            != _stable_directory_identity(bundle.snapshot)
+            or _tree_metadata_snapshot(
+                bundle.descriptor,
+                error_message=error_message,
+            )
+            != bundle.tree_snapshot
+        ):
+            raise _CapabilityDriftError(error_message)
+        return path
+    except BaseException as exc:
+        raise _CleanupBlockedError(error_message) from exc
+
+
+def _verify_held_bundle_candidate(
+    bundle: _BundleCapability,
+    candidate: Path,
+    *,
+    error_message: str,
+) -> Path:
+    """Bind the current publish name to the held, sealed bundle tree."""
+
+    descriptor: int | None = None
+    try:
+        _verify_held_bundle_tree(bundle, error_message=error_message)
+        if not candidate.is_absolute() or ".." in candidate.parts:
+            raise _CapabilityDriftError(error_message)
+        named = candidate.lstat()
+        descriptor = os.open(
+            candidate,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        opened = os.fstat(descriptor)
+        held = os.fstat(bundle.descriptor)
+        expected_identity = _stable_directory_identity(bundle.snapshot)
+        if (
+            stat.S_ISLNK(named.st_mode)
+            or not stat.S_ISDIR(named.st_mode)
+            or not stat.S_ISDIR(opened.st_mode)
+            or _stable_directory_identity(held) != expected_identity
+            or _stable_directory_identity(named) != expected_identity
+            or _stable_directory_identity(opened) != expected_identity
+            or _tree_metadata_snapshot(
+                descriptor,
+                error_message=error_message,
+            )
+            != bundle.tree_snapshot
+        ):
+            raise _CapabilityDriftError(error_message)
+        return candidate
+    except _CleanupBlockedError:
+        raise
+    except BaseException as exc:
+        raise _CleanupBlockedError(error_message) from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise _CleanupBlockedError(error_message) from exc
+
+
+def _close_published_bundle_capability(scratch: _ScratchCapability) -> None:
+    bundle = scratch.bundle
+    if bundle is None or bundle.closed:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(
+            "Published Python sidecar bundle capability is unavailable"
+        )
+    failed = False
+    for descriptor in (bundle.descriptor, bundle.parent_descriptor):
+        try:
+            os.close(descriptor)
+        except OSError:
+            failed = True
+    bundle.closed = True
+    scratch.bundle = None
+    if failed:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(
+            "Published Python sidecar bundle capability cleanup failed"
+        )
+
+
+def _run_pyinstaller_command(
+    *,
+    active_python: Path,
+    source_root: Path,
+    source_descriptor: int,
+    bundle_descriptor: int,
+    dist_descriptor: int,
+    work_descriptor: int,
+    config_descriptor: int,
+    temp_descriptor: int,
+    dist_root: Path,
+    work_root: Path,
+    config_root: Path,
+    temp_root: Path,
+    environment: Mapping[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Exec PyInstaller in an owned session with every root inherited."""
+
+    error_message = "PyInstaller directory capability is unavailable"
+    roots = (
+        (source_descriptor, source_root),
+        (bundle_descriptor, dist_root / "lcf-service"),
+        (dist_descriptor, dist_root),
+        (work_descriptor, work_root),
+        (config_descriptor, config_root),
+        (temp_descriptor, temp_root),
+    )
+
+    def revalidate_roots() -> None:
+        for descriptor, root in roots:
+            observed = root.lstat()
+            probe = os.open(
+                root,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC,
+            )
+            try:
+                opened = os.fstat(probe)
+                held = os.fstat(descriptor)
+                if (
+                    stat.S_ISLNK(observed.st_mode)
+                    or _stable_directory_identity(observed)
+                    != _stable_directory_identity(held)
+                    or _stable_directory_identity(opened)
+                    != _stable_directory_identity(held)
+                ):
+                    raise BuildError(error_message)
+            finally:
+                os.close(probe)
+
+    try:
+        revalidate_roots()
+        if (
+            environment.get("PYINSTALLER_CONFIG_DIR") != str(config_root)
+            or environment.get("TMPDIR") != str(temp_root)
+        ):
+            raise BuildError(error_message)
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+    arguments = (
+        str(active_python),
+        "-I",
+        "-c",
+        PYINSTALLER_CAPABILITY_RUNNER,
+        str(source_descriptor),
+        str(bundle_descriptor),
+        str(dist_descriptor),
+        str(work_descriptor),
+        str(config_descriptor),
+        str(temp_descriptor),
+        str(source_root),
+        str(dist_root / "lcf-service"),
+        str(dist_root),
+        str(work_root),
+        str(config_root),
+        str(temp_root),
+        "--noconfirm",
+        "--clean",
+        "--distpath",
+        str(dist_root),
+        "--workpath",
+        str(work_root),
+        str(source_root / "backend" / "packaging" / "lcf_sidecar.spec"),
+    )
+    source_cwd_descriptor: int | None = None
+    result: subprocess.CompletedProcess[str] | None = None
+    primary_error: BaseException | None = None
+    try:
+        source_cwd_descriptor = os.dup(source_descriptor)
+        result = _run_owned_command(
+            arguments,
+            cwd=source_root,
+            cwd_descriptor=source_cwd_descriptor,
+            environment=environment,
+            timeout=1800,
+            label="PyInstaller",
+            pass_fds=tuple(descriptor for descriptor, _root in roots),
+            launcher_python=active_python,
+        )
+    except BaseException as exc:
+        primary_error = exc
+
+    postcheck_error: BaseException | None = None
+    try:
+        revalidate_roots()
+    except BaseException as exc:
+        postcheck_error = exc
+    if source_cwd_descriptor is not None:
+        try:
+            os.close(source_cwd_descriptor)
+        except OSError as exc:
+            postcheck_error = postcheck_error or exc
+    if primary_error is not None:
+        if postcheck_error is not None:
+            raise BuildError(
+                "PyInstaller failed and its directory capabilities changed"
+            ) from primary_error
+        raise primary_error
+    if postcheck_error is not None:
+        raise BuildError(error_message) from postcheck_error
+    if result is None:
+        raise BuildError(error_message)
+    return subprocess.CompletedProcess(
+        arguments,
+        result.returncode,
+        stdout=result.stdout + result.stderr,
+        stderr=None,
+    )
+
+
+def _process_group_exists(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError as exc:
+        raise BuildError("PyInstaller process group state is unavailable") from exc
+    return True
+
+
+def _terminate_pyinstaller_process_group(
+    process: subprocess.Popen[str],
+) -> None:
+    """Boundedly stop and reap the isolated PyInstaller process group."""
+
+    _terminate_owned_process_group(
+        process,
+        error_message="PyInstaller process group did not stop",
+    )
+
+
+def _terminate_owned_process_group(
+    process: subprocess.Popen[Any],
+    *,
+    error_message: str,
+) -> None:
+    """Boundedly stop, reap, and prove absence of one owned session."""
+
+    process_group = process.pid
+    for stop_signal, timeout in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
+        try:
+            os.killpg(process_group, stop_signal)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                process.wait(timeout=min(0.1, max(0.01, deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                pass
+            if not _process_group_exists(process_group):
+                try:
+                    process.wait(
+                        timeout=min(0.1, max(0.01, deadline - time.monotonic()))
+                    )
+                except subprocess.TimeoutExpired:
+                    continue
+                if not _process_group_exists(process_group):
+                    return
+            time.sleep(0.01)
+    try:
+        process.wait(timeout=0.1)
+    except subprocess.TimeoutExpired as exc:
+        raise BuildError(error_message) from exc
+    if _process_group_exists(process_group):
+        raise BuildError(error_message)
+
+
+def _rollback_bound_directory(
+    *,
+    parent_descriptor: int,
+    parent_path: Path,
+    name: str,
+    descriptor: int,
+    snapshot: _DirectorySnapshot,
+    error_message: str,
+) -> None:
+    """Remove one fully-bound owned directory without trusting its pathname."""
+
+    path = parent_path / name
+    try:
+        current = _capture_bound_directory(
+            descriptor,
+            path,
+            parent_descriptor=parent_descriptor,
+            relative_name=name,
+            expected=snapshot,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if _stable_directory_identity(current) != _stable_directory_identity(snapshot):
+            raise _CleanupBlockedError(error_message)
+        _remove_tree_contents(descriptor, error_message=error_message)
+        empty = _capture_bound_directory(
+            descriptor,
+            path,
+            parent_descriptor=parent_descriptor,
+            relative_name=name,
+            expected=current,
+            expected_mode=None,
+            exact_entries=(),
+            error_message=error_message,
+        )
+        quarantine = f".lcf-acquisition-{secrets.token_hex(16)}"
+        _rename_noreplace_at(
+            parent_descriptor,
+            name,
+            parent_descriptor,
+            quarantine,
+        )
+        quarantined = os.stat(
+            quarantine,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if _stable_directory_identity(quarantined) != _stable_directory_identity(empty):
+            try:
+                _rename_noreplace_at(
+                    parent_descriptor,
+                    quarantine,
+                    parent_descriptor,
+                    name,
+                )
+            except BaseException as restore_error:
+                raise _CleanupBlockedError(error_message) from restore_error
+            raise _CleanupBlockedError(error_message)
+        _remove_verified_quarantine_leaf(
+            parent_descriptor,
+            original_name=name,
+            quarantine_name=quarantine,
+            expected=quarantined,
+            directory=True,
+            error_message=error_message,
+        )
+    except _CleanupBlockedError:
+        raise
+    except BaseException as exc:
+        raise _CleanupBlockedError(error_message) from exc
+
+
+def _rollback_pyinstaller_acquisition(
+    scratch: _ScratchCapability,
+    *,
+    initial_parent_snapshot: _DirectorySnapshot,
+    directory_descriptors: Mapping[str, int],
+    directory_snapshots: Mapping[str, _DirectorySnapshot],
+    bundle_capability: _BundleCapability | None,
+    pending_bundle_descriptor: int | None,
+    pending_bundle_snapshot: _DirectorySnapshot | None,
+    ambiguous_name: str | None,
+) -> None:
+    """Rollback every fully-bound acquisition; retain ambiguous namespace state."""
+
+    error_message = "PyInstaller capability acquisition cleanup failed"
+    bundle_descriptor_to_close = (
+        bundle_capability.descriptor
+        if bundle_capability is not None
+        else pending_bundle_descriptor
+    )
+    descriptors_to_close: list[int] = []
+    if bundle_descriptor_to_close is not None:
+        descriptors_to_close.append(bundle_descriptor_to_close)
+    for name in ("tmp", "pyinstaller-config", "work", "dist"):
+        descriptor = directory_descriptors.get(name)
+        if descriptor is not None and descriptor not in descriptors_to_close:
+            descriptors_to_close.append(descriptor)
+    failed = ambiguous_name is not None
+    try:
+        active_bundle_descriptor = (
+            bundle_capability.descriptor
+            if bundle_capability is not None
+            else pending_bundle_descriptor
+        )
+        active_bundle_snapshot = (
+            bundle_capability.snapshot
+            if bundle_capability is not None
+            else pending_bundle_snapshot
+        )
+        dist_descriptor = directory_descriptors.get("dist")
+        if (
+            active_bundle_descriptor is not None
+            and active_bundle_snapshot is not None
+            and dist_descriptor is not None
+        ):
+            _rollback_bound_directory(
+                parent_descriptor=dist_descriptor,
+                parent_path=scratch.build_root / "dist",
+                name="lcf-service",
+                descriptor=active_bundle_descriptor,
+                snapshot=active_bundle_snapshot,
+                error_message=error_message,
+            )
+            if bundle_capability is not None:
+                bundle_capability.closed = True
+                scratch.bundle = None
+        elif ambiguous_name == "lcf-service":
+            failed = True
+
+        for name in ("tmp", "pyinstaller-config", "work", "dist"):
+            descriptor = directory_descriptors.get(name)
+            snapshot = directory_snapshots.get(name)
+            if descriptor is None or snapshot is None:
+                continue
+            if ambiguous_name == name or (
+                name == "dist" and ambiguous_name == "lcf-service"
+            ):
+                failed = True
+                continue
+            _rollback_bound_directory(
+                parent_descriptor=scratch.build_root_descriptor,
+                parent_path=scratch.build_root,
+                name=name,
+                descriptor=descriptor,
+                snapshot=snapshot,
+                error_message=error_message,
+            )
+        if not failed:
+            scratch.build_root_snapshot = _capture_bound_directory(
+                scratch.build_root_descriptor,
+                scratch.build_root,
+                parent_descriptor=scratch.scratch_parent_descriptor,
+                relative_name=scratch.build_root_name,
+                expected=initial_parent_snapshot,
+                expected_mode=0o700,
+                exact_entries=initial_parent_snapshot.entries,
+                error_message=error_message,
+            )
+    except BaseException:
+        failed = True
+    close_failed = False
+    for descriptor in descriptors_to_close:
+        try:
+            os.close(descriptor)
+        except OSError:
+            close_failed = True
+    if bundle_capability is not None:
+        bundle_capability.closed = True
+        if scratch.bundle is bundle_capability:
+            scratch.bundle = None
+    if failed or close_failed:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message)
+    scratch.poisoned = False
+
+
+def _prepare_pyinstaller_capabilities(
+    scratch: _ScratchCapability,
+) -> tuple[_BundleCapability, _PyInstallerProducerCapabilities]:
+    """Bind every private producer directory before PyInstaller starts."""
+
+    build_root = scratch.build_root
+    directory_names = ("dist", "work", "pyinstaller-config", "tmp")
+    directory_descriptors: dict[str, int] = {}
+    directory_snapshots: dict[str, _DirectorySnapshot] = {}
+    directory_paths: dict[str, Path] = {}
+    pending_bundle_descriptor: int | None = None
+    pending_bundle_snapshot: _DirectorySnapshot | None = None
+    bundle_capability: _BundleCapability | None = None
+    producer_capabilities: _PyInstallerProducerCapabilities | None = None
+    attempted_name: str | None = None
+    ambiguous_name: str | None = None
+    initial_parent_snapshot = scratch.build_root_snapshot
+    try:
+        # Nested helper deferrals borrow this outer transaction.  Therefore a
+        # signal cannot land between mkdir/open/bind and registration in these
+        # ownership maps, nor between final bundle ownership and return.
+        with _defer_publish_signals():
+            for name in directory_names:
+                attempted_name = name
+                descriptor, snapshot = _create_bound_child_directory(
+                    parent_descriptor=scratch.build_root_descriptor,
+                    parent_path=build_root,
+                    name=name,
+                    mode=0o700,
+                    error_message="PyInstaller work capability is unavailable",
+                )
+                directory_descriptors[name] = descriptor
+                directory_snapshots[name] = snapshot
+                directory_paths[name] = build_root / name
+                attempted_name = None
+            attempted_name = "lcf-service"
+            pending_bundle_descriptor, pending_bundle_snapshot = (
+                _create_bound_child_directory(
+                    parent_descriptor=directory_descriptors["dist"],
+                    parent_path=build_root / "dist",
+                    name="lcf-service",
+                    mode=0o700,
+                    error_message="PyInstaller bundle capability could not be acquired",
+                )
+            )
+            attempted_name = None
+            bundle_capability = _create_bundle_capability(
+                scratch,
+                dist_root=build_root / "dist",
+                dist_descriptor=directory_descriptors["dist"],
+                dist_snapshot=directory_snapshots["dist"],
+                descriptor=pending_bundle_descriptor,
+                created_snapshot=pending_bundle_snapshot,
+            )
+            producer_directories = {
+                name: _ProducerDirectoryCapability(
+                    path=build_root / name,
+                    capability_path=directory_paths[name],
+                    name=name,
+                    descriptor=directory_descriptors[name],
+                    snapshot=directory_snapshots[name],
+                    tree_snapshot=(),
+                )
+                for name in ("work", "pyinstaller-config", "tmp")
+            }
+            producer_capabilities = _PyInstallerProducerCapabilities(
+                parent_snapshot=scratch.build_root_snapshot,
+                directories=producer_directories,
+            )
+        if bundle_capability is None or producer_capabilities is None:
+            raise AssertionError("PyInstaller capability transfer is incomplete")
+        return bundle_capability, producer_capabilities
+    except BaseException as exc:
+        if attempted_name is not None:
+            parent_descriptor = (
+                directory_descriptors.get("dist")
+                if attempted_name == "lcf-service"
+                else scratch.build_root_descriptor
+            )
+            if parent_descriptor is not None:
+                try:
+                    os.stat(
+                        attempted_name,
+                        dir_fd=parent_descriptor,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    ambiguous_name = attempted_name
+                else:
+                    ambiguous_name = attempted_name
+        try:
+            with _defer_publish_signals(preserve_error=exc):
+                _rollback_pyinstaller_acquisition(
+                    scratch,
+                    initial_parent_snapshot=initial_parent_snapshot,
+                    directory_descriptors=directory_descriptors,
+                    directory_snapshots=directory_snapshots,
+                    bundle_capability=bundle_capability,
+                    pending_bundle_descriptor=(
+                        None
+                        if bundle_capability is not None
+                        else pending_bundle_descriptor
+                    ),
+                    pending_bundle_snapshot=(
+                        None
+                        if bundle_capability is not None
+                        else pending_bundle_snapshot
+                    ),
+                    ambiguous_name=ambiguous_name,
+                )
+        except BaseException as cleanup_error:
+            raise _CleanupBlockedError(
+                "PyInstaller capability acquisition cleanup failed"
+            ) from cleanup_error
+        raise
+
+
+def _revalidate_pyinstaller_producer_capabilities(
+    scratch: _ScratchCapability,
+    capabilities: _PyInstallerProducerCapabilities,
+    *,
+    accept_tree_changes: bool,
+    accept_parent_metadata_change: bool = False,
+    expected_parent_entries: tuple[str, ...] | None = None,
+    error_message: str,
+) -> None:
+    """Rebind every producer name and either seal or verify its tree."""
+
+    if capabilities.closed or scratch.poisoned or scratch.closed:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message)
+    try:
+        parent = _capture_bound_directory(
+            scratch.build_root_descriptor,
+            scratch.build_root,
+            parent_descriptor=scratch.scratch_parent_descriptor,
+            relative_name=scratch.build_root_name,
+            expected=capabilities.parent_snapshot,
+            expected_mode=0o700,
+            exact_entries=(
+                capabilities.parent_snapshot.entries
+                if expected_parent_entries is None
+                else expected_parent_entries
+            ),
+            error_message=error_message,
+        )
+        if (
+            _stable_directory_identity(parent)
+            != _stable_directory_identity(capabilities.parent_snapshot)
+            or (
+                not accept_parent_metadata_change
+                and parent != capabilities.parent_snapshot
+            )
+        ):
+            raise _CapabilityDriftError(error_message)
+        observed: dict[
+            str,
+            tuple[_DirectorySnapshot, tuple[tuple[Any, ...], ...]],
+        ] = {}
+        for name, capability in sorted(capabilities.directories.items()):
+            current = _capture_bound_directory(
+                capability.descriptor,
+                capability.path,
+                parent_descriptor=scratch.build_root_descriptor,
+                relative_name=capability.name,
+                expected=capability.snapshot,
+                expected_mode=0o700,
+                exact_entries=(
+                    None if accept_tree_changes else capability.snapshot.entries
+                ),
+                error_message=error_message,
+            )
+            tree = _tree_metadata_snapshot(
+                capability.descriptor,
+                error_message=error_message,
+            )
+            if (
+                _stable_directory_identity(current)
+                != _stable_directory_identity(capability.snapshot)
+                or (
+                    not accept_tree_changes
+                    and (
+                        current != capability.snapshot
+                        or tree != capability.tree_snapshot
+                    )
+                )
+            ):
+                raise _CapabilityDriftError(error_message)
+            expected_capability_path = capability.path
+            probe: int | None = None
+            try:
+                probe = os.open(
+                    expected_capability_path,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                )
+                probed = os.fstat(probe)
+            finally:
+                if probe is not None:
+                    os.close(probe)
+            if (
+                capability.capability_path != expected_capability_path
+                or _stable_directory_identity(probed)
+                != _stable_directory_identity(current)
+            ):
+                raise _CapabilityDriftError(error_message)
+            observed[name] = (current, tree)
+        capabilities.parent_snapshot = parent
+        scratch.build_root_snapshot = parent
+        for name, (current, tree) in observed.items():
+            capabilities.directories[name].snapshot = current
+            capabilities.directories[name].tree_snapshot = tree
+        _validate_source_snapshot(scratch)
+    except BaseException as exc:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(error_message) from exc
+
+
+def _close_pyinstaller_producer_capabilities(
+    scratch: _ScratchCapability,
+    capabilities: _PyInstallerProducerCapabilities,
+) -> None:
+    failed = False
+    if capabilities.closed:
+        scratch.poisoned = True
+        return
+    for capability in capabilities.directories.values():
+        try:
+            os.close(capability.descriptor)
+        except OSError:
+            failed = True
+    capabilities.closed = True
+    if failed:
+        scratch.poisoned = True
 
 
 def run_pyinstaller(
     *,
-    build_root: Path,
+    scratch: _ScratchCapability,
     install_root: Path,
     source_date_epoch: int,
     deployment_target: str,
-) -> tuple[Path, Path]:
+    source_root: Path,
+) -> tuple[_BundleCapability, _EvidenceCapability]:
     """Run PyInstaller with a minimal deterministic environment."""
 
+    build_root = scratch.build_root
+    source_descriptor = scratch.source_snapshot_descriptor
+    if (
+        source_descriptor is None
+        or scratch.source_snapshot is None
+        or source_root != scratch.source_snapshot
+    ):
+        raise BuildError("PyInstaller source capability is unavailable")
+    _validate_source_snapshot(scratch)
     active_python = Path(sys.executable)
     try:
         executable_info = active_python.lstat()
@@ -1042,73 +5266,196 @@ def run_pyinstaller(
     ):
         raise BuildError("PyInstaller must run through the reviewed build venv")
 
-    dist_root = build_root / "dist"
-    work_root = build_root / "work"
-    config_root = build_root / "pyinstaller-config"
-    temp_root = build_root / "tmp"
-    for directory in (dist_root, work_root, config_root, temp_root):
-        directory.mkdir(mode=0o700)
-    environment = {
-        "PATH": "/usr/bin:/bin",
-        "LANG": "C",
-        "LC_ALL": "C",
-        "PYTHONHASHSEED": "0",
-        "PYTHONNOUSERSITE": "1",
-        "SOURCE_DATE_EPOCH": str(source_date_epoch),
-        "MACOSX_DEPLOYMENT_TARGET": deployment_target,
-        "PYINSTALLER_CONFIG_DIR": str(config_root),
-        "TMPDIR": str(temp_root),
-    }
-    arguments = (
-        str(active_python),
-        "-I",
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--clean",
-        "--distpath",
-        str(dist_root),
-        "--workpath",
-        str(work_root),
-        str(SPEC_FILE),
-    )
+    bundle_capability: _BundleCapability | None = None
+    producer_capabilities: _PyInstallerProducerCapabilities | None = None
+    command_error: BaseException | None = None
     try:
-        completed = subprocess.run(
-            arguments,
-            cwd=REPOSITORY_ROOT,
-            env=environment,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=1800,
+        # The caller owns the CALL -> UNPACK/STORE handoff.  The acquisition
+        # helper cannot protect the bytecode window after its RETURN_VALUE.
+        with _defer_publish_signals():
+            bundle_capability, producer_capabilities = (
+                _prepare_pyinstaller_capabilities(scratch)
+            )
+        dist_root = bundle_capability.parent_path
+        work_root = producer_capabilities.directories["work"].capability_path
+        config_root = producer_capabilities.directories[
+            "pyinstaller-config"
+        ].capability_path
+        temp_root = producer_capabilities.directories["tmp"].capability_path
+        environment = {
+            "PATH": "/usr/bin:/bin",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PYTHONHASHSEED": "0",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "SOURCE_DATE_EPOCH": str(source_date_epoch),
+            "MACOSX_DEPLOYMENT_TARGET": deployment_target,
+            "PYINSTALLER_CONFIG_DIR": str(config_root),
+            "TMPDIR": str(temp_root),
+        }
+
+        _revalidate_pyinstaller_producer_capabilities(
+            scratch,
+            producer_capabilities,
+            accept_tree_changes=False,
+            error_message="PyInstaller producer capability changed before execution",
+        )
+        completed = _run_pyinstaller_command(
+            active_python=active_python,
+            source_root=source_root,
+            source_descriptor=source_descriptor,
+            bundle_descriptor=bundle_capability.descriptor,
+            dist_descriptor=bundle_capability.parent_descriptor,
+            work_descriptor=producer_capabilities.directories[
+                "work"
+            ].descriptor,
+            config_descriptor=producer_capabilities.directories[
+                "pyinstaller-config"
+            ].descriptor,
+            temp_descriptor=producer_capabilities.directories["tmp"].descriptor,
+            dist_root=dist_root,
+            work_root=work_root,
+            config_root=config_root,
+            temp_root=temp_root,
+            environment=environment,
         )
         log_text = completed.stdout
     except (OSError, subprocess.TimeoutExpired) as exc:
         log_text = f"PyInstaller invocation failed: {type(exc).__name__}\n"
         completed = None
-    evidence = build_root / "evidence"
-    _collect_pyinstaller_evidence(
-        work_root=work_root,
-        log_text=log_text,
-        destination=evidence,
-        build_root=build_root,
-        install_root=install_root,
-    )
-    if completed is None or completed.returncode != 0:
-        raise BuildError("PyInstaller build failed; sanitized evidence was retained")
-    validate_missing_imports(_warn_file(evidence))
-    bundle = dist_root / "lcf-service"
-    executable = bundle / "lcf-service"
-    if (
-        not bundle.is_dir()
-        or bundle.is_symlink()
-        or not executable.is_file()
-        or executable.is_symlink()
-    ):
-        raise BuildError("PyInstaller did not produce the reviewed onedir shape")
-    shutil.copytree(evidence, bundle / "_build-evidence", symlinks=True)
-    return bundle, evidence
+    except BaseException as exc:
+        log_text = "PyInstaller invocation was interrupted\n"
+        completed = None
+        command_error = exc
+    try:
+        if bundle_capability is None or producer_capabilities is None:
+            if command_error is not None:
+                raise command_error
+            raise BuildError("PyInstaller capabilities are unavailable")
+        _revalidate_pyinstaller_producer_capabilities(
+            scratch,
+            producer_capabilities,
+            accept_tree_changes=True,
+            error_message="PyInstaller producer capability changed during execution",
+        )
+        _validate_bundle_capability(
+            scratch,
+            accept_tree_changes=True,
+            error_message="PyInstaller bundle changed during producer assembly",
+        )
+    except BaseException:
+        if producer_capabilities is not None:
+            _close_pyinstaller_producer_capabilities(
+                scratch,
+                producer_capabilities,
+            )
+        raise
+    if command_error is not None:
+        if producer_capabilities is not None:
+            _close_pyinstaller_producer_capabilities(
+                scratch,
+                producer_capabilities,
+            )
+        raise command_error
+    try:
+        evidence = build_root / "evidence"
+        evidence_capability = _collect_pyinstaller_evidence(
+            work_root=work_root,
+            log_text=log_text,
+            destination=evidence,
+            build_root=build_root,
+            install_root=install_root,
+            source_root=source_root,
+            scratch=scratch,
+        )
+        expected_parent_entries = tuple(
+            sorted((*producer_capabilities.parent_snapshot.entries, "evidence"))
+        )
+        _revalidate_pyinstaller_producer_capabilities(
+            scratch,
+            producer_capabilities,
+            accept_tree_changes=False,
+            accept_parent_metadata_change=True,
+            expected_parent_entries=expected_parent_entries,
+            error_message="PyInstaller producer capability changed during evidence collection",
+        )
+        if evidence_capability is None:
+            raise BuildError("PyInstaller evidence capability is unavailable")
+        if completed is None or completed.returncode != 0:
+            raise BuildError("PyInstaller build failed; sanitized evidence was retained")
+        _bundle_capability_path(bundle_capability)
+        bundle = bundle_capability.path
+        evidence_files = _consume_failure_evidence(
+            scratch,
+            evidence_capability,
+            error_message="Sanitized PyInstaller evidence changed before use",
+        )
+        warning_matches = [
+            payload
+            for relative, payload in sorted(evidence_files.items())
+            if PurePosixPath(relative).name.startswith("warn-")
+            and PurePosixPath(relative).name.endswith(".txt")
+        ]
+        if len(warning_matches) != 1:
+            scratch.poisoned = True
+            raise _CleanupBlockedError(
+                "PyInstaller warning evidence is missing or ambiguous"
+            )
+        try:
+            warning_text = warning_matches[0].decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            scratch.poisoned = True
+            raise _CleanupBlockedError(
+                "PyInstaller warning evidence is not UTF-8"
+            ) from exc
+        _validate_missing_import_text(
+            warning_text,
+            allowlist_path=(
+                source_root
+                / "backend"
+                / "packaging"
+                / "missing-imports-allowlist.json"
+            ),
+            toolchain_path=(
+                source_root
+                / "backend"
+                / "packaging"
+                / "python-sidecar-toolchain.lock.json"
+            ),
+        )
+        executable = bundle / "lcf-service"
+        if (
+            not bundle.is_dir()
+            or bundle.is_symlink()
+            or not executable.is_file()
+            or executable.is_symlink()
+        ):
+            raise BuildError("PyInstaller did not produce the reviewed onedir shape")
+        _revalidate_failure_evidence_capability(
+            scratch,
+            error_message="Sanitized PyInstaller evidence changed before bundling",
+        )
+        _copy_evidence_bytes_to_bundle(
+            evidence_files,
+            bundle / "_build-evidence",
+        )
+        _revalidate_failure_evidence_capability(
+            scratch,
+            error_message="Sanitized PyInstaller evidence changed during bundling",
+        )
+        _validate_bundle_capability(
+            scratch,
+            accept_tree_changes=True,
+            error_message="Python sidecar bundle changed during evidence materialization",
+        )
+        return bundle_capability, evidence_capability
+    finally:
+        if producer_capabilities is not None:
+            _close_pyinstaller_producer_capabilities(
+                scratch,
+                producer_capabilities,
+            )
 
 
 def _license_sources(distribution_name: str) -> list[Path]:
@@ -1192,8 +5539,9 @@ def _platform_component(
     license_expression: str,
     notice_name: str,
     bundle: Path,
+    packaging_root: Path,
 ) -> dict[str, Any]:
-    notice = PACKAGING_ROOT / "notices" / notice_name
+    notice = packaging_root / "notices" / notice_name
     return {
         "name": name,
         "version": version,
@@ -1219,8 +5567,13 @@ def build_components(
     bundle: Path,
     runtime_versions: Mapping[str, str],
     build_versions: Mapping[str, str],
+    source_root: Path,
 ) -> list[dict[str, Any]]:
-    policy = _load_json(LICENSE_POLICY, "Python sidecar license policy")
+    packaging_root = source_root / "backend" / "packaging"
+    policy = _load_json(
+        packaging_root / "license-policy.json",
+        "Python sidecar license policy",
+    )
     if policy.get("schemaVersion") != 1:
         raise BuildError("Python sidecar license policy schema is unsupported")
     runtime_policy = _mapping(
@@ -1251,7 +5604,7 @@ def build_components(
     for name, version in sorted(build_versions.items()):
         sources = _license_sources(name)
         if not sources and name == "uv":
-            sources = [PACKAGING_ROOT / "notices" / "uv-NOTICE.txt"]
+            sources = [packaging_root / "notices" / "uv-NOTICE.txt"]
         if not sources:
             raise BuildError(f"Build tool {name} has no license evidence")
         components.append(
@@ -1305,6 +5658,7 @@ def build_components(
                 license_expression=str(platform_policy[name]),
                 notice_name=notice_name,
                 bundle=bundle,
+                packaging_root=packaging_root,
             )
         )
 
@@ -1489,27 +5843,24 @@ def _run_frozen_command(
     arguments: Sequence[str],
     *,
     environment: Mapping[str, str],
+    cwd_descriptor: int,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(
-            (str(executable), *arguments),
-            cwd=executable.parent,
-            env=dict(environment),
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise BuildError("Frozen sidecar command did not complete") from exc
+    return _run_owned_command(
+        (str(executable), *arguments),
+        cwd=executable.parent,
+        cwd_descriptor=cwd_descriptor,
+        environment=environment,
+        timeout=timeout,
+        label="Frozen sidecar command",
+    )
 
 
 def _http_json_over_uds(
     socket_path: Path,
     request_path: str,
     *,
+    check: str,
     token: str,
     launch_id: str,
     method: str = "GET",
@@ -1517,17 +5868,45 @@ def _http_json_over_uds(
     expected_status: int = 200,
     timeout: float = 10.0,
 ) -> Any:
+    if check not in FROZEN_UDS_CHECKS:
+        raise BuildError("Frozen UDS smoke requested an unknown check")
     if method not in {"GET", "POST"}:
         raise BuildError("Frozen UDS smoke requested an unsupported method")
-    serialized = (
-        b""
-        if body is None
-        else json.dumps(
-            body,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
+    if not isinstance(expected_status, int) or not 100 <= expected_status <= 599:
+        raise BuildError("Frozen UDS smoke expected an invalid status")
+    if (
+        not isinstance(request_path, str)
+        or re.fullmatch(
+            r"/api/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]{0,2042}",
+            request_path,
+        )
+        is None
+        or re.fullmatch(r"[A-Za-z0-9_-]{43}", token) is None
+        or re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            launch_id,
+        )
+        is None
+        or not isinstance(timeout, (int, float))
+        or isinstance(timeout, bool)
+        or not 0.1 <= timeout <= 120.0
+    ):
+        raise BuildError(f"Frozen UDS request is invalid (check={check})")
+    try:
+        serialized = (
+            b""
+            if body is None
+            else json.dumps(
+                body,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+    except (TypeError, ValueError, UnicodeEncodeError, RecursionError) as exc:
+        raise BuildError(
+            f"Frozen UDS request cannot be serialized (check={check})"
+        ) from exc
     if len(serialized) > 1024 * 1024:
         raise BuildError("Frozen UDS request exceeds its size bound")
     request_id = str(uuid.uuid4())
@@ -1546,10 +5925,16 @@ def _http_json_over_uds(
     )
     if body is not None:
         headers += "Content-Type: application/json\r\n"
-    request = headers.encode("ascii") + b"\r\n" + serialized
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(timeout)
     try:
+        request = headers.encode("ascii") + b"\r\n" + serialized
+    except UnicodeEncodeError as exc:
+        raise BuildError(
+            f"Frozen UDS request cannot be encoded (check={check})"
+        ) from exc
+    client: socket.socket | None = None
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(timeout)
         client.connect(str(socket_path))
         client.sendall(request)
         response = bytearray()
@@ -1559,25 +5944,63 @@ def _http_json_over_uds(
                 break
             response.extend(chunk)
             if len(response) > 1024 * 1024:
-                raise BuildError("Frozen UDS response exceeds its size bound")
-    except OSError as exc:
-        raise BuildError("Frozen UDS request failed") from exc
+                raise BuildError(
+                    "Frozen UDS response exceeds its size bound "
+                    f"(check={check})"
+                )
+    except (OSError, TypeError, ValueError) as exc:
+        raise BuildError(f"Frozen UDS request failed (check={check})") from exc
     finally:
-        client.close()
+        if client is not None:
+            active_error = sys.exception()
+            try:
+                client.close()
+            except OSError as exc:
+                if active_error is None:
+                    raise BuildError(
+                        f"Frozen UDS request cleanup failed (check={check})"
+                    ) from exc
     try:
         raw_headers, body = bytes(response).split(b"\r\n\r\n", 1)
-        status_line = raw_headers.split(b"\r\n", 1)[0].decode("ascii")
-        status = int(status_line.split(" ", 2)[1])
+        status_parts = raw_headers.split(b"\r\n", 1)[0].split(b" ", 2)
+        if (
+            len(status_parts) != 3
+            or status_parts[0] != b"HTTP/1.1"
+            or re.fullmatch(rb"[0-9]{3}", status_parts[1]) is None
+            or not status_parts[2]
+            or len(status_parts[2]) > 64
+            or any(byte < 0x20 or byte > 0x7E for byte in status_parts[2])
+        ):
+            raise ValueError("noncanonical status line")
+        status = int(status_parts[1].decode("ascii"))
         payload = json.loads(body.decode("utf-8"))
     except (
         ValueError,
         IndexError,
         UnicodeDecodeError,
         json.JSONDecodeError,
+        RecursionError,
     ) as exc:
-        raise BuildError("Frozen UDS response is malformed") from exc
+        raise BuildError(
+            f"Frozen UDS response is malformed (check={check})"
+        ) from exc
+    if not 100 <= status <= 599:
+        raise BuildError(
+            f"Frozen UDS response has an invalid status (check={check})"
+        )
     if status != expected_status or not isinstance(payload, (dict, list)):
-        raise BuildError("Frozen UDS response did not pass")
+        payload_kind = (
+            "object"
+            if isinstance(payload, dict)
+            else "array"
+            if isinstance(payload, list)
+            else "scalar"
+        )
+        raise BuildError(
+            "Frozen UDS response did not pass "
+            f"(check={check}; expected={expected_status}; "
+            f"observed={status}; payload={payload_kind})"
+        )
     return payload
 
 
@@ -1670,7 +6093,7 @@ def _read_smoke_broker_request(
         headers[name] = value
     content_length = headers.get("content-length", "")
     if (
-        not content_length.isdigit()
+        re.fullmatch(r"[0-9]{1,10}", content_length) is None
         or int(content_length) > maximum_body
     ):
         raise BuildError("Frozen smoke broker request length is invalid")
@@ -1684,7 +6107,7 @@ def _read_smoke_broker_request(
         raise BuildError("Frozen smoke broker received trailing request bytes")
     try:
         payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise BuildError("Frozen smoke broker body is not JSON") from exc
     if not isinstance(payload, dict):
         raise BuildError("Frozen smoke broker body is not an object")
@@ -1742,6 +6165,7 @@ def _serve_smoke_broker(
                     deadline = 0
                 current_millis = int(time.time() * 1000)
                 collections = payload.get("collections")
+                embedding = payload.get("embedding")
                 collection_names = (
                     [
                         item["name"]
@@ -1767,7 +6191,7 @@ def _serve_smoke_broker(
                     is None
                     or deadline <= current_millis
                     or deadline > current_millis + 121_000
-                    or set(payload) != {"revision", "collections"}
+                    or set(payload) != {"revision", "collections", "embedding"}
                     or not isinstance(payload["revision"], int)
                     or isinstance(payload["revision"], bool)
                     or payload["revision"] < 0
@@ -1776,6 +6200,7 @@ def _serve_smoke_broker(
                     or len(collections) > MAX_SMOKE_BROKER_COLLECTIONS
                     or len(collection_names) != len(collections)
                     or len(collection_names) != len(set(collection_names))
+                    or embedding != {"mode": "lexical", "profile": None}
                     or not all(
                         isinstance(item, dict)
                         and set(item) == {"name", "wiki_root"}
@@ -1800,6 +6225,13 @@ def _serve_smoke_broker(
                         "unchanged": 0,
                         "removed": 0,
                     },
+                    "embedding": {
+                        "status": "stale",
+                        "profile": None,
+                        "revision": None,
+                        "model_status": "not_requested",
+                        "error": None,
+                    },
                 }
                 serialized = _canonical_json_bytes(response_payload)
                 response = (
@@ -1815,6 +6247,7 @@ def _serve_smoke_broker(
                         "endpoint": endpoint,
                         "revision": payload["revision"],
                         "collections": len(collections),
+                        "embedding": "lexical",
                     }
                 )
             except (BuildError, OSError, TimeoutError):
@@ -1831,22 +6264,2492 @@ def _serve_smoke_broker(
                     pass
 
 
-def _wait_for_socket(socket_path: Path, process: subprocess.Popen[Any]) -> None:
+def _open_frozen_log(log_path: Path) -> tuple[Any, tuple[int, int]]:
+    if not log_path.is_absolute() or not hasattr(os, "O_NOFOLLOW"):
+        raise BuildError("Frozen smoke log cannot be created securely")
+    try:
+        descriptor = os.open(
+            log_path,
+            os.O_RDWR
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_CLOEXEC
+            | os.O_NOFOLLOW,
+            0o600,
+        )
+    except OSError as exc:
+        raise BuildError("Frozen smoke log cannot be created securely") from exc
+    try:
+        handle = os.fdopen(descriptor, "w+b", buffering=0)
+    except BaseException as exc:
+        os.close(descriptor)
+        raise BuildError("Frozen smoke log cannot be opened securely") from exc
+    try:
+        info = os.fstat(handle.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_size != 0
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise BuildError("Frozen smoke log has unsafe metadata")
+    except BaseException:
+        handle.close()
+        raise
+    return handle, (info.st_dev, info.st_ino)
+
+
+def _frozen_log_metadata(info: os.stat_result) -> tuple[int, ...]:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _read_bound_frozen_log(
+    log_handle: Any,
+    log_path: Path,
+    identity: tuple[int, int],
+) -> tuple[str, bytes | None]:
+    try:
+        before = os.fstat(log_handle.fileno())
+        path_before = log_path.lstat()
+        if (
+            (before.st_dev, before.st_ino) != identity
+            or (path_before.st_dev, path_before.st_ino) != identity
+            or _frozen_log_metadata(before) != _frozen_log_metadata(path_before)
+        ):
+            return "log-changed", None
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not stat.S_ISREG(path_before.st_mode)
+            or stat.S_ISLNK(path_before.st_mode)
+            or before.st_uid != os.geteuid()
+            or path_before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or path_before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or stat.S_IMODE(path_before.st_mode) != 0o600
+            or before.st_size > MAX_FROZEN_START_LOG_BYTES
+        ):
+            return "log-unsafe", None
+        os.lseek(log_handle.fileno(), 0, os.SEEK_SET)
+        raw = bytearray()
+        while len(raw) <= MAX_FROZEN_START_LOG_BYTES:
+            chunk = os.read(
+                log_handle.fileno(),
+                min(64 * 1024, MAX_FROZEN_START_LOG_BYTES + 1 - len(raw)),
+            )
+            if not chunk:
+                break
+            raw.extend(chunk)
+        after = os.fstat(log_handle.fileno())
+        path_after = log_path.lstat()
+        if (
+            len(raw) > MAX_FROZEN_START_LOG_BYTES
+            or len(raw) != before.st_size
+            or _frozen_log_metadata(after) != _frozen_log_metadata(before)
+            or _frozen_log_metadata(path_after)
+            != _frozen_log_metadata(path_before)
+            or _frozen_log_metadata(after) != _frozen_log_metadata(path_after)
+        ):
+            return "log-changed", None
+    except (OSError, ValueError):
+        return "log-unavailable", None
+    return "ok", bytes(raw)
+
+
+class _BoundedFrozenLogCollector:
+    """Drain one owned child pipe into the held log without unbounded output."""
+
+    def __init__(self, stream: Any, log_handle: Any) -> None:
+        self._stream = stream
+        self._log_handle = log_handle
+        self._status: str | None = None
+        self._status_lock = threading.Lock()
+        self._thread = threading.Thread(
+            target=self._capture,
+            name="lcf-frozen-log-collector",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        try:
+            self._thread.start()
+        except RuntimeError as exc:
+            self._set_status("log-start")
+            raise BuildError(
+                "Frozen sidecar log capture failed (category=log-start)"
+            ) from exc
+
+    def _set_status(self, status: str) -> None:
+        with self._status_lock:
+            if self._status is None:
+                self._status = status
+
+    def _capture(self) -> None:
+        captured = 0
+        status = "ok"
+        try:
+            source_descriptor = self._stream.fileno()
+            target_descriptor = self._log_handle.fileno()
+            while True:
+                chunk = os.read(source_descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                remaining = MAX_FROZEN_START_LOG_BYTES - captured
+                if len(chunk) > remaining:
+                    if remaining > 0:
+                        view = memoryview(chunk)[:remaining]
+                        while view:
+                            written = os.write(target_descriptor, view)
+                            if written <= 0:
+                                raise OSError(errno.EIO, "bounded log write failed")
+                            view = view[written:]
+                    captured += max(remaining, 0)
+                    status = "log-overflow"
+                    break
+                view = memoryview(chunk)
+                while view:
+                    written = os.write(target_descriptor, view)
+                    if written <= 0:
+                        raise OSError(errno.EIO, "bounded log write failed")
+                    view = view[written:]
+                captured += len(chunk)
+        except OSError:
+            status = "log-io"
+        finally:
+            try:
+                self._stream.close()
+            except OSError:
+                if status == "ok":
+                    status = "log-close"
+            self._set_status(status)
+
+    def assert_healthy(self) -> None:
+        with self._status_lock:
+            status = self._status
+        if status in {None, "ok"}:
+            return
+        if status == "log-overflow":
+            raise BuildError("Frozen sidecar log exceeded its size bound")
+        raise BuildError(
+            f"Frozen sidecar log capture failed (category={status})"
+        )
+
+    def finish(self, *, timeout: float = 5.0) -> None:
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            raise BuildError(
+                "Frozen sidecar log capture failed (category=log-drain-timeout)"
+            )
+        self.assert_healthy()
+
+
+def _frozen_start_failure_category(
+    log_handle: Any,
+    log_path: Path,
+    identity: tuple[int, int],
+) -> str:
+    """Classify a failed frozen start without exposing its captured output."""
+
+    status, raw = _read_bound_frozen_log(log_handle, log_path, identity)
+    if status != "ok" or raw is None:
+        return status
+    if not raw:
+        return "no-output"
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return "log-non-utf8"
+
+    if "ModuleNotFoundError: No module named" in text:
+        return "module-not-found"
+    if "ImportError: cannot import name" in text:
+        return "import-error"
+    if "AttributeError: module" in text and "has no attribute" in text:
+        return "attribute-error"
+    if "lcf-service: desktop transport setup failed" in text:
+        return "desktop-transport"
+    if "Traceback (most recent call last):" in text:
+        return "python-traceback"
+    return "unclassified"
+
+
+def _wait_for_socket(
+    socket_path: Path,
+    process: subprocess.Popen[Any],
+    log_handle: Any,
+    log_path: Path,
+    log_identity: tuple[int, int],
+    *,
+    log_collector: _BoundedFrozenLogCollector | None = None,
+) -> None:
     deadline = time.monotonic() + 30
+    socket_identity: tuple[int, int] | None = None
     while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise BuildError("Frozen sidecar exited before its UDS became ready")
+        if log_collector is not None:
+            log_collector.assert_healthy()
+        return_code = process.poll()
+        if return_code is not None:
+            if log_collector is not None:
+                log_collector.finish()
+            category = _frozen_start_failure_category(
+                log_handle,
+                log_path,
+                log_identity,
+            )
+            raise BuildError(
+                "Frozen sidecar exited before its UDS became ready "
+                f"(exit={return_code}; category={category})"
+            )
         try:
             info = socket_path.lstat()
         except FileNotFoundError:
-            time.sleep(0.05)
+            if socket_identity is not None:
+                raise BuildError(
+                    "Frozen sidecar socket changed during readiness"
+                )
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
             continue
         except OSError as exc:
             raise BuildError("Frozen sidecar socket cannot be inspected") from exc
-        if stat.S_ISSOCK(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600:
+        if (
+            stat.S_ISSOCK(info.st_mode)
+            and stat.S_IMODE(info.st_mode) == 0o600
+            and info.st_uid == os.geteuid()
+            and info.st_nlink == 1
+        ):
+            current_identity = (info.st_dev, info.st_ino)
+            if socket_identity is None:
+                socket_identity = current_identity
+            elif current_identity != socket_identity:
+                raise BuildError(
+                    "Frozen sidecar socket changed during readiness"
+                )
+        else:
+            raise BuildError("Frozen sidecar created an unsafe socket")
+
+        return_code = process.poll()
+        if return_code is not None:
+            if log_collector is not None:
+                log_collector.finish()
+            category = _frozen_start_failure_category(
+                log_handle,
+                log_path,
+                log_identity,
+            )
+            raise BuildError(
+                "Frozen sidecar exited before its UDS became ready "
+                f"(exit={return_code}; category={category})"
+            )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        probe: socket.socket | None = None
+        connection_refused = False
+        try:
+            try:
+                probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            except (OSError, TypeError, ValueError) as exc:
+                raise BuildError(
+                    "Frozen sidecar UDS readiness probe failed"
+                ) from exc
+            try:
+                probe.settimeout(min(1.0, remaining))
+            except (OSError, TypeError, ValueError) as exc:
+                raise BuildError(
+                    "Frozen sidecar UDS readiness probe failed"
+                ) from exc
+            try:
+                probe.connect(str(socket_path))
+            except OSError as exc:
+                if exc.errno != errno.ECONNREFUSED:
+                    raise BuildError(
+                        "Frozen sidecar UDS readiness probe failed"
+                    ) from exc
+                connection_refused = True
+            except (TypeError, ValueError) as exc:
+                raise BuildError(
+                    "Frozen sidecar UDS readiness probe failed"
+                ) from exc
+        finally:
+            if probe is not None:
+                active_error = sys.exception()
+                try:
+                    probe.close()
+                except OSError as exc:
+                    if active_error is None:
+                        raise BuildError(
+                            "Frozen sidecar UDS readiness probe cleanup failed"
+                        ) from exc
+
+        try:
+            after = socket_path.lstat()
+        except OSError as exc:
+            raise BuildError(
+                "Frozen sidecar socket changed during readiness"
+            ) from exc
+        if (
+            (after.st_dev, after.st_ino) != socket_identity
+            or not stat.S_ISSOCK(after.st_mode)
+            or stat.S_IMODE(after.st_mode) != 0o600
+            or after.st_uid != os.geteuid()
+            or after.st_nlink != 1
+        ):
+            raise BuildError("Frozen sidecar socket changed during readiness")
+        return_code = process.poll()
+        if return_code is not None:
+            if log_collector is not None:
+                log_collector.finish()
+            category = _frozen_start_failure_category(
+                log_handle,
+                log_path,
+                log_identity,
+            )
+            raise BuildError(
+                "Frozen sidecar exited before its UDS became ready "
+                f"(exit={return_code}; category={category})"
+            )
+        if not connection_refused:
+            if log_collector is not None:
+                log_collector.assert_healthy()
             return
-        raise BuildError("Frozen sidecar created an unsafe socket")
+        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+    return_code = process.poll()
+    if return_code is not None:
+        if log_collector is not None:
+            log_collector.finish()
+        category = _frozen_start_failure_category(
+            log_handle,
+            log_path,
+            log_identity,
+        )
+        raise BuildError(
+            "Frozen sidecar exited before its UDS became ready "
+            f"(exit={return_code}; category={category})"
+        )
+    if log_collector is not None:
+        log_collector.assert_healthy()
     raise BuildError("Frozen sidecar UDS readiness timed out")
+
+
+def _canonical_private_smoke_root(raw_root: str) -> Path:
+    lexical_root = Path(raw_root)
+    if not lexical_root.is_absolute() or ".." in lexical_root.parts:
+        raise BuildError("Frozen smoke root is not an absolute path")
+    try:
+        lexical_info = lexical_root.lstat()
+        canonical_root = lexical_root.resolve(strict=True)
+        canonical_info = canonical_root.lstat()
+    except OSError as exc:
+        raise BuildError("Frozen smoke root cannot be inspected") from exc
+    if (
+        not stat.S_ISDIR(lexical_info.st_mode)
+        or stat.S_ISLNK(lexical_info.st_mode)
+        or not stat.S_ISDIR(canonical_info.st_mode)
+        or stat.S_ISLNK(canonical_info.st_mode)
+        or (lexical_info.st_dev, lexical_info.st_ino)
+        != (canonical_info.st_dev, canonical_info.st_ino)
+        or lexical_info.st_uid != os.geteuid()
+        or canonical_info.st_uid != os.geteuid()
+        or stat.S_IMODE(lexical_info.st_mode) != 0o700
+        or stat.S_IMODE(canonical_info.st_mode) != 0o700
+        or canonical_root.resolve(strict=True) != canonical_root
+    ):
+        raise BuildError("Frozen smoke root is not a private canonical directory")
+    return canonical_root
+
+
+@contextlib.contextmanager
+def _held_private_smoke_root(
+    parent_override: Path | None = None,
+) -> Any:
+    """Yield one exact /private/tmp child and clean it only through held fds."""
+
+    parent: Path | None = None
+    child: Path | None = None
+    parent_descriptor: int | None = None
+    child_descriptor: int | None = None
+    child_name: str | None = None
+    parent_identity: tuple[int, ...] | None = None
+    child_snapshot: _DirectorySnapshot | None = None
+    primary_error: BaseException | None = None
+    creation_error = "Frozen smoke root capability cannot be created"
+    try:
+        parent = (
+            parent_override.resolve(strict=True)
+            if parent_override is not None
+            else Path("/tmp").resolve(strict=True)
+        )
+        expected_parent_uid = (
+            os.geteuid() if parent_override is not None else 0
+        )
+        expected_parent_mode = 0o700 if parent_override is not None else 0o1777
+        parent_descriptor = os.open(
+            parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        parent_fd_info = os.fstat(parent_descriptor)
+        parent_path_info = parent.lstat()
+        parent_identity = _stable_directory_identity(parent_fd_info)
+        if (
+            not stat.S_ISDIR(parent_fd_info.st_mode)
+            or stat.S_ISLNK(parent_path_info.st_mode)
+            or _stable_directory_identity(parent_path_info) != parent_identity
+            or parent_fd_info.st_uid != expected_parent_uid
+            or stat.S_IMODE(parent_fd_info.st_mode) != expected_parent_mode
+        ):
+            raise BuildError(creation_error)
+        for _attempt in range(8):
+            candidate = f"lcf-{secrets.token_hex(16)}"
+            try:
+                os.mkdir(candidate, mode=0o700, dir_fd=parent_descriptor)
+            except FileExistsError:
+                continue
+            child_name = candidate
+            break
+        if child_name is None:
+            raise BuildError(creation_error)
+        child = parent / child_name
+        child_descriptor = os.open(
+            child_name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_descriptor,
+        )
+        child_snapshot = _capture_bound_directory(
+            child_descriptor,
+            child,
+            parent_descriptor=parent_descriptor,
+            relative_name=child_name,
+            expected=None,
+            expected_mode=0o700,
+            exact_entries=(),
+            error_message=creation_error,
+        )
+        try:
+            yield child
+        except BaseException as exc:
+            primary_error = exc
+    except BaseException as exc:
+        if primary_error is None:
+            primary_error = exc
+
+    cleanup_failed = False
+    cleanup_error = "Frozen smoke root cleanup failed"
+    if (
+        parent is not None
+        and child is not None
+        and parent_descriptor is not None
+        and child_descriptor is not None
+        and child_name is not None
+        and parent_identity is not None
+        and child_snapshot is not None
+    ):
+        try:
+            parent_fd_info = os.fstat(parent_descriptor)
+            parent_path_info = parent.lstat()
+            if (
+                _stable_directory_identity(parent_fd_info) != parent_identity
+                or _stable_directory_identity(parent_path_info) != parent_identity
+                or parent_fd_info.st_uid != expected_parent_uid
+                or stat.S_IMODE(parent_fd_info.st_mode) != expected_parent_mode
+            ):
+                raise BuildError(cleanup_error)
+            _capture_bound_directory(
+                child_descriptor,
+                child,
+                parent_descriptor=parent_descriptor,
+                relative_name=child_name,
+                expected=child_snapshot,
+                expected_mode=0o700,
+                exact_entries=None,
+                error_message=cleanup_error,
+            )
+            _remove_tree_contents(child_descriptor, error_message=cleanup_error)
+            _capture_bound_directory(
+                child_descriptor,
+                child,
+                parent_descriptor=parent_descriptor,
+                relative_name=child_name,
+                expected=child_snapshot,
+                expected_mode=0o700,
+                exact_entries=(),
+                error_message=cleanup_error,
+            )
+            os.rmdir(child_name, dir_fd=parent_descriptor)
+        except BaseException:
+            cleanup_failed = True
+    elif child_name is not None:
+        cleanup_failed = True
+    for descriptor in (child_descriptor, parent_descriptor):
+        if descriptor is None:
+            continue
+        try:
+            os.close(descriptor)
+        except OSError:
+            cleanup_failed = True
+    if cleanup_failed:
+        if primary_error is not None:
+            raise BuildError(
+                "Frozen smoke failed and root cleanup failed"
+            ) from primary_error
+        raise BuildError(cleanup_error)
+    if primary_error is not None:
+        raise primary_error
+
+
+def _refresh_scratch_capability(
+    capability: _ScratchCapability,
+    *,
+    exact_build_entries: tuple[str, ...] | None = None,
+) -> None:
+    if capability.closed:
+        raise BuildError("Python sidecar scratch capability is closed")
+    destination_snapshot = _capture_bound_directory(
+        capability.destination_parent_descriptor,
+        capability.destination_parent,
+        parent_descriptor=None,
+        relative_name=None,
+        expected=capability.destination_parent_snapshot,
+        expected_mode=None,
+        exact_entries=None,
+        error_message="Python sidecar destination parent changed",
+    )
+    if destination_snapshot != capability.destination_parent_snapshot:
+        raise BuildError("Python sidecar destination parent changed")
+    scratch_snapshot = _capture_bound_directory(
+        capability.scratch_parent_descriptor,
+        capability.scratch_parent,
+        parent_descriptor=capability.destination_parent_descriptor,
+        relative_name=capability.scratch_parent_name,
+        expected=capability.scratch_parent_snapshot,
+        expected_mode=0o700,
+        exact_entries=(capability.build_root_name,),
+        error_message="Python sidecar scratch parent changed",
+    )
+    if scratch_snapshot != capability.scratch_parent_snapshot:
+        raise BuildError("Python sidecar scratch parent changed")
+    capability.build_root_snapshot = _capture_bound_directory(
+        capability.build_root_descriptor,
+        capability.build_root,
+        parent_descriptor=capability.scratch_parent_descriptor,
+        relative_name=capability.build_root_name,
+        expected=capability.build_root_snapshot,
+        expected_mode=0o700,
+        exact_entries=exact_build_entries,
+        error_message="Python sidecar scratch root changed",
+    )
+
+
+def _accept_destination_parent_metadata(
+    capability: _ScratchCapability,
+) -> None:
+    """Advance the destination snapshot after a capability-checked publish."""
+
+    capability.destination_parent_snapshot = _capture_bound_directory(
+        capability.destination_parent_descriptor,
+        capability.destination_parent,
+        parent_descriptor=None,
+        relative_name=None,
+        expected=capability.destination_parent_snapshot,
+        expected_mode=None,
+        exact_entries=None,
+        error_message="Python sidecar destination parent changed",
+    )
+
+
+def _cleanup_retained_published_directories(
+    capability: _ScratchCapability,
+    *,
+    error_message: str,
+) -> bool:
+    """Remove exchanged old destinations only through their held identities."""
+
+    close_failed = False
+    for retained in capability.retained_published_directories:
+        if retained.closed:
+            raise _CleanupBlockedError(error_message)
+        current = _capture_bound_directory(
+            retained.descriptor,
+            retained.parent_path / retained.name,
+            parent_descriptor=retained.parent_descriptor,
+            relative_name=retained.name,
+            expected=retained.snapshot,
+            expected_mode=None,
+            exact_entries=retained.snapshot.entries,
+            error_message=error_message,
+        )
+        if (
+            current != retained.snapshot
+            or _tree_metadata_snapshot(
+                retained.descriptor,
+                error_message=error_message,
+            )
+            != retained.tree_snapshot
+        ):
+            raise _CleanupBlockedError(error_message)
+        _rollback_bound_directory(
+            parent_descriptor=retained.parent_descriptor,
+            parent_path=retained.parent_path,
+            name=retained.name,
+            descriptor=retained.descriptor,
+            snapshot=retained.snapshot,
+            error_message=error_message,
+        )
+        for descriptor in (
+            retained.descriptor,
+            (
+                retained.parent_descriptor
+                if retained.owns_parent_descriptor
+                else None
+            ),
+        ):
+            if descriptor is None:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError:
+                close_failed = True
+        retained.closed = True
+    capability.retained_published_directories.clear()
+    return close_failed
+
+
+def _close_scratch_descriptors(capability: _ScratchCapability) -> bool:
+    failed = False
+    descriptors = [
+        (
+            capability.bundle.descriptor
+            if capability.bundle is not None
+            and not capability.bundle.closed
+            else None
+        ),
+        (
+            capability.bundle.parent_descriptor
+            if capability.bundle is not None
+            and not capability.bundle.closed
+            else None
+        ),
+        (
+            capability.evidence.descriptor
+            if capability.evidence is not None
+            and not capability.evidence.closed
+            else None
+        ),
+        capability.source_snapshot_descriptor,
+        capability.build_root_descriptor,
+        capability.scratch_parent_descriptor,
+        capability.destination_parent_descriptor,
+    ]
+    for retained in capability.retained_published_directories:
+        if retained.closed:
+            continue
+        descriptors.append(retained.descriptor)
+        if retained.owns_parent_descriptor:
+            descriptors.append(retained.parent_descriptor)
+    seen: set[int] = set()
+    for descriptor in descriptors:
+        if descriptor is None or descriptor in seen:
+            continue
+        seen.add(descriptor)
+        try:
+            os.close(descriptor)
+        except OSError:
+            failed = True
+    capability.source_snapshot_descriptor = None
+    if capability.evidence is not None:
+        capability.evidence.closed = True
+    if capability.bundle is not None:
+        capability.bundle.closed = True
+    for retained in capability.retained_published_directories:
+        retained.closed = True
+    capability.closed = True
+    return failed
+
+
+def _cleanup_scratch_capability(capability: _ScratchCapability) -> None:
+    """Remove only the exact held candidate and its dedicated empty parent."""
+
+    error_message = "Python sidecar scratch cleanup failed"
+    if capability.poisoned:
+        close_failed = _close_scratch_descriptors(capability)
+        raise BuildError(
+            error_message,
+            cleanup_category=(
+                "descriptor-close" if close_failed else "poisoned-preserved"
+            ),
+        )
+    failed_category: str | None = None
+    safe_to_remove = False
+    cleanup_stage = "capability-revalidation"
+    try:
+        if capability.closed:
+            raise BuildError(error_message)
+        _refresh_scratch_capability(capability)
+        cleanup_stage = "retained-publish"
+        retained_close_failed = _cleanup_retained_published_directories(
+            capability,
+            error_message=error_message,
+        )
+        if retained_close_failed:
+            failed_category = cleanup_stage
+        cleanup_stage = "bundle-close"
+        if capability.bundle is not None:
+            bundle = capability.bundle
+            _validate_bundle_capability(
+                capability,
+                error_message=error_message,
+            )
+            os.close(bundle.descriptor)
+            os.close(bundle.parent_descriptor)
+            bundle.closed = True
+            capability.bundle = None
+        cleanup_stage = "evidence-close"
+        if capability.evidence is not None:
+            evidence = _revalidate_failure_evidence_capability(
+                capability,
+                error_message=error_message,
+            )
+            os.close(evidence.descriptor)
+            evidence.closed = True
+        cleanup_stage = "source-close"
+        if capability.source_snapshot_descriptor is not None:
+            os.close(capability.source_snapshot_descriptor)
+            capability.source_snapshot_descriptor = None
+        safe_to_remove = True
+    except BaseException as exc:
+        failed_category = (
+            getattr(exc, "cleanup_category", None) or cleanup_stage
+        )
+
+    if safe_to_remove:
+        try:
+            cleanup_stage = "build-root-quarantine"
+            _rollback_bound_directory(
+                parent_descriptor=capability.scratch_parent_descriptor,
+                parent_path=capability.scratch_parent,
+                name=capability.build_root_name,
+                descriptor=capability.build_root_descriptor,
+                snapshot=capability.build_root_snapshot,
+                error_message=error_message,
+            )
+            cleanup_stage = "scratch-root-quarantine"
+            _rollback_bound_directory(
+                parent_descriptor=capability.destination_parent_descriptor,
+                parent_path=capability.destination_parent,
+                name=capability.scratch_parent_name,
+                descriptor=capability.scratch_parent_descriptor,
+                snapshot=capability.scratch_parent_snapshot,
+                error_message=error_message,
+            )
+        except BaseException as exc:
+            failed_category = failed_category or (
+                getattr(exc, "cleanup_category", None) or cleanup_stage
+            )
+
+    if _close_scratch_descriptors(capability):
+        failed_category = failed_category or "descriptor-close"
+    if failed_category is not None:
+        raise BuildError(
+            error_message,
+            cleanup_category=(
+                failed_category
+                if failed_category in INNER_CLEANUP_CATEGORIES
+                else "unclassified"
+            ),
+        )
+
+
+def _finish_scratch_lifecycle(
+    capability: _ScratchCapability,
+    primary_error: BaseException | None,
+) -> None:
+    """Close scratch while preserving only a fixed, redacted failure class."""
+
+    try:
+        _cleanup_scratch_capability(capability)
+    except BaseException as cleanup_error:
+        primary_category = (
+            getattr(primary_error, "primary_category", None)
+            if primary_error is not None
+            else "none"
+        ) or "unclassified"
+        cleanup_category = (
+            getattr(cleanup_error, "cleanup_category", None) or "unclassified"
+        )
+        if primary_error is not None:
+            raise BuildError(
+                "Python sidecar build failed and scratch cleanup failed",
+                primary_category=primary_category,
+                cleanup_category=cleanup_category,
+            ) from primary_error
+        raise BuildError(
+            "Python sidecar scratch cleanup failed",
+            primary_category="none",
+            cleanup_category=cleanup_category,
+        ) from cleanup_error
+
+
+def _cleanup_failed_scratch_creation(
+    *,
+    destination_descriptor: int | None,
+    scratch_descriptor: int | None,
+    build_descriptor: int | None,
+    scratch_snapshot: _DirectorySnapshot | None,
+    build_snapshot: _DirectorySnapshot | None,
+    scratch_created: bool,
+    build_created: bool,
+    scratch_parent: Path,
+    build_root: Path,
+    scratch_name: str,
+    build_name: str,
+) -> bool:
+    """Clean fully-bound creation objects while cleanup signals stay masked."""
+
+    cleanup_failed = (
+        (scratch_created and (scratch_descriptor is None or scratch_snapshot is None))
+        or (build_created and (build_descriptor is None or build_snapshot is None))
+    )
+    active_build_descriptor = build_descriptor
+    active_scratch_descriptor = scratch_descriptor
+    if active_build_descriptor is not None:
+        try:
+            if not os.listdir(active_build_descriptor) and build_snapshot is not None:
+                if active_scratch_descriptor is None or not build_created:
+                    raise BuildError(
+                        "Python sidecar scratch creation cleanup failed"
+                    )
+                _rollback_bound_directory(
+                    parent_descriptor=active_scratch_descriptor,
+                    parent_path=scratch_parent,
+                    name=build_name,
+                    descriptor=active_build_descriptor,
+                    snapshot=build_snapshot,
+                    error_message=(
+                        "Python sidecar scratch creation cleanup failed"
+                    ),
+                )
+                os.close(active_build_descriptor)
+                active_build_descriptor = None
+            else:
+                cleanup_failed = True
+        except (BuildError, OSError):
+            cleanup_failed = True
+    if active_scratch_descriptor is not None:
+        try:
+            if not os.listdir(active_scratch_descriptor) and scratch_snapshot is not None:
+                if destination_descriptor is None or not scratch_created:
+                    raise BuildError(
+                        "Python sidecar scratch creation cleanup failed"
+                    )
+                _rollback_bound_directory(
+                    parent_descriptor=destination_descriptor,
+                    parent_path=scratch_parent.parent,
+                    name=scratch_name,
+                    descriptor=active_scratch_descriptor,
+                    snapshot=scratch_snapshot,
+                    error_message=(
+                        "Python sidecar scratch creation cleanup failed"
+                    ),
+                )
+                os.close(active_scratch_descriptor)
+                active_scratch_descriptor = None
+            else:
+                cleanup_failed = True
+        except (BuildError, OSError):
+            cleanup_failed = True
+    for descriptor in (
+        active_build_descriptor,
+        active_scratch_descriptor,
+        destination_descriptor,
+    ):
+        if descriptor is None:
+            continue
+        try:
+            os.close(descriptor)
+        except OSError:
+            cleanup_failed = True
+    return cleanup_failed
+
+
+def _create_private_build_root_impl(
+    destination_parent: Path,
+) -> _ScratchCapability:
+    """Create one non-reusable private scratch hierarchy and hold every fd."""
+
+    error_message = "Python sidecar scratch capability cannot be created"
+    destination_descriptor: int | None = None
+    scratch_descriptor: int | None = None
+    build_descriptor: int | None = None
+    scratch_snapshot: _DirectorySnapshot | None = None
+    build_snapshot: _DirectorySnapshot | None = None
+    scratch_created = False
+    build_created = False
+    creation_error: BaseException | None = None
+    scratch_name = f"{SCRATCH_PARENT_NAME}-{secrets.token_hex(16)}"
+    build_name = f"candidate-{secrets.token_hex(16)}"
+    scratch_parent = destination_parent / scratch_name
+    build_root = scratch_parent / build_name
+    try:
+        if (
+            not destination_parent.is_absolute()
+            or destination_parent.resolve(strict=True) != destination_parent
+        ):
+            raise BuildError(error_message)
+        destination_descriptor = os.open(
+            destination_parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        destination_snapshot = _capture_bound_directory(
+            destination_descriptor,
+            destination_parent,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if stat.S_IMODE(destination_snapshot.mode) & 0o022:
+            raise BuildError(error_message)
+        try:
+            os.stat(
+                scratch_name,
+                dir_fd=destination_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            raise BuildError("Python sidecar scratch parent must not pre-exist")
+        with _defer_publish_signals():
+            os.mkdir(scratch_name, mode=0o700, dir_fd=destination_descriptor)
+            scratch_created = True
+            scratch_created_info = os.stat(
+                scratch_name,
+                dir_fd=destination_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(scratch_created_info.st_mode)
+                or stat.S_ISLNK(scratch_created_info.st_mode)
+                or scratch_created_info.st_uid != os.geteuid()
+                or stat.S_IMODE(scratch_created_info.st_mode) != 0o700
+            ):
+                raise BuildError(error_message)
+            scratch_created_snapshot = _snapshot_from_stat(
+                scratch_created_info,
+                (),
+            )
+            scratch_descriptor = os.open(
+                scratch_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=destination_descriptor,
+            )
+            scratch_snapshot = _capture_bound_directory(
+                scratch_descriptor,
+                scratch_parent,
+                parent_descriptor=destination_descriptor,
+                relative_name=scratch_name,
+                expected=scratch_created_snapshot,
+                expected_mode=0o700,
+                exact_entries=(),
+                error_message=error_message,
+            )
+        if scratch_snapshot.device != destination_snapshot.device:
+            raise BuildError(error_message)
+        with _defer_publish_signals():
+            os.mkdir(build_name, mode=0o700, dir_fd=scratch_descriptor)
+            build_created = True
+            build_created_info = os.stat(
+                build_name,
+                dir_fd=scratch_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(build_created_info.st_mode)
+                or stat.S_ISLNK(build_created_info.st_mode)
+                or build_created_info.st_uid != os.geteuid()
+                or stat.S_IMODE(build_created_info.st_mode) != 0o700
+            ):
+                raise BuildError(error_message)
+            build_created_snapshot = _snapshot_from_stat(
+                build_created_info,
+                (),
+            )
+            build_descriptor = os.open(
+                build_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=scratch_descriptor,
+            )
+            build_snapshot = _capture_bound_directory(
+                build_descriptor,
+                build_root,
+                parent_descriptor=scratch_descriptor,
+                relative_name=build_name,
+                expected=build_created_snapshot,
+                expected_mode=0o700,
+                exact_entries=(),
+                error_message=error_message,
+            )
+        if build_snapshot.device != destination_snapshot.device:
+            raise BuildError(error_message)
+        scratch_snapshot = _capture_bound_directory(
+            scratch_descriptor,
+            scratch_parent,
+            parent_descriptor=destination_descriptor,
+            relative_name=scratch_name,
+            expected=scratch_snapshot,
+            expected_mode=0o700,
+            exact_entries=(build_name,),
+            error_message=error_message,
+        )
+        destination_snapshot = _capture_bound_directory(
+            destination_descriptor,
+            destination_parent,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=destination_snapshot,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        return _ScratchCapability(
+            destination_parent=destination_parent,
+            destination_parent_descriptor=destination_descriptor,
+            destination_parent_snapshot=destination_snapshot,
+            scratch_parent=scratch_parent,
+            scratch_parent_name=scratch_name,
+            scratch_parent_descriptor=scratch_descriptor,
+            scratch_parent_snapshot=scratch_snapshot,
+            build_root=build_root,
+            build_root_name=build_name,
+            build_root_descriptor=build_descriptor,
+            build_root_snapshot=build_snapshot,
+        )
+    except BuildError as exc:
+        creation_error = exc
+    except (OSError, RuntimeError) as exc:
+        creation_error = exc
+    except BaseException as exc:
+        creation_error = exc
+    else:  # pragma: no cover - the success path returns above
+        raise AssertionError("unreachable")
+
+    with _defer_publish_signals(preserve_error=creation_error):
+        cleanup_failed = _cleanup_failed_scratch_creation(
+            destination_descriptor=destination_descriptor,
+            scratch_descriptor=scratch_descriptor,
+            build_descriptor=build_descriptor,
+            scratch_snapshot=scratch_snapshot,
+            build_snapshot=build_snapshot,
+            scratch_created=scratch_created,
+            build_created=build_created,
+            scratch_parent=scratch_parent,
+            build_root=build_root,
+            scratch_name=scratch_name,
+            build_name=build_name,
+        )
+    if cleanup_failed:
+        raise BuildError("Python sidecar scratch creation cleanup failed")
+    if isinstance(creation_error, BuildError):
+        raise creation_error
+    if isinstance(creation_error, (KeyboardInterrupt, SystemExit)):
+        raise creation_error
+    raise BuildError(error_message) from creation_error
+
+
+def _create_private_build_root(
+    destination_parent: Path,
+) -> _ScratchCapability:
+    """Create scratch with process-signal translation around fd handoff."""
+
+    with _translate_cleanup_signals():
+        return _create_private_build_root_impl(destination_parent)
+
+
+def _ensure_fixed_output_parent() -> Path:
+    """Create only the reviewed generated directory through a held Desktop fd."""
+
+    error_message = "Python sidecar output parent is unsafe"
+    desktop_root = REPOSITORY_ROOT / "desktop"
+    generated_root = desktop_root / "generated"
+    desktop_descriptor: int | None = None
+    generated_descriptor: int | None = None
+    close_failed = False
+    try:
+        desktop_descriptor = os.open(
+            desktop_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        desktop_snapshot = _capture_bound_directory(
+            desktop_descriptor,
+            desktop_root,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if stat.S_IMODE(desktop_snapshot.mode) & 0o022:
+            raise BuildError(error_message)
+        try:
+            generated_entry = os.stat(
+                "generated",
+                dir_fd=desktop_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            os.mkdir("generated", mode=0o755, dir_fd=desktop_descriptor)
+        else:
+            if (
+                not stat.S_ISDIR(generated_entry.st_mode)
+                or stat.S_ISLNK(generated_entry.st_mode)
+            ):
+                raise BuildError(error_message)
+        generated_descriptor = os.open(
+            "generated",
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=desktop_descriptor,
+        )
+        generated_snapshot = _capture_bound_directory(
+            generated_descriptor,
+            generated_root,
+            parent_descriptor=desktop_descriptor,
+            relative_name="generated",
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if (
+            stat.S_IMODE(generated_snapshot.mode) & 0o022
+            or generated_snapshot.device != desktop_snapshot.device
+        ):
+            raise BuildError(error_message)
+        return generated_root
+    except BuildError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        for descriptor in (generated_descriptor, desktop_descriptor):
+            if descriptor is None:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError:
+                close_failed = True
+        if close_failed:
+            raise BuildError(error_message)
+
+
+def _git_blob_digest(size: int, chunks: Sequence[bytes]) -> str:
+    digest = hashlib.sha1()
+    digest.update(f"blob {size}\0".encode("ascii"))
+    for chunk in chunks:
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _source_inventory_layout(
+    inventory: Sequence[_TreeEntry],
+    *,
+    error_message: str,
+) -> tuple[
+    dict[str, _TreeEntry],
+    set[str],
+    dict[str, tuple[str, ...]],
+]:
+    """Return the exact blob/directory namespace implied by a Git tree."""
+
+    entries: dict[str, _TreeEntry] = {}
+    directories = {""}
+    for entry in inventory:
+        if not all(
+            isinstance(value, str)
+            for value in (
+                entry.path,
+                entry.mode,
+                entry.object_type,
+                entry.object_id,
+            )
+        ):
+            raise BuildError(error_message)
+        pure = PurePosixPath(entry.path)
+        if (
+            entry.object_type != "blob"
+            or entry.mode not in {"100644", "100755", "120000"}
+            or re.fullmatch(r"[0-9a-f]{40}", entry.object_id) is None
+            or not entry.path
+            or pure.is_absolute()
+            or pure.as_posix() != entry.path
+            or len(pure.parts) > 128
+            or any(part in {"", ".", "..", ".git"} for part in pure.parts)
+            or "\\" in entry.path
+            or any(ord(character) < 0x20 for character in entry.path)
+            or entry.path in entries
+        ):
+            raise BuildError(error_message)
+        entries[entry.path] = entry
+        for index in range(1, len(pure.parts)):
+            directories.add("/".join(pure.parts[:index]))
+    if (
+        not entries
+        or any(path in directories for path in entries)
+        or len(entries) + len(directories) - 1 > MAX_SOURCE_SNAPSHOT_FILES
+    ):
+        raise BuildError(error_message)
+
+    children: dict[str, set[str]] = {path: set() for path in directories}
+    for directory in directories - {""}:
+        parent, _separator, name = directory.rpartition("/")
+        if name in children[parent]:
+            raise BuildError(error_message)
+        children[parent].add(name)
+    for path in entries:
+        parent, _separator, name = path.rpartition("/")
+        if name in children[parent]:
+            raise BuildError(error_message)
+        children[parent].add(name)
+    return (
+        entries,
+        directories,
+        {path: tuple(sorted(names)) for path, names in children.items()},
+    )
+
+
+def _source_directory_identity(info: os.stat_result) -> tuple[int, int]:
+    return (info.st_dev, info.st_ino)
+
+
+def _held_source_capability_path(capability: _ScratchCapability) -> Path:
+    """Return an fd-backed source path after proving it denotes the held root."""
+
+    error_message = "Exact Git source capability path is unavailable"
+    descriptor = capability.source_snapshot_descriptor
+    metadata = capability.source_snapshot_metadata
+    if descriptor is None or metadata is None or capability.closed:
+        raise BuildError(error_message)
+    path = Path("/dev/fd") / str(descriptor)
+    probe: int | None = None
+    try:
+        held = os.fstat(descriptor)
+        path_info = os.stat(path, follow_symlinks=True)
+        probe = os.open(
+            path,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC,
+        )
+        opened = os.fstat(probe)
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or _stable_directory_identity(held)
+            != _stable_directory_identity(metadata)
+            or _stable_directory_identity(path_info)
+            != _stable_directory_identity(held)
+            or _stable_directory_identity(opened)
+            != _stable_directory_identity(held)
+        ):
+            raise BuildError(error_message)
+        return path
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        if probe is not None:
+            try:
+                os.close(probe)
+            except OSError as exc:
+                if sys.exception() is None:
+                    raise BuildError(error_message) from exc
+
+
+def _open_source_directory(
+    root_descriptor: int,
+    relative_path: str,
+    identities: Mapping[str, tuple[int, int]],
+    *,
+    allowed_modes: frozenset[int],
+    error_message: str,
+) -> int:
+    """Open one recorded snapshot directory through only held parent fds."""
+
+    current_descriptor: int | None = None
+    try:
+        root_before = os.fstat(root_descriptor)
+        current_descriptor = os.dup(root_descriptor)
+        root_opened = os.fstat(current_descriptor)
+        root_after = os.fstat(root_descriptor)
+        root_identity = identities.get("")
+        if (
+            root_identity is None
+            or _stat_metadata(root_opened) != _stat_metadata(root_before)
+            or _stat_metadata(root_after) != _stat_metadata(root_before)
+            or _source_directory_identity(root_before) != root_identity
+        ):
+            raise BuildError(error_message)
+
+        prefix = ""
+        for name in PurePosixPath(relative_path).parts if relative_path else ():
+            parent_before = os.fstat(current_descriptor)
+            child_before = os.stat(
+                name,
+                dir_fd=current_descriptor,
+                follow_symlinks=False,
+            )
+            child_descriptor = os.open(
+                name,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC,
+                dir_fd=current_descriptor,
+            )
+            try:
+                child_opened = os.fstat(child_descriptor)
+                child_relative = os.stat(
+                    name,
+                    dir_fd=current_descriptor,
+                    follow_symlinks=False,
+                )
+                parent_after = os.fstat(current_descriptor)
+                child_path = f"{prefix}/{name}" if prefix else name
+                if (
+                    _stat_metadata(parent_after) != _stat_metadata(parent_before)
+                    or _stat_metadata(child_opened) != _stat_metadata(child_before)
+                    or _stat_metadata(child_relative) != _stat_metadata(child_before)
+                    or not stat.S_ISDIR(child_opened.st_mode)
+                    or stat.S_ISLNK(child_relative.st_mode)
+                    or _source_directory_identity(child_opened)
+                    != identities.get(child_path)
+                ):
+                    raise BuildError(error_message)
+            except BaseException:
+                try:
+                    os.close(child_descriptor)
+                except OSError:
+                    pass
+                raise
+            os.close(current_descriptor)
+            current_descriptor = child_descriptor
+            prefix = child_path
+
+        current = os.fstat(current_descriptor)
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or current.st_uid != os.geteuid()
+            or current.st_gid != os.getegid()
+            or current.st_nlink < 1
+            or stat.S_IMODE(current.st_mode) not in allowed_modes
+            or _source_directory_identity(current) != identities.get(relative_path)
+            or current.st_dev != root_before.st_dev
+        ):
+            raise BuildError(error_message)
+        return current_descriptor
+    except BuildError:
+        if current_descriptor is not None:
+            try:
+                os.close(current_descriptor)
+            except OSError:
+                pass
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        if current_descriptor is not None:
+            try:
+                os.close(current_descriptor)
+            except OSError:
+                pass
+        raise BuildError(error_message) from exc
+    except BaseException:
+        if current_descriptor is not None:
+            try:
+                os.close(current_descriptor)
+            except OSError:
+                pass
+        raise
+
+
+@contextlib.contextmanager
+def _held_source_directory(
+    root_descriptor: int,
+    relative_path: str,
+    identities: Mapping[str, tuple[int, int]],
+    *,
+    allowed_modes: frozenset[int],
+    error_message: str,
+) -> Any:
+    descriptor = _open_source_directory(
+        root_descriptor,
+        relative_path,
+        identities,
+        allowed_modes=allowed_modes,
+        error_message=error_message,
+    )
+    try:
+        yield descriptor
+    finally:
+        active_error = sys.exception()
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            if active_error is None:
+                raise BuildError(error_message) from exc
+
+
+def _source_symlinks_are_contained(
+    entries: Mapping[str, _TreeEntry],
+    directories: set[str],
+    targets: Mapping[str, str],
+) -> bool:
+    """Resolve reviewed link text lexically inside the inventory namespace."""
+
+    node_types = {path: "directory" for path in directories}
+    node_types.update(
+        {
+            path: "symlink" if entry.mode == "120000" else "regular"
+            for path, entry in entries.items()
+        }
+    )
+    for link_path, initial_target in targets.items():
+        pending = deque(
+            [
+                *PurePosixPath(link_path).parent.parts,
+                *PurePosixPath(initial_target).parts,
+            ]
+        )
+        resolved: list[str] = []
+        expansions = 0
+        while pending:
+            component = pending.popleft()
+            if component in {"", "."}:
+                continue
+            if component == "..":
+                if not resolved:
+                    return False
+                resolved.pop()
+                continue
+            candidate = "/".join((*resolved, component))
+            node_type = node_types.get(candidate)
+            if node_type is None:
+                return False
+            if node_type == "symlink":
+                expansions += 1
+                if expansions > len(targets) + 128:
+                    return False
+                target = targets.get(candidate)
+                if target is None or PurePosixPath(target).is_absolute():
+                    return False
+                pending.extendleft(reversed(PurePosixPath(target).parts))
+                continue
+            resolved.append(component)
+            if pending and node_type != "directory":
+                return False
+    return True
+
+
+def _verify_source_inventory(
+    descriptor: int,
+    inventory: Sequence[_TreeEntry],
+    *,
+    error_message: str,
+) -> tuple[tuple[Any, ...], ...]:
+    """Hash and metadata-check an exact source tree from its held root fd."""
+
+    entries, directories, children = _source_inventory_layout(
+        inventory,
+        error_message=error_message,
+    )
+    records: list[tuple[Any, ...]] = []
+    symlink_targets: dict[str, str] = {}
+    total_size = 0
+    try:
+        root_info = os.fstat(descriptor)
+    except OSError as exc:
+        raise BuildError(error_message) from exc
+    root_device = root_info.st_dev
+    link_models = {"subdirectories", "entries"}
+
+    def expected_directory_links(path: str) -> dict[str, int]:
+        return {
+            "subdirectories": 2 + sum(
+                1
+                for name in children[path]
+                if (f"{path}/{name}" if path else name) in directories
+            ),
+            # APFS reports a directory link count using all immediate
+            # directory entries, rather than only immediate subdirectories.
+            "entries": 2 + len(children[path]),
+        }
+
+    def validate_directory(info: os.stat_result, path: str) -> None:
+        expected_links = expected_directory_links(path)
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_dev != root_device
+            or info.st_uid != os.geteuid()
+            or info.st_gid != os.getegid()
+            or stat.S_IMODE(info.st_mode) != 0o500
+        ):
+            raise BuildError(error_message)
+        link_models.intersection_update(
+            model
+            for model, expected in expected_links.items()
+            if info.st_nlink == expected
+        )
+        if not link_models:
+            raise BuildError(error_message)
+
+    def visit(directory_descriptor: int, prefix: str, depth: int) -> None:
+        nonlocal total_size
+        if depth > 128:
+            raise BuildError(error_message)
+        directory_before = os.fstat(directory_descriptor)
+        validate_directory(directory_before, prefix)
+        try:
+            names = tuple(sorted(os.listdir(directory_descriptor)))
+        except OSError as exc:
+            raise BuildError(error_message) from exc
+        if names != children[prefix]:
+            raise BuildError(error_message)
+        for name in names:
+            if not name or "/" in name or "\0" in name:
+                raise BuildError(error_message)
+            relative = f"{prefix}/{name}" if prefix else name
+            try:
+                before = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise BuildError(error_message) from exc
+            if relative in directories:
+                validate_directory(before, relative)
+                child_descriptor: int | None = None
+                try:
+                    child_descriptor = os.open(
+                        name,
+                        os.O_RDONLY
+                        | os.O_DIRECTORY
+                        | os.O_NOFOLLOW
+                        | os.O_CLOEXEC,
+                        dir_fd=directory_descriptor,
+                    )
+                    opened = os.fstat(child_descriptor)
+                    relative_now = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stat_metadata(opened) != _stat_metadata(before)
+                        or _stat_metadata(relative_now) != _stat_metadata(before)
+                    ):
+                        raise BuildError(error_message)
+                    records.append((relative, *_stat_metadata(before), None))
+                    visit(child_descriptor, relative, depth + 1)
+                    after = os.fstat(child_descriptor)
+                    relative_after = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stat_metadata(after) != _stat_metadata(opened)
+                        or _stat_metadata(relative_after) != _stat_metadata(opened)
+                    ):
+                        raise BuildError(error_message)
+                except BuildError:
+                    raise
+                except (OSError, RuntimeError, ValueError) as exc:
+                    raise BuildError(error_message) from exc
+                finally:
+                    if child_descriptor is not None:
+                        active_error = sys.exception()
+                        try:
+                            os.close(child_descriptor)
+                        except OSError as exc:
+                            if active_error is None:
+                                raise BuildError(error_message) from exc
+                continue
+
+            entry = entries.get(relative)
+            if entry is None:
+                raise BuildError(error_message)
+            link_target: str | None = None
+            if entry.mode in {"100644", "100755"}:
+                expected_mode = 0o555 if entry.mode == "100755" else 0o444
+                if (
+                    not stat.S_ISREG(before.st_mode)
+                    or before.st_dev != root_device
+                    or before.st_uid != os.geteuid()
+                    or before.st_gid != os.getegid()
+                    or before.st_nlink != 1
+                    or stat.S_IMODE(before.st_mode) != expected_mode
+                    or before.st_size < 0
+                    or before.st_size > MAX_SOURCE_SNAPSHOT_FILE_BYTES
+                ):
+                    raise BuildError(error_message)
+                total_size += before.st_size
+                if total_size > MAX_SOURCE_SNAPSHOT_TOTAL_BYTES:
+                    raise BuildError(error_message)
+                file_descriptor: int | None = None
+                try:
+                    file_descriptor = os.open(
+                        name,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=directory_descriptor,
+                    )
+                    opened = os.fstat(file_descriptor)
+                    relative_now = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        _stat_metadata(opened) != _stat_metadata(before)
+                        or _stat_metadata(relative_now) != _stat_metadata(before)
+                    ):
+                        raise BuildError(error_message)
+                    digest = hashlib.sha1()
+                    digest.update(f"blob {before.st_size}\0".encode("ascii"))
+                    read_size = 0
+                    while read_size < before.st_size:
+                        chunk = os.read(
+                            file_descriptor,
+                            min(1024 * 1024, before.st_size - read_size),
+                        )
+                        if not chunk:
+                            raise BuildError(error_message)
+                        read_size += len(chunk)
+                        digest.update(chunk)
+                    if os.read(file_descriptor, 1):
+                        raise BuildError(error_message)
+                    after = os.fstat(file_descriptor)
+                    relative_after = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (
+                        read_size != before.st_size
+                        or digest.hexdigest() != entry.object_id
+                        or _stat_metadata(after) != _stat_metadata(opened)
+                        or _stat_metadata(relative_after) != _stat_metadata(opened)
+                    ):
+                        raise BuildError(error_message)
+                except BuildError:
+                    raise
+                except (OSError, RuntimeError, ValueError) as exc:
+                    raise BuildError(error_message) from exc
+                finally:
+                    if file_descriptor is not None:
+                        active_error = sys.exception()
+                        try:
+                            os.close(file_descriptor)
+                        except OSError as exc:
+                            if active_error is None:
+                                raise BuildError(error_message) from exc
+            elif entry.mode == "120000":
+                if (
+                    not stat.S_ISLNK(before.st_mode)
+                    or before.st_dev != root_device
+                    or before.st_uid != os.geteuid()
+                    or before.st_gid != os.getegid()
+                    or before.st_nlink != 1
+                    or stat.S_IMODE(before.st_mode) != 0o777
+                ):
+                    raise BuildError(error_message)
+                try:
+                    link_target = os.readlink(name, dir_fd=directory_descriptor)
+                    encoded_target = link_target.encode("utf-8", errors="strict")
+                    after = os.stat(
+                        name,
+                        dir_fd=directory_descriptor,
+                        follow_symlinks=False,
+                    )
+                except (OSError, UnicodeError) as exc:
+                    raise BuildError(error_message) from exc
+                if (
+                    not link_target
+                    or PurePosixPath(link_target).is_absolute()
+                    or "\0" in link_target
+                    or len(encoded_target) > MAX_SOURCE_SNAPSHOT_FILE_BYTES
+                    or _git_blob_digest(len(encoded_target), (encoded_target,))
+                    != entry.object_id
+                    or _stat_metadata(after) != _stat_metadata(before)
+                ):
+                    raise BuildError(error_message)
+                total_size += len(encoded_target)
+                if total_size > MAX_SOURCE_SNAPSHOT_TOTAL_BYTES:
+                    raise BuildError(error_message)
+                symlink_targets[relative] = link_target
+            else:  # pragma: no cover - layout rejects this
+                raise BuildError(error_message)
+            records.append((relative, *_stat_metadata(before), link_target))
+            if len(records) > MAX_SOURCE_SNAPSHOT_FILES:
+                raise BuildError(error_message)
+        directory_after = os.fstat(directory_descriptor)
+        if _stat_metadata(directory_after) != _stat_metadata(directory_before):
+            raise BuildError(error_message)
+
+    try:
+        visit(descriptor, "", 0)
+    except BuildError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BuildError(error_message) from exc
+    if (
+        len(link_models) != 1
+        or len(records) != len(entries) + len(directories) - 1
+        or set(symlink_targets)
+        != {path for path, entry in entries.items() if entry.mode == "120000"}
+        or not _source_symlinks_are_contained(
+            entries,
+            directories,
+            symlink_targets,
+        )
+    ):
+        raise BuildError(error_message)
+    return tuple(records)
+
+
+class _DeadlinePipeReader:
+    """Read one owned child pipe without exceeding a total deadline."""
+
+    def __init__(
+        self,
+        stream: Any,
+        *,
+        arguments: Sequence[str],
+        timeout: float,
+    ) -> None:
+        self._stream = stream
+        self._arguments = tuple(arguments)
+        self._timeout = timeout
+        self._deadline = time.monotonic() + timeout
+        self._descriptor = stream.fileno()
+        self._selector = selectors.DefaultSelector()
+        os.set_blocking(self._descriptor, False)
+        self._selector.register(self._descriptor, selectors.EVENT_READ)
+
+    def remaining(self) -> float:
+        return max(0.0, self._deadline - time.monotonic())
+
+    def read(self, size: int = -1) -> bytes:
+        if size == 0:
+            return b""
+        if size < 0:
+            raise BuildError("Exact Git archive read contract is unsafe")
+        while True:
+            remaining = self.remaining()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(
+                    self._arguments,
+                    self._timeout,
+                )
+            if not self._selector.select(min(0.1, remaining)):
+                continue
+            try:
+                return os.read(self._descriptor, size)
+            except BlockingIOError:
+                continue
+
+    def close(self) -> None:
+        self._selector.close()
+
+
+def _materialize_source_snapshot(
+    capability: _ScratchCapability,
+    release_state: Mapping[str, Any],
+    *,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> Path:
+    """Materialize and verify an inventory-bound read-only commit snapshot."""
+
+    error_message = "Exact Git source snapshot could not be materialized"
+    inventory = release_state.get("sourceInventory")
+    if not isinstance(inventory, tuple) or not all(
+        isinstance(entry, _TreeEntry) for entry in inventory
+    ):
+        raise BuildError(error_message)
+    expected, directories, root_children = _source_inventory_layout(
+        inventory,
+        error_message=error_message,
+    )
+    if (
+        _source_snapshot_sha256(inventory)
+        != release_state.get("sourceSnapshotSha256")
+    ):
+        raise BuildError(error_message)
+    seen: set[str] = set()
+    seen_directories: set[str] = set()
+    snapshot_descriptor: int | None = None
+    snapshot: Path | None = None
+    snapshot_initial: _DirectorySnapshot | None = None
+    build_root_binding: _DirectorySnapshot | None = None
+    process: subprocess.Popen[bytes] | None = None
+    repository_descriptor: int | None = None
+    repository_identity: tuple[Any, ...] | None = None
+    git_descriptor: int | None = None
+    git_identity: tuple[Any, ...] | None = None
+    archive_arguments: tuple[str, ...] | None = None
+    archive_effective_arguments: tuple[str, ...] | None = None
+    archive_actual_exec_identity: tuple[int, ...] | None = None
+    archive_exec_identity: tuple[int, ...] | None = None
+    archive_reader: _DeadlinePipeReader | None = None
+    stdout_closed = False
+    try:
+        _refresh_scratch_capability(capability, exact_build_entries=())
+        snapshot = capability.build_root / SOURCE_SNAPSHOT_NAME
+        snapshot_descriptor, snapshot_initial = _create_bound_child_directory(
+            parent_descriptor=capability.build_root_descriptor,
+            parent_path=capability.build_root,
+            name=SOURCE_SNAPSHOT_NAME,
+            mode=0o700,
+            error_message=error_message,
+        )
+        build_root_binding = _capture_bound_directory(
+            capability.build_root_descriptor,
+            capability.build_root,
+            parent_descriptor=capability.scratch_parent_descriptor,
+            relative_name=capability.build_root_name,
+            expected=capability.build_root_snapshot,
+            expected_mode=0o700,
+            exact_entries=(SOURCE_SNAPSHOT_NAME,),
+            error_message=error_message,
+        )
+        directory_identities: dict[str, tuple[int, int]] = {
+            "": (snapshot_initial.device, snapshot_initial.inode)
+        }
+        for directory in sorted(
+            directories - {""},
+            key=lambda path: (len(PurePosixPath(path).parts), path),
+        ):
+            parent, _separator, name = directory.rpartition("/")
+            with _held_source_directory(
+                snapshot_descriptor,
+                parent,
+                directory_identities,
+                allowed_modes=frozenset({0o700}),
+                error_message=error_message,
+            ) as parent_descriptor:
+                try:
+                    os.stat(
+                        name,
+                        dir_fd=parent_descriptor,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise BuildError(error_message)
+                child_descriptor: int | None = None
+                try:
+                    parent_path = snapshot if not parent else snapshot / parent
+                    child_descriptor, child_snapshot = (
+                        _create_bound_child_directory(
+                            parent_descriptor=parent_descriptor,
+                            parent_path=parent_path,
+                            name=name,
+                            mode=0o700,
+                            error_message=error_message,
+                        )
+                    )
+                    opened = os.fstat(child_descriptor)
+                    if (
+                        _stable_directory_identity(opened)
+                        != _stable_directory_identity(child_snapshot)
+                        or not stat.S_ISDIR(opened.st_mode)
+                        or opened.st_uid != os.geteuid()
+                        or opened.st_gid != os.getegid()
+                        or opened.st_nlink != 2
+                        or stat.S_IMODE(opened.st_mode) != 0o700
+                        or opened.st_dev != snapshot_initial.device
+                    ):
+                        raise BuildError(error_message)
+                    directory_identities[directory] = _source_directory_identity(
+                        opened
+                    )
+                except BuildError:
+                    raise
+                except (OSError, RuntimeError, ValueError) as exc:
+                    raise BuildError(error_message) from exc
+                finally:
+                    if child_descriptor is not None:
+                        active_error = sys.exception()
+                        try:
+                            os.close(child_descriptor)
+                        except OSError as exc:
+                            if active_error is None:
+                                raise BuildError(error_message) from exc
+        try:
+            if (
+                not repository_root.is_absolute()
+                or repository_root.resolve(strict=True) != repository_root
+            ):
+                raise BuildError(error_message)
+            repository_descriptor = os.open(
+                repository_root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+            held_repository = os.fstat(repository_descriptor)
+            named_repository = repository_root.lstat()
+            repository_identity = _stat_metadata(held_repository)
+            if (
+                repository_identity != _stat_metadata(named_repository)
+                or held_repository.st_uid != os.geteuid()
+                or stat.S_IMODE(held_repository.st_mode) & 0o022
+            ):
+                raise BuildError(error_message)
+            git_descriptor = os.open(
+                ".git",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=repository_descriptor,
+            )
+            held_git = os.fstat(git_descriptor)
+            relative_git = os.stat(
+                ".git",
+                dir_fd=repository_descriptor,
+                follow_symlinks=False,
+            )
+            named_git = (repository_root / ".git").lstat()
+            git_identity = _stat_metadata(held_git)
+            if (
+                not stat.S_ISDIR(held_git.st_mode)
+                or git_identity != _stat_metadata(relative_git)
+                or git_identity != _stat_metadata(named_git)
+                or held_git.st_uid != os.geteuid()
+                or held_git.st_gid != os.getegid()
+                or stat.S_IMODE(held_git.st_mode) & 0o022
+            ):
+                raise BuildError(error_message)
+            import bootstrap_python_sidecar as bootstrap
+
+            archive_arguments = tuple(_isolated_git_command(
+                "archive",
+                "--format=tar",
+                str(release_state.get("repositoryCommit", "")),
+                repository_root=repository_root,
+            ))
+            archive_actual_exec_identity = bootstrap._exec_target_identity(
+                Path(archive_arguments[0])
+            )
+            archive_effective_arguments = (
+                str(Path(sys.executable)),
+                "-I",
+                "-c",
+                bootstrap.PATH_CAPABILITY_EXEC_RUNNER,
+                "1",
+                str(git_descriptor),
+                "relative",
+                *(str(item) for item in git_identity),
+                ".git",
+                *(str(item) for item in archive_actual_exec_identity),
+                *archive_arguments,
+            )
+            archive_command, archive_pass_fds, archive_exec_identity = (
+                bootstrap._held_cwd_exec_command(
+                    Path(sys.executable),
+                    archive_effective_arguments,
+                    cwd_descriptor=repository_descriptor,
+                    keep_fds=(git_descriptor,),
+                )
+            )
+        except BuildError:
+            raise
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            raise BuildError(error_message) from exc
+        with _defer_publish_signals():
+            process = subprocess.Popen(
+                list(archive_command),
+                cwd=Path("/"),
+                env=_isolated_git_environment(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                pass_fds=archive_pass_fds,
+                close_fds=True,
+                start_new_session=True,
+            )
+        if process.stdout is None:
+            raise BuildError(error_message)
+        archive_reader = _DeadlinePipeReader(
+            process.stdout,
+            arguments=archive_arguments,
+            timeout=SOURCE_ARCHIVE_TIMEOUT_SECONDS,
+        )
+        total_size = 0
+        with tarfile.open(fileobj=archive_reader, mode="r|") as archive:
+            for member in archive:
+                name = member.name[:-1] if member.name.endswith("/") else member.name
+                pure = PurePosixPath(name)
+                if (
+                    not name
+                    or pure.is_absolute()
+                    or pure.as_posix() != name
+                    or any(part in {"", ".", "..", ".git"} for part in pure.parts)
+                    or "\\" in name
+                    or any(ord(character) < 0x20 for character in name)
+                ):
+                    raise BuildError(error_message)
+                if member.isdir():
+                    if name not in directories or name in seen_directories:
+                        raise BuildError(error_message)
+                    seen_directories.add(name)
+                    continue
+                entry = expected.get(name)
+                if entry is None or name in seen:
+                    raise BuildError(error_message)
+                parent = pure.parent.as_posix()
+                if parent == ".":
+                    parent = ""
+                leaf = pure.name
+                if entry.mode in {"100644", "100755"}:
+                    if (
+                        not member.isfile()
+                        or member.issym()
+                        or member.islnk()
+                        or member.size < 0
+                        or member.size > MAX_SOURCE_SNAPSHOT_FILE_BYTES
+                    ):
+                        raise BuildError(error_message)
+                    total_size += member.size
+                    if total_size > MAX_SOURCE_SNAPSHOT_TOTAL_BYTES:
+                        raise BuildError(error_message)
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise BuildError(error_message)
+                    digest = hashlib.sha1()
+                    digest.update(f"blob {member.size}\0".encode("ascii"))
+                    written = 0
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+                    flags |= os.O_NOFOLLOW
+                    descriptor: int | None = None
+                    try:
+                        with _held_source_directory(
+                            snapshot_descriptor,
+                            parent,
+                            directory_identities,
+                            allowed_modes=frozenset({0o700}),
+                            error_message=error_message,
+                        ) as parent_descriptor:
+                            descriptor = os.open(
+                                leaf,
+                                flags,
+                                0o600,
+                                dir_fd=parent_descriptor,
+                            )
+                            os.fchmod(descriptor, 0o600)
+                            created = os.fstat(descriptor)
+                            relative = os.stat(
+                                leaf,
+                                dir_fd=parent_descriptor,
+                                follow_symlinks=False,
+                            )
+                            if (
+                                _stat_metadata(created) != _stat_metadata(relative)
+                                or not stat.S_ISREG(created.st_mode)
+                                or created.st_uid != os.geteuid()
+                                or created.st_gid != os.getegid()
+                                or created.st_nlink != 1
+                                or created.st_size != 0
+                                or stat.S_IMODE(created.st_mode) != 0o600
+                                or created.st_dev != snapshot_initial.device
+                            ):
+                                raise BuildError(error_message)
+                            while True:
+                                chunk = source.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                written += len(chunk)
+                                if written > member.size:
+                                    raise BuildError(error_message)
+                                digest.update(chunk)
+                                remaining = memoryview(chunk)
+                                while remaining:
+                                    count = os.write(descriptor, remaining)
+                                    if count <= 0:
+                                        raise BuildError(error_message)
+                                    remaining = remaining[count:]
+                            os.fsync(descriptor)
+                            if (
+                                written != member.size
+                                or digest.hexdigest() != entry.object_id
+                            ):
+                                raise BuildError(error_message)
+                            os.fchmod(
+                                descriptor,
+                                0o555 if entry.mode == "100755" else 0o444,
+                            )
+                            finalized = os.fstat(descriptor)
+                            relative = os.stat(
+                                leaf,
+                                dir_fd=parent_descriptor,
+                                follow_symlinks=False,
+                            )
+                            if (
+                                _stat_metadata(finalized) != _stat_metadata(relative)
+                                or finalized.st_size != member.size
+                                or stat.S_IMODE(finalized.st_mode)
+                                != (0o555 if entry.mode == "100755" else 0o444)
+                            ):
+                                raise BuildError(error_message)
+                    finally:
+                        active_error = sys.exception()
+                        close_failed: OSError | None = None
+                        if descriptor is not None:
+                            try:
+                                os.close(descriptor)
+                            except OSError as exc:
+                                close_failed = exc
+                        try:
+                            source.close()
+                        except OSError as exc:
+                            close_failed = close_failed or exc
+                        if close_failed is not None and active_error is None:
+                            raise BuildError(error_message) from close_failed
+                elif entry.mode == "120000":
+                    if not member.issym() or member.islnk():
+                        raise BuildError(error_message)
+                    link_target = member.linkname
+                    try:
+                        encoded_target = link_target.encode(
+                            "utf-8",
+                            errors="strict",
+                        )
+                    except UnicodeError as exc:
+                        raise BuildError(error_message) from exc
+                    if (
+                        not link_target
+                        or PurePosixPath(link_target).is_absolute()
+                        or "\x00" in link_target
+                        or len(encoded_target) > MAX_SOURCE_SNAPSHOT_FILE_BYTES
+                        or _git_blob_digest(len(encoded_target), (encoded_target,))
+                        != entry.object_id
+                    ):
+                        raise BuildError(error_message)
+                    total_size += len(encoded_target)
+                    if total_size > MAX_SOURCE_SNAPSHOT_TOTAL_BYTES:
+                        raise BuildError(error_message)
+                    with _held_source_directory(
+                        snapshot_descriptor,
+                        parent,
+                        directory_identities,
+                        allowed_modes=frozenset({0o700}),
+                        error_message=error_message,
+                    ) as parent_descriptor:
+                        os.symlink(
+                            link_target,
+                            leaf,
+                            dir_fd=parent_descriptor,
+                        )
+                        relative = os.stat(
+                            leaf,
+                            dir_fd=parent_descriptor,
+                            follow_symlinks=False,
+                        )
+                        actual_target = os.readlink(
+                            leaf,
+                            dir_fd=parent_descriptor,
+                        )
+                        after = os.stat(
+                            leaf,
+                            dir_fd=parent_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (
+                            _stat_metadata(after) != _stat_metadata(relative)
+                            or not stat.S_ISLNK(relative.st_mode)
+                            or relative.st_uid != os.geteuid()
+                            or relative.st_gid != os.getegid()
+                            or relative.st_nlink != 1
+                            or stat.S_IMODE(relative.st_mode) != 0o777
+                            or relative.st_dev != snapshot_initial.device
+                            or actual_target != link_target
+                        ):
+                            raise BuildError(error_message)
+                else:  # pragma: no cover - inventory parsing rejects this
+                    raise BuildError(error_message)
+                seen.add(name)
+        archive_reader.close()
+        process.stdout.close()
+        stdout_closed = True
+        remaining = archive_reader.remaining()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(
+                archive_arguments,
+                SOURCE_ARCHIVE_TIMEOUT_SECONDS,
+            )
+        if process.wait(timeout=remaining) != 0 or seen != set(expected):
+            raise BuildError(error_message)
+        if (
+            repository_descriptor is None
+            or archive_exec_identity is None
+            or _stat_metadata(os.fstat(repository_descriptor))
+            != _stat_metadata(repository_root.lstat())
+        ):
+            raise BuildError(error_message)
+        bootstrap._revalidate_exec_identity(
+            Path(sys.executable),
+            archive_effective_arguments,
+            archive_exec_identity,
+        )
+        with _defer_publish_signals():
+            descendants = _process_group_exists(process.pid)
+            if descendants:
+                _terminate_owned_process_group(
+                    process,
+                    error_message="Exact Git archive process group did not stop",
+                )
+        if descendants:
+            raise BuildError("Exact Git archive left a descendant process running")
+        for directory in sorted(
+            directories - {""},
+            key=lambda path: (-len(PurePosixPath(path).parts), path),
+        ):
+            with _held_source_directory(
+                snapshot_descriptor,
+                directory,
+                directory_identities,
+                allowed_modes=frozenset({0o700, 0o500}),
+                error_message=error_message,
+            ) as directory_descriptor:
+                os.fchmod(directory_descriptor, 0o500)
+                if stat.S_IMODE(os.fstat(directory_descriptor).st_mode) != 0o500:
+                    raise BuildError(error_message)
+        os.fchmod(snapshot_descriptor, 0o500)
+        metadata = _capture_bound_directory(
+            snapshot_descriptor,
+            snapshot,
+            parent_descriptor=capability.build_root_descriptor,
+            relative_name=SOURCE_SNAPSHOT_NAME,
+            expected=None,
+            expected_mode=0o500,
+            exact_entries=root_children[""],
+            error_message=error_message,
+        )
+        source_tree_metadata = _verify_source_inventory(
+            snapshot_descriptor,
+            inventory,
+            error_message=error_message,
+        )
+        final_build_root = _capture_bound_directory(
+            capability.build_root_descriptor,
+            capability.build_root,
+            parent_descriptor=capability.scratch_parent_descriptor,
+            relative_name=capability.build_root_name,
+            expected=build_root_binding,
+            expected_mode=0o700,
+            exact_entries=(SOURCE_SNAPSHOT_NAME,),
+            error_message=error_message,
+        )
+        if final_build_root != build_root_binding:
+            raise BuildError(error_message)
+        capability.source_snapshot = snapshot
+        capability.source_snapshot_descriptor = snapshot_descriptor
+        capability.source_snapshot_metadata = metadata
+        capability.source_inventory = tuple(inventory)
+        capability.source_tree_metadata = source_tree_metadata
+        capability.build_root_snapshot = final_build_root
+        return _held_source_capability_path(capability)
+    except _CleanupBlockedError:
+        capability.poisoned = True
+        raise
+    except BuildError:
+        raise
+    except (
+        OSError,
+        RuntimeError,
+        UnicodeError,
+        ValueError,
+        tarfile.TarError,
+        subprocess.SubprocessError,
+    ) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        active_error = sys.exception()
+        process_cleanup_error: BaseException | None = None
+        if archive_reader is not None:
+            archive_reader.close()
+        if process is not None and process.stdout is not None and not stdout_closed:
+            try:
+                process.stdout.close()
+            except OSError:
+                pass
+        if process is not None:
+            try:
+                with _defer_publish_signals(preserve_error=active_error):
+                    _terminate_owned_process_group(
+                        process,
+                        error_message=(
+                            "Exact Git archive process group did not stop"
+                        ),
+                    )
+            except BaseException as exc:
+                process_cleanup_error = exc
+        if repository_descriptor is not None and repository_identity is not None:
+            try:
+                if (
+                    _stat_metadata(os.fstat(repository_descriptor))
+                    != repository_identity
+                    or _stat_metadata(repository_root.lstat())
+                    != repository_identity
+                ):
+                    raise BuildError(error_message)
+                if git_descriptor is not None and git_identity is not None:
+                    if (
+                        _stat_metadata(os.fstat(git_descriptor)) != git_identity
+                        or _stat_metadata(
+                            os.stat(
+                                ".git",
+                                dir_fd=repository_descriptor,
+                                follow_symlinks=False,
+                            )
+                        )
+                        != git_identity
+                        or _stat_metadata((repository_root / ".git").lstat())
+                        != git_identity
+                    ):
+                        raise BuildError(error_message)
+                if (
+                    archive_exec_identity is not None
+                    and archive_effective_arguments is not None
+                    and archive_actual_exec_identity is not None
+                ):
+                    import bootstrap_python_sidecar as bootstrap
+
+                    bootstrap._revalidate_exec_identity(
+                        Path(sys.executable),
+                        archive_effective_arguments,
+                        archive_exec_identity,
+                    )
+                    if (
+                        bootstrap._exec_target_identity(Path(archive_arguments[0]))
+                        != archive_actual_exec_identity
+                    ):
+                        raise BuildError(error_message)
+            except BaseException as exc:
+                process_cleanup_error = process_cleanup_error or exc
+        if git_descriptor is not None:
+            try:
+                os.close(git_descriptor)
+            except OSError as exc:
+                process_cleanup_error = process_cleanup_error or exc
+        if repository_descriptor is not None:
+            try:
+                os.close(repository_descriptor)
+            except OSError as exc:
+                process_cleanup_error = process_cleanup_error or exc
+        if (
+            snapshot_descriptor is not None
+            and capability.source_snapshot_descriptor != snapshot_descriptor
+        ):
+            try:
+                os.close(snapshot_descriptor)
+            except OSError:
+                pass
+        if process_cleanup_error is not None:
+            capability.poisoned = True
+            raise BuildError(
+                "Exact Git archive process group cleanup failed"
+            ) from (active_error or process_cleanup_error)
+
+
+def _validate_source_snapshot(capability: _ScratchCapability) -> Path:
+    error_message = "Exact Git source snapshot changed during packaging"
+    if (
+        capability.closed
+        or capability.source_snapshot is None
+        or capability.source_snapshot_descriptor is None
+        or capability.source_snapshot_metadata is None
+        or capability.source_inventory is None
+        or capability.source_tree_metadata is None
+    ):
+        raise BuildError(error_message)
+    build_root_before = _capture_bound_directory(
+        capability.build_root_descriptor,
+        capability.build_root,
+        parent_descriptor=capability.scratch_parent_descriptor,
+        relative_name=capability.build_root_name,
+        expected=capability.build_root_snapshot,
+        expected_mode=0o700,
+        exact_entries=None,
+        error_message=error_message,
+    )
+    root_before = _capture_bound_directory(
+        capability.source_snapshot_descriptor,
+        capability.source_snapshot,
+        parent_descriptor=capability.build_root_descriptor,
+        relative_name=SOURCE_SNAPSHOT_NAME,
+        expected=capability.source_snapshot_metadata,
+        expected_mode=0o500,
+        exact_entries=capability.source_snapshot_metadata.entries,
+        error_message=error_message,
+    )
+    current_tree = _verify_source_inventory(
+        capability.source_snapshot_descriptor,
+        capability.source_inventory,
+        error_message=error_message,
+    )
+    root_after = _capture_bound_directory(
+        capability.source_snapshot_descriptor,
+        capability.source_snapshot,
+        parent_descriptor=capability.build_root_descriptor,
+        relative_name=SOURCE_SNAPSHOT_NAME,
+        expected=capability.source_snapshot_metadata,
+        expected_mode=0o500,
+        exact_entries=capability.source_snapshot_metadata.entries,
+        error_message=error_message,
+    )
+    build_root_after = _capture_bound_directory(
+        capability.build_root_descriptor,
+        capability.build_root,
+        parent_descriptor=capability.scratch_parent_descriptor,
+        relative_name=capability.build_root_name,
+        expected=build_root_before,
+        expected_mode=0o700,
+        exact_entries=build_root_before.entries,
+        error_message=error_message,
+    )
+    if (
+        root_before != capability.source_snapshot_metadata
+        or root_after != capability.source_snapshot_metadata
+        or build_root_after != build_root_before
+        or current_tree != capability.source_tree_metadata
+    ):
+        raise BuildError(error_message)
+    return _held_source_capability_path(capability)
+
+
+def _frozen_socket_paths(smoke_root: Path) -> tuple[Path, Path, Path]:
+    runtime_directory = smoke_root / "r"
+    socket_path = runtime_directory / "s"
+    broker_socket_path = runtime_directory / "b"
+    if (
+        not smoke_root.is_absolute()
+        or ".." in smoke_root.parts
+        or socket_path == broker_socket_path
+    ):
+        raise BuildError("Frozen smoke socket root is invalid")
+    for candidate in (socket_path, broker_socket_path):
+        try:
+            encoded = str(candidate).encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise BuildError("Frozen smoke socket path is not UTF-8") from exc
+        if b"\0" in encoded or len(encoded) > MAX_FROZEN_UDS_PATH_BYTES:
+            raise BuildError("Frozen smoke socket path exceeds the runtime bound")
+    return runtime_directory, socket_path, broker_socket_path
 
 
 def _duplicate_high(descriptor: int) -> int:
@@ -1856,6 +8759,25 @@ def _duplicate_high(descriptor: int) -> int:
         raise BuildError("Frozen fd smoke requires POSIX descriptor controls") from exc
     command = getattr(fcntl, "F_DUPFD_CLOEXEC", fcntl.F_DUPFD)
     return int(fcntl.fcntl(descriptor, command, 10))
+
+
+def _desktop_retrieval_protocol(versions: Mapping[str, Any]) -> str:
+    protocol = _mapping(
+        versions.get("desktopRetrievalProtocol"),
+        "canonical desktop retrieval protocol",
+    )
+    major = protocol.get("major")
+    minor = protocol.get("minor")
+    if (
+        not isinstance(major, int)
+        or isinstance(major, bool)
+        or major < 0
+        or not isinstance(minor, int)
+        or isinstance(minor, bool)
+        or minor < 0
+    ):
+        raise BuildError("Canonical desktop retrieval protocol is malformed")
+    return f"{major}.{minor}"
 
 
 SavedControlFd = tuple[int | None, bool | None]
@@ -1896,7 +8818,7 @@ def _open_child_control_fds() -> tuple[
             finally:
                 os.close(read_fd)
             writers[target] = write_fd
-    except Exception:
+    except BaseException:
         for descriptor in writers.values():
             os.close(descriptor)
         _restore_parent_control_fds(saved)
@@ -1928,12 +8850,34 @@ def run_frozen_smoke(
     versions: Mapping[str, Any],
     *,
     source_date_epoch: int,
+    bundle_descriptor: int | None = None,
 ) -> dict[str, Any]:
     """Exercise the frozen API and a real domain lifecycle under PATH traps."""
 
-    executable = (bundle / "lcf-service").resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix="lcf-frozen-smoke-") as raw_root:
-        smoke_root = Path(raw_root)
+    executable = bundle / "lcf-service"
+    try:
+        executable_info = executable.lstat()
+    except OSError as exc:
+        raise BuildError("Frozen sidecar executable is unavailable") from exc
+    if (
+        not stat.S_ISREG(executable_info.st_mode)
+        or stat.S_ISLNK(executable_info.st_mode)
+        or not stat.S_IMODE(executable_info.st_mode) & 0o111
+    ):
+        raise BuildError("Frozen sidecar executable is unsafe")
+    if bundle_descriptor is None:
+        raise BuildError("Frozen sidecar bundle capability is unavailable")
+    bundle_binding = _capture_bound_directory(
+        bundle_descriptor,
+        bundle,
+        parent_descriptor=None,
+        relative_name=None,
+        expected=None,
+        expected_mode=None,
+        exact_entries=None,
+        error_message="Frozen sidecar bundle capability is unavailable",
+    )
+    with _held_private_smoke_root() as smoke_root:
         trap_directory = smoke_root / "trap"
         trap_marker = smoke_root / "path-used.log"
         source_root = smoke_root / "source-root"
@@ -1954,6 +8898,7 @@ def run_frozen_smoke(
             executable,
             ("version",),
             environment=environment,
+            cwd_descriptor=bundle_descriptor,
         )
         if (
             version.returncode != 0
@@ -1966,6 +8911,7 @@ def run_frozen_smoke(
             executable,
             ("doctor",),
             environment=environment,
+            cwd_descriptor=bundle_descriptor,
         )
         try:
             doctor = json.loads(doctor_result.stdout)
@@ -1995,18 +8941,18 @@ def run_frozen_smoke(
         ):
             raise BuildError("Frozen doctor command differs from canonical versions")
 
-        runtime_directory = smoke_root / "runtime"
+        runtime_directory, socket_path, broker_socket_path = _frozen_socket_paths(
+            smoke_root
+        )
         data_directory = smoke_root / "data"
         runtime_directory.mkdir(mode=0o700)
         data_directory.mkdir(mode=0o700)
-        socket_path = runtime_directory / "sidecar.sock"
-        broker_socket_path = runtime_directory / "retrieval.sock"
         broker_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             broker_listener.bind(str(broker_socket_path))
             broker_socket_path.chmod(0o600)
             broker_listener.listen(4)
-        except Exception:
+        except BaseException:
             broker_listener.close()
             raise
         launch_id = str(uuid.uuid4())
@@ -2018,16 +8964,7 @@ def run_frozen_smoke(
         ).rstrip(b"=").decode("ascii")
         if len(token) != 43 or len(capability) != 43 or capability == token:
             raise BuildError("Frozen smoke generated a noncanonical capability")
-        desktop_protocol = _mapping(
-            versions.get("desktopProtocol"),
-            "canonical desktop protocol",
-        )
-        protocol = (
-            f"{desktop_protocol.get('major')}."
-            f"{desktop_protocol.get('minor')}"
-        )
-        if re.fullmatch(r"[0-9]+\.[0-9]+", protocol) is None:
-            raise BuildError("Canonical desktop protocol is malformed")
+        protocol = _desktop_retrieval_protocol(versions)
         broker_stop = threading.Event()
         broker_requests: deque[dict[str, Any]] = deque()
         broker_failures: deque[str] = deque()
@@ -2050,48 +8987,105 @@ def run_frozen_smoke(
         writers: dict[int, int] = {}
         saved_descriptors: dict[int, SavedControlFd] = {}
         log_path = smoke_root / "sidecar.log"
+        log_handle: Any | None = None
+        log_identity: tuple[int, int] | None = None
+        log_collector: _BoundedFrozenLogCollector | None = None
         process: subprocess.Popen[Any] | None = None
+        api_exec_identity: tuple[int, ...] | None = None
+        api_arguments: tuple[str, ...] | None = None
         try:
             writers, saved_descriptors = _open_child_control_fds()
             broker_thread.start()
             broker_started = True
-            with log_path.open("wb") as log:
+            log_handle, log_identity = _open_frozen_log(log_path)
+            try:
+                import bootstrap_python_sidecar as bootstrap
+
+                api_arguments = (
+                    str(executable),
+                    "api",
+                    "--uds",
+                    str(socket_path),
+                    "--launch-id",
+                    launch_id,
+                    "--token-fd",
+                    "3",
+                    "--data-dir",
+                    str(data_directory),
+                    "--local-source-root",
+                    str(source_root),
+                    "--retrieval-broker-uds",
+                    str(broker_socket_path),
+                    "--retrieval-capability-fd",
+                    "4",
+                )
+                api_command, api_pass_fds, api_exec_identity = (
+                    bootstrap._held_cwd_exec_command(
+                        Path(sys.executable),
+                        api_arguments,
+                        cwd_descriptor=bundle_descriptor,
+                        keep_fds=(3, 4),
+                    )
+                )
+            except BuildError:
+                raise
+            except (ImportError, OSError, RuntimeError, ValueError) as exc:
+                raise BuildError(
+                    "Frozen sidecar exec capability is unavailable"
+                ) from exc
+            with _defer_publish_signals():
                 process = subprocess.Popen(
-                    (
-                        str(executable),
-                        "api",
-                        "--uds",
-                        str(socket_path),
-                        "--launch-id",
-                        launch_id,
-                        "--token-fd",
-                        "3",
-                        "--data-dir",
-                        str(data_directory),
-                        "--retrieval-broker-uds",
-                        str(broker_socket_path),
-                        "--retrieval-capability-fd",
-                        "4",
-                    ),
-                    cwd=executable.parent,
+                    api_command,
+                    cwd=Path("/"),
                     env=environment,
                     stdin=subprocess.DEVNULL,
-                    stdout=log,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    pass_fds=(3, 4),
+                    pass_fds=api_pass_fds,
                     close_fds=True,
+                    start_new_session=True,
                 )
+            if process.stdout is None:
+                raise BuildError("Frozen sidecar log pipe is unavailable")
+            log_collector = _BoundedFrozenLogCollector(
+                process.stdout,
+                log_handle,
+            )
+            log_collector.start()
             _restore_parent_control_fds(saved_descriptors)
             saved_descriptors = {}
             os.write(writers[3], token.encode("ascii") + b"\n")
             os.write(writers[4], capability.encode("ascii") + b"\n")
             os.close(writers.pop(4))
-            _wait_for_socket(socket_path, process)
-            handshake = _http_json_over_uds(
+            _wait_for_socket(
                 socket_path,
+                process,
+                log_handle,
+                log_path,
+                log_identity,
+                log_collector=log_collector,
+            )
+
+            def smoke_http(
+                request_path: str,
+                **request_options: Any,
+            ) -> Any:
+                if log_collector is None:
+                    raise BuildError("Frozen sidecar log capture is unavailable")
+                log_collector.assert_healthy()
+                response = _http_json_over_uds(
+                    socket_path,
+                    request_path,
+                    token=token,
+                    launch_id=launch_id,
+                    **request_options,
+                )
+                log_collector.assert_healthy()
+                return response
+
+            handshake = smoke_http(
                 "/api/desktop/handshake",
-                token=token,
-                launch_id=launch_id,
+                check="handshake",
             )
             if (
                 not isinstance(handshake, dict)
@@ -2111,11 +9105,9 @@ def run_frozen_smoke(
                 }.issubset(set(handshake.get("capabilities", [])))
             ):
                 raise BuildError("Frozen UDS handshake differs from the contract")
-            health = _http_json_over_uds(
-                socket_path,
+            health = smoke_http(
                 "/api/health",
-                token=token,
-                launch_id=launch_id,
+                check="health",
             )
             if (
                 not isinstance(health, dict)
@@ -2125,11 +9117,9 @@ def run_frozen_smoke(
             ):
                 raise BuildError("Frozen UDS health differs from the contract")
 
-            library = _http_json_over_uds(
-                socket_path,
+            library = smoke_http(
                 "/api/libraries",
-                token=token,
-                launch_id=launch_id,
+                check="library-create",
                 method="POST",
                 body={
                     "name": "Frozen Widget",
@@ -2141,15 +9131,14 @@ def run_frozen_smoke(
             if (
                 not isinstance(library, dict)
                 or not isinstance(library.get("id"), str)
+                or re.fullmatch(r"[0-9a-f]{32}", library["id"]) is None
                 or library.get("source") != str(source_repository)
             ):
                 raise BuildError("Frozen domain smoke could not create a library")
             library_id = library["id"]
-            job = _http_json_over_uds(
-                socket_path,
+            job = smoke_http(
                 f"/api/libraries/{library_id}/ingest",
-                token=token,
-                launch_id=launch_id,
+                check="library-ingest",
                 method="POST",
                 body={
                     "version": "1.0.0",
@@ -2161,16 +9150,15 @@ def run_frozen_smoke(
             if (
                 not isinstance(job, dict)
                 or not isinstance(job.get("id"), str)
+                or re.fullmatch(r"[0-9a-f]{32}", job["id"]) is None
             ):
                 raise BuildError("Frozen domain smoke could not enqueue ingestion")
             job_id = job["id"]
             job_deadline = time.monotonic() + 90
             while True:
-                completed_job = _http_json_over_uds(
-                    socket_path,
+                completed_job = smoke_http(
                     f"/api/jobs/{job_id}",
-                    token=token,
-                    launch_id=launch_id,
+                    check="job-status",
                 )
                 if (
                     not isinstance(completed_job, dict)
@@ -2209,11 +9197,9 @@ def run_frozen_smoke(
                     "Frozen domain job did not prove mock auto-publication"
                 )
 
-            pages = _http_json_over_uds(
-                socket_path,
+            pages = smoke_http(
                 f"/api/libraries/{library_id}/pages?version=1.0.0",
-                token=token,
-                launch_id=launch_id,
+                check="pages",
             )
             if (
                 not isinstance(pages, list)
@@ -2228,20 +9214,16 @@ def run_frozen_smoke(
                 )
             ):
                 raise BuildError("Frozen domain smoke did not publish pages")
-            lint = _http_json_over_uds(
-                socket_path,
+            lint = smoke_http(
                 f"/api/libraries/{library_id}/lint?version=1.0.0",
-                token=token,
-                launch_id=launch_id,
+                check="lint",
                 method="POST",
             )
             if not isinstance(lint, dict) or lint.get("ok") is not True:
                 raise BuildError("Frozen domain lint did not pass")
-            published_library = _http_json_over_uds(
-                socket_path,
+            published_library = smoke_http(
                 f"/api/libraries/{library_id}",
-                token=token,
-                launch_id=launch_id,
+                check="library-publish",
             )
             if (
                 not isinstance(published_library, dict)
@@ -2256,19 +9238,19 @@ def run_frozen_smoke(
                 )
             ):
                 raise BuildError("Frozen domain version was not activated")
-            post_publish_health = _http_json_over_uds(
-                socket_path,
+            post_publish_health = smoke_http(
                 "/api/health",
-                token=token,
-                launch_id=launch_id,
+                check="post-publish-health",
             )
             if (
                 not isinstance(post_publish_health, dict)
                 or not isinstance(post_publish_health.get("qmd"), dict)
+                or post_publish_health["qmd"].get("enabled") is not False
                 or post_publish_health["qmd"].get("available") is not True
+                or post_publish_health["qmd"].get("hybrid_enabled") is not False
             ):
                 raise BuildError(
-                    "Frozen domain publication did not activate retrieval"
+                    "Frozen domain publication did not activate desktop retrieval"
                 )
             if broker_failures or not any(
                 request.get("endpoint") == "/reconcile"
@@ -2278,6 +9260,9 @@ def run_frozen_smoke(
                 raise BuildError(
                     "Frozen domain publication did not reconcile retrieval"
                 )
+            if log_collector is None:
+                raise BuildError("Frozen sidecar log capture is unavailable")
+            log_collector.assert_healthy()
             os.close(writers.pop(3))
             try:
                 return_code = process.wait(timeout=20)
@@ -2285,37 +9270,108 @@ def run_frozen_smoke(
                 raise BuildError("Frozen sidecar did not stop after parent EOF") from exc
             if return_code != 0:
                 raise BuildError("Frozen sidecar exited unsuccessfully")
+            log_collector.finish()
+            if api_exec_identity is None:
+                raise BuildError("Frozen sidecar exec capability is unavailable")
+            bootstrap._revalidate_exec_identity(
+                Path(sys.executable),
+                api_arguments,
+                api_exec_identity,
+            )
+            with _defer_publish_signals():
+                descendants = _process_group_exists(process.pid)
+                if descendants:
+                    _terminate_owned_process_group(
+                        process,
+                        error_message="Frozen sidecar process group did not stop",
+                    )
+            if descendants:
+                raise BuildError("Frozen sidecar left a descendant process running")
             if socket_path.exists() or socket_path.is_symlink():
                 raise BuildError("Frozen sidecar did not remove its UDS")
             _assert_no_smoke_secrets(
                 data_directory,
                 (token, capability, launch_id),
             )
+            log_status, frozen_log_bytes = _read_bound_frozen_log(
+                log_handle,
+                log_path,
+                log_identity,
+            )
+            if log_status != "ok" or frozen_log_bytes is None:
+                raise BuildError(
+                    "Frozen smoke log could not be audited "
+                    f"(category={log_status})"
+                )
+            try:
+                frozen_log = frozen_log_bytes.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise BuildError("Frozen smoke log is not UTF-8") from exc
+            if token in frozen_log or capability in frozen_log or launch_id in frozen_log:
+                raise BuildError("Frozen sidecar logged session secrets")
         finally:
+            active_error = sys.exception()
+            process_cleanup_error: BaseException | None = None
             if saved_descriptors:
                 _restore_parent_control_fds(saved_descriptors)
             for descriptor in writers.values():
                 os.close(descriptor)
-            if process is not None and process.poll() is None:
-                process.terminate()
+            if process is not None:
                 try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+                    with _defer_publish_signals(preserve_error=active_error):
+                        _terminate_owned_process_group(
+                            process,
+                            error_message=(
+                                "Frozen sidecar process group did not stop"
+                            ),
+                        )
+                except BaseException as exc:
+                    process_cleanup_error = exc
+            if log_collector is not None:
+                try:
+                    log_collector.finish()
+                except BaseException as exc:
+                    process_cleanup_error = process_cleanup_error or exc
+            try:
+                bundle_after = _capture_bound_directory(
+                    bundle_descriptor,
+                    bundle,
+                    parent_descriptor=None,
+                    relative_name=None,
+                    expected=bundle_binding,
+                    expected_mode=None,
+                    exact_entries=bundle_binding.entries,
+                    error_message=(
+                        "Frozen sidecar bundle capability changed during smoke"
+                    ),
+                )
+                if bundle_after != bundle_binding:
+                    raise BuildError(
+                        "Frozen sidecar bundle capability changed during smoke"
+                    )
+                if api_exec_identity is not None and api_arguments is not None:
+                    import bootstrap_python_sidecar as bootstrap
+
+                    bootstrap._revalidate_exec_identity(
+                        Path(sys.executable),
+                        api_arguments,
+                        api_exec_identity,
+                    )
+            except BaseException as exc:
+                process_cleanup_error = process_cleanup_error or exc
             broker_stop.set()
             broker_listener.close()
             if broker_started:
                 broker_thread.join(timeout=2)
                 broker_shutdown_failed = broker_thread.is_alive()
+            if log_handle is not None:
+                log_handle.close()
+            if process_cleanup_error is not None:
+                raise BuildError(
+                    "Frozen sidecar process state cleanup or verification failed"
+                ) from (active_error or process_cleanup_error)
         if broker_shutdown_failed:
             raise BuildError("Frozen smoke broker did not stop")
-        try:
-            frozen_log = log_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            raise BuildError("Frozen smoke log is unreadable") from exc
-        if token in frozen_log or capability in frozen_log or launch_id in frozen_log:
-            raise BuildError("Frozen sidecar logged session secrets")
         if trap_marker.exists() and trap_marker.stat().st_size:
             raise BuildError("Frozen sidecar invoked a forbidden PATH executable")
     return {
@@ -2362,10 +9418,15 @@ def normalize_tree(root: Path, source_date_epoch: int) -> None:
         os.utime(path, (source_date_epoch, source_date_epoch))
 
 
-def _exchange_paths(first: Path, second: Path) -> None:
+def _exchange_at(
+    first_parent_descriptor: int,
+    first_name: str,
+    second_parent_descriptor: int,
+    second_name: str,
+) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
-    encoded_first = os.fsencode(first)
-    encoded_second = os.fsencode(second)
+    encoded_first = os.fsencode(first_name)
+    encoded_second = os.fsencode(second_name)
     if platform.system() == "Darwin":
         function = getattr(libc, "renameatx_np", None)
         if function is None:
@@ -2378,7 +9439,13 @@ def _exchange_paths(first: Path, second: Path) -> None:
             ctypes.c_uint,
         ]
         function.restype = ctypes.c_int
-        result = function(-2, encoded_first, -2, encoded_second, 0x00000002)
+        result = function(
+            first_parent_descriptor,
+            encoded_first,
+            second_parent_descriptor,
+            encoded_second,
+            0x00000002,
+        )
     elif platform.system() == "Linux":
         function = getattr(libc, "renameat2", None)
         if function is None:
@@ -2391,7 +9458,13 @@ def _exchange_paths(first: Path, second: Path) -> None:
             ctypes.c_uint,
         ]
         function.restype = ctypes.c_int
-        result = function(-100, encoded_first, -100, encoded_second, 0x2)
+        result = function(
+            first_parent_descriptor,
+            encoded_first,
+            second_parent_descriptor,
+            encoded_second,
+            0x2,
+        )
     else:
         raise BuildError("Atomic staging replacement is unsupported on this OS")
     if result != 0:
@@ -2402,73 +9475,1345 @@ def _exchange_paths(first: Path, second: Path) -> None:
         )
 
 
+def _rename_noreplace_at(
+    source_parent_descriptor: int,
+    source_name: str,
+    destination_parent_descriptor: int,
+    destination_name: str,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    encoded_source = os.fsencode(source_name)
+    encoded_destination = os.fsencode(destination_name)
+    if platform.system() == "Darwin":
+        function = getattr(libc, "renameatx_np", None)
+        if function is None:
+            raise BuildError("Atomic no-replace rename is unavailable on Darwin")
+        function.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        function.restype = ctypes.c_int
+        result = function(
+            source_parent_descriptor,
+            encoded_source,
+            destination_parent_descriptor,
+            encoded_destination,
+            0x00000004,
+        )
+    elif platform.system() == "Linux":
+        function = getattr(libc, "renameat2", None)
+        if function is None:
+            raise BuildError("Atomic no-replace rename is unavailable on Linux")
+        function.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        function.restype = ctypes.c_int
+        result = function(
+            source_parent_descriptor,
+            encoded_source,
+            destination_parent_descriptor,
+            encoded_destination,
+            0x1,
+        )
+    else:
+        raise BuildError("Atomic no-replace staging is unsupported on this OS")
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise BuildError("Atomic no-replace staging rename failed") from OSError(
+            error_number,
+            os.strerror(error_number),
+        )
+
+
+def _open_publish_capability(
+    candidate: Path,
+    destination: Path,
+    *,
+    held_candidate: _EvidenceCapability | _BundleCapability | None = None,
+) -> _PublishCapability:
+    error_message = "Atomic staging capability is unsafe"
+    descriptors: list[int] = []
+    try:
+        if (
+            not candidate.is_absolute()
+            or not destination.is_absolute()
+            or candidate == destination
+            or candidate.parent.resolve(strict=True) != candidate.parent
+            or destination.parent.resolve(strict=True) != destination.parent
+            or candidate.resolve(strict=True) != candidate
+            or candidate.name in {"", ".", ".."}
+            or destination.name in {"", ".", ".."}
+        ):
+            raise BuildError(error_message)
+        candidate_parent_descriptor = os.open(
+            candidate.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        descriptors.append(candidate_parent_descriptor)
+        destination_parent_descriptor = os.open(
+            destination.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        descriptors.append(destination_parent_descriptor)
+        candidate_parent_snapshot = _capture_bound_directory(
+            candidate_parent_descriptor,
+            candidate.parent,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        destination_parent_snapshot = _capture_bound_directory(
+            destination_parent_descriptor,
+            destination.parent,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=None,
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if (
+            candidate_parent_snapshot.device
+            != destination_parent_snapshot.device
+            or stat.S_IMODE(candidate_parent_snapshot.mode) & 0o022
+            or stat.S_IMODE(destination_parent_snapshot.mode) & 0o022
+        ):
+            raise BuildError(error_message)
+        if held_candidate is not None:
+            if (
+                held_candidate.closed
+                or held_candidate.path != candidate
+                or held_candidate.name != candidate.name
+                or _stable_directory_identity(
+                    os.fstat(held_candidate.parent_descriptor)
+                )
+                != _stable_directory_identity(candidate_parent_snapshot)
+            ):
+                raise _CapabilityDriftError(error_message)
+            candidate_descriptor = os.dup(held_candidate.descriptor)
+            os.set_inheritable(candidate_descriptor, False)
+        else:
+            candidate_descriptor = os.open(
+                candidate.name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=candidate_parent_descriptor,
+            )
+        descriptors.append(candidate_descriptor)
+        candidate_snapshot = _capture_bound_directory(
+            candidate_descriptor,
+            candidate,
+            parent_descriptor=candidate_parent_descriptor,
+            relative_name=candidate.name,
+            expected=(
+                held_candidate.snapshot
+                if held_candidate is not None
+                else None
+            ),
+            expected_mode=None,
+            exact_entries=None,
+            error_message=error_message,
+        )
+        if stat.S_IMODE(candidate_snapshot.mode) & 0o022:
+            raise BuildError(error_message)
+        candidate_tree_snapshot = _tree_metadata_snapshot(
+            candidate_descriptor,
+            error_message=error_message,
+        )
+        if held_candidate is not None and (
+            candidate_snapshot != held_candidate.snapshot
+            or candidate_tree_snapshot != held_candidate.tree_snapshot
+            or _stable_directory_identity(
+                os.fstat(held_candidate.descriptor)
+            )
+            != _stable_directory_identity(candidate_snapshot)
+        ):
+            raise _CapabilityDriftError(error_message)
+        if isinstance(held_candidate, _EvidenceCapability):
+            _read_held_evidence_tree(
+                held_candidate,
+                expected_tree=held_candidate.tree_snapshot,
+                expected_content=held_candidate.content_snapshot,
+                error_message=error_message,
+            )
+
+        existing_descriptor: int | None = None
+        existing_snapshot: _DirectorySnapshot | None = None
+        existing_tree: tuple[tuple[Any, ...], ...] | None = None
+        try:
+            destination_entry = os.stat(
+                destination.name,
+                dir_fd=destination_parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            destination_entry = None
+        if destination_entry is not None:
+            if not stat.S_ISDIR(destination_entry.st_mode):
+                raise BuildError(error_message)
+            existing_descriptor = os.open(
+                destination.name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=destination_parent_descriptor,
+            )
+            descriptors.append(existing_descriptor)
+            existing_snapshot = _capture_bound_directory(
+                existing_descriptor,
+                destination,
+                parent_descriptor=destination_parent_descriptor,
+                relative_name=destination.name,
+                expected=None,
+                expected_mode=None,
+                exact_entries=None,
+                error_message=error_message,
+            )
+            if stat.S_IMODE(existing_snapshot.mode) & 0o022:
+                raise BuildError(error_message)
+            existing_tree = _tree_metadata_snapshot(
+                existing_descriptor,
+                error_message=error_message,
+            )
+        return _PublishCapability(
+            candidate=candidate,
+            candidate_name=candidate.name,
+            candidate_parent=candidate.parent,
+            candidate_parent_descriptor=candidate_parent_descriptor,
+            candidate_parent_snapshot=candidate_parent_snapshot,
+            candidate_descriptor=candidate_descriptor,
+            candidate_snapshot=candidate_snapshot,
+            candidate_tree_snapshot=candidate_tree_snapshot,
+            destination=destination,
+            destination_name=destination.name,
+            destination_parent=destination.parent,
+            destination_parent_descriptor=destination_parent_descriptor,
+            destination_parent_snapshot=destination_parent_snapshot,
+            existing_destination_descriptor=existing_descriptor,
+            existing_destination_snapshot=existing_snapshot,
+            existing_destination_tree_snapshot=existing_tree,
+        )
+    except BuildError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise BuildError(error_message) from exc
+    finally:
+        if sys.exc_info()[0] is not None:
+            for descriptor in reversed(descriptors):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+
+def _close_publish_capability(capability: _PublishCapability) -> None:
+    failed = False
+    seen: set[int] = set()
+    for descriptor in (
+        capability.existing_destination_descriptor,
+        capability.candidate_descriptor,
+        capability.destination_parent_descriptor,
+        capability.candidate_parent_descriptor,
+    ):
+        if descriptor is None or descriptor in seen:
+            continue
+        seen.add(descriptor)
+        try:
+            os.close(descriptor)
+        except OSError:
+            failed = True
+    if failed:
+        raise BuildError("Atomic staging capability cleanup failed")
+
+
+def _revalidate_publish_directory(
+    descriptor: int,
+    path: Path,
+    *,
+    parent_descriptor: int,
+    relative_name: str,
+    expected: _DirectorySnapshot,
+    expected_tree: tuple[tuple[Any, ...], ...],
+    error_message: str,
+    allow_root_metadata_change: bool = False,
+) -> _DirectorySnapshot:
+    try:
+        current = _capture_bound_directory(
+            descriptor,
+            path,
+            parent_descriptor=parent_descriptor,
+            relative_name=relative_name,
+            expected=expected,
+            expected_mode=None,
+            exact_entries=expected.entries,
+            error_message=error_message,
+        )
+        if (
+            _stable_directory_identity(current)
+            != _stable_directory_identity(expected)
+            or (not allow_root_metadata_change and current != expected)
+            or _tree_metadata_snapshot(
+                descriptor,
+                error_message=error_message,
+            )
+            != expected_tree
+        ):
+            raise _CapabilityDriftError(error_message)
+        return current
+    except _CapabilityDriftError:
+        raise
+    except BaseException as exc:
+        raise _CapabilityDriftError(error_message) from exc
+
+
+def _revalidate_publish_parent(
+    descriptor: int,
+    path: Path,
+    expected: _DirectorySnapshot,
+    *,
+    error_message: str,
+    allow_metadata_change: bool = False,
+    expected_entries: tuple[str, ...] | None = None,
+) -> _DirectorySnapshot:
+    try:
+        current = _capture_bound_directory(
+            descriptor,
+            path,
+            parent_descriptor=None,
+            relative_name=None,
+            expected=expected,
+            expected_mode=None,
+            exact_entries=(
+                expected.entries
+                if expected_entries is None
+                else expected_entries
+            ),
+            error_message=error_message,
+        )
+        if not allow_metadata_change and current != expected:
+            raise _CapabilityDriftError(error_message)
+        return current
+    except _CapabilityDriftError:
+        raise
+    except BaseException as exc:
+        raise _CapabilityDriftError(error_message) from exc
+
+
+def _finish_publish_signal_deferral(
+    scope: Any | None,
+    primary_error: BaseException | None,
+) -> None:
+    if scope is None:
+        return
+    try:
+        scope.__exit__(
+            type(primary_error) if primary_error is not None else None,
+            primary_error,
+            primary_error.__traceback__ if primary_error is not None else None,
+        )
+    except _DeferredSignalError:
+        if primary_error is None:
+            raise
+    except BaseException as signal_error:
+        if primary_error is not None:
+            raise BuildError(
+                "Atomic staging failed and signal cleanup failed"
+            ) from primary_error
+        raise BuildError(
+            "Atomic staging signal cleanup failed"
+        ) from signal_error
+
+
+def _publish_staging_impl(
+    candidate: Path,
+    destination: Path,
+    *,
+    verifier: Callable[[Path], Any],
+    held_candidate: _EvidenceCapability | _BundleCapability | None,
+    ownership_transfer: _PublishOwnershipTransfer | None = None,
+) -> None:
+    """Verify and atomically publish a directory, rolling back on recheck."""
+
+    capability = _open_publish_capability(
+        candidate,
+        destination,
+        held_candidate=held_candidate,
+    )
+    swapped = False
+    primary_error: BaseException | None = None
+    cleanup_blocked = False
+    transaction_signals: Any | None = None
+    ownership_committed = False
+    ownership_descriptors: tuple[int, ...] = ()
+    old_cleanup_error: BaseException | None = None
+    try:
+        initial_candidate_parent_entries = (
+            capability.candidate_parent_snapshot.entries
+        )
+        initial_destination_parent_entries = (
+            capability.destination_parent_snapshot.entries
+        )
+        candidate_parent_identity = _stable_directory_identity(
+            capability.candidate_parent_snapshot
+        )
+        destination_parent_identity = _stable_directory_identity(
+            capability.destination_parent_snapshot
+        )
+        if capability.existing_destination_descriptor is not None:
+            post_swap_candidate_parent_entries = initial_candidate_parent_entries
+            post_swap_destination_parent_entries = (
+                initial_destination_parent_entries
+            )
+        elif candidate_parent_identity == destination_parent_identity:
+            entries = set(initial_candidate_parent_entries)
+            if (
+                capability.candidate_name not in entries
+                or capability.destination_name in entries
+            ):
+                raise BuildError("Atomic staging parent inventory is inconsistent")
+            entries.remove(capability.candidate_name)
+            entries.add(capability.destination_name)
+            post_swap_candidate_parent_entries = tuple(sorted(entries))
+            post_swap_destination_parent_entries = (
+                post_swap_candidate_parent_entries
+            )
+        else:
+            candidate_entries = set(initial_candidate_parent_entries)
+            destination_entries = set(initial_destination_parent_entries)
+            if (
+                capability.candidate_name not in candidate_entries
+                or capability.destination_name in destination_entries
+            ):
+                raise BuildError("Atomic staging parent inventory is inconsistent")
+            candidate_entries.remove(capability.candidate_name)
+            destination_entries.add(capability.destination_name)
+            post_swap_candidate_parent_entries = tuple(sorted(candidate_entries))
+            post_swap_destination_parent_entries = tuple(sorted(destination_entries))
+    except BaseException:
+        try:
+            _close_publish_capability(capability)
+        except BuildError:
+            pass
+        raise
+    try:
+        verifier(candidate)
+        _revalidate_publish_directory(
+            capability.candidate_descriptor,
+            capability.candidate,
+            parent_descriptor=capability.candidate_parent_descriptor,
+            relative_name=capability.candidate_name,
+            expected=capability.candidate_snapshot,
+            expected_tree=capability.candidate_tree_snapshot,
+            error_message="Atomic staging candidate changed during verification",
+        )
+        capability.candidate_parent_snapshot = _revalidate_publish_parent(
+            capability.candidate_parent_descriptor,
+            capability.candidate_parent,
+            capability.candidate_parent_snapshot,
+            error_message="Atomic staging candidate parent changed",
+        )
+        capability.destination_parent_snapshot = _revalidate_publish_parent(
+            capability.destination_parent_descriptor,
+            capability.destination_parent,
+            capability.destination_parent_snapshot,
+            error_message="Atomic staging destination parent changed",
+        )
+        if (
+            capability.existing_destination_descriptor is not None
+            and capability.existing_destination_snapshot is not None
+            and capability.existing_destination_tree_snapshot is not None
+        ):
+            _revalidate_publish_directory(
+                capability.existing_destination_descriptor,
+                capability.destination,
+                parent_descriptor=capability.destination_parent_descriptor,
+                relative_name=capability.destination_name,
+                expected=capability.existing_destination_snapshot,
+                expected_tree=capability.existing_destination_tree_snapshot,
+                error_message="Atomic staging destination changed before swap",
+            )
+        transaction_signals = _defer_publish_signals()
+        transaction_signals.__enter__()
+        if capability.existing_destination_descriptor is not None:
+            _exchange_at(
+                capability.candidate_parent_descriptor,
+                capability.candidate_name,
+                capability.destination_parent_descriptor,
+                capability.destination_name,
+            )
+        else:
+            _rename_noreplace_at(
+                capability.candidate_parent_descriptor,
+                capability.candidate_name,
+                capability.destination_parent_descriptor,
+                capability.destination_name,
+            )
+        swapped = True
+        capability.candidate_parent_snapshot = _revalidate_publish_parent(
+            capability.candidate_parent_descriptor,
+            capability.candidate_parent,
+            capability.candidate_parent_snapshot,
+            error_message="Atomic staging candidate parent changed after swap",
+            allow_metadata_change=True,
+            expected_entries=post_swap_candidate_parent_entries,
+        )
+        capability.destination_parent_snapshot = _revalidate_publish_parent(
+            capability.destination_parent_descriptor,
+            capability.destination_parent,
+            capability.destination_parent_snapshot,
+            error_message="Atomic staging destination parent changed after swap",
+            allow_metadata_change=True,
+            expected_entries=post_swap_destination_parent_entries,
+        )
+        capability.candidate_snapshot = _revalidate_publish_directory(
+            capability.candidate_descriptor,
+            capability.destination,
+            parent_descriptor=capability.destination_parent_descriptor,
+            relative_name=capability.destination_name,
+            expected=capability.candidate_snapshot,
+            expected_tree=capability.candidate_tree_snapshot,
+            error_message="Published staging binding changed after swap",
+            allow_root_metadata_change=True,
+        )
+        if (
+            capability.existing_destination_descriptor is not None
+            and capability.existing_destination_snapshot is not None
+            and capability.existing_destination_tree_snapshot is not None
+        ):
+            capability.existing_destination_snapshot = _revalidate_publish_directory(
+                capability.existing_destination_descriptor,
+                capability.candidate,
+                parent_descriptor=capability.candidate_parent_descriptor,
+                relative_name=capability.candidate_name,
+                expected=capability.existing_destination_snapshot,
+                expected_tree=capability.existing_destination_tree_snapshot,
+                error_message="Old staging destination binding changed after swap",
+                allow_root_metadata_change=True,
+            )
+        verifier(destination)
+        _revalidate_publish_directory(
+            capability.candidate_descriptor,
+            capability.destination,
+            parent_descriptor=capability.destination_parent_descriptor,
+            relative_name=capability.destination_name,
+            expected=capability.candidate_snapshot,
+            expected_tree=capability.candidate_tree_snapshot,
+            error_message="Published staging changed during post-swap audit",
+        )
+        if ownership_transfer is not None:
+            ownership_transfer.prepare(capability)
+            # The commit gate remains inside the rollback-capable section and
+            # performs no ownership mutation.  Only after it returns does the
+            # publisher apply the fully preallocated Python state transfer.
+            ownership_transfer.commit(capability)
+    except BaseException as exc:
+        primary_error = exc
+
+    if primary_error is not None and not swapped:
+        try:
+            _revalidate_publish_directory(
+                capability.candidate_descriptor,
+                capability.candidate,
+                parent_descriptor=capability.candidate_parent_descriptor,
+                relative_name=capability.candidate_name,
+                expected=capability.candidate_snapshot,
+                expected_tree=capability.candidate_tree_snapshot,
+                error_message="Atomic staging candidate changed during verification",
+            )
+        except BaseException:
+            cleanup_blocked = True
+
+    if primary_error is not None and swapped:
+        try:
+            capability.candidate_parent_snapshot = _revalidate_publish_parent(
+                capability.candidate_parent_descriptor,
+                capability.candidate_parent,
+                capability.candidate_parent_snapshot,
+                error_message="Published staging rollback safety check failed",
+            )
+            capability.destination_parent_snapshot = _revalidate_publish_parent(
+                capability.destination_parent_descriptor,
+                capability.destination_parent,
+                capability.destination_parent_snapshot,
+                error_message="Published staging rollback safety check failed",
+            )
+            _revalidate_publish_directory(
+                capability.candidate_descriptor,
+                capability.destination,
+                parent_descriptor=capability.destination_parent_descriptor,
+                relative_name=capability.destination_name,
+                expected=capability.candidate_snapshot,
+                expected_tree=capability.candidate_tree_snapshot,
+                error_message="Published staging rollback safety check failed",
+            )
+            if (
+                capability.existing_destination_descriptor is not None
+                and capability.existing_destination_snapshot is not None
+                and capability.existing_destination_tree_snapshot is not None
+            ):
+                _revalidate_publish_directory(
+                    capability.existing_destination_descriptor,
+                    capability.candidate,
+                    parent_descriptor=capability.candidate_parent_descriptor,
+                    relative_name=capability.candidate_name,
+                    expected=capability.existing_destination_snapshot,
+                    expected_tree=capability.existing_destination_tree_snapshot,
+                    error_message="Published staging rollback safety check failed",
+                )
+                _exchange_at(
+                    capability.candidate_parent_descriptor,
+                    capability.candidate_name,
+                    capability.destination_parent_descriptor,
+                    capability.destination_name,
+                )
+            else:
+                _rename_noreplace_at(
+                    capability.destination_parent_descriptor,
+                    capability.destination_name,
+                    capability.candidate_parent_descriptor,
+                    capability.candidate_name,
+                )
+            capability.candidate_parent_snapshot = _revalidate_publish_parent(
+                capability.candidate_parent_descriptor,
+                capability.candidate_parent,
+                capability.candidate_parent_snapshot,
+                error_message="Published staging rollback safety check failed",
+                allow_metadata_change=True,
+                expected_entries=initial_candidate_parent_entries,
+            )
+            capability.destination_parent_snapshot = _revalidate_publish_parent(
+                capability.destination_parent_descriptor,
+                capability.destination_parent,
+                capability.destination_parent_snapshot,
+                error_message="Published staging rollback safety check failed",
+                allow_metadata_change=True,
+                expected_entries=initial_destination_parent_entries,
+            )
+            capability.candidate_snapshot = _revalidate_publish_directory(
+                capability.candidate_descriptor,
+                capability.candidate,
+                parent_descriptor=capability.candidate_parent_descriptor,
+                relative_name=capability.candidate_name,
+                expected=capability.candidate_snapshot,
+                expected_tree=capability.candidate_tree_snapshot,
+                error_message="Published staging rollback safety check failed",
+                allow_root_metadata_change=True,
+            )
+            if (
+                capability.existing_destination_descriptor is not None
+                and capability.existing_destination_snapshot is not None
+                and capability.existing_destination_tree_snapshot is not None
+            ):
+                capability.existing_destination_snapshot = _revalidate_publish_directory(
+                    capability.existing_destination_descriptor,
+                    capability.destination,
+                    parent_descriptor=capability.destination_parent_descriptor,
+                    relative_name=capability.destination_name,
+                    expected=capability.existing_destination_snapshot,
+                    expected_tree=capability.existing_destination_tree_snapshot,
+                    error_message="Published staging rollback safety check failed",
+                    allow_root_metadata_change=True,
+                )
+            else:
+                try:
+                    os.stat(
+                        capability.destination_name,
+                        dir_fd=capability.destination_parent_descriptor,
+                        follow_symlinks=False,
+                    )
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise _CapabilityDriftError(
+                        "Published staging rollback safety check failed"
+                    )
+            if ownership_transfer is not None:
+                # The callback existed before the swap, so even failures in
+                # the post-swap verifier or ownership prepare restore every
+                # caller-owned snapshot after namespace rollback completes.
+                ownership_transfer.rollback(capability)
+        except BaseException as rollback_error:
+            try:
+                _close_publish_capability(capability)
+            except BuildError:
+                pass
+            _finish_publish_signal_deferral(
+                transaction_signals,
+                rollback_error,
+            )
+            raise _CleanupBlockedError(
+                "Published staging rollback safety check failed"
+            ) from rollback_error
+
+    if (
+        primary_error is None
+        and capability.existing_destination_descriptor is not None
+        and not (
+            ownership_transfer is not None
+            and ownership_transfer.retain_previous_in_scratch
+        )
+    ):
+        try:
+            if (
+                capability.existing_destination_snapshot is None
+                or capability.existing_destination_tree_snapshot is None
+            ):
+                raise BuildError("Published staging old destination cleanup failed")
+            capability.candidate_parent_snapshot = _revalidate_publish_parent(
+                capability.candidate_parent_descriptor,
+                capability.candidate_parent,
+                capability.candidate_parent_snapshot,
+                error_message="Published staging old destination cleanup failed",
+            )
+            _revalidate_publish_directory(
+                capability.existing_destination_descriptor,
+                capability.candidate,
+                parent_descriptor=capability.candidate_parent_descriptor,
+                relative_name=capability.candidate_name,
+                expected=capability.existing_destination_snapshot,
+                expected_tree=capability.existing_destination_tree_snapshot,
+                error_message="Published staging old destination cleanup failed",
+            )
+            quarantine = f".lcf-old-{secrets.token_hex(16)}"
+            _rename_noreplace_at(
+                capability.candidate_parent_descriptor,
+                capability.candidate_name,
+                capability.candidate_parent_descriptor,
+                quarantine,
+            )
+            quarantined = os.stat(
+                quarantine,
+                dir_fd=capability.candidate_parent_descriptor,
+                follow_symlinks=False,
+            )
+            held = os.fstat(capability.existing_destination_descriptor)
+            if (
+                _stable_directory_identity(quarantined)
+                != _stable_directory_identity(held)
+            ):
+                try:
+                    _rename_noreplace_at(
+                        capability.candidate_parent_descriptor,
+                        quarantine,
+                        capability.candidate_parent_descriptor,
+                        capability.candidate_name,
+                    )
+                except BaseException as restore_error:
+                    raise _CleanupBlockedError(
+                        "Published staging old destination cleanup failed"
+                    ) from restore_error
+                raise _CleanupBlockedError(
+                    "Published staging old destination cleanup failed"
+                )
+            _remove_tree_contents(
+                capability.existing_destination_descriptor,
+                error_message="Published staging old destination cleanup failed",
+            )
+            if os.listdir(capability.existing_destination_descriptor):
+                raise BuildError("Published staging old destination cleanup failed")
+            relative = os.stat(
+                quarantine,
+                dir_fd=capability.candidate_parent_descriptor,
+                follow_symlinks=False,
+            )
+            held = os.fstat(capability.existing_destination_descriptor)
+            if _stable_directory_identity(relative) != _stable_directory_identity(held):
+                raise BuildError("Published staging old destination cleanup failed")
+            _remove_verified_quarantine_leaf(
+                capability.candidate_parent_descriptor,
+                original_name=capability.candidate_name,
+                quarantine_name=quarantine,
+                expected=held,
+                directory=True,
+                error_message="Published staging old destination cleanup failed",
+            )
+            try:
+                os.stat(
+                    capability.candidate_name,
+                    dir_fd=capability.candidate_parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            else:
+                raise _CleanupBlockedError(
+                    "Published staging old destination cleanup failed"
+                )
+        except BaseException as cleanup_error:
+            old_cleanup_error = cleanup_error
+
+    if primary_error is None and ownership_transfer is not None:
+        # Every fallible revalidation ran in ownership prepare while the
+        # previous destination was still rollback-capable.  Commit performs
+        # only Python state transfers and returns descriptors for best-effort
+        # close after the namespace and scratch owner are already stable.
+        ownership_descriptors = ownership_transfer.apply(capability)
+        ownership_committed = True
+
+    close_error: BaseException | None = None
+    try:
+        _close_publish_capability(capability)
+    except BaseException as exc:
+        close_error = exc
+    for descriptor in ownership_descriptors:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            close_error = close_error or exc
+    if close_error is not None:
+        _finish_publish_signal_deferral(
+            transaction_signals,
+            primary_error or old_cleanup_error or close_error,
+        )
+        if primary_error is not None:
+            raise BuildError(
+                "Published staging failed and capability cleanup failed"
+            ) from close_error
+        if old_cleanup_error is not None:
+            if ownership_committed:
+                raise BuildError(
+                    "Published staging old destination cleanup failed"
+                ) from old_cleanup_error
+            raise _CleanupBlockedError(
+                "Published staging old destination cleanup failed"
+            ) from old_cleanup_error
+        raise BuildError("Published staging capability cleanup failed") from close_error
+    _finish_publish_signal_deferral(
+        transaction_signals,
+        primary_error or old_cleanup_error,
+    )
+    if old_cleanup_error is not None:
+        if ownership_committed:
+            raise BuildError(
+                "Published staging old destination cleanup failed"
+            ) from old_cleanup_error
+        raise _CleanupBlockedError(
+            "Published staging old destination cleanup failed"
+        ) from old_cleanup_error
+    if primary_error is not None:
+        if cleanup_blocked:
+            raise _CleanupBlockedError(
+                "Atomic staging capability drifted during verification"
+            ) from primary_error
+        if isinstance(primary_error, (KeyboardInterrupt, SystemExit)):
+            raise primary_error
+        if swapped:
+            raise BuildError("Published staging failed its post-swap audit") from primary_error
+        raise BuildError("Atomic staging candidate failed verification") from primary_error
+
+
 def publish_staging(
     candidate: Path,
     destination: Path,
     *,
     verifier: Callable[[Path], Any],
+    held_candidate: _EvidenceCapability | _BundleCapability | None = None,
+    ownership_transfer: _PublishOwnershipTransfer | None = None,
 ) -> None:
-    """Verify and atomically publish a directory, rolling back on recheck."""
+    """Publish with scoped process-signal translation around the transaction."""
 
-    if not candidate.is_absolute() or not destination.is_absolute():
-        raise BuildError("Atomic staging paths must be absolute")
-    try:
-        candidate_info = candidate.lstat()
-    except OSError as exc:
-        raise BuildError("Atomic staging candidate is missing") from exc
-    if not stat.S_ISDIR(candidate_info.st_mode) or stat.S_ISLNK(
-        candidate_info.st_mode
+    with _translate_cleanup_signals():
+        _publish_staging_impl(
+            candidate,
+            destination,
+            verifier=verifier,
+            held_candidate=held_candidate,
+            ownership_transfer=ownership_transfer,
+        )
+
+
+def _prepare_published_bundle_ownership(
+    scratch: _ScratchCapability,
+    bundle: _BundleCapability,
+    publish: _PublishCapability,
+) -> _DirectorySnapshot:
+    """Prove the complete bundle handoff while publication can roll back."""
+
+    error_message = "Published Python sidecar bundle capability changed"
+    if scratch.bundle is not bundle or bundle.closed or scratch.poisoned:
+        raise _CleanupBlockedError(error_message)
+    _validate_source_snapshot(scratch)
+    moved = _capture_bound_directory(
+        bundle.descriptor,
+        publish.destination,
+        parent_descriptor=publish.destination_parent_descriptor,
+        relative_name=publish.destination_name,
+        expected=bundle.snapshot,
+        expected_mode=None,
+        exact_entries=bundle.snapshot.entries,
+        error_message=error_message,
+    )
+    if (
+        _stable_directory_identity(moved)
+        != _stable_directory_identity(bundle.snapshot)
+        or _tree_metadata_snapshot(
+            bundle.descriptor,
+            error_message=error_message,
+        )
+        != bundle.tree_snapshot
     ):
-        raise BuildError("Atomic staging candidate must be a real directory")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if candidate.resolve() == destination.resolve(strict=False):
-        raise BuildError("Atomic staging candidate and destination must differ")
-    try:
-        if candidate.stat().st_dev != destination.parent.stat().st_dev:
-            raise BuildError("Atomic staging candidate must share destination filesystem")
-    except OSError as exc:
-        raise BuildError("Atomic staging filesystem cannot be inspected") from exc
+        raise _CapabilityDriftError(error_message)
+    destination_snapshot = _capture_bound_directory(
+        scratch.destination_parent_descriptor,
+        scratch.destination_parent,
+        parent_descriptor=None,
+        relative_name=None,
+        expected=scratch.destination_parent_snapshot,
+        expected_mode=None,
+        exact_entries=publish.destination_parent_snapshot.entries,
+        error_message=error_message,
+    )
+    if (
+        _stable_directory_identity(destination_snapshot)
+        != _stable_directory_identity(publish.destination_parent_snapshot)
+    ):
+        raise _CapabilityDriftError(error_message)
 
-    verifier(candidate)
-    destination_existed = destination.exists()
-    if destination_existed:
-        destination_info = destination.lstat()
-        if not stat.S_ISDIR(destination_info.st_mode) or stat.S_ISLNK(
-            destination_info.st_mode
-        ):
-            raise BuildError("Existing staging destination must be a real directory")
-        _exchange_paths(candidate, destination)
+    return destination_snapshot
+
+
+def _prepare_published_evidence_ownership(
+    scratch: _ScratchCapability,
+    evidence: _EvidenceCapability,
+    publish: _PublishCapability,
+) -> tuple[_DirectorySnapshot, _DirectorySnapshot]:
+    """Prove evidence/source/scratch handoff before previous cleanup."""
+
+    error_message = "Published PyInstaller evidence capability changed"
+    if scratch.evidence is not evidence or evidence.closed or scratch.poisoned:
+        raise _CleanupBlockedError(error_message)
+    moved = _capture_bound_directory(
+        evidence.descriptor,
+        publish.destination,
+        parent_descriptor=publish.destination_parent_descriptor,
+        relative_name=publish.destination_name,
+        expected=evidence.snapshot,
+        expected_mode=0o700,
+        exact_entries=evidence.snapshot.entries,
+        error_message=error_message,
+    )
+    if (
+        _stable_directory_identity(moved)
+        != _stable_directory_identity(evidence.snapshot)
+        or _tree_metadata_snapshot(
+            evidence.descriptor,
+            error_message=error_message,
+        )
+        != evidence.tree_snapshot
+    ):
+        raise _CapabilityDriftError(error_message)
+    _read_held_evidence_tree(
+        evidence,
+        expected_tree=evidence.tree_snapshot,
+        expected_content=evidence.content_snapshot,
+        error_message=error_message,
+    )
+    destination_snapshot = _capture_bound_directory(
+        scratch.destination_parent_descriptor,
+        scratch.destination_parent,
+        parent_descriptor=None,
+        relative_name=None,
+        expected=scratch.destination_parent_snapshot,
+        expected_mode=None,
+        exact_entries=publish.destination_parent_snapshot.entries,
+        error_message=error_message,
+    )
+    build_root_snapshot = _capture_bound_directory(
+        scratch.build_root_descriptor,
+        scratch.build_root,
+        parent_descriptor=scratch.scratch_parent_descriptor,
+        relative_name=scratch.build_root_name,
+        expected=scratch.build_root_snapshot,
+        expected_mode=0o700,
+        exact_entries=publish.candidate_parent_snapshot.entries,
+        error_message=error_message,
+    )
+    _validate_source_snapshot(scratch)
+
+    return destination_snapshot, build_root_snapshot
+
+
+def _bundle_publish_ownership_transfer(
+    scratch: _ScratchCapability,
+    bundle: _BundleCapability,
+) -> _PublishOwnershipTransfer:
+    """Create rollback ownership before any bundle namespace mutation."""
+
+    prepared_destination = scratch.destination_parent_snapshot
+    prepared_retained_directories = scratch.retained_published_directories
+    retained_previous: _RetainedPublishedDirectory | None = None
+    close_bundle_only = (bundle.descriptor,)
+    close_bundle_and_parent = (bundle.descriptor, bundle.parent_descriptor)
+    prepared = False
+
+    def prepare(publish: _PublishCapability) -> None:
+        nonlocal prepared, prepared_destination, retained_previous
+        nonlocal prepared_retained_directories
+        prepared_destination = _prepare_published_bundle_ownership(
+            scratch,
+            bundle,
+            publish,
+        )
+        if publish.existing_destination_descriptor is not None:
+            if (
+                publish.existing_destination_snapshot is None
+                or publish.existing_destination_tree_snapshot is None
+            ):
+                raise _CleanupBlockedError(
+                    "Published Python sidecar bundle capability changed"
+                )
+            retained_previous = _RetainedPublishedDirectory(
+                parent_path=bundle.parent_path,
+                name=bundle.name,
+                parent_descriptor=bundle.parent_descriptor,
+                descriptor=publish.existing_destination_descriptor,
+                snapshot=publish.existing_destination_snapshot,
+                tree_snapshot=publish.existing_destination_tree_snapshot,
+                owns_parent_descriptor=True,
+            )
+            prepared_retained_directories = [
+                *scratch.retained_published_directories,
+                retained_previous,
+            ]
+        prepared = True
+
+    def commit(_publish: _PublishCapability) -> None:
+        if not prepared:
+            raise AssertionError("bundle ownership commit was not prepared")
+
+    def apply(publish: _PublishCapability) -> tuple[int, ...]:
+        scratch.destination_parent_snapshot = prepared_destination
+        scratch.retained_published_directories = prepared_retained_directories
+        if retained_previous is not None:
+            publish.existing_destination_descriptor = None
+        bundle.closed = True
+        scratch.bundle = None
+        if retained_previous is not None:
+            return close_bundle_only
+        return close_bundle_and_parent
+
+    def rollback(publish: _PublishCapability) -> None:
+        scratch.destination_parent_snapshot = publish.destination_parent_snapshot
+        bundle.parent_snapshot = publish.candidate_parent_snapshot
+        bundle.snapshot = publish.candidate_snapshot
+
+    return _PublishOwnershipTransfer(
+        prepare=prepare,
+        commit=commit,
+        apply=apply,
+        rollback=rollback,
+        retain_previous_in_scratch=True,
+    )
+
+
+def _evidence_publish_ownership_transfer(
+    scratch: _ScratchCapability,
+    evidence: _EvidenceCapability,
+) -> _PublishOwnershipTransfer:
+    """Create rollback ownership before any evidence namespace mutation."""
+
+    prepared_destination = scratch.destination_parent_snapshot
+    prepared_build_root = scratch.build_root_snapshot
+    prepared_retained_directories = scratch.retained_published_directories
+    retained_previous: _RetainedPublishedDirectory | None = None
+    close_evidence = (evidence.descriptor,)
+    prepared = False
+
+    def prepare(publish: _PublishCapability) -> None:
+        nonlocal prepared, prepared_destination, prepared_build_root
+        nonlocal prepared_retained_directories, retained_previous
+        prepared_destination, prepared_build_root = (
+            _prepare_published_evidence_ownership(
+                scratch,
+                evidence,
+                publish,
+            )
+        )
+        if publish.existing_destination_descriptor is not None:
+            if (
+                publish.existing_destination_snapshot is None
+                or publish.existing_destination_tree_snapshot is None
+            ):
+                raise _CleanupBlockedError(
+                    "Published PyInstaller evidence capability changed"
+                )
+            retained_previous = _RetainedPublishedDirectory(
+                parent_path=scratch.build_root,
+                name=evidence.name,
+                parent_descriptor=scratch.build_root_descriptor,
+                descriptor=publish.existing_destination_descriptor,
+                snapshot=publish.existing_destination_snapshot,
+                tree_snapshot=publish.existing_destination_tree_snapshot,
+                owns_parent_descriptor=False,
+            )
+            prepared_retained_directories = [
+                *scratch.retained_published_directories,
+                retained_previous,
+            ]
+        prepared = True
+
+    def commit(_publish: _PublishCapability) -> None:
+        if not prepared:
+            raise AssertionError("evidence ownership commit was not prepared")
+
+    def apply(publish: _PublishCapability) -> tuple[int, ...]:
+        scratch.destination_parent_snapshot = prepared_destination
+        scratch.build_root_snapshot = prepared_build_root
+        scratch.retained_published_directories = prepared_retained_directories
+        if retained_previous is not None:
+            publish.existing_destination_descriptor = None
+        evidence.closed = True
+        scratch.evidence = None
+        return close_evidence
+
+    def rollback(publish: _PublishCapability) -> None:
+        scratch.destination_parent_snapshot = publish.destination_parent_snapshot
+        scratch.build_root_snapshot = publish.candidate_parent_snapshot
+        evidence.snapshot = publish.candidate_snapshot
+
+    return _PublishOwnershipTransfer(
+        prepare=prepare,
+        commit=commit,
+        apply=apply,
+        rollback=rollback,
+        retain_previous_in_scratch=True,
+    )
+
+
+def _publish_owned_bundle(
+    scratch: _ScratchCapability,
+    bundle: _BundleCapability,
+    destination: Path,
+    *,
+    verifier: Callable[[Path], Any],
+) -> None:
+    """Commit publication and its two ownership transfers as one signal unit."""
+
+    if scratch.bundle is not bundle:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(
+            "Published Python sidecar bundle capability is unavailable"
+        )
+    with _defer_publish_signals():
+        ownership_transfer = _bundle_publish_ownership_transfer(scratch, bundle)
+        publish_staging(
+            bundle.path,
+            destination,
+            verifier=verifier,
+            held_candidate=bundle,
+            ownership_transfer=ownership_transfer,
+        )
+
+
+def _publish_owned_evidence(
+    scratch: _ScratchCapability,
+    evidence: _EvidenceCapability,
+    destination: Path,
+    *,
+    verifier: Callable[[Path], Any],
+) -> None:
+    """Publish evidence and transfer its held ownership without signal gaps."""
+
+    if scratch.evidence is not evidence or evidence.closed:
+        scratch.poisoned = True
+        raise _CleanupBlockedError(
+            "Sanitized PyInstaller evidence capability is unavailable"
+        )
+    try:
+        with _defer_publish_signals():
+            ownership_transfer = _evidence_publish_ownership_transfer(
+                scratch,
+                evidence,
+            )
+            publish_staging(
+                evidence.path,
+                destination,
+                verifier=verifier,
+                held_candidate=evidence,
+                ownership_transfer=ownership_transfer,
+            )
+    except _DeferredSignalError:
+        raise
+    except BaseException as exc:
+        if isinstance(exc, _CleanupBlockedError):
+            scratch.poisoned = True
+            raise _CleanupBlockedError(
+                "Published PyInstaller evidence capability changed"
+            ) from exc
+        # A verifier/prepare failure that reaches here was rolled back by the
+        # publish transaction while it still held both namespace bindings.
+        # The original evidence capability therefore remains the exact owner
+        # and the outer scratch lifecycle can remove it normally.
+        if isinstance(exc, (BuildError, KeyboardInterrupt, SystemExit)):
+            raise
+        raise BuildError("Published PyInstaller evidence failed") from exc
+
+
+def _preserve_evidence(
+    evidence: Path | _EvidenceCapability,
+    destination: Path,
+    *,
+    scratch: _ScratchCapability | None = None,
+) -> None:
+    held_evidence: _EvidenceCapability | None = None
+    if isinstance(evidence, _EvidenceCapability):
+        if scratch is None or scratch.evidence is not evidence:
+            if scratch is not None:
+                scratch.poisoned = True
+            raise _CleanupBlockedError(
+                "Sanitized PyInstaller evidence capability is unavailable"
+            )
+        held_evidence = _revalidate_failure_evidence_capability(
+            scratch,
+            error_message="Sanitized PyInstaller evidence capability changed",
+        )
+        candidate_path = held_evidence.path
     else:
-        os.rename(candidate, destination)
-    try:
-        verifier(destination)
-    except Exception as verification_error:
-        try:
-            if destination_existed:
-                _exchange_paths(candidate, destination)
-            else:
-                os.rename(destination, candidate)
-        except Exception as rollback_error:
-            raise BuildError(
-                "Published staging failed verification and rollback"
-            ) from rollback_error
-        raise BuildError("Published staging failed its post-swap audit") from verification_error
-    if destination_existed:
-        shutil.rmtree(candidate)
-
-
-def _preserve_evidence(evidence: Path, destination: Path) -> None:
-    if not evidence.is_dir() or evidence.is_symlink():
-        return
+        candidate_path = evidence
+        if not candidate_path.is_dir() or candidate_path.is_symlink():
+            return
 
     def verify(candidate: Path) -> None:
-        log = candidate / "pyinstaller.log"
-        if not log.is_file() or log.is_symlink() or log.stat().st_size == 0:
+        if scratch is not None:
+            _validate_source_snapshot(scratch)
+        if held_evidence is not None:
+            files, _content = _read_held_evidence_tree(
+                held_evidence,
+                expected_tree=held_evidence.tree_snapshot,
+                expected_content=held_evidence.content_snapshot,
+                error_message="Sanitized PyInstaller evidence is unsafe",
+            )
+            names = sorted(PurePosixPath(name).name for name in files)
+            if (
+                names.count("pyinstaller.log") != 1
+                or len(
+                    [
+                        name
+                        for name in names
+                        if name.startswith("warn-") and name.endswith(".txt")
+                    ]
+                )
+                > 1
+            ):
+                raise BuildError("Sanitized PyInstaller evidence is incomplete")
+            for payload in files.values():
+                try:
+                    text = payload.decode("utf-8", errors="strict")
+                except UnicodeDecodeError as exc:
+                    raise BuildError(
+                        "Sanitized PyInstaller evidence is not UTF-8"
+                    ) from exc
+                if re.search(
+                    r"/(?:Users/[^/\s]+|private|var/folders|workspace|tmp)/",
+                    text,
+                ):
+                    raise BuildError(
+                        "Sanitized PyInstaller evidence contains a private path"
+                    )
+            if scratch is not None:
+                _validate_source_snapshot(scratch)
+            return
+        files: list[Path] = []
+        directories = 0
+        total_size = 0
+        for path in sorted(candidate.rglob("*"), key=lambda item: item.as_posix()):
+            try:
+                info = path.lstat()
+            except OSError as exc:
+                raise BuildError("Sanitized PyInstaller evidence is unsafe") from exc
+            if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                directories += 1
+                if directories > 16 or stat.S_IMODE(info.st_mode) & 0o022:
+                    raise BuildError("Sanitized PyInstaller evidence is unsafe")
+                continue
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or stat.S_ISLNK(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_size <= 0
+                or info.st_size > 16 * 1024 * 1024
+                or stat.S_IMODE(info.st_mode) & 0o022
+            ):
+                raise BuildError("Sanitized PyInstaller evidence is unsafe")
+            files.append(path)
+            total_size += info.st_size
+        if not 1 <= len(files) <= 2 or total_size > 24 * 1024 * 1024:
             raise BuildError("Sanitized PyInstaller evidence is incomplete")
+        names = sorted(path.name for path in files)
+        if (
+            names.count("pyinstaller.log") != 1
+            or len([name for name in names if name.startswith("warn-") and name.endswith(".txt")])
+            > 1
+        ):
+            raise BuildError("Sanitized PyInstaller evidence is incomplete")
+        for path in files:
+            descriptor: int | None = None
+            try:
+                descriptor = os.open(
+                    path,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                )
+                before = os.fstat(descriptor)
+                path_before = path.lstat()
+                if _stat_metadata(before) != _stat_metadata(path_before):
+                    raise BuildError("Sanitized PyInstaller evidence is unsafe")
+                chunks: list[bytes] = []
+                remaining = before.st_size
+                while remaining:
+                    chunk = os.read(descriptor, min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise BuildError("Sanitized PyInstaller evidence is unsafe")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                if os.read(descriptor, 1):
+                    raise BuildError("Sanitized PyInstaller evidence is unsafe")
+                after = os.fstat(descriptor)
+                path_after = path.lstat()
+                if (
+                    _stat_metadata(after) != _stat_metadata(before)
+                    or _stat_metadata(path_after) != _stat_metadata(before)
+                ):
+                    raise BuildError("Sanitized PyInstaller evidence is unsafe")
+                text = b"".join(chunks).decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise BuildError("Sanitized PyInstaller evidence is not UTF-8") from exc
+            except BuildError:
+                raise
+            except OSError as exc:
+                raise BuildError("Sanitized PyInstaller evidence is unsafe") from exc
+            finally:
+                if descriptor is not None:
+                    try:
+                        os.close(descriptor)
+                    except OSError as exc:
+                        raise BuildError("Sanitized PyInstaller evidence cleanup failed") from exc
+            if re.search(
+                r"/(?:Users/[^/\s]+|private|var/folders|workspace|tmp)/",
+                text,
+            ):
+                raise BuildError("Sanitized PyInstaller evidence contains a private path")
+        if scratch is not None:
+            _validate_source_snapshot(scratch)
 
-    publish_staging(
-        evidence.resolve(),
-        destination.resolve(),
+    if scratch is None or held_evidence is None:
+        publish_staging(
+            candidate_path,
+            destination,
+            verifier=verify,
+            held_candidate=held_evidence,
+        )
+        return
+    _publish_owned_evidence(
+        scratch,
+        held_evidence,
+        destination,
         verifier=verify,
     )
 
@@ -2476,6 +10821,7 @@ def _preserve_evidence(evidence: Path, destination: Path) -> None:
 def _build_manifest(
     *,
     bundle: Path,
+    bundle_descriptor: int,
     versions: Mapping[str, Any],
     toolchain: Mapping[str, Any],
     release: Mapping[str, Any],
@@ -2484,15 +10830,21 @@ def _build_manifest(
     components: Sequence[Mapping[str, Any]],
     artifacts: Mapping[str, str],
     frozen_smoke: Mapping[str, Any],
+    toolchain_evidence: Mapping[str, Any],
+    source_root: Path,
 ) -> dict[str, Any]:
     try:
         import audit_python_sidecar as audit
     except ImportError as exc:
         raise BuildError("Python sidecar auditor cannot be imported") from exc
+
     target = _mapping(toolchain.get("target"), "toolchain target")
     tools = _mapping(toolchain.get("tools"), "toolchain tools")
     files = audit.build_file_inventory(bundle)
-    native = audit.scan_macho_inventory(bundle)
+    native = audit.scan_macho_inventory(
+        bundle,
+        root_descriptor=bundle_descriptor,
+    )
     audit.validate_native_inventory(bundle, native)
     return {
         "$schema": "python-sidecar-build-manifest.schema.json",
@@ -2522,7 +10874,17 @@ def _build_manifest(
                 **python_provenance,
                 "installRootFingerprintSha256": python_fingerprint,
             },
-            "inputDigests": audit.critical_input_digests(),
+            "pythonToolchain": {
+                name: toolchain_evidence[name]
+                for name in (
+                    "buildRequirementsLockSha256",
+                    "runtimeLockSha256",
+                    "runtimeRequirementsSha256",
+                    "installedTreeContentSha256",
+                    "buildTools",
+                )
+            },
+            "inputDigests": audit.critical_input_digests(source_root),
         },
         "components": list(components),
         "artifacts": dict(artifacts),
@@ -2540,7 +10902,7 @@ def _build_manifest(
     }
 
 
-def build_python_sidecar(
+def _build_python_sidecar_impl(
     *,
     destination: Path,
     evidence_destination: Path,
@@ -2551,68 +10913,222 @@ def build_python_sidecar(
     except ImportError as exc:
         raise BuildError("Python sidecar auditor cannot be imported") from exc
 
-    toolchain = _load_json(TOOLCHAIN_LOCK, "Python toolchain lock")
-    release = validate_release_environment(environment, toolchain)
-    archive = Path(environment["LCF_PYTHON_DISTRIBUTION_ARCHIVE"])
-    hash_manifest = Path(
-        environment["LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST"]
-    )
-    python_provenance = verify_distribution_files(
-        archive,
-        hash_manifest,
-        toolchain=toolchain,
-    )
-    install_root = Path(environment["LCF_PYTHON_INSTALL_ROOT"])
-    python_fingerprint = verify_python_install_binding(
-        install_root,
-        toolchain=toolchain,
-    )
-    build_versions = parse_build_requirements()
-    verify_build_tool_versions(toolchain, build_versions)
-    uv_executable = Path(sys.executable).parent / "uv"
-    verify_uv_lock(uv_executable)
-    runtime_versions = runtime_dependency_versions()
-    verify_runtime_dependencies(runtime_versions)
-    versions = _load_json(VERSION_FILE, "Canonical runtime versions")
+    if destination != DEFAULT_STAGING or evidence_destination != DEFAULT_EVIDENCE:
+        raise BuildError("Python sidecar output paths differ from the fixed contract")
+    output_parent = _ensure_fixed_output_parent()
+    if destination.parent != output_parent or evidence_destination.parent != output_parent:
+        raise BuildError("Python sidecar output parent is unsafe")
+    for candidate in (destination, evidence_destination):
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise BuildError("Python sidecar output endpoint is unsafe") from exc
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+            raise BuildError("Python sidecar output endpoint is unsafe")
 
-    destination = destination.resolve()
-    evidence_destination = evidence_destination.resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    raw_build_root = tempfile.mkdtemp(
-        prefix=".python-sidecar-build-",
-        dir=destination.parent,
+    toolchain_evidence, toolchain_evidence_payload = (
+        _verify_exact_toolchain_environment(environment)
     )
-    build_root = Path(raw_build_root)
-    evidence: Path | None = None
+
+    def verify_exact_toolchain() -> None:
+        observed, payload = _verify_exact_toolchain_environment(environment)
+        if observed != toolchain_evidence or payload != toolchain_evidence_payload:
+            raise BuildError("Installed Python toolchain evidence changed")
+
+    scratch: _ScratchCapability | None = None
+    evidence: _EvidenceCapability | None = None
+    primary_error: BaseException | None = None
+    summary: dict[str, int] | None = None
+    primary_stage = "scratch-create"
     try:
-        bundle, evidence = run_pyinstaller(
-            build_root=build_root,
+        # The lifecycle owner must cover the callee RETURN_VALUE -> caller
+        # STORE_FAST window.  If the transaction reports a pending signal
+        # after the assignment, this same try still owns exact cleanup.
+        with _defer_publish_signals():
+            scratch = _create_private_build_root(output_parent)
+        primary_stage = "repository-state"
+        repository_state = _validate_repository_state(environment)
+        primary_stage = "source-materialize"
+        _materialize_source_snapshot(scratch, repository_state)
+        primary_stage = "source-revalidate"
+        _validate_source_snapshot(scratch)
+        source_root = scratch.source_snapshot
+        if source_root is None:  # pragma: no cover - validated immediately above
+            raise BuildError("Exact Git source capability path is unavailable")
+        primary_stage = "toolchain-contract"
+        toolchain = _load_json(
+            source_root
+            / "backend"
+            / "packaging"
+            / "python-sidecar-toolchain.lock.json",
+            "Python toolchain lock",
+        )
+        release = validate_release_environment(environment, toolchain)
+        if (
+            release.get("repositoryCommit")
+            != repository_state.get("repositoryCommit")
+            or release.get("repositoryTree")
+            != repository_state.get("repositoryTree")
+            or release.get("sourceSnapshotSha256")
+            != repository_state.get("sourceSnapshotSha256")
+        ):
+            raise BuildError("Repository provenance changed before snapshot use")
+        _validate_source_snapshot(scratch)
+        primary_stage = "distribution"
+        archive = Path(environment["LCF_PYTHON_DISTRIBUTION_ARCHIVE"])
+        hash_manifest = Path(
+            environment["LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST"]
+        )
+        python_provenance = verify_distribution_files(
+            archive,
+            hash_manifest,
+            toolchain=toolchain,
+        )
+        primary_stage = "installed-toolchain"
+        install_root = Path(environment["LCF_PYTHON_INSTALL_ROOT"])
+        python_fingerprint = verify_python_install_binding(
+            install_root,
+            toolchain=toolchain,
+        )
+        packaging_root = source_root / "backend" / "packaging"
+        build_versions = parse_build_requirements(
+            packaging_root / "build-requirements.lock"
+        )
+        _validate_toolchain_evidence_against_source(
+            toolchain_evidence,
+            build_versions=build_versions,
+            packaging_root=packaging_root,
+            backend_root=source_root / "backend",
+        )
+        verify_exact_toolchain()
+        verify_build_tool_versions(toolchain, build_versions)
+        primary_stage = "uv-lock"
+        uv_cache = scratch.build_root / UV_CACHE_NAME
+        uv_cache_descriptor, uv_cache_snapshot = _create_bound_child_directory(
+            parent_descriptor=scratch.build_root_descriptor,
+            parent_path=scratch.build_root,
+            name=UV_CACHE_NAME,
+            mode=0o700,
+            error_message="uv cache capability is unsafe",
+        )
+        uv_executable = Path(sys.executable).parent / "uv"
+        try:
+            verify_uv_lock(
+                uv_executable,
+                backend_root=source_root / "backend",
+                cache_directory=uv_cache,
+                cache_parent_descriptor=scratch.build_root_descriptor,
+                cache_descriptor=uv_cache_descriptor,
+                cache_snapshot=uv_cache_snapshot,
+                source_descriptor=scratch.source_snapshot_descriptor,
+            )
+        finally:
+            active_error = sys.exception()
+            try:
+                os.close(uv_cache_descriptor)
+            except OSError as exc:
+                scratch.poisoned = True
+                if active_error is None:
+                    raise _CleanupBlockedError(
+                        "uv cache capability cleanup failed"
+                    ) from exc
+        primary_stage = "runtime-lock"
+        runtime_versions = runtime_dependency_versions(
+            source_root / "backend" / "uv.lock"
+        )
+        verify_exact_toolchain()
+        verify_runtime_dependencies(runtime_versions)
+        versions = _load_json(
+            source_root / "runtime" / "version.json",
+            "Canonical runtime versions",
+        )
+        _validate_source_snapshot(scratch)
+        verify_repository_provenance(release)
+        verify_exact_toolchain()
+        primary_stage = "pyinstaller"
+        bundle_capability, evidence = run_pyinstaller(
+            scratch=scratch,
             install_root=install_root,
             source_date_epoch=int(release["sourceDateEpoch"]),
             deployment_target=str(release["macosDeploymentTarget"]),
+            source_root=source_root,
         )
+        verify_exact_toolchain()
+        _validate_source_snapshot(scratch)
+        verify_repository_provenance(release)
+        _validate_bundle_capability(scratch)
+        canonical_bundle = bundle_capability.path
+        primary_stage = "frozen-smoke"
         frozen_smoke = run_frozen_smoke(
-            bundle,
+            canonical_bundle,
             versions,
             source_date_epoch=int(release["sourceDateEpoch"]),
+            bundle_descriptor=bundle_capability.descriptor,
         )
+        _validate_bundle_capability(
+            scratch,
+            error_message="Python sidecar bundle changed during frozen smoke",
+        )
+        _validate_bundle_capability(scratch)
+        bundle = bundle_capability.path
+        primary_stage = "component-assembly"
         components = build_components(
             bundle=bundle,
             runtime_versions=runtime_versions,
             build_versions=build_versions,
+            source_root=source_root,
         )
+        _validate_bundle_capability(
+            scratch,
+            accept_tree_changes=True,
+            error_message="Python sidecar bundle changed during component assembly",
+        )
+        bundle = bundle_capability.path
+        primary_stage = "compliance-assembly"
         artifacts = write_compliance_artifacts(
             bundle=bundle,
             components=components,
             repository_commit=str(release["repositoryCommit"]),
             source_date_epoch=int(release["sourceDateEpoch"]),
         )
-        if fingerprint_install_root(install_root) != python_fingerprint:
+        artifacts["pythonBuildToolchain"] = _write_toolchain_evidence_artifact(
+            bundle,
+            toolchain_evidence_payload,
+        )
+        _validate_bundle_capability(
+            scratch,
+            accept_tree_changes=True,
+            error_message="Python sidecar bundle changed during compliance assembly",
+        )
+        bundle = bundle_capability.path
+        python_lock = _mapping(toolchain.get("python"), "Python toolchain entry")
+        if (
+            fingerprint_install_root(
+                install_root,
+                reviewed_broken_symlinks=_reviewed_broken_symlinks(python_lock),
+            )
+            != python_fingerprint
+        ):
             raise BuildError("Pinned Python framework changed during the build")
         verify_repository_provenance(release)
+        _validate_source_snapshot(scratch)
+        _validate_bundle_capability(scratch)
+        bundle = bundle_capability.path
+        primary_stage = "normalize"
         normalize_tree(bundle, int(release["sourceDateEpoch"]))
+        _validate_bundle_capability(
+            scratch,
+            accept_tree_changes=True,
+            error_message="Python sidecar bundle changed during normalization",
+        )
+        bundle = bundle_capability.path
+        canonical_bundle = bundle_capability.path
+        primary_stage = "manifest"
         manifest = _build_manifest(
-            bundle=bundle,
+            bundle=canonical_bundle,
+            bundle_descriptor=bundle_capability.descriptor,
             versions=versions,
             toolchain=toolchain,
             release=release,
@@ -2621,7 +11137,14 @@ def build_python_sidecar(
             components=components,
             artifacts=artifacts,
             frozen_smoke=frozen_smoke,
+            toolchain_evidence=toolchain_evidence,
+            source_root=source_root,
         )
+        _validate_bundle_capability(
+            scratch,
+            error_message="Python sidecar bundle changed during manifest assembly",
+        )
+        bundle = bundle_capability.path
         manifest_path = bundle / audit.MANIFEST_NAME
         _write_canonical_json(manifest_path, manifest)
         manifest_path.chmod(0o644)
@@ -2632,29 +11155,119 @@ def build_python_sidecar(
                 int(release["sourceDateEpoch"]),
             ),
         )
-        def final_verifier(candidate: Path) -> dict[str, int]:
-            verify_repository_provenance(release)
-            return audit.audit_bundle(candidate)
+        _validate_bundle_capability(
+            scratch,
+            accept_tree_changes=True,
+            error_message="Python sidecar bundle changed during manifest sealing",
+        )
+        bundle = bundle_capability.path
 
+        def final_verifier(candidate: Path) -> dict[str, int]:
+            verify_exact_toolchain()
+            verify_repository_provenance(release)
+            _validate_source_snapshot(scratch)
+            _verify_held_bundle_candidate(
+                bundle_capability,
+                candidate,
+                error_message="Python sidecar bundle changed during final audit",
+            )
+            result = audit.audit_bundle(
+                candidate,
+                native_scanner=lambda native_root: audit.scan_macho_inventory(
+                    native_root,
+                    root_descriptor=bundle_capability.descriptor,
+                ),
+                repository_root=source_root,
+                verify_git_provenance=False,
+            )
+            _verify_held_bundle_candidate(
+                bundle_capability,
+                candidate,
+                error_message="Python sidecar bundle changed during final audit",
+            )
+            verify_exact_toolchain()
+            return result
+
+        primary_stage = "final-audit"
         summary = final_verifier(bundle)
-        publish_staging(bundle, destination, verifier=final_verifier)
-        return summary
-    except Exception:
-        if evidence is None:
-            candidate = build_root / "evidence"
-            if candidate.is_dir():
-                evidence = candidate
-        if evidence is not None:
+        verify_exact_toolchain()
+        primary_stage = "publish"
+        _publish_owned_bundle(
+            scratch,
+            bundle_capability,
+            destination,
+            verifier=final_verifier,
+        )
+        verify_exact_toolchain()
+    except BaseException as exc:
+        primary_error = _bind_failure_categories(exc, primary=primary_stage)
+        if scratch is None:
+            pass
+        elif isinstance(exc, _CleanupBlockedError):
+            scratch.poisoned = True
+        if scratch is not None and evidence is None:
+            evidence = scratch.evidence
+        if (
+            scratch is not None
+            and
+            evidence is not None
+            and not scratch.poisoned
+            and not isinstance(exc, (KeyboardInterrupt, SystemExit))
+        ):
             try:
-                _preserve_evidence(evidence, evidence_destination)
-            except Exception as preservation_error:
-                raise BuildError(
-                    "Python sidecar build failed and evidence preservation failed"
-                ) from preservation_error
+                _preserve_evidence(
+                    evidence,
+                    evidence_destination,
+                    scratch=scratch,
+                )
+            except BaseException as preservation_error:
+                if isinstance(preservation_error, _CleanupBlockedError):
+                    scratch.poisoned = True
+                combined_error = BuildError(
+                    "Python sidecar build failed and evidence preservation failed",
+                    primary_category=(
+                        getattr(primary_error, "primary_category", None)
+                        or primary_stage
+                    ),
+                    cleanup_category="evidence-preserve",
+                )
+                combined_error.__cause__ = primary_error
+                primary_error = combined_error
+    if scratch is not None:
+        with _defer_publish_signals(preserve_error=primary_error):
+            _finish_scratch_lifecycle(scratch, primary_error)
+    if primary_error is not None:
+        if isinstance(primary_error, BuildError):
+            raise primary_error
+        if isinstance(primary_error, (KeyboardInterrupt, SystemExit)):
+            raise primary_error
+        raise BuildError(
+            "Python sidecar build failed",
+            primary_category=primary_stage,
+        ) from primary_error
+    if summary is None:
+        raise BuildError("Python sidecar build produced no audit summary")
+    return summary
+
+
+def build_python_sidecar(
+    *,
+    destination: Path,
+    evidence_destination: Path,
+    environment: Mapping[str, str],
+) -> dict[str, int]:
+    """Run the complete scratch-owned lifecycle with cancellable translation."""
+
+    try:
+        with _translate_cleanup_signals():
+            return _build_python_sidecar_impl(
+                destination=destination,
+                evidence_destination=evidence_destination,
+                environment=environment,
+            )
+    except BuildError as exc:
+        _bind_failure_categories(exc, primary="preflight")
         raise
-    finally:
-        if build_root.exists():
-            shutil.rmtree(build_root)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -2685,9 +11298,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--installer-output",
         type=Path,
-        default=REPOSITORY_ROOT
-        / ".python-sidecar-build"
-        / "python-3.13.14-macos11.pkg",
+        default=None,
         help="absolute output used with --extract-installer-package",
     )
     parser.add_argument(
@@ -2714,6 +11325,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "source verification requires --archive and --hash-manifest"
                 )
             if arguments.extract_installer_package:
+                if arguments.installer_output is None:
+                    raise BuildError(
+                        "installer extraction requires --installer-output"
+                    )
                 output = extract_reviewed_installer_package(
                     arguments.archive,
                     arguments.hash_manifest,
@@ -2756,7 +11371,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             environment=os.environ,
         )
     except (BuildError, audit_error_type()) as exc:
-        print(f"python-sidecar build failed: {exc}", file=sys.stderr)
+        _write_inner_build_diagnostic(exc)
+        print("python-sidecar build failed", file=sys.stderr)
         return 2
     print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
     return 0

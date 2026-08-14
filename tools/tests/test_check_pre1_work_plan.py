@@ -26,6 +26,11 @@ def documents() -> list[str]:
         CHECKER.read(CHECKER.R13),
         CHECKER.read(CHECKER.RELEASE_RUNBOOK),
         json.loads(CHECKER.read(CHECKER.W01_EVIDENCE)),
+        CHECKER.read(CHECKER.W02_ENTRY),
+        CHECKER.read(CHECKER.W02_ASSEMBLY),
+        CHECKER.read(CHECKER.W02_REMEDIATION),
+        CHECKER.read(CHECKER.EVIDENCE_INDEX),
+        CHECKER.read(CHECKER.PARENT_ITERATION),
     ]
 
 
@@ -69,21 +74,21 @@ class Pre1WorkPlanTests(unittest.TestCase):
 
     def test_task_status_drift_fails(self) -> None:
         docs = documents()
-        original = "| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` |"
+        original = "| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` |"
         self.assertIn(original, docs[1])
         docs[1] = replace_once(
             self,
             docs[1],
             original,
-            "| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` |",
+            "| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` |",
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("TODO-PACKAGED-SMOKE-001 status" in error for error in errors))
 
     def test_detailed_task_status_drift_fails(self) -> None:
         docs = documents()
-        current_status = "in-progress"
-        drifted_status = "done"
+        current_status = "done"
+        drifted_status = "in-progress"
         original = (
             "### TODO-GOV-EVIDENCE-001：统一可复现证据坐标\n\n"
             f"- 状态：`{current_status}`"
@@ -99,45 +104,42 @@ class Pre1WorkPlanTests(unittest.TestCase):
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("detail status" in error for error in errors))
 
-    def test_w01_evidence_state_must_match_documents(self) -> None:
+    def test_historical_w01_evidence_state_is_immutable(self) -> None:
         docs = documents()
         current = docs[9]["remediation"]["technical_source_result"]
-        self.assertIn(current, {"pending", "pass"})
-        docs[9]["remediation"]["technical_source_result"] = (
-            "pending" if current == "pass" else "pass"
-        )
+        self.assertEqual(current, "pass")
+        docs[9]["remediation"]["technical_source_result"] = "pending"
         errors = CHECKER.validate_documents(*docs)
-        self.assertTrue(any("lifecycle result missing" in error for error in errors))
-        self.assertIn("R13-07 checkbox must match remediation technical closeout only", errors)
+        self.assertIn("historical W01 remediation technical result must remain pass", errors)
 
-    def test_r13_cannot_complete_before_canonical_activation(self) -> None:
+    def test_r13_must_remain_completed_after_external_closeout(self) -> None:
         docs = documents()
         docs[7] = replace_once(
             self,
             docs[7],
-            "- 状态：`in-progress`",
             "- 状态：`completed`",
+            "- 状态：`in-progress`",
         )
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("R13 status must remain in-progress until canonical activation", errors)
+        self.assertIn("R13 status must be completed after external W01 closeout", errors)
 
     def test_repository_record_cannot_self_declare_independent_acceptance(self) -> None:
         docs = documents()
         docs[9]["remediation"]["independent_acceptance"] = "pass"
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("W01 independent acceptance must remain pending", errors)
+        self.assertIn("historical W01 independent acceptance must remain pending", errors)
 
     def test_repository_record_cannot_self_activate_canonical_state(self) -> None:
         docs = documents()
         docs[9]["remediation"]["canonical_activation"]["status"] = "pass"
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("W01 canonical activation must remain blocked", errors)
+        self.assertIn("historical W01 canonical activation must remain blocked", errors)
 
     def test_canonical_main_source_must_remain_not_run_before_merge(self) -> None:
         docs = documents()
         docs[9]["canonical_main_source"]["status"] = "pass"
         errors = CHECKER.validate_documents(*docs)
-        self.assertIn("W01 canonical-main source result must remain not-run", errors)
+        self.assertIn("historical W01 canonical-main source result must remain not-run", errors)
 
     def test_mixed_not_run_and_formal_pass_fails(self) -> None:
         docs = documents()
@@ -208,6 +210,956 @@ class Pre1WorkPlanTests(unittest.TestCase):
         )
         errors = CHECKER.validate_documents(*docs)
         self.assertTrue(any("R13 missing required release-boundary phrase" in error for error in errors))
+
+    def test_w02_entry_exact_external_coordinates_are_required(self) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_ENTRY_AUTHORITY_MARKER.replace(
+            CHECKER.W01_ACCEPTED_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[10] = replace_once(
+            self, docs[10], CHECKER.W02_ENTRY_AUTHORITY_MARKER, drifted
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("W02 entry must contain the exact external authority marker once", errors)
+
+    def test_w02_entry_requires_all_resulting_main_jobs(self) -> None:
+        docs = documents()
+        docs[10] = replace_once(
+            self,
+            docs[10],
+            "W01 exact-head source coverage evidence | `success`",
+            "W01 exact-head source coverage evidence | `skipped`",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 entry missing required marker: W01 exact-head source coverage evidence | `success`",
+            errors,
+        )
+
+    def test_current_w01_gate_cannot_regress_to_historical_pending(self) -> None:
+        docs = documents()
+        docs[2] = replace_once(
+            self,
+            docs[2],
+            CHECKER.CURRENT_W01_TRACE_MARKER,
+            "修复候选 PR/source `pass`；independent acceptance `pending`",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertTrue(any("lifecycle result missing" in error for error in errors))
+
+    def test_w02_packaged_gate_cannot_be_claimed_pass(self) -> None:
+        docs = documents()
+        original = (
+            "| VAL-PACKAGED-SMOKE-001 | macOS arm64 engineering-smoke App；exact commit/digest/"
+            "inventory、launch、renderer/preload、Main→private UDS health/domain request、quit/no "
+            "orphan、无 public INET、exercised path 无系统 Python/Node/Git discovery、updater "
+            "unavailable/no-network | `not-run`；[old static assembly/audit]"
+            "(evidence/W02/2026-08-06-08137c7-assembly.md) 与 pre-pack frozen sidecar staging "
+            "smoke 不替代 packaged launch/runtime gate；[current PR #21 record]"
+            "(evidence/W02/2026-08-07-pr21-remediation.md) binds latest independent `NO-GO`、"
+            "eleven remediation technical failures / superseded states and twelfth local "
+            "candidate；eleventh real Installer seal/rollback/postcondition 已执行但 full "
+            "Engineering failed，twelfth fresh exact-head Actions 与 App launch/runtime 均未执行 |"
+        )
+        self.assertIn(original, docs[2])
+        docs[2] = replace_once(self, docs[2], original, original.replace("`not-run`", "`pass`"))
+        errors = CHECKER.validate_documents(*docs)
+        self.assertTrue(any("VAL-PACKAGED-SMOKE-001 status words" in error for error in errors))
+
+    def test_w10_must_remain_locked_while_w02_gate_is_not_run(self) -> None:
+        docs = documents()
+        original = "| TODO-LEGACY-DECOUPLE-001 | Priority-0 | W10/P7 | `planned` |"
+        docs[1] = replace_once(
+            self,
+            docs[1],
+            original,
+            "| TODO-LEGACY-DECOUPLE-001 | Priority-0 | W10/P7 | `in-progress` |",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertTrue(any("TODO-LEGACY-DECOUPLE-001 status" in error for error in errors))
+
+    def test_w02_phase_cannot_create_a_new_stable_id(self) -> None:
+        docs = documents()
+        docs[3] += "\nTODO-W02A-001\n"
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("iteration must not create a W02A stable ID", errors)
+
+    def test_w02_phase_cannot_be_named_w02_b(self) -> None:
+        for forbidden in ("W02-B", "W02B"):
+            with self.subTest(forbidden=forbidden):
+                docs = documents()
+                docs[3] += f"\n{forbidden}\n"
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn("iteration must not introduce W02-B/W02B", errors)
+
+    def test_w02_launch_phase_must_remain_not_run(self) -> None:
+        docs = documents()
+        marker = (
+            "packaged App launch/runtime smoke：十一次 remediation 均未启动 bundle，第十二次 candidate 也尚未运行，\n"
+            "    当前 `not-run`"
+        )
+        docs[3] = replace_once(self, docs[3], marker, marker.replace("`not-run`", "`pass`"))
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
+
+    def test_w02_entry_cannot_claim_bundle_assembly(self) -> None:
+        docs = documents()
+        marker = "engineering-smoke `.app` assembly：`not-run`"
+        docs[10] = replace_once(self, docs[10], marker, marker.replace("`not-run`", "`pass`"))
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"W02 entry missing required marker: {marker}", errors)
+
+    def test_w02_static_assembly_phase_marker_is_required(self) -> None:
+        docs = documents()
+        marker = (
+            "acceptance `NO-GO`；第一次至第十一次 remediation technical attempts 均为 `fail` / `superseded`"
+        )
+        docs[3] = replace_once(
+            self,
+            docs[3],
+            marker,
+            "acceptance `pass`；十一次 remediation technical attempts `pass`",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"ITER-0008 missing W02 phase marker: {marker}", errors)
+
+    def test_w02_assembly_exact_run_coordinates_are_required(self) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_ASSEMBLY_AUTHORITY_MARKER.replace(
+            CHECKER.W02_ASSEMBLY_SOURCE,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[11] = replace_once(
+            self,
+            docs[11],
+            CHECKER.W02_ASSEMBLY_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("W02 assembly must contain the exact run authority marker once", errors)
+
+    def test_w02_assembly_visible_authority_and_limits_are_immutable(self) -> None:
+        mutations = (
+            (
+                f"| exact source commit | `{CHECKER.W02_ASSEMBLY_SOURCE}` |",
+                "| exact source commit | `0000000000000000000000000000000000000000` |",
+            ),
+            (
+                f"`{CHECKER.W02_ASSEMBLY_INVENTORY_SHA256}`",
+                f"`{'0' * 64}`",
+            ),
+            ("", "\nVAL-PACKAGED-SMOKE-001: pass\n"),
+            ("", "\npublic release: GO\n"),
+            ("", "\nnormalized inventory SHA-256 is the package digest\n"),
+        )
+        for old, new in mutations:
+            with self.subTest(new=new.strip()):
+                docs = documents()
+                if old:
+                    docs[11] = replace_once(self, docs[11], old, new)
+                else:
+                    docs[11] += new
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn("W02 assembly reviewed document drifted", errors)
+
+    def test_w02_static_assembly_cannot_promote_packaged_launch(self) -> None:
+        docs = documents()
+        marker = "`packagedAppLaunch`：`not-run`"
+        docs[11] = replace_once(
+            self,
+            docs[11],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"W02 assembly missing required marker: {marker}", errors)
+
+    def test_w02_static_assembly_cannot_promote_packaged_gate(self) -> None:
+        docs = documents()
+        marker = "- `VAL-PACKAGED-SMOKE-001`：`not-run`；"
+        docs[11] = replace_once(
+            self,
+            docs[11],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 assembly missing required marker: `VAL-PACKAGED-SMOKE-001`：`not-run`",
+            errors,
+        )
+
+    def test_w02_assembly_preserves_staging_vs_packaged_sidecar_boundary(self) -> None:
+        docs = documents()
+        marker = "pre-pack frozen sidecar staging smoke 已运行且成功"
+        docs[11] = replace_once(
+            self,
+            docs[11],
+            marker,
+            "pre-pack frozen sidecar staging smoke `not-run`",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(f"W02 assembly missing required marker: {marker}", errors)
+
+    def test_w02_pr21_nogo_exact_authority_coordinates_are_required(self) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_PR21_AUTHORITY_MARKER.replace(
+            CHECKER.W02_PR21_REVIEWED_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            CHECKER.W02_PR21_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 PR #21 remediation must contain the exact NO-GO authority marker once",
+            errors,
+        )
+
+    def test_w02_pr21_first_remediation_exact_authority_coordinates_are_required(
+        self,
+    ) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_PR21_FIRST_REMEDIATION_AUTHORITY_MARKER.replace(
+            CHECKER.W02_PR21_FIRST_REMEDIATION_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            CHECKER.W02_PR21_FIRST_REMEDIATION_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 PR #21 remediation must contain the exact first-attempt authority marker once",
+            errors,
+        )
+
+    def test_w02_pr21_second_remediation_exact_authority_coordinates_are_required(
+        self,
+    ) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_PR21_SECOND_REMEDIATION_AUTHORITY_MARKER.replace(
+            CHECKER.W02_PR21_SECOND_REMEDIATION_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            CHECKER.W02_PR21_SECOND_REMEDIATION_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 PR #21 remediation must contain the exact second-attempt authority marker once",
+            errors,
+        )
+
+    def test_w02_pr21_third_remediation_exact_authority_coordinates_are_required(
+        self,
+    ) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_PR21_THIRD_REMEDIATION_AUTHORITY_MARKER.replace(
+            CHECKER.W02_PR21_THIRD_REMEDIATION_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            CHECKER.W02_PR21_THIRD_REMEDIATION_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 PR #21 remediation must contain the exact third-attempt authority marker once",
+            errors,
+        )
+
+    def test_w02_pr21_fourth_remediation_exact_authority_coordinates_are_required(
+        self,
+    ) -> None:
+        docs = documents()
+        drifted = CHECKER.W02_PR21_FOURTH_REMEDIATION_AUTHORITY_MARKER.replace(
+            CHECKER.W02_PR21_FOURTH_REMEDIATION_HEAD,
+            "0000000000000000000000000000000000000000",
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            CHECKER.W02_PR21_FOURTH_REMEDIATION_AUTHORITY_MARKER,
+            drifted,
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "W02 PR #21 remediation must contain the exact fourth-attempt authority marker once",
+            errors,
+        )
+
+    def test_w02_pr21_fifth_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (
+                CHECKER.W02_PR21_FIFTH_REMEDIATION_HEAD,
+                "0000000000000000000000000000000000000000",
+            ),
+            (
+                CHECKER.W02_PR21_FIFTH_REMEDIATION_PARENT,
+                "1111111111111111111111111111111111111111",
+            ),
+            (
+                CHECKER.W02_PR21_FIFTH_REMEDIATION_TREE,
+                "2222222222222222222222222222222222222222",
+            ),
+            (CHECKER.W02_PR21_FIFTH_REMEDIATION_ASSEMBLY_RUN, "31454826264"),
+            (CHECKER.W02_PR21_FIFTH_REMEDIATION_ASSEMBLY_JOB, "93666344719"),
+            (CHECKER.W02_PR21_FIFTH_REMEDIATION_SOURCE_RUN, "31454826262"),
+            (CHECKER.W02_PR21_FIFTH_REMEDIATION_SOURCE_JOB, "93666344562"),
+            (CHECKER.W02_PR21_FIFTH_REMEDIATION_CONTAINER_RUN, "31454826244"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact fifth-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_FIFTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original,
+                    replacement,
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_FIFTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_FIFTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+    def test_w02_pr21_sixth_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (
+                CHECKER.W02_PR21_SIXTH_REMEDIATION_HEAD,
+                "0000000000000000000000000000000000000000",
+            ),
+            (
+                CHECKER.W02_PR21_SIXTH_REMEDIATION_PARENT,
+                "1111111111111111111111111111111111111111",
+            ),
+            (
+                CHECKER.W02_PR21_SIXTH_REMEDIATION_TREE,
+                "2222222222222222222222222222222222222222",
+            ),
+            (CHECKER.W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_RUN, "31460588224"),
+            (CHECKER.W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_JOB, "93683139743"),
+            (CHECKER.W02_PR21_SIXTH_REMEDIATION_SOURCE_RUN, "31460588211"),
+            (CHECKER.W02_PR21_SIXTH_REMEDIATION_CONTAINER_RUN, "31460588213"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact sixth-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original,
+                    replacement,
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+    def test_w02_pr21_sixth_context_and_snapshot_coordinates_are_required(self) -> None:
+        mutations = (
+            (
+                f"| synthetic PR context SHA | `{CHECKER.W02_PR21_SIXTH_REMEDIATION_CONTEXT}` |",
+                "| synthetic PR context SHA | `0000000000000000000000000000000000000000` |",
+            ),
+            (
+                "| committed-source snapshot SHA-256 | "
+                f"`{CHECKER.W02_PR21_SIXTH_REMEDIATION_SOURCE_SNAPSHOT_SHA256}` |",
+                f"| committed-source snapshot SHA-256 | `{'0' * 64}` |",
+            ),
+        )
+        for marker, replacement in mutations:
+            with self.subTest(marker=marker):
+                docs = documents()
+                docs[12] = replace_once(self, docs[12], marker, replacement)
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn(
+                    f"W02 PR #21 remediation missing required marker: {marker}",
+                    errors,
+                )
+
+    def test_w02_pr21_seventh_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (CHECKER.W02_PR21_SEVENTH_REMEDIATION_HEAD, "0" * 40),
+            (CHECKER.W02_PR21_SEVENTH_REMEDIATION_PARENT, "1" * 40),
+            (CHECKER.W02_PR21_SEVENTH_REMEDIATION_TREE, "2" * 40),
+            (CHECKER.W02_PR21_SEVENTH_REMEDIATION_CONTEXT, "3" * 40),
+            (CHECKER.W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_RUN, "31559498117"),
+            (CHECKER.W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_JOB, "93998717926"),
+            (CHECKER.W02_PR21_SEVENTH_REMEDIATION_SOURCE_RUN, "31559498107"),
+            (CHECKER.W02_PR21_SEVENTH_REMEDIATION_CONTAINER_RUN, "31559498071"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact seventh-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_SEVENTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original, replacement
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_SEVENTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_SEVENTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+    def test_w02_pr21_eighth_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_HEAD, "0" * 40),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_PARENT, "1" * 40),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_TREE, "2" * 40),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_CONTEXT, "3" * 40),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_RUN, "31570734637"),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_JOB, "94031972544"),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_SOURCE_RUN, "31570734561"),
+            (CHECKER.W02_PR21_EIGHTH_REMEDIATION_CONTAINER_RUN, "31570734581"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact eighth-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_EIGHTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original, replacement
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_EIGHTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_EIGHTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+    def test_w02_pr21_ninth_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (CHECKER.W02_PR21_NINTH_REMEDIATION_HEAD, "0" * 40),
+            (CHECKER.W02_PR21_NINTH_REMEDIATION_PARENT, "1" * 40),
+            (CHECKER.W02_PR21_NINTH_REMEDIATION_TREE, "2" * 40),
+            (CHECKER.W02_PR21_NINTH_REMEDIATION_CONTEXT, "3" * 40),
+            (CHECKER.W02_PR21_NINTH_REMEDIATION_ASSEMBLY_RUN, "31575062797"),
+            (CHECKER.W02_PR21_NINTH_REMEDIATION_ASSEMBLY_JOB, "94045233042"),
+            (CHECKER.W02_PR21_NINTH_REMEDIATION_SOURCE_RUN, "31575062815"),
+            (CHECKER.W02_PR21_NINTH_REMEDIATION_CONTAINER_RUN, "31575062786"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact ninth-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_NINTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original, replacement
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_NINTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_NINTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+    def test_w02_pr21_tenth_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (CHECKER.W02_PR21_TENTH_REMEDIATION_HEAD, "0" * 40),
+            (CHECKER.W02_PR21_TENTH_REMEDIATION_PARENT, "1" * 40),
+            (CHECKER.W02_PR21_TENTH_REMEDIATION_TREE, "2" * 40),
+            (CHECKER.W02_PR21_TENTH_REMEDIATION_ASSEMBLY_RUN, "31580628878"),
+            (CHECKER.W02_PR21_TENTH_REMEDIATION_ASSEMBLY_JOB, "94062603910"),
+            (CHECKER.W02_PR21_TENTH_REMEDIATION_SOURCE_RUN, "31580628861"),
+            (CHECKER.W02_PR21_TENTH_REMEDIATION_CONTAINER_RUN, "31580628858"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact tenth-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_TENTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original, replacement
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_TENTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_TENTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+    def test_w02_pr21_eleventh_remediation_authority_count_and_coordinates_are_required(
+        self,
+    ) -> None:
+        mutations = (
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_HEAD, "0" * 40),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_PARENT, "1" * 40),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_TREE, "2" * 40),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_RUN, "31799645732"),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_JOB, "94764347265"),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_SOURCE_RUN, "31799645686"),
+            (CHECKER.W02_PR21_ELEVENTH_REMEDIATION_CONTAINER_RUN, "31799645738"),
+            ("result=fail", "result=pass"),
+        )
+        expected = (
+            "W02 PR #21 remediation must contain the exact eleventh-attempt "
+            "authority marker once"
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                docs = documents()
+                drifted = CHECKER.W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER.replace(
+                    original, replacement
+                )
+                docs[12] = replace_once(
+                    self,
+                    docs[12],
+                    CHECKER.W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER,
+                    drifted,
+                )
+                self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+        docs = documents()
+        docs[12] += f"\n{CHECKER.W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER}\n"
+        self.assertIn(expected, CHECKER.validate_documents(*docs))
+
+    def test_w02_pr21_historical_sixth_precommit_state_is_preserved(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_SIXTH_PRECOMMIT_NOT_RUN_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+    def test_w02_pr21_historical_seventh_precommit_state_is_preserved(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_SEVENTH_PRECOMMIT_NOT_RUN_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "| PR #21 seventh remediation technical candidate | `pass`",
+            errors,
+        )
+
+    def test_w02_pr21_historical_eighth_precommit_state_is_preserved(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_EIGHTH_PRECOMMIT_NOT_RUN_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "第八次 remediation technical candidate：`pass`",
+            errors,
+        )
+
+    def test_w02_pr21_historical_ninth_precommit_state_is_preserved(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_NINTH_PRECOMMIT_NOT_RUN_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "第九次 remediation technical candidate：`pass`",
+            errors,
+        )
+
+    def test_w02_pr21_historical_tenth_precommit_state_is_preserved(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_TENTH_NOT_RUN_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "第十次 remediation technical candidate：`pass`",
+            errors,
+        )
+        required_markers = (
+            "ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec",
+            "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
+            "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
+            "这不是 runtime learn-and-accept",
+            "在注册 EXIT trap 前，transaction phase、新 installed root identity 与旧 quarantine state/identity",
+            "fixed cleanup failure `70`",
+            "verifier 与 held inputs 全部成功后才能把 transaction 标为 `committed`",
+            "第十候选 pre-commit local validation",
+            "HEAD 6eec41125b431a9fd99d8b1821362573de1b5b8a",
+            "`19` 个 tracked-file worktree",
+            "direct checker pass；`57/57`",
+            "不能把第十候选提升为",
+        )
+        for required_fragment in required_markers:
+            with self.subTest(required_fragment=required_fragment):
+                required_marker = next(
+                    marker
+                    for marker in CHECKER.W02_PR21_REMEDIATION_REQUIRED_MARKERS
+                    if required_fragment in marker
+                )
+                docs = documents()
+                self.assertIn(required_marker, docs[12])
+                docs[12] = docs[12].replace(
+                    required_marker, "removed-tenth-design-required-marker"
+                )
+                self.assertIn(
+                    "W02 PR #21 remediation missing required marker: "
+                    f"{required_marker}",
+                    CHECKER.validate_documents(*docs),
+                )
+
+    def test_w02_pr21_historical_eleventh_precommit_state_is_preserved(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_ELEVENTH_NOT_RUN_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "第十一次 remediation technical candidate：`pass`",
+            errors,
+        )
+        historical_required_markers = (
+            "raw materialization 都只作为 seal 输入",
+            "七类 difference count 全部为 `0`",
+            "committed` 状态继续保留旧 quarantine",
+            "rollback-ready 的 `pending:pending`、`rolled-back:rolled-back` 或 `committed:committed`",
+            "no-rollback/fixed `70`",
+            "不声称能从 `SIGKILL`、host crash",
+            "policy mutation `86/86`",
+            "exact-Git `1/1`",
+            "direct checker pass；`59/59`",
+            "YAML `2/2`；Bash `37/37`",
+            "Markdown links `90` files；diff check pass",
+        )
+        for required_marker in historical_required_markers:
+            with self.subTest(required_marker=required_marker):
+                self.assertIn(
+                    required_marker,
+                    CHECKER.W02_PR21_REMEDIATION_REQUIRED_MARKERS,
+                )
+                docs = documents()
+                self.assertIn(required_marker, docs[12])
+                docs[12] = docs[12].replace(
+                    required_marker, "removed-eleventh-current-required-marker"
+                )
+                self.assertIn(
+                    "W02 PR #21 remediation missing required marker: "
+                    f"{required_marker}",
+                    CHECKER.validate_documents(*docs),
+                )
+
+    def test_w02_pr21_twelfth_candidate_and_corrected_contract_remain_not_run(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_TWELFTH_NOT_RUN_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            marker.replace("`not-run`", "`pass`"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "第十二次 remediation technical candidate：`pass`",
+            errors,
+        )
+
+        corrected_contract_markers = (
+            "`77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10`",
+            "symlink 的 path/type/target/mode 均保持 exact `0775`",
+            "`b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f`",
+            "lock size `4852` /\nSHA-256 `9682d3112cf816944bdf34ba532ccc401c80f44a4e7c752d60ce314307894431`",
+            "verifier size `51765` /\nSHA-256 `2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe`",
+            "三个 full-expansion materialization 上都观察到",
+            "`Frameworks/Tcl.framework/Headers` 的 lstat mode 为 `0777`",
+            "错误\n模型的来源/反例，不是 `77b580…` 的正向复现",
+            "本机真实 `/Library/Frameworks` install/rollback/postcondition\n继续为 `not-run`",
+            "`entries=3648`；inventory `77b580…`",
+            "direct checker pass；policy mutation `86/86`；exact-Git `1/1`",
+            "`468 passed / 114 failed / 1 skipped` in `117.62s`",
+            "| Desktop engineering consumer default aggregate（initial） | "
+            "`npm --prefix desktop run test:engineering-smoke` |",
+            "exit `1`；`92 passed / 5 failed`；4 个 renderer canonical-directory failures",
+            "| Desktop engineering consumer default aggregate（isolated retry） | "
+            "`npm --prefix desktop run test:engineering-smoke` |",
+            "exit `1`；`93 passed / 4 failed`；4 个 failure 均为上述 renderer canonical "
+            "temp-dir `/tmp` vs `/private/tmp` 差异",
+            "initial 的第 5 个 timeout 未复现，故记为 concurrent-load transient",
+            "| Desktop build | `cd desktop && npm run build` | exit `0`；main/preload/companion build success |",
+            "direct checker pass；`61/61`",
+            "YAML `2/2`；Bash `37/37`（smoke `14` + formal `23`）",
+            "上述 Python aggregate failure 也不会被 focused pass 覆盖",
+            "`97/97` 不能覆盖默认 Desktop engineering aggregate initial "
+            "`92 passed / 5 failed` 与 isolated\nretry `93 passed / 4 failed` 的失败结论",
+        )
+        for required_marker in corrected_contract_markers:
+            with self.subTest(required_marker=required_marker):
+                self.assertIn(
+                    required_marker,
+                    CHECKER.W02_PR21_REMEDIATION_REQUIRED_MARKERS,
+                )
+                docs = documents()
+                self.assertIn(required_marker, docs[12])
+                docs[12] = docs[12].replace(
+                    required_marker, "removed-twelfth-corrected-contract-marker"
+                )
+                self.assertIn(
+                    "W02 PR #21 remediation missing required marker: "
+                    f"{required_marker}",
+                    CHECKER.validate_documents(*docs),
+                )
+
+    def test_current_summary_cannot_regress_eleven_failures_to_ten(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
+        docs[6] = replace_once(
+            self,
+            docs[6],
+            marker,
+            marker.replace("eleven remediation attempts", "ten remediation attempts"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "status must contain the exact eleven-failure/twelfth-candidate summary once",
+            errors,
+        )
+
+    def test_current_summary_cannot_regress_twelfth_candidate_to_eleventh(self) -> None:
+        docs = documents()
+        marker = CHECKER.W02_STATUS_CURRENT_SUMMARY
+        docs[6] = replace_once(
+            self,
+            docs[6],
+            marker,
+            marker.replace("twelfth local candidate", "eleventh local candidate"),
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "status must contain the exact eleven-failure/twelfth-candidate summary once",
+            errors,
+        )
+
+    def test_w02_pr21_fifth_root_cause_must_not_be_promoted_to_raw_log_proof(
+        self,
+    ) -> None:
+        docs = documents()
+        marker = CHECKER.W02_PR21_FIFTH_ROOT_CAUSE_LIMIT_MARKER
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            marker,
+            "raw log 直接证明 binding root cause",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "raw log 直接证明 binding root cause",
+            errors,
+        )
+
+    def test_w02_pr21_nogo_reviewed_document_is_immutable(self) -> None:
+        docs = documents()
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            "H1 build scratch lifecycle",
+            "H1 renamed lifecycle",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn("W02 PR #21 remediation reviewed document drifted", errors)
+
+    def test_w02_pr21_independent_nogo_cannot_be_promoted(self) -> None:
+        docs = documents()
+        required_marker = (
+            "| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…`）；"
+            "本候选 `pending` |"
+        )
+        docs[12] = replace_once(
+            self,
+            docs[12],
+            required_marker,
+            "| latest independent acceptance | `pass` |",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            f"W02 PR #21 remediation missing required marker: {required_marker}",
+            errors,
+        )
+        self.assertIn(
+            "W02 PR #21 remediation contains forbidden claim: "
+            "| latest independent acceptance | `pass`",
+            errors,
+        )
+
+    def test_w02_pr21_remediation_cannot_advance_w02_or_unlock_slices(self) -> None:
+        mutations = (
+            ("| W02 | `in-progress` |", "| W02 | `completed` |"),
+            ("| W10/W11 | `locked` |", "| W10/W11 | `unlocked` |"),
+            (
+                "| `VAL-PACKAGED-SMOKE-001` | `not-run` |",
+                "| `VAL-PACKAGED-SMOKE-001` | `pass` |",
+            ),
+        )
+        for old, new in mutations:
+            with self.subTest(new=new):
+                docs = documents()
+                docs[12] = replace_once(self, docs[12], old, new)
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn(
+                    f"W02 PR #21 remediation contains forbidden claim: {new[:-2]}",
+                    errors,
+                )
+
+    def test_current_status_cannot_drop_pr21_nogo_binding(self) -> None:
+        docs = documents()
+        self.assertIn(CHECKER.W02_PR21_REVIEWED_TREE, docs[6])
+        docs[6] = docs[6].replace(
+            CHECKER.W02_PR21_REVIEWED_TREE,
+            "0000000000000000000000000000000000000000",
+        )
+        errors = CHECKER.validate_documents(*docs)
+        self.assertIn(
+            "status missing current PR #21 NO-GO marker: "
+            f"{CHECKER.W02_PR21_REVIEWED_TREE}",
+            errors,
+        )
+
+    def test_evidence_index_and_parent_iteration_must_link_current_nogo(self) -> None:
+        for index, label in ((13, "evidence index"), (14, "parent iteration")):
+            with self.subTest(label=label):
+                docs = documents()
+                marker = "independent `NO-GO`"
+                docs[index] = replace_once(self, docs[index], marker, "independent `pending`")
+                errors = CHECKER.validate_documents(*docs)
+                self.assertIn(
+                    f"{label} missing current PR #21 NO-GO marker: {marker}",
+                    errors,
+                )
 
 
 if __name__ == "__main__":

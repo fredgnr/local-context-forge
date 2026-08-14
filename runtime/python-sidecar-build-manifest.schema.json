@@ -94,6 +94,8 @@
       "additionalProperties": false,
       "required": [
         "repositoryCommit",
+        "repositoryTree",
+        "sourceSnapshotSha256",
         "sourceDateEpoch",
         "runnerImage",
         "runnerImageVersion",
@@ -104,12 +106,20 @@
         "pyinstallerVersion",
         "pyinstallerHooksContribVersion",
         "python",
+        "pythonToolchain",
         "inputDigests"
       ],
       "properties": {
         "repositoryCommit": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
+        },
+        "repositoryTree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "sourceSnapshotSha256": {
+          "$ref": "#/$defs/sha256"
         },
         "sourceDateEpoch": {
           "type": "integer",
@@ -145,6 +155,9 @@
         "python": {
           "$ref": "#/$defs/pythonProvenance"
         },
+        "pythonToolchain": {
+          "$ref": "#/$defs/pythonToolchain"
+        },
         "inputDigests": {
           "type": "object",
           "minProperties": 1,
@@ -170,7 +183,8 @@
       "required": [
         "spdxSbom",
         "thirdPartyNotices",
-        "licensesDirectory"
+        "licensesDirectory",
+        "pythonBuildToolchain"
       ],
       "properties": {
         "spdxSbom": {
@@ -180,6 +194,9 @@
           "$ref": "#/$defs/safePath"
         },
         "licensesDirectory": {
+          "$ref": "#/$defs/safePath"
+        },
+        "pythonBuildToolchain": {
           "$ref": "#/$defs/safePath"
         }
       }
@@ -257,6 +274,70 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*\\u0000).+$"
+    },
+    "pythonToolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "buildRequirementsLockSha256",
+        "runtimeLockSha256",
+        "runtimeRequirementsSha256",
+        "installedTreeContentSha256",
+        "buildTools"
+      ],
+      "properties": {
+        "buildRequirementsLockSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtimeLockSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtimeRequirementsSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "installedTreeContentSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "buildTools": {
+          "$ref": "#/$defs/buildTools"
+        }
+      }
+    },
+    "buildTools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "altgraphVersion",
+        "macholibVersion",
+        "packagingVersion",
+        "pyinstallerVersion",
+        "pyinstallerHooksContribVersion",
+        "setuptoolsVersion",
+        "uvVersion"
+      ],
+      "properties": {
+        "altgraphVersion": {
+          "const": "0.17.4"
+        },
+        "macholibVersion": {
+          "const": "1.16.3"
+        },
+        "packagingVersion": {
+          "const": "26.2"
+        },
+        "pyinstallerVersion": {
+          "const": "6.21.0"
+        },
+        "pyinstallerHooksContribVersion": {
+          "const": "2026.6"
+        },
+        "setuptoolsVersion": {
+          "const": "83.0.0"
+        },
+        "uvVersion": {
+          "const": "0.11.29"
+        }
+      }
     },
     "pythonProvenance": {
       "type": "object",

@@ -11,6 +11,46 @@
     "version": "3.13.14",
     "installRoot": "/Library/Frameworks/Python.framework/Versions/3.13",
     "interpreterRelativePath": "bin/python3.13",
+    "interpreterSize": 119232,
+    "interpreterSha256": "ee3c4103b97e32a98e98cfad7f6ca4d09b2ab2dc16f3d28e18b54a4a0244efe0",
+    "frameworkBinaryRelativePath": "Python",
+    "frameworkBinarySize": 13633312,
+    "frameworkBinarySha256": "db77544e7135af8478d62c7d1289581d83714a676c7d3f2b7a4b996bdfef5717",
+    "frameworkCoreFingerprintExcludedPaths": [
+      "Resources/English.lproj/Documentation",
+      "bin/pip",
+      "bin/pip3",
+      "bin/pip3.13",
+      "bin/python",
+      "bin/python313",
+      "etc/openssl/cert.pem",
+      "lib/python3.13/site-packages",
+      "share/doc/python3.13/html"
+    ],
+    "frameworkCoreFingerprintSha256": "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10",
+    "frameworkCoreInventory": {
+      "fileName": "python-framework-sealed-inventory.json",
+      "fileSize": 615969,
+      "fileSha256": "b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f",
+      "schemaVersion": 1,
+      "sourcePayloadSize": 32739568,
+      "sourcePayloadSha256": "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
+      "sourceEntryCount": 3654,
+      "sourceInventorySha256": "863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d",
+      "transformationCount": 6,
+      "entryCount": 3648,
+      "inventorySha256": "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"
+    },
+    "reviewedBrokenSymlinks": [
+      {
+        "path": "Frameworks/Tcl.framework/PrivateHeaders",
+        "target": "Versions/Current/PrivateHeaders"
+      },
+      {
+        "path": "Frameworks/Tk.framework/PrivateHeaders",
+        "target": "Versions/Current/PrivateHeaders"
+      }
+    ],
     "distribution": {
       "provider": "actions/python-versions",
       "releaseTag": "3.13.14-27320626148",
@@ -38,7 +78,24 @@
       ],
       "installerPackageName": "python-3.13.14-macos11.pkg",
       "installerPackageSha256": "8e58affb218c155a1dfdc27b291f817129669f8760e7a297adb2e4439ba5d2e8",
-      "installMethod": "macos-installer-pkg-direct",
+      "installMethod": "macos-installer-no-op-framework-component",
+      "frameworkComponent": {
+        "packageName": "Python_Framework.pkg",
+        "bomSize": 1404518,
+        "bomSha256": "4e49a4c96076a4855219461f721d510493c6d4f3a7a2a9ad7c981ced723d09bd",
+        "packageInfoSize": 947,
+        "packageInfoSha256": "86938c44112e37c4791fdc15ee0d89777ed8b6d0a85bae37f7ebf09839072f5c",
+        "payloadSize": 32739568,
+        "payloadSha256": "f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391",
+        "scriptsSize": 380,
+        "scriptsSha256": "84fb517c2da6089848bfb6a0ab0e6c508351546d1df9d31abcadd5de4cd42bac",
+        "postinstallSize": 894,
+        "postinstallSha256": "7821586a42b4d86b075ed2c87da0a5981e5372070b9c7f6141d09f77cb172417",
+        "postinstallMode": "0755",
+        "noOpPostinstallSize": 17,
+        "noOpPostinstallSha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb",
+        "noOpPostinstallMode": "0755"
+      },
       "hashManifestName": "hashes.sha256",
       "hashManifestSource": "https://github.com/actions/python-versions/releases/download/3.13.14-27320626148/hashes.sha256",
       "hashManifestSha256": "b4dd388b14ff20ced93003e31e2be8d486049456161fc1ea393aa7c64a000e17",
@@ -51,7 +108,8 @@
     "pyinstallerHooksContrib": "2026.6"
   },
   "requiredCiInputs": [
-    "GITHUB_SHA",
+    "LCF_SOURCE_SHA",
+    "LCF_SOURCE_TREE",
     "LCF_SOURCE_DATE_EPOCH",
     "ImageVersion",
     "LCF_PYTHON_DISTRIBUTION_ARCHIVE",

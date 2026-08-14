@@ -1,8 +1,8 @@
 # ITER-0002/R13：Pre-1.0 增量式 retirement 治理
 
-- 状态：`in-progress`（W01 remediation technical checkpoint `pass` / canonical activation
-  pending；父 ITER-0002 继续）
-- 日期：2026-08-03；W01 closure 尝试 2026-08-04–05；remediation 自 2026-08-05
+- 状态：`completed`（W01 accepted remediation、independent acceptance、canonical merge 与
+  resulting-main source 已闭环；父 ITER-0002 继续）
+- 日期：2026-08-03；W01 closure/remediation 2026-08-04–05；外部闭环 2026-08-05
 - 上游基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
 - 当前分支：`agent/w01-governance-source-ci`
 - 范围：决策、治理、计划、追踪关系与治理校验；不删除 runtime，不实现 package，不修改
@@ -34,11 +34,15 @@ controls、credentials、trust pins 和 formal Release 最后处理。
 - [x] R13-07 修复 evidence lifecycle、merge-strategy independence、PR canonical activation、
   artifact/QMD schema 与 model scan scope；Checkpoint A `f4074a31…` / run `30980342634` 已生成
   payload `8919891304` 与 provenance `8919891597`。
+- [x] R13-08 记录 exact remediation final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`
+  的 technical/independent `pass`、accepted merge、resulting
+  `main@1786255b55dd1a78659ed92235893876175a0722` 与 run `30986208251` success；W02 entry
+  prerequisites 闭环。
 
-R13 保持 `in-progress`，直至修复候选 exact-head PR/source technical `pass`、independent
-acceptance `pass`、被验收 candidate 合入 canonical `main`，且 resulting main commit 的
-`source-coverage` success。R13-06 的 `[x]` 只保存旧技术执行事实；它不授权 W02，也不表示
-runtime、packaged、physical、GitHub settings 或 Release gate 已运行。
+上述四层条件已由 [W02 entry record](../evidence/W02/2026-08-05-entry.md) 追加闭环；历史
+[W01 schema v2 record](../evidence/W01/2026-08-04.json) 继续保留记录时刻的 `pending` / `blocked` /
+`not-run`，不回写。R13-06 的 `[x]` 只保存旧技术执行事实；R13 completed 只授权开始 W02，
+不表示 runtime、packaged、physical、GitHub settings 或 Release gate 已运行。
 
 ## 实时基线
 
@@ -67,10 +71,10 @@ runtime、packaged、physical、GitHub settings 或 Release gate 已运行。
 
 | 验证 | 当前结果 | 最低环境 | 说明 |
 | --- | --- | --- | --- |
-| `VAL-PRE1-SEQUENCE-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A `f4074a31…` / run `30980342634` | 旧 candidate technical `pass` / independent `fail` / activation `not-eligible`；历史 run/artifact 保留 |
-| `VAL-GOV-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | schema v2 + Checkpoint A exact-head Actions | 历史 checker 不再读取 current ancestry 或动态 diff；当前 bytes 由 payload/provenance 绑定 |
-| `VAL-CI-COVERAGE-001` | 修复 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A exact PR-head checkout success | QMD 10 pass / 1 exact skip；扫描只覆盖 isolated HOME/XDG/TMP，repository/global tmp 未扫描；guide-site external-blocked/unvalidated |
-| `VAL-PACKAGED-SMOKE-001` | `not-run` | macOS arm64 packaged App | 本 Work 不实现 harness |
+| `VAL-PRE1-SEQUENCE-001` | `pass` | accepted final `36885e04…`；resulting main `1786255b…`；run `30986208251` | 旧 candidate technical `pass` / independent `fail` / activation `not-eligible`；历史 run/artifact 保留 |
+| `VAL-GOV-001` | `pass` | accepted final/tree + W02 entry authority | schema v2 历史记录不变；后续 independent/merge/main facts追加记录 |
+| `VAL-CI-COVERAGE-001` | `pass` | resulting-main run `30986208251` attempt 1 | Python/Web/Desktop/macOS IPC/source-coverage 五 jobs success |
+| `VAL-PACKAGED-SMOKE-001` | `not-run` | macOS arm64 packaged App | R13 不实现或运行 harness；W02 当前仅 boundary/assembly source implementation |
 | 六个 legacy slice gate | `not-run` | slice exact before/after package | 本 Work 不删除 runtime |
 | `VAL-ENGINEERING-PACKAGE-001` | `not-run` | cleaned-tree non-release package | 本 Work 不实现工程包 |
 | `VAL-ELECTRON-CUTOVER-001` / `VAL-LEGACY-ABSENCE-001` | `not-run` | final cleaned bytes | 最终聚合门禁保留 |

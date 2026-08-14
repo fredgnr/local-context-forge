@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -145,10 +146,6 @@ def test_release_actions_are_immutable_and_checkout_drops_credentials() -> None:
             "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
         ),
         (
-            "actions/setup-python",
-            "a309ff8b426b58ec0e2a45f0f869d46889d02405",
-        ),
-        (
             "actions/upload-artifact",
             "ea165f8d65b6e75b540449e92b4886f43607fa02",
         ),
@@ -157,6 +154,8 @@ def test_release_actions_are_immutable_and_checkout_drops_credentials() -> None:
             "d3f86a106a0bac45b974a628896c90dbdf5c8093",
         ),
     }
+    assert "actions/setup-python@" not in workflow
+    assert all(action != "actions/setup-python" for action, _revision in uses)
     assert workflow.count("persist-credentials: false") == 3
     assert workflow.count(
         "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
@@ -221,17 +220,63 @@ def test_release_builds_and_reaudits_every_packaged_runtime() -> None:
     for command in (
         "make python-sidecar-build",
         "make qmd-runtime-build",
-        "npm --prefix web run build",
+        "run_exact_npm_script web build:packaging",
         "make renderer-stage",
-        "npm --prefix desktop run build",
-        "npm --prefix desktop run audit:companion",
-        "npm --prefix desktop run audit:python-sidecar",
+        "run_exact_npm_script desktop build",
+        "run_exact_npm_script desktop audit:companion",
+        "run_exact_npm_script desktop audit:python-sidecar",
         "make qmd-runtime-audit",
         "make renderer-audit",
     ):
         assert command in build
         assert command not in create_draft
         assert command not in promote
+    for live_checkout_command in (
+        "npm --prefix web run build",
+        "npm --prefix desktop run build",
+        "npm --prefix desktop run audit:companion",
+        "npm --prefix desktop run audit:python-sidecar",
+    ):
+        assert live_checkout_command not in build
+    assert build.count("run_exact_npm_script() (") == 2
+    assert 'cd "${LCF_REVIEWED_SOURCE_ROOT}"' in build
+    assert (
+        'LCF_REVIEWED_SOURCE_ROOT="${LCF_REVIEWED_SOURCE_ROOT}" \\'
+        in build
+    )
+    assert (
+        'LCF_RENDERER_PACKAGE_LOCK_SHA256="${LCF_RENDERER_PACKAGE_LOCK_SHA256}" \\'
+        in build
+    )
+    assert "tools/check_exact_git_provenance.py" in build
+    assert "--emit-github-env" in build
+
+    web_package = json.loads(
+        (PROJECT_ROOT / "web" / "package.json").read_text(encoding="utf-8")
+    )
+    assert web_package["scripts"]["build:packaging"] == (
+        "node scripts/buildEngineeringRenderer.cjs"
+    )
+    renderer_builder = (
+        PROJECT_ROOT / "web" / "scripts" / "buildEngineeringRenderer.cjs"
+    ).read_text(encoding="utf-8")
+    for reviewed_builder_marker in (
+        'const PACKAGE_LOCK_PATH = "web/package-lock.json";',
+        "prepare.readReviewedGitBlob(repositoryRoot, record.objectId)",
+        "snapshot.rendererPackageLockSha256 !== rendererPackageLockSha256",
+        "packageLockSha256: rendererPackageLockSha256",
+    ):
+        assert reviewed_builder_marker in renderer_builder
+
+    exact_git_checker = (
+        PROJECT_ROOT / "tools" / "check_exact_git_provenance.py"
+    ).read_text(encoding="utf-8")
+    for committed_lock_marker in (
+        'if entry.path == "web/package-lock.json"',
+        '"cat-file", "blob", package_lock_entry.object_id',
+        '"LCF_RENDERER_PACKAGE_LOCK_SHA256="',
+    ):
+        assert committed_lock_marker in exact_git_checker
     verify_assets = re.findall(
         r"prepareRelease\.cjs\"?\s+verify-assets",
         workflow,
@@ -272,20 +317,216 @@ def test_runtime_source_urls_and_hashes_are_exactly_locked() -> None:
     distribution = python_lock["python"]["distribution"]
     node = qmd_lock["node"]
     for value in (
+        distribution["archiveName"],
         distribution["archiveSource"],
         distribution["hashManifestSource"],
         distribution["archiveSha256"],
         distribution["hashManifestSha256"],
+        distribution["installerPackageName"],
+        distribution["installerPackageSha256"],
         node["archiveSource"],
         node["hashManifestSource"],
         node["archiveSha256"],
         node["hashManifestSha256"],
     ):
         assert value in workflow
-    assert "python-version: \"3.13.14\"" in workflow
+    manifest_entry = (
+        "839B14DF8A24415E17D15F222E2AC01D3A90845DEB39DF642E2CC01869140A34 "
+        "python-3.13.14-darwin-arm64.tar.gz"
+    )
+    manifest_binding = (
+        'test "$(/usr/bin/grep -Fxc \\\n'
+        f"            '{manifest_entry}' \\\n"
+        '            "${hashes}")" = "1"'
+    )
+    assert workflow.count(manifest_entry) == 1
+    assert workflow.count(manifest_binding) == 1
+    assert "actions/setup-python@" not in workflow
+    assert "python-version:" not in workflow
     assert "node-version: \"22.23.2\"" in workflow
     assert "os.path.realpath(sys.executable)" in workflow
     assert "LCF_QMD_BUILD_PYTHON" in workflow
+
+
+def test_reviewed_framework_transaction_is_synchronized_and_postconditioned() -> None:
+    release_workflow = _workflow()
+    smoke_workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "packaged-smoke.yml"
+    ).read_text(encoding="utf-8")
+    framework_inputs = {
+        "verifier": (
+            PROJECT_ROOT / "tools" / "verify_reviewed_python_framework.cjs"
+        ),
+        "lock": (
+            PROJECT_ROOT
+            / "backend"
+            / "packaging"
+            / "python-sidecar-toolchain.lock.json"
+        ),
+        "inventory": (
+            PROJECT_ROOT
+            / "backend"
+            / "packaging"
+            / "python-framework-sealed-inventory.json"
+        ),
+    }
+    for workflow in (release_workflow, smoke_workflow):
+        for name, pathname in framework_inputs.items():
+            content = pathname.read_bytes()
+            size_marker = f'readonly framework_{name}_size="{len(content)}"'
+            digest_marker = (
+                f'readonly framework_{name}_sha256="'
+                f'{hashlib.sha256(content).hexdigest()}"'
+            )
+            assert workflow.count(size_marker) == 2
+            assert workflow.count(digest_marker) == 2
+
+    inventory = json.loads(
+        framework_inputs["inventory"].read_text(encoding="utf-8")
+    )
+    transformations = inventory["transformations"]
+    assert len(transformations) == 6
+    assert {item["kind"] for item in transformations} == {"remove-appledouble"}
+    symlink_entries = [
+        item for item in inventory["entries"] if item["type"] == "symlink"
+    ]
+    assert len(symlink_entries) == 33
+    assert {item["mode"] for item in symlink_entries} == {"0775"}
+    python_lock = json.loads(
+        framework_inputs["lock"].read_text(encoding="utf-8")
+    )
+    python_contract = python_lock["python"]
+    assert python_contract["frameworkCoreFingerprintSha256"] == (
+        inventory["inventorySha256"]
+    )
+    assert python_contract["frameworkCoreInventory"]["transformationCount"] == 6
+    for pathname in (
+        framework_inputs["verifier"],
+        PROJECT_ROOT / "tools" / "generate_reviewed_python_framework_inventory.cjs",
+    ):
+        assert "SYMLINK_MODE" not in pathname.read_text(encoding="utf-8")
+
+    release_build = _job_slice(release_workflow, "build")
+    smoke_build = _job_slice(smoke_workflow, "assemble")
+    step_names = (
+        "Provision reviewed build Python without executing it",
+        "Seal reviewed build Python framework",
+        "Validate reviewed Python framework transaction postcondition",
+    )
+
+    def step_document(job: str, name: str) -> str:
+        start = job.index(f"      - name: {name}")
+        following = job.find("\n      - name: ", start + 1)
+        return job[start:] if following < 0 else job[start:following]
+
+    for name in step_names:
+        release_step = step_document(release_build, name)
+        smoke_step = step_document(smoke_build, name)
+        release_run = release_step.split("        run: |\n", 1)[1]
+        smoke_run = smoke_step.split("        run: |\n", 1)[1]
+        assert release_run == smoke_run
+
+    producer = step_document(release_build, step_names[0])
+    seal = step_document(release_build, step_names[1])
+    postcondition = step_document(release_build, step_names[2])
+    assert "id: provision_reviewed_python" in producer
+    assert "id: seal_reviewed_python" in seal
+    assert postcondition.count("if: ${{ always() }}") == 1
+    assert "continue-on-error:" not in release_build
+    assert "steps.provision_reviewed_python.outcome" in postcondition
+    assert "steps.seal_reviewed_python.outcome" in postcondition
+    assert release_build.index(step_names[0]) < release_build.index(step_names[1])
+    assert release_build.index(step_names[1]) < release_build.index(step_names[2])
+    assert release_build.index(step_names[2]) < release_build.index(
+        "Bind release provenance"
+    )
+
+    for block in (producer, seal, postcondition):
+        for signal in ("HUP", "INT", "TERM"):
+            assert signal in block
+        assert "rm -rf" not in block
+        assert 'find -P -x "${framework_parent}"' not in block
+    for marker in (
+        "LCF_REVIEWED_FRAMEWORK_INITIAL_STATE",
+        "LCF_REVIEWED_FRAMEWORK_PREVIOUS_IDENTITY",
+        "LCF_REVIEWED_FRAMEWORK_CANDIDATE_IDENTITY",
+        "LCF_REVIEWED_FRAMEWORK_QUARANTINE_IDENTITY",
+    ):
+        assert marker in producer
+        assert marker in postcondition
+    assert 'exit 70' in producer
+    assert 'exit 70' in seal
+    assert 'exit 70' in postcondition
+    assert '"${framework_root}" -depth -delete' in producer
+    assert '"${framework_root}" -depth -delete' in seal
+    assert '"${framework_root}" -depth -delete' in postcondition
+    assert '"${framework_quarantine}" -depth -delete' in postcondition
+    assert '"${seal_quarantine}" -depth -delete' not in seal
+    assert "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete" not in seal
+    seal_signal_mask = seal.rindex("trap '' HUP INT TERM")
+    seal_commit_journal = seal.index(
+        "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=committed",
+        seal_signal_mask,
+    )
+    seal_exit_handoff = seal.index("trap - EXIT", seal_commit_journal)
+    seal_local_commit = seal.index(
+        'seal_transaction_phase="committed"',
+        seal_exit_handoff,
+    )
+    assert seal_signal_mask < seal_commit_journal < seal_exit_handoff < seal_local_commit
+    assert "restore_initial_state()" in postcondition
+    assert "finish_postcondition_failure()" in postcondition
+    assert "handle_verification_failure()" in postcondition
+    assert "finish_postcondition_failure verification" in postcondition
+    assert "cleanup=complete" in postcondition
+    assert 'postcondition_phase="finalizing"' in postcondition
+    assert "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=finalizing" in postcondition
+    assert "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete" in postcondition
+    assert "trap 'handle_postcondition_signal HUP 129' HUP" in postcondition
+    assert "trap 'handle_postcondition_signal INT 130' INT" in postcondition
+    assert "trap 'handle_postcondition_signal TERM 143' TERM" in postcondition
+    assert (
+        "pending:pending|rolled-back:rolled-back|committed:committed)"
+        in postcondition
+    )
+    verifier = postcondition.index("verifier.verifyReviewedPythonFramework({")
+    identity_recheck = postcondition.index(
+        "trap 'fail_postcondition identity-mismatch' ERR"
+    )
+    finalizing = postcondition.index('postcondition_phase="finalizing"')
+    finalizing_signal_mask = postcondition.rindex(
+        "trap '' HUP INT TERM",
+        0,
+        finalizing,
+    )
+    finalizing_failure_trap = postcondition.index(
+        "trap 'fail_postcondition finalizing' ERR",
+        finalizing,
+    )
+    quarantine_delete = postcondition.index(
+        '"${framework_quarantine}" -depth -delete'
+    )
+    complete = postcondition.index(
+        "LCF_REVIEWED_FRAMEWORK_TRANSACTION_PHASE=complete"
+    )
+    assert (
+        verifier
+        < identity_recheck
+        < finalizing_signal_mask
+        < finalizing
+        < finalizing_failure_trap
+        < quarantine_delete
+        < complete
+    )
+    assert "restore_initial_state" not in postcondition[finalizing:complete]
+    assert postcondition.count("reviewedModule._compile(") == 1
+    assert postcondition.count("revalidate(verifierBinding);") == 1
+    assert postcondition.count("revalidate(lockBinding);") == 1
+    assert postcondition.count("revalidate(inventoryBinding);") == 1
+    assert "lcf-reviewed-framework-verification: failed" in postcondition
+    assert "error.stack" not in postcondition
+    assert "error.cause" not in postcondition
+    assert "process.stderr.write" not in postcondition
 
 
 def test_public_pins_default_fail_closed_without_breaking_source_ci() -> None:
@@ -497,7 +738,15 @@ def test_manual_promotion_revalidates_remote_draft_and_published_state() -> None
         PROJECT_ROOT / "desktop" / "scripts" / "prepareRelease.cjs"
     ).read_text(encoding="utf-8")
     assert "release.immutable !== !expectedDraft" in release_policy
-    assert "packageLockPath: path.join(" in release_policy
+    assert "packageLockPath: path.join(" not in release_policy
+    assert (
+        "environment.LCF_RENDERER_PACKAGE_LOCK_SHA256 || \"\""
+        in release_policy
+    )
+    assert (
+        "expectedPackageLockSha256: rendererPackageLockSha256"
+        in release_policy
+    )
 
 
 def test_repository_tracks_no_private_key_material() -> None:

@@ -8,8 +8,8 @@
 > **操作停止：** 当前 tag 仍会同时触发 container 与 desktop，且 public locks 为
 > `unprovisioned`；在 W11 slice、W13 final gates、W14/W15 production controls/credentials 与
 > W15/W16 release continuity 通过前，禁止创建新 release tag 或执行 promotion。本页后续命令仅用于
-> 审计现存 workflow，不是发布步骤。PR #20 的 W01 remediation 尚待 exact-head 独立验收；
-> 整体仍是 **PR merge blocked / release NO-GO**。
+> 审计现存 workflow，不是发布步骤。PR #20 的 W01 accepted remediation、canonical merge 与
+> resulting-main source 已闭环，只解锁 W02；整体仍是 **release NO-GO**。
 
 仓库通过 `.github/workflows/container-images.yml` 构建并托管三个镜像：
 

@@ -155,6 +155,7 @@ export interface UpdateClientOptions {
   readonly updateDirectory: string;
   readonly openPath: (filePath: string) => Promise<string>;
   readonly openExternal: (url: string) => Promise<void>;
+  readonly distributionPolicy?: "standard" | "engineering-disabled";
   readonly loadTrustAnchor?: () => Promise<UpdateTrustAnchor>;
   readonly fetchBytes?: UpdateFetchBytes;
   readonly streamAsset?: UpdateStreamAsset;
@@ -1073,7 +1074,8 @@ export function verifyUpdateManifest(
 function initialStatus(
   currentVersion: string,
   channel: string,
-  reason: UpdateUnavailableReason
+  reason: UpdateUnavailableReason,
+  canOpenReleasePage = true
 ): UpdateStatus {
   return {
     state: "unavailable",
@@ -1085,7 +1087,7 @@ function initialStatus(
     unavailableReason: reason,
     canCheck: false,
     canDownloadOrOpen: false,
-    canOpenReleasePage: true,
+    canOpenReleasePage,
     automaticApply: false,
     automaticApplyReason: "val-update-001-not-passed"
   };
@@ -1358,8 +1360,11 @@ export class UpdateClient {
   private active: ActiveOperation | undefined;
   private shuttingDown = false;
   private resolvedUpdateDirectory?: string;
+  private readonly engineeringDisabled: boolean;
 
   private constructor(private readonly options: UpdateClientOptions) {
+    this.engineeringDisabled =
+      options.distributionPolicy === "engineering-disabled";
     try {
       this.parsedCurrentVersion = parseSemver(options.currentVersion);
       this.channel = channelForVersion(this.parsedCurrentVersion);
@@ -1378,7 +1383,8 @@ export class UpdateClient {
     this.status = initialStatus(
       this.parsedCurrentVersion.raw,
       this.channel,
-      "source-build"
+      this.engineeringDisabled ? "engineering-smoke" : "source-build",
+      !this.engineeringDisabled
     );
   }
 
@@ -1389,6 +1395,15 @@ export class UpdateClient {
   }
 
   private async initialize(): Promise<void> {
+    if (this.engineeringDisabled) {
+      this.status = initialStatus(
+        this.parsedCurrentVersion.raw,
+        this.channel,
+        "engineering-smoke",
+        false
+      );
+      return;
+    }
     if (!this.options.packaged) {
       this.status = initialStatus(
         this.parsedCurrentVersion.raw,
@@ -1518,7 +1533,11 @@ export class UpdateClient {
   }
 
   check(): Promise<UpdateStatus> {
-    if (!this.trustAnchor || this.status.state === "unavailable") {
+    if (
+      this.engineeringDisabled ||
+      !this.trustAnchor ||
+      this.status.state === "unavailable"
+    ) {
       return Promise.reject(new UpdateClientError("unavailable"));
     }
     return this.runOperation("check", async (signal) => {
@@ -1631,7 +1650,11 @@ export class UpdateClient {
   }
 
   downloadOrOpen(): Promise<UpdateStatus> {
-    if (!this.trustAnchor || this.status.state === "unavailable") {
+    if (
+      this.engineeringDisabled ||
+      !this.trustAnchor ||
+      this.status.state === "unavailable"
+    ) {
       return Promise.reject(new UpdateClientError("unavailable"));
     }
     return this.runOperation("download-or-open", async (signal) => {

@@ -78,8 +78,10 @@ def load_json(path: Path) -> Any:
 
 
 def target_dependencies(makefile: str, target: str) -> list[str] | None:
-    match = re.search(rf"^{re.escape(target)}:\s*(.*?)\s*$", makefile, re.MULTILINE)
-    return match.group(1).split() if match else None
+    matches = re.findall(
+        rf"^{re.escape(target)}:[ \t]*(.*?)[ \t]*$", makefile, re.MULTILINE
+    )
+    return matches[0].split() if len(matches) == 1 else None
 
 
 def target_recipe(makefile: str, target: str) -> str:
@@ -89,6 +91,25 @@ def target_recipe(makefile: str, target: str) -> str:
         re.MULTILINE,
     )
     return match.group("body") if match else ""
+
+
+def phony_targets(makefile: str) -> list[str] | None:
+    lines = makefile.splitlines()
+    starts = [index for index, line in enumerate(lines) if line.startswith(".PHONY:")]
+    if len(starts) != 1:
+        return None
+    index = starts[0]
+    parts: list[str] = []
+    line = lines[index].split(":", 1)[1].strip()
+    while True:
+        continued = line.endswith("\\")
+        parts.extend(line.removesuffix("\\").split())
+        if not continued:
+            return parts
+        index += 1
+        if index >= len(lines) or not lines[index].startswith("\t"):
+            return None
+        line = lines[index].strip()
 
 
 def job_block(workflow: str, job: str) -> str:
@@ -256,25 +277,52 @@ def validate_contract(
             errors.append(f"ci-qmd-worker recipe missing {phrase!r}")
     if "ci --ignore-scripts" not in qmd_recipe:
         errors.append("QMD dependency installation can execute lifecycle scripts")
+    phony = phony_targets(makefile)
+    if phony is None or phony.count("web-install") != 1:
+        errors.append("web-install must be declared exactly once as phony")
+    if target_dependencies(makefile, "web-install") != []:
+        errors.append("web-install must not have prerequisites")
+    if target_recipe(makefile, "web-install") != "\tcd web && $(NPM) ci\n":
+        errors.append("web-install must run exactly the locked Web npm ci recipe")
+    if target_dependencies(makefile, "ci-web") != ["web-install"]:
+        errors.append("ci-web must depend exactly on web-install")
     web_recipe = target_recipe(makefile, "ci-web")
     for phrase in (
-        "cd web && $(NPM) ci",
         "cd web && $(NPM) test",
         "cd web && $(NPM) run typecheck",
         "cd web && $(NPM) run build",
     ):
         if phrase not in web_recipe:
             errors.append(f"ci-web recipe missing {phrase!r}")
-    if target_dependencies(makefile, "desktop-ci") != ["desktop-install"]:
-        errors.append("desktop-ci must depend on desktop-install")
+    if target_dependencies(makefile, "desktop-install") != []:
+        errors.append("desktop-install must not have prerequisites")
+    if target_recipe(makefile, "desktop-install") != (
+        "\tcd desktop && ELECTRON_SKIP_BINARY_DOWNLOAD=1 "
+        "$(NPM) ci --ignore-scripts\n"
+    ):
+        errors.append("desktop-install locked npm flags drifted")
+    if target_dependencies(makefile, "desktop-ci") != [
+        "web-install",
+        "desktop-install",
+    ]:
+        errors.append("desktop-ci must install Web before Desktop dependencies")
     desktop_recipe = target_recipe(makefile, "desktop-ci")
-    for phrase in (
+    desktop_commands = (
         "$(MAKE) desktop-test",
         "$(MAKE) desktop-typecheck",
         "$(MAKE) desktop-build",
-    ):
+    )
+    desktop_offsets: list[int] = []
+    for phrase in desktop_commands:
         if phrase not in desktop_recipe:
             errors.append(f"desktop-ci recipe missing {phrase!r}")
+        desktop_offsets.append(desktop_recipe.find(phrase))
+    if (
+        any(offset < 0 for offset in desktop_offsets)
+        or desktop_offsets != sorted(desktop_offsets)
+        or any(desktop_recipe.count(phrase) != 1 for phrase in desktop_commands)
+    ):
+        errors.append("desktop-ci test/typecheck/build order drifted")
     ipc_recipe = target_recipe(makefile, "ci-ipc-source")
     if "tests/backend/test_desktop_transport.py" not in ipc_recipe:
         errors.append("ci-ipc-source must run the desktop transport contract")
@@ -386,6 +434,34 @@ def validate_contract(
         for phrase in required_phrases:
             if phrase not in block:
                 errors.append(f"{job_name} job missing {phrase!r}")
+
+    desktop_job = job_block(workflow, "desktop")
+    desktop_setup = step_block(desktop_job, "Set up Node")
+    desktop_run = step_block(desktop_job, "Run desktop source checks")
+    expected_desktop_cache = (
+        '          node-version: "24"\n'
+        "          cache: npm\n"
+        "          cache-dependency-path: |\n"
+        "            desktop/package-lock.json\n"
+        "            web/package-lock.json\n"
+    )
+    if (
+        not desktop_setup
+        or desktop_setup.count(expected_desktop_cache) != 1
+        or desktop_setup.count("desktop/package-lock.json") != 1
+        or desktop_setup.count("web/package-lock.json") != 1
+    ):
+        errors.append("desktop job npm cache must bind exact Desktop and Web locks")
+    setup_offset = desktop_job.find("      - name: Set up Node\n")
+    run_offset = desktop_job.find("      - name: Run desktop source checks\n")
+    if (
+        not desktop_run
+        or desktop_run.count("        run: make desktop-ci\n") != 1
+        or setup_offset < 0
+        or run_offset < 0
+        or setup_offset >= run_offset
+    ):
+        errors.append("desktop job setup/run order drifted")
 
     summary_job = job_block(workflow, "source-coverage")
     for phrase in (

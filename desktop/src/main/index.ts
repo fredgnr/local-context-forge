@@ -55,12 +55,13 @@ import {
 } from "./updateClient";
 import { registerUpdateIpcHandlers } from "./updateIpc";
 import { createMainWindow } from "./window";
+import { COMPILED_DISTRIBUTION_PROFILE } from "./distribution";
 
-const PRODUCT_NAME = "Local Context Forge";
+const PRODUCT_NAME = COMPILED_DISTRIBUTION_PROFILE.productName;
 const productCacheDirectory = path.join(
   path.dirname(app.getPath("appData")),
   "Caches",
-  PRODUCT_NAME
+  COMPILED_DISTRIBUTION_PROFILE.cacheDirectoryName
 );
 const REQUIRED_SIDECAR_CAPABILITIES = [
   "desktop-handshake",
@@ -76,7 +77,10 @@ registerPrivilegedScheme(
 enableApplicationSandbox(app);
 
 app.setName(PRODUCT_NAME);
-const dataDir = path.join(app.getPath("appData"), PRODUCT_NAME);
+const dataDir = path.join(
+  app.getPath("appData"),
+  COMPILED_DISTRIBUTION_PROFILE.dataDirectoryName
+);
 app.setPath("userData", dataDir);
 
 let mainWindow: BrowserWindow | undefined;
@@ -306,6 +310,7 @@ async function bootstrap(): Promise<void> {
     currentVersion: app.getVersion(),
     resourcesPath: process.resourcesPath,
     updateDirectory: path.join(dataDir, "updates"),
+    distributionPolicy: COMPILED_DISTRIBUTION_PROFILE.updaterPolicy,
     openPath: (filePath) => shell.openPath(filePath),
     openExternal: async (url) => {
       if (url !== CANONICAL_RELEASES_URL) {

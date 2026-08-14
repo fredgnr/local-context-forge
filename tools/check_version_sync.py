@@ -27,8 +27,39 @@ def _python_project_version(path: Path) -> str:
     return str(value["project"]["version"])
 
 
+def _safe_constant_expression(
+    value: ast.expr,
+    symbols: dict[str, object],
+) -> object:
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, TypeError):
+        pass
+    if isinstance(value, ast.Name) and value.id in symbols:
+        return symbols[value.id]
+    if isinstance(value, ast.JoinedStr):
+        pieces: list[str] = []
+        for part in value.values:
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                pieces.append(part.value)
+            elif (
+                isinstance(part, ast.FormattedValue)
+                and part.conversion == -1
+                and part.format_spec is None
+            ):
+                resolved = _safe_constant_expression(part.value, symbols)
+                if not isinstance(resolved, (str, int)):
+                    raise ValueError("formatted constant is not a string or integer")
+                pieces.append(str(resolved))
+            else:
+                raise ValueError("joined constant is not statically resolvable")
+        return "".join(pieces)
+    raise ValueError("constant is not statically resolvable")
+
+
 def _constant(path: Path, name: str) -> object:
     module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    symbols: dict[str, object] = {}
     for statement in module.body:
         target: ast.expr | None = None
         value: ast.expr | None = None
@@ -38,13 +69,18 @@ def _constant(path: Path, name: str) -> object:
         elif isinstance(statement, ast.AnnAssign):
             target = statement.target
             value = statement.value
-        if isinstance(target, ast.Name) and target.id == name and value is not None:
+        if isinstance(target, ast.Name) and value is not None:
             try:
-                return ast.literal_eval(value)
+                resolved = _safe_constant_expression(value, symbols)
             except (ValueError, TypeError) as error:
-                raise ValueError(
-                    f"{name} in {path.relative_to(ROOT)} must be a literal"
-                ) from error
+                if target.id == name:
+                    raise ValueError(
+                        f"{name} in {path.relative_to(ROOT)} must be static"
+                    ) from error
+                continue
+            symbols[target.id] = resolved
+            if target.id == name:
+                return resolved
     raise ValueError(f"{name} is missing from {path.relative_to(ROOT)}")
 
 
@@ -66,6 +102,13 @@ def main() -> int:
     protocol = manifest["desktopProtocol"]
     if not isinstance(protocol, dict):
         raise ValueError("desktopProtocol must contain major and minor")
+    retrieval_protocol = manifest["desktopRetrievalProtocol"]
+    if not isinstance(retrieval_protocol, dict):
+        raise ValueError("desktopRetrievalProtocol must contain major and minor")
+    protocol_version = f"{protocol['major']}.{protocol['minor']}"
+    retrieval_protocol_version = (
+        f"{retrieval_protocol['major']}.{retrieval_protocol['minor']}"
+    )
 
     checks: list[tuple[str, object, object]] = [
         (
@@ -107,6 +150,34 @@ def main() -> int:
             int(protocol["minor"]),
         ),
         (
+            "backend retrieval protocol major",
+            int(
+                _constant(
+                    ROOT / "backend" / "app" / "version.py",
+                    "DESKTOP_RETRIEVAL_PROTOCOL_MAJOR",
+                )
+            ),
+            int(retrieval_protocol["major"]),
+        ),
+        (
+            "backend retrieval protocol minor",
+            int(
+                _constant(
+                    ROOT / "backend" / "app" / "version.py",
+                    "DESKTOP_RETRIEVAL_PROTOCOL_MINOR",
+                )
+            ),
+            int(retrieval_protocol["minor"]),
+        ),
+        (
+            "backend retrieval protocol version",
+            _constant(
+                ROOT / "backend" / "app" / "version.py",
+                "DESKTOP_RETRIEVAL_PROTOCOL_VERSION",
+            ),
+            retrieval_protocol_version,
+        ),
+        (
             "database schema",
             int(_constant(ROOT / "backend" / "app" / "db.py", "SCHEMA_VERSION")),
             int(manifest["databaseSchema"]),
@@ -116,7 +187,9 @@ def main() -> int:
     desktop_package = ROOT / "desktop" / "package.json"
     if desktop_package.exists():
         desktop_contracts = ROOT / "desktop" / "src" / "contracts.ts"
-        protocol_version = f"{protocol['major']}.{protocol['minor']}"
+        desktop_retrieval_broker = (
+            ROOT / "desktop" / "src" / "main" / "retrievalBroker.ts"
+        )
         checks.extend(
             [
                 (
@@ -137,6 +210,14 @@ def main() -> int:
                         desktop_contracts, "SIDECAR_PROTOCOL_VERSION"
                     ),
                     protocol_version,
+                ),
+                (
+                    "desktop retrieval broker protocol",
+                    _typescript_string_constant(
+                        desktop_retrieval_broker,
+                        "RETRIEVAL_BROKER_PROTOCOL_VERSION",
+                    ),
+                    retrieval_protocol_version,
                 ),
             ]
         )
@@ -163,7 +244,9 @@ def main() -> int:
         return 1
     print(
         "Version synchronization passed: "
-        f"{product}, desktop protocol {protocol['major']}.{protocol['minor']}"
+        f"{product}, desktop protocol {protocol['major']}.{protocol['minor']}, "
+        "desktop retrieval protocol "
+        f"{retrieval_protocol['major']}.{retrieval_protocol['minor']}"
     )
     return 0
 

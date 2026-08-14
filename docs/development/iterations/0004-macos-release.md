@@ -62,5 +62,5 @@ hardened runtime。
 
 repository owner、可修改 `main`/workflow 的 contents writer 与 settings 管理员仍是根信任；
 GitHub Draft 无资产 CAS，verify→fixed-ID PATCH 竞态只能 post-publish 后验检测。这些真实
-settings、签名构建和物理 Mac 门禁均未运行，当前仍是
-**W01 remediation pending / PR merge blocked / release NO-GO**。
+settings、签名构建和物理 Mac 门禁均未运行。W01 closeout 已完成，但 W02–W13 尚未通过，
+当前仍是 **release NO-GO**。

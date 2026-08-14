@@ -1,0 +1,411 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "engineering-smoke-manifest.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "kind",
+    "distribution",
+    "application",
+    "target",
+    "source",
+    "assembly",
+    "components",
+    "security",
+    "capabilities",
+    "validation"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "engineering-smoke-manifest.schema.json"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "local-context-forge-engineering-smoke-distribution"
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "marker", "engineeringOnly", "publishable"],
+      "properties": {
+        "class": { "const": "engineering-smoke" },
+        "marker": { "const": "UNOFFICIAL" },
+        "engineeringOnly": { "const": true },
+        "publishable": { "const": false }
+      }
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["appId", "productName", "version"],
+      "properties": {
+        "appId": { "const": "dev.localcontextforge.engineering-smoke" },
+        "productName": {
+          "const": "Local Context Forge Engineering Smoke"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture", "artifact"],
+      "properties": {
+        "os": { "const": "darwin" },
+        "architecture": { "const": "arm64" },
+        "artifact": { "const": "app-dir" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "commit",
+        "tree",
+        "sourceSnapshotSha256",
+        "sourceDateEpoch"
+      ],
+      "properties": {
+        "repository": { "const": "fredgnr/local-context-forge" },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "sourceSnapshotSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sourceDateEpoch": {
+          "type": "integer",
+          "minimum": 100000000
+        }
+      }
+    },
+    "assembly": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "builder",
+        "mode",
+        "asar",
+        "outputDirectory",
+        "manifestPath"
+      ],
+      "properties": {
+        "builder": { "const": "electron-builder" },
+        "mode": { "const": "dir" },
+        "asar": { "const": true },
+        "outputDirectory": { "const": "release-smoke" },
+        "manifestPath": {
+          "const": "Contents/Resources/engineering-smoke/distribution.json"
+        }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["desktopApp", "renderer", "pythonSidecar"],
+      "properties": {
+        "desktopApp": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "asarPath",
+            "mainPath",
+            "mainSha256",
+            "mainBytes",
+            "preloadPath",
+            "preloadSha256",
+            "preloadBytes",
+            "packagePath",
+            "packageSha256",
+            "packageBytes",
+            "reviewedPackagePath",
+            "reviewedPackageSha256",
+            "entrypointBuild"
+          ],
+          "properties": {
+            "asarPath": { "const": "Contents/Resources/app.asar" },
+            "mainPath": { "const": "dist/main/index.js" },
+            "mainSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "mainBytes": { "type": "integer", "minimum": 1 },
+            "preloadPath": { "const": "dist/preload/index.cjs" },
+            "preloadSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "preloadBytes": { "type": "integer", "minimum": 1 },
+            "packagePath": { "const": "package.json" },
+            "packageSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "packageBytes": { "type": "integer", "minimum": 1 },
+            "reviewedPackagePath": { "const": "desktop/package.json" },
+            "reviewedPackageSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "entrypointBuild": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "builder",
+                "builderVersion",
+                "nodeVersion",
+                "npmVersion",
+                "packageLockSha256",
+                "installedContentSha256",
+                "inputs",
+                "inputsSha256"
+              ],
+              "properties": {
+                "builder": { "const": "esbuild" },
+                "builderVersion": { "const": "0.28.1" },
+                "nodeVersion": { "const": "v22.23.2" },
+                "npmVersion": { "const": "10.9.8" },
+                "packageLockSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "installedContentSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "inputs": { "type": "integer", "minimum": 3 },
+                "inputsSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        "renderer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "resourcePath",
+            "manifestPath",
+            "manifestSha256",
+            "repositoryCommit",
+            "repositoryTree",
+            "sourceSnapshotSha256",
+            "inputSnapshotSha256",
+            "files",
+            "bytes"
+          ],
+          "properties": {
+            "resourcePath": { "const": "Contents/Resources/renderer" },
+            "manifestPath": {
+              "const": "Contents/Resources/renderer/renderer-build-manifest.json"
+            },
+            "manifestSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "repositoryCommit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "repositoryTree": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "sourceSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "inputSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "files": { "type": "integer", "minimum": 1 },
+            "bytes": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "pythonSidecar": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "resourcePath",
+            "manifestPath",
+            "manifestSha256",
+            "normalizedInventorySha256",
+            "repositoryCommit",
+            "repositoryTree",
+            "sourceSnapshotSha256",
+            "pythonBuildToolchainPath",
+            "pythonToolchain",
+            "files",
+            "nativeFiles",
+            "components"
+          ],
+          "properties": {
+            "resourcePath": { "const": "Contents/Resources/sidecar" },
+            "manifestPath": {
+              "const": "Contents/Resources/sidecar/build-manifest.json"
+            },
+            "manifestSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "normalizedInventorySha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "repositoryCommit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "repositoryTree": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "sourceSnapshotSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "pythonBuildToolchainPath": {
+              "const": "Contents/Resources/sidecar/python-build-toolchain.json"
+            },
+            "pythonToolchain": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "buildRequirementsLockSha256",
+                "runtimeLockSha256",
+                "runtimeRequirementsSha256",
+                "installedTreeContentSha256",
+                "buildTools"
+              ],
+              "properties": {
+                "buildRequirementsLockSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "runtimeLockSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "runtimeRequirementsSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "installedTreeContentSha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "buildTools": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "altgraphVersion",
+                    "macholibVersion",
+                    "packagingVersion",
+                    "pyinstallerVersion",
+                    "pyinstallerHooksContribVersion",
+                    "setuptoolsVersion",
+                    "uvVersion"
+                  ],
+                  "properties": {
+                    "altgraphVersion": { "const": "0.17.4" },
+                    "macholibVersion": { "const": "1.16.3" },
+                    "packagingVersion": { "const": "26.2" },
+                    "pyinstallerVersion": { "const": "6.21.0" },
+                    "pyinstallerHooksContribVersion": { "const": "2026.6" },
+                    "setuptoolsVersion": { "const": "83.0.0" },
+                    "uvVersion": { "const": "0.11.29" }
+                  }
+                }
+              }
+            },
+            "files": { "type": "integer", "minimum": 1 },
+            "nativeFiles": { "type": "integer", "minimum": 1 },
+            "components": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signing",
+        "identity",
+        "hardenedRuntime",
+        "notarized",
+        "productionCredentialsUsed",
+        "secureFusesRequired"
+      ],
+      "properties": {
+        "signing": { "const": "ad-hoc" },
+        "identity": { "const": "-" },
+        "hardenedRuntime": { "const": false },
+        "notarized": { "const": false },
+        "productionCredentialsUsed": { "const": false },
+        "secureFusesRequired": { "const": true }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "updater",
+        "networkAllowed",
+        "manualReleasePageAllowed",
+        "qmd",
+        "mcp",
+        "companion",
+        "productionUpdateTrust",
+        "releaseMetadata",
+        "modelWeights"
+      ],
+      "properties": {
+        "updater": { "const": "unavailable" },
+        "networkAllowed": { "const": false },
+        "manualReleasePageAllowed": { "const": false },
+        "qmd": { "const": "omitted" },
+        "mcp": { "const": "omitted" },
+        "companion": { "const": "omitted" },
+        "productionUpdateTrust": { "const": "omitted" },
+        "releaseMetadata": { "const": "omitted" },
+        "modelWeights": { "const": "omitted" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validationId",
+        "packagedAppLaunch",
+        "packagedSmoke",
+        "unlocks"
+      ],
+      "properties": {
+        "validationId": { "const": "VAL-PACKAGED-SMOKE-001" },
+        "packagedAppLaunch": { "const": "not-run" },
+        "packagedSmoke": { "const": "not-run" },
+        "unlocks": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    }
+  }
+}

@@ -99,6 +99,7 @@ export interface DesktopUpdateStatus {
   errorCode: DesktopUpdateErrorCode | null;
   unavailableReason:
     | "source-build"
+    | "engineering-smoke"
     | "unsupported-platform"
     | "version-invalid"
     | "key-unprovisioned"

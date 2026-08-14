@@ -5,6 +5,10 @@
     "major": 1,
     "minor": 0
   },
+  "desktopRetrievalProtocol": {
+    "major": 1,
+    "minor": 1
+  },
   "databaseSchema": 5,
   "runnerTask": "wiki_v1",
   "runnerSchema": 1,

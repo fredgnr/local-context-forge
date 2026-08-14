@@ -43,10 +43,10 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 
 | Task ID | 优先级 | Roadmap | 状态 | Owner component | 主要依赖 | 验收 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `in-progress` | Governance/Architecture | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
-| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `in-progress` | Governance/CI | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
-| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `in-progress` | CI/QMD/Sites | 无 | technical PR/source + independent acceptance + canonical-main source + activation |
-| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `planned` | Desktop/Packaging/QA | W01 全部退出门禁 | `VAL-PACKAGED-SMOKE-001` |
+| TODO-PRE1-SEQUENCING-001 | Priority-0 | W01 | `done` | Governance/Architecture | 无 | accepted head + independent acceptance + resulting-main source `pass` |
+| TODO-GOV-EVIDENCE-001 | Priority-0 | W01/P0 | `done` | Governance/CI | 无 | immutable history + external closeout evidence |
+| TODO-CI-COVERAGE-001 | Priority-0 | W01/P0 | `done` | CI/QMD/Sites | 无 | resulting-main run `30986208251` success |
+| TODO-PACKAGED-SMOKE-001 | Priority-0 | W02 | `in-progress` | Desktop/Packaging/QA | W01 全部退出门禁 `pass` | old static run technical `pass`；PR #21 latest independent `NO-GO`；eleven remediation attempts `fail` / `superseded`；twelfth local candidate `not-run`；eleventh Actions real Installer ran/rolled back，local system-root/fresh twelfth Actions/`VAL-PACKAGED-SMOKE-001` remain `not-run` |
 | TODO-LEGACY-CONTROL-001 | — | historical | `superseded` | Legacy Operations/Installer | ADR-0015 | `not-run` |
 | TODO-DATA-LAYOUT-001 | Priority-1 | W04/P4 | `planned` | Desktop runtime/Data | engineering package | `VAL-DATA-001` foundation |
 | TODO-DATA-BACKUP-001 | Priority-1 | W04/P4 | `planned` | Desktop/Data/Operations | layout | backup/restore physical pass |
@@ -91,7 +91,7 @@ production trust pins、tag、Draft、promotion 和公开 Release 都不得在 W
 
 ### TODO-PRE1-SEQUENCING-001：接受并机器化新的 Pre-1.0 顺序
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：Governance/Architecture
 - 关联：REQ-PRE1-SEQUENCING-001、ADR-0016、ITER-0002/R13
 - 依赖：无
@@ -101,16 +101,18 @@ skills/runbook，以及接入 `ci-python` 的 `tools/check_pre1_work_plan.py` �
 本任务不删除 legacy、不实现 package、不改 GitHub settings、不生成凭据、不创建 Release。
 
 验收分四层：修复候选 exact PR/source technical `pass`、该 exact final head 的 independent
-acceptance `pass`、被验收 candidate 合入后的 canonical-main source `pass`、随后 canonical
-activation 才可完成。当前旧 candidate 是 technical `pass` / independent `fail` /
-activation `not-eligible`；修复 candidate Checkpoint A 是 technical `pass` / independent
-`pending` / canonical-main `not-run` / activation `blocked`，绑定 commit `f4074a31…`、run
-`30980342634`、payload `8919891304` 与 provenance `8919891597`。所有 runtime、packaged、
-physical、settings 和 release gate 保持真实的 `not-run`。
+acceptance `pass`、被验收 candidate 合入后的 canonical-main source `pass`，随后 canonical
+activation 才可完成。四层已在 accepted final
+`36885e04df09c4789d8ec3c9dc5c5e78a381a634`、tree
+`1b9f3a34847fd3acc8b7f3a31ff19332d5328b64`、resulting `main`
+`1786255b55dd1a78659ed92235893876175a0722` 与 push run `30986208251` 闭环；见
+[W02 entry record](evidence/W02/2026-08-05-entry.md)。旧 candidate 的拒绝与 remediation
+Checkpoint A 当时的 `pending` / `blocked` 状态继续原样保存在历史 W01 JSON。所有 runtime、
+packaged、physical、settings 和 release gate 保持真实的 `not-run`。
 
 ### TODO-PACKAGED-SMOKE-001：最小非发行 packaged smoke harness
 
-- 状态：`planned`
+- 状态：`in-progress`
 - Owner：Desktop/Packaging/QA
 - 关联：REQ-PACKAGED-SMOKE-001、ADR-0016、ITER-0008/I01
 - 依赖：W01 三个 gate 的修复 candidate PR/source technical `pass`、该 exact final head 独立验收
@@ -118,10 +120,155 @@ physical、settings 和 release gate 保持真实的 `not-run`。
   `source-coverage` success
 <!-- pre1-w02-requires: VAL-PRE1-SEQUENCE-001,VAL-GOV-001,VAL-CI-COVERAGE-001,independent-acceptance-exact-final-head,accepted-candidate-merged-to-main,resulting-main-source-coverage -->
 
-交付独立 engineering-smoke packaging mode：绑定 exact commit/digest/arch/inventory，启动
-packaged App，验证 renderer/preload handshake、Main → private UDS sidecar 的 health/一个领域
-请求、正常退出、无 orphan、无 public INET listener，并以 PATH trap 证明 exercised path 不发现
-系统 Python/Node/Git。
+W02 仍是唯一稳定工作包；当前按两个顺序阶段实施，不创建额外 task/VAL ID：
+
+1. engineering-smoke boundary/assembly：建立在 distribution/publish semantics 上与 formal release
+   隔离的 macOS arm64 `.app` assembly、严格 manifest/inventory/audit 与 non-upload CI；shared
+   Python/renderer exact provenance 同步加固 formal build job，但不触发 Draft/promotion/publish。
+   历史 Draft PR #21 exact head
+   `08137c7bce5469350b861cef7960e4a0530151bf` 已由
+   [run `31024794972`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972)
+   完成 static assembly/bundle audit；不启动 assembled App。后来的 reviewed head
+   `8c5fd23206b671b768fd21d253bf292642f93a51` / tree
+   `785f4656de8a7233b6dd632fe4815976d33468fb` 因 build scratch lifecycle、Git provenance 与
+   cleanup fail-closed 缺口被独立判定为 `NO-GO`。同一 branch/PR 的第一次 remediation exact
+   `9f7d5d11225517ff5b1643d4bb71983346358ae0` / tree
+   `ea8e62e9b76c3270d60135a8633f56db025ad921` 已 technical `fail` / `superseded`；第二次 exact
+   `9ecf0effaa48a8b010ff46ffb42afc57e0f3d948` / tree
+   `ee82712c7874155eba038d1ce05d374416ed34e5` 同样 technical `fail` / `superseded`；第三次 exact
+   `2665ec61712fe410608ac50c7a6d44fa35746092` / tree
+   `c3cd1706838f7050533e2812dfdcad482aaedde5` 也为 technical `fail` / `superseded`；第四次 exact
+   `c2be665f5832c15064cae87c694a782e51351e7c` / tree
+   `f90b527b4de1a422f63c4bfeb01f9c1010e22b7d` 仍为 technical `fail` / `superseded`；第五次 exact
+   `c04fe9fce2bc2f0f4350e080f7f02c44699c975d` / parent
+   `c2be665f5832c15064cae87c694a782e51351e7c` / tree
+   `2f8b3aceb4caa2d71537cd51c3b3b985c55a3db5` 同样 technical `fail` / `superseded`；第六次 exact
+   `cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` / parent
+   `c04fe9fce2bc2f0f4350e080f7f02c44699c975d` / tree
+   `911e91d6849266fa75b0efde794ae9b5236f5504` 也为 technical `fail` / `superseded`；第七次 exact
+   `aaf3f51f69dfded82b8237e03a871017317e7158` / parent
+   `cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` / tree
+   `60c2c6c2553ff8d10c2faee47ec838b34e378fc5` 也已 technical `fail` / `superseded`：Desktop source
+   `31559498106` success；Engineering `31559498116` / job `93998717925` 因 manifest exact-line
+   literal mismatch primary fail，cleanup 因 source 尚未绑定 secondary fail，later stages skipped、
+   artifacts `[]`；Containers `31559498070` success/no publish。第八次 exact
+   `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / parent
+   `aaf3f51f69dfded82b8237e03a871017317e7158` / tree
+   `66779e9ca8df445fb413e93faed4d265899fb1ec` 也已 `fail` / `superseded`：Desktop source
+   `31570734560` success；Engineering `31570734636` / job `94031972543` manifest/component checks
+   passed 后在 root-owned `0700` empty quarantine ordinary-runner canonical `cd` permission fail；
+   cleanup success 未证明 `/Library/Frameworks/**` quarantine residue absent；later skipped、artifacts
+   `[]`、no App launch；Containers `31570734580` success/no publish。第九次 exact
+   `6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent
+   `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree
+   `3361f3e3880c926015a82abc862cb3e8334410c2` 也已 `fail` / `superseded`：Desktop source
+   `31575062814` success；Engineering `31575062796` / job `94045233041` producer success 后因
+   archive symlink mode `0775` vs macOS Installer `0777` core-fingerprint fail；cleanup runner scope
+   success、later skipped、artifacts `[]`、no App launch；Containers `31575062785` success/no publish。
+   第十次 exact `70b1823259590725d6f579b97fa294d3d9dcf728` / parent
+   `6eec41125b431a9fd99d8b1821362573de1b5b8a` / tree
+   `a706817f28b170bab1fe9fe6c3a6e8b673e5dc81` 同样已 `fail` / `superseded`：Desktop
+   `31580628860` success；Engineering `31580628877` / job `94062603909` framework-fingerprint fail；
+   Containers `31580628857` success/no-publish；artifacts `[]`、no App launch。第十一次 exact
+   `095cbc12585a2c141f151389c1829bd758e8ed54` / parent
+   `8b2277a2c8027c5fbdab8f3e85506b72044dbba4` / tree
+   `2eca5e8e293de444213e3aba43079802b6a0d910` 同样已 `fail` / `superseded`：Desktop
+   `31799645685` success；Engineering `31799645731` / job `94764347264` producer success、真实
+   Installer 后 seal expected `3648` / `fdd600…` vs observed `3648` / `77b580…`，only mode diff
+   `33`；rollback、独立 framework postcondition 与 scratch cleanup success，later skipped、artifacts
+   `[]`、no App；Containers `31799645737` success/no-publish。第十二次 local candidate 尚无 committed
+   exact head/tree 或 fresh exact-head Actions。它保留 producer 不使用
+   `actions/setup-python` 或原 full pkg 的 producer：验签 exact outer pkg 后只把
+   `Python_Framework.pkg` 的唯一 postinstall 替换为 locked 17-byte no-op，隔离旧 root/确认
+   target absent 后 component-install，再进行 non-symlink seal、大小写无关 cache 清理和
+   O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node core/fresh-exclusion verification；
+   随后才精确复验/清理 quarantine，首次
+   framework Python 必须在该 cleanup 后；
+   运行时 `--install-reviewed-python` 只验证 distribution/framework/interpreter binding，不安装或
+   调用 `sudo`；并把 manifest 真实 uppercase/single-space 整行固定在 `grep -Fxc` + count one，
+   cleanup 显式区分 source-unbound zero-residue 与 source-bound strict source/repo closure；
+   fingerprint contract 从 locked compressed Payload raw `3654` / `863a6353…` 出发，只允许 `6`
+   个 exact AppleDouble removals；`33` 个 exact symlink mode 保持 `0775`，单一 pin sealed `3648` /
+   `77b580…`；manifest `615969` / `b145fe36…`、lock `4852` / `9682d311…`、verifier `51765` /
+   `2dbd1f36…`，不放宽 target/path/type、non-symlink mode 或 core bytes。三个
+   `pkgutil --expand-full` materialization 的代表性 symlink 均为 `0777`，所以它们是旧 normalization
+   模型的来源/反例，不是 `77b580…` positive reproduction。第十一次 Actions 已运行 real Installer；
+   本机因无 passwordless `sudo`，本机 system-root reproduction 为 `not-run`。这不是 runtime
+   learn-and-accept。两份 workflow 的 seal
+   transaction 以 pre-trap sentinel 开始，只在新 root/旧 quarantine exact
+   path/type/root-owner/`dev:ino` 绑定后激活；seal 只写 `committed` 并保留 quarantine，独立
+   `always()` postcondition 重验后才 `finalizing` 删除并最终 `complete`。rollback-ready phase 的
+   `HUP`/`INT`/`TERM` 精确恢复；unbound/mismatch preserve/no-delete、`finalizing` failure
+   no-rollback，均 fixed `70`，且不声称 `SIGKILL`/host-crash recovery。该设计本身不改变 `not-run`；
+2. packaged App launch/runtime smoke：十一次 remediation 均未启动 bundle，第十二次 candidate 也尚未运行，
+   保持 `not-run`；未来验证 renderer/preload
+   handshake、Main → private UDS sidecar health/领域请求、正常退出、无 orphan、无 public INET
+   listener，并以 PATH trap 证明 exercised path 不发现系统 Python/Node/Git。
+
+旧第一阶段 static assembly/bundle audit technical substage 为 `pass`，inventory 为 `879` entries /
+`78` native files，SHA-256 为
+`7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c`；见
+[canonical assembly evidence](evidence/W02/2026-08-06-08137c7-assembly.md)。pre-pack frozen
+sidecar staging smoke 已成功，但 assembled `.app` 未启动、sidecar 未从 bundle 启动，且 remote
+artifacts empty；这些旧结果不能证明 remediation。当前权威结论见
+[append-only PR #21 remediation record](evidence/W02/2026-08-07-pr21-remediation.md)：latest
+independent acceptance `NO-GO`；first remediation technical attempt `fail` / `superseded`，其
+assembly `31181911570` / job `92876982671` 与 source `31181911534` 失败，container
+`31181911527` 仅 `3/3` no-publish success。second remediation technical attempt 同样 `fail` /
+`superseded`：assembly `31184441362` / job `92885372402` 因 `Installed toolchain file is unsafe`
+失败且 cleanup-only success，source `31184441306` 因 Python `744` pass / `2` fail / `1` skip、QMD
+skipped、W01 fail closed 而失败，Desktop/Web/macOS success；container `31184441281` 仅 `3/3`
+no-publish success，engineering product artifacts `[]`。third remediation technical attempt 仍为
+`fail` / `superseded`：source `31258135929` 五个 jobs success；assembly `31258135925` / job
+`93104615763` 因 Darwin fd-backed uv cwd failure，cleanup-only success、later stages skipped、
+engineering product artifacts `[]`；container `31258135932` 的 API/MCP success、Web QEMU
+Node/npm stall 后 cancelled，PR 未 login/publish。fourth remediation technical attempt 也为
+`fail` / `superseded`：source `31358373316` 五个 jobs success；Engineering `31358373320` / job
+`93362214499` 的高置信根因分别为 APFS/Darwin directory-link inventory 与 Darwin sealed-source
+cleanup ordering；raw log 没有打印 inner stage、`st_nlink`、cleanup assertion label 或 errno，
+later stages skipped、engineering product artifacts `[]`；Containers `31358373311` API/Web/MCP
+`3/3` success 且 PR no-login/no-push。fifth remediation technical attempt 也已 `fail` /
+`superseded`：exact `c04fe9fce2bc2f0f4350e080f7f02c44699c975d` / parent
+`c2be665f5832c15064cae87c694a782e51351e7c` / tree
+`2f8b3aceb4caa2d71537cd51c3b3b985c55a3db5`；Desktop source `31454826261` / Python job
+`93666344561` 在 fixture setup 中以 `EACCES` 失败，发生在 product cleanup 之前，W01
+evidence downstream fail closed；Engineering `31454826263` / job `93666344718` 在 Python
+framework installation 失败，cleanup success。launcher identity self-update collision 是高置信代码/
+时序归因，不是 raw log 直接证明；Containers `31454826243` success/no publish。本记录不在
+未单独核验 artifact API 时声称该轮 engineering product artifact 列表。sixth remediation
+technical attempt 也已 `fail` / `superseded`：exact
+`cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` / parent
+`c04fe9fce2bc2f0f4350e080f7f02c44699c975d` / tree
+`911e91d6849266fa75b0efde794ae9b5236f5504`；Desktop source `31460588210` success；Engineering
+`31460588223` / job `93683139742` 在 policy `67/67` + exact-Git `1/1` passed 后以
+`Reviewed Python installer launcher is unsafe` fail，cleanup success、later stages skipped、artifacts
+`[]`；Containers `31460588212` success/no publish。seventh remediation technical attempt 也已
+`fail` / `superseded`：exact `aaf3f51f69dfded82b8237e03a871017317e7158` / parent
+`cc6ade1113d4753cc6094c5ee23a588dbbe8c18e` / tree
+`60c2c6c2553ff8d10c2faee47ec838b34e378fc5`；Desktop source `31559498106` success；Engineering
+`31559498116` / job `93998717925` manifest literal primary fail、unbound-source cleanup secondary fail、
+later skipped、artifacts `[]`；Containers `31559498070` success/no publish。eighth remediation exact
+`15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / parent `aaf3f51…` / tree `66779e9…` also failed：
+Desktop source `31570734560` and Containers `31570734580` success/no publish；Engineering
+`31570734636` / job `94031972543` failed at ordinary-runner canonical `cd` into root-owned quarantine
+after manifest/component checks passed；cleanup success did not prove framework quarantine residue
+absent，later skipped、artifacts `[]`、no App launch。ninth remediation exact
+`6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent `1533656…` / tree `3361f3e…` also failed：
+Desktop `31575062814` and Containers `31575062785` success/no publish；Engineering `31575062796` /
+job `94045233041` producer success then archive symlink mode `0775` vs Installer `0777` core-fingerprint
+failure；cleanup runner scope success，later skipped、artifacts `[]`、no App launch。tenth remediation
+exact `70b1823…` / tree `a706817…` also failed：Desktop `31580628860` and Containers
+`31580628857` success/no-publish；Engineering `31580628877` / job `94062603909` framework-fingerprint
+failure，artifacts `[]`、no App launch。eleventh remediation exact `095cbc1…` / tree `2eca5e8…` also
+failed：Desktop `31799645685` and Containers `31799645737` success/no publish；Engineering
+`31799645731` / job `94764347264` real-Installer seal expected `fdd600…` vs observed `77b580…` with
+33 mode-only diffs，rollback/postcondition/scratch cleanup success，later skipped、artifacts `[]`、no
+App launch。twelfth local candidate remains `not-run`（无 committed exact head/tree；无 fresh
+exact-head Actions），W02
+`in-progress`。packaged App
+launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`。W10/W11 保持 locked，直至未来
+packaged 阶段在 independently accepted exact head、合入后 resulting `main` 上取得完整 smoke
+`pass`。
 
 必须显著 `UNOFFICIAL` / `engineering-only` / `publishable=false`，不读取 production secret，
 不要求 production trust pins，不生成 updater/release metadata，不由 tag 触发，不上传、不创建
@@ -145,7 +292,7 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 
 ### TODO-GOV-EVIDENCE-001：统一可复现证据坐标
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：Governance/CI
 - 目的：移除“当前工作树 pass”和混合历史 SHA，让每个 source 结论能追到公开 commit/Actions。
 - 依赖：无
@@ -172,9 +319,12 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 - source 与 packaged/physical 分类清楚；
 - `VAL-GOV-001` link check 通过。
 
+外部闭环坐标为 accepted final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`、resulting
+`main@1786255b55dd1a78659ed92235893876175a0722` 与 run `30986208251`；历史 W01 JSON 不回写。
+
 ### TODO-CI-COVERAGE-001：补齐并声明 source aggregate 覆盖
 
-- 状态：`in-progress`
+- 状态：`done`
 - Owner：CI/QMD/Sites
 - 目的：补齐原先 `make ci-source` 遗漏的 QMD worker，并对 guide-site 未验证状态作机器声明。
 - 依赖：无
@@ -201,6 +351,10 @@ Python、QMD worker、MCP companion、工程 inventory/digest/SBOM/notices 和 W
 - CI 在最终 PR head 成功；
 - PR/source technical `pass` 不自动变成 independent、canonical-main 或 canonical activation
   `pass`；在外部条件满足前后三者分别保持 `pending`、`not-run`、`blocked`。
+
+最终 accepted head 经独立验收并合入；resulting-main `Desktop source CI` run `30986208251`
+attempt 1 的五个 jobs 均为 `success`，因此本 source task 已完成。该结论不运行或提升
+`VAL-PACKAGED-SMOKE-001`。
 
 ### TODO-LEGACY-CONTROL-001：Legacy 实例控制与外置数据
 

@@ -37,6 +37,86 @@
   `source-coverage` job 成功后开始。PR head、synthetic merge SHA 与 resulting main SHA 不得静默
   互换；仓库内状态不能自我提升 canonical activation。它是所有 W10/W11 destructive slice 的
   前置，但只证明最小 packaged feedback loop。
+  当前这些 entry 条件已由 accepted final
+  `36885e04df09c4789d8ec3c9dc5c5e78a381a634`、resulting
+  `main@1786255b55dd1a78659ed92235893876175a0722` 与 run `30986208251` 闭环。W02 Draft PR #21
+  exact `08137c7…` 的 [static assembly/bundle audit](evidence/W02/2026-08-06-08137c7-assembly.md)
+  是历史技术 `pass`；后来 reviewed `8c5fd232…` / tree `785f4656…` 因 scratch lifecycle、Git
+  provenance 与 cleanup fail-closed blocker 被独立判定为 `NO-GO`，见
+  [append-only remediation record](evidence/W02/2026-08-07-pr21-remediation.md)。第一次 remediation
+  exact `9f7d5d…` / tree `ea8e62…` 的 assembly/source technical execution `fail`，container 仅
+  no-publish success；该 attempt 已 `superseded`、independent `pending`，没有改变旧 head 的 latest
+  independent `NO-GO`。第二次 exact `9ecf0e…` / tree `ee8271…` 的 assembly/source 也 technical
+  `fail`（installed-toolchain file 与 Python real-venv mode/ownership），container 仍仅 no-publish
+  success；该 attempt 同样已 `superseded`、independent `pending`。第三次 exact `2665ec…` / tree
+  `c3cd17…` 的 source success，但 assembly 因 Darwin fd-backed uv cwd technical `fail`；container
+  API/MCP success、Web QEMU Node/npm stall 后 cancelled，且仍未 publish。第三次 attempt 也已
+  `superseded`、independent `pending`。第四次 exact `c2be665f…` / tree `f90b527b…` 的 source 与
+  Containers success；Engineering inner build 与 cleanup gate technical `fail`，exact tree、平台和
+  当时实现把高置信根因分别归到 APFS/Darwin directory-link inventory 与 Darwin sealed-source
+  cleanup ordering（raw log 未打印 inner stage、`st_nlink` 或 cleanup errno）。该 attempt 也已
+  `superseded`、independent `pending`。第五次 exact
+  `c04fe9f…` / parent `c2be665f…` / tree `2f8b3ace…` 的 Desktop source `31454826261`
+  因 Python fixture `EACCES` before product cleanup 失败，W01 evidence downstream fail closed；
+  Engineering `31454826263` / job `93666344718` 在 Python framework installation 失败但
+  cleanup success，launcher self-update collision 只是高置信代码/时序归因，不是 raw log
+  直接证明；Containers `31454826243` success/no publish。第五次已 technical `fail` /
+  `superseded`、independent `pending`。第六次 exact
+  `cc6ade1…` / parent `c04fe9f…` / tree `911e91d…` 的 Desktop source `31460588210`
+  success；Engineering `31460588223` / job `93683139742` 在 policy `67/67` 与 exact-Git `1/1`
+  通过后以 `Reviewed Python installer launcher is unsafe` 失败，cleanup success、later stages
+  skipped、artifacts `[]`；Containers `31460588212` success/no publish。第六次已 technical `fail` /
+  `superseded`、independent `pending`。第七次 exact `aaf3f51…` / parent `cc6ade1…` / tree
+  `60c2c6c…` 的 Desktop source `31559498106` success；Engineering `31559498116` / job
+  `93998717925` 因 manifest actual uppercase/single-space 与 workflow lowercase/double-space literal
+  不符而 primary fail，cleanup 因 source 未绑定 secondary fail，later stages skipped、artifacts
+  `[]`；Containers `31559498070` success/no publish。第七次已 technical `fail` / `superseded`、
+  independent `pending`。第八次 exact `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / parent
+  `aaf3f51f69dfded82b8237e03a871017317e7158` / tree
+  `66779e9ca8df445fb413e93faed4d265899fb1ec` 的 Desktop source `31570734560` success；Engineering
+  `31570734636` / job `94031972543` 在 manifest/component checks passed 后因 root-owned `0700`
+  quarantine ordinary-runner canonical `cd` permission fail；cleanup success 未证明 framework
+  quarantine residue absent，later skipped、artifacts `[]`、no App launch；Containers `31570734580`
+  success/no publish。第八次已 technical `fail` / `superseded`、independent `pending`。第九次 exact
+  `6eec41125b431a9fd99d8b1821362573de1b5b8a` / parent
+  `15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree
+  `3361f3e3880c926015a82abc862cb3e8334410c2` 的 Desktop `31575062814` success；Engineering
+  `31575062796` / job `94045233041` producer success 后因 archive symlink mode `0775` vs Installer
+  `0777` core-fingerprint fail；cleanup runner scope success、later skipped、artifacts `[]`、no App；
+  Containers `31575062785` success/no publish。第九次已 technical `fail` / `superseded`、independent
+  `pending`。第十次 exact `70b1823…` / parent `6eec411…` / tree `a706817…` 的 Desktop
+  `31580628860` success；Engineering `31580628877` / job `94062603909` framework-fingerprint fail；
+  Containers `31580628857` success/no-publish；artifacts `[]`、no App。第十次已 technical `fail` /
+  `superseded`、independent `pending`。第十一次 exact `095cbc1…` / parent `8b2277a…` / tree
+  `2eca5e8…` 的 Desktop `31799645685` success；Engineering `31799645731` / job `94764347264`
+  producer success、真实 Installer 后 seal expected `3648` / `fdd600…` vs observed `3648` /
+  `77b580…`、only mode diff `33`，rollback/framework postcondition/scratch cleanup success，later
+  skipped、artifacts `[]`、no App；Containers `31799645737` success/no-publish。第十一次已 technical
+  `fail` / `superseded`、independent `pending`。第十二次 local candidate `not-run`（无 committed exact
+  head/tree 或 fresh exact-head Actions）。它继承 producer 不使用
+  `actions/setup-python` / 原 full pkg；exact outer pkg 验签后只以唯一 17-byte no-op 重打并安装
+  `Python_Framework.pkg`，隔离旧 root/确认 target absent，再完成 non-symlink seal、大小写无关
+  cache cleanup 与 O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node
+  core/fresh-exclusion verification；之后才精确复验/清理
+  quarantine，首次 framework Python 位于该 cleanup 后；运行时 install-reviewed 仅验证
+  distribution/binding，不安装或 `sudo`；同时把 manifest 真实整行固定为 `grep -Fxc` + count one，
+  cleanup 分成 source-unbound zero-residue 与 source-bound strict source/repo closure，并要求
+  privileged quarantine 在 ordinary runner 访问前完成 canonical binding、cleanup gate 显式证明
+  identity-bound exact framework quarantine zero-residue。fingerprint contract 从 locked compressed
+  Payload raw `3654` / `863a6353…` 出发，只允许 `6` 个 exact AppleDouble removals；`33` 个 exact
+  symlink mode 保持 `0775`，单一 pin sealed `3648` / `77b580…`；manifest `615969` /
+  `b145fe36…`、lock `4852` / `9682d311…`、verifier `51765` / `2dbd1f36…`，不放宽其他 seal。
+  三个 pkgutil full-expansion materialization 的代表性 symlink 都是 `0777`，所以它们是旧
+  normalization 模型的来源/反例，不是 `77b580…` positive reproduction。第十一次 Actions 已运行
+  real Installer；本机因无 passwordless `sudo`，本机 system-root reproduction 为 `not-run`；不是
+  runtime learn-and-accept，mode/target/path/type/bytes 均参与。两份 workflow 以
+  pre-trap sentinel 起步；新 root/旧 quarantine exact identity 绑定后才激活。seal 只写
+  `committed` 并保留 quarantine，独立 `always()` postcondition 重验后才 `finalizing` 删除并最终
+  `complete`；rollback-ready phase 的 `HUP`/`INT`/`TERM` 精确恢复，unbound/mismatch
+  preserve/no-delete、`finalizing` failure no-rollback，均 fixed `70`，且不声称 `SIGKILL`/host-crash
+  recovery。十一次失败均未启动 assembled App，
+  packaged App launch/runtime 与
+  `VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，所以 W10/W11 尚未解锁。
 - W10/W11 每个 slice 都在 exact before/after bytes 上独立运行 focused replacement（或受限
   pure-legacy unsupported disposition）、source regression、packaged smoke、absence 与
   protected-path presence；不同 slice 不能共享一个

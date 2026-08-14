@@ -227,59 +227,120 @@ function validateIndex(root, records) {
 
 function loadManifest(root) {
   const manifestPath = path.join(root, MANIFEST_NAME);
-  let info;
+  let descriptor;
+  let before;
+  let bytes;
   try {
-    info = fs.lstatSync(manifestPath);
-  } catch {
-    fail("Renderer build manifest is missing");
-  }
-  if (
-    !info.isFile() ||
-    info.isSymbolicLink() ||
-    info.nlink !== 1 ||
-    info.size > 8 * 1024 * 1024
-  ) {
-    fail("Renderer build manifest must be a bounded regular file");
+    descriptor = fs.openSync(
+      manifestPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+    );
+    before = fs.fstatSync(descriptor);
+    bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    if (
+      !before.isFile() ||
+      before.uid !== process.geteuid() ||
+      before.nlink !== 1 ||
+      before.size <= 0 ||
+      before.size > 8 * 1024 * 1024 ||
+      (before.mode & 0o7022) !== 0 ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.mode !== after.mode ||
+      before.nlink !== after.nlink ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    ) {
+      fail("Renderer build manifest must be a stable bounded regular file");
+    }
+  } catch (error) {
+    if (error instanceof RendererAuditError) {
+      throw error;
+    }
+    fail("Renderer build manifest is unreadable");
+  } finally {
+    if (descriptor !== undefined) {
+      fs.closeSync(descriptor);
+    }
   }
   let manifest;
+  let text;
   try {
-    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  } catch {
+    text = bytes.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(bytes)) {
+      fail("Renderer build manifest is not valid UTF-8");
+    }
+    manifest = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof RendererAuditError) {
+      throw error;
+    }
     fail("Renderer build manifest is not valid JSON");
   }
   if (
-    fs.readFileSync(manifestPath, "utf8") !==
-      `${canonicalJson(manifest)}\n` ||
-    !exactKeys(manifest, ["schemaVersion", "kind", "source", "files"]) ||
+    text !== `${canonicalJson(manifest)}\n` ||
+    !exactKeys(manifest, ["schemaVersion", "kind", "source", "builder", "files"]) ||
     manifest.schemaVersion !== 1 ||
     manifest.kind !== MANIFEST_KIND ||
     !exactKeys(manifest.source, [
       "repositoryCommit",
+      "repositoryTree",
+      "sourceSnapshotSha256",
       "sourceDateEpoch",
-      "packageLockSha256"
+      "packageLockSha256",
+      "inputSnapshotSha256",
+      "inputFiles"
     ]) ||
     !/^[0-9a-f]{40}$/.test(manifest.source.repositoryCommit || "") ||
+    !/^[0-9a-f]{40}$/.test(manifest.source.repositoryTree || "") ||
+    !SHA256_PATTERN.test(manifest.source.sourceSnapshotSha256 || "") ||
     !Number.isSafeInteger(manifest.source.sourceDateEpoch) ||
     manifest.source.sourceDateEpoch < 100_000_000 ||
     !SHA256_PATTERN.test(manifest.source.packageLockSha256 || "") ||
+    !SHA256_PATTERN.test(manifest.source.inputSnapshotSha256 || "") ||
+    !Number.isSafeInteger(manifest.source.inputFiles) ||
+    manifest.source.inputFiles < 5 ||
+    !exactKeys(manifest.builder, [
+      "name",
+      "version",
+      "reactPluginVersion",
+      "nodeVersion",
+      "npmVersion",
+      "installedContentSha256"
+    ]) ||
+    manifest.builder.name !== "vite" ||
+    manifest.builder.version !== "7.3.6" ||
+    manifest.builder.reactPluginVersion !== "4.7.0" ||
+    manifest.builder.nodeVersion !== "v22.23.2" ||
+    manifest.builder.npmVersion !== "10.9.8" ||
+    !SHA256_PATTERN.test(manifest.builder.installedContentSha256 || "") ||
     !Array.isArray(manifest.files)
   ) {
     fail("Renderer build manifest has a non-canonical or invalid shape");
   }
-  return manifest;
+  return {
+    manifest,
+    manifestSha256: crypto.createHash("sha256").update(bytes).digest("hex")
+  };
 }
 
 function auditRenderer(
   rendererRoot = DEFAULT_RENDERER_ROOT,
   {
     expectedCommit,
+    expectedTree,
+    expectedSourceSnapshotSha256,
     expectedSourceDateEpoch,
-    packageLockPath = WEB_PACKAGE_LOCK
+    expectedPackageLockSha256,
+    packageLockPath
   } = {}
 ) {
   const resolvedRoot = path.resolve(rendererRoot);
   requireRealDirectory(resolvedRoot, "Renderer bundle");
-  const manifest = loadManifest(resolvedRoot);
+  const manifestAttestation = loadManifest(resolvedRoot);
+  const manifest = manifestAttestation.manifest;
   const actual = inventory(resolvedRoot, { excludeManifest: true });
   validateIndex(resolvedRoot, actual);
   if (
@@ -295,6 +356,18 @@ function auditRenderer(
     fail("Renderer files differ from the canonical build inventory");
   }
   if (
+    expectedTree !== undefined &&
+    manifest.source.repositoryTree !== expectedTree
+  ) {
+    fail("Renderer source tree differs from the release tree");
+  }
+  if (
+    expectedSourceSnapshotSha256 !== undefined &&
+    manifest.source.sourceSnapshotSha256 !== expectedSourceSnapshotSha256
+  ) {
+    fail("Renderer source snapshot differs from the release snapshot");
+  }
+  if (
     expectedCommit !== undefined &&
     manifest.source.repositoryCommit !== expectedCommit
   ) {
@@ -306,8 +379,15 @@ function auditRenderer(
   ) {
     fail("Renderer source epoch differs from the release commit");
   }
-  if (packageLockPath !== null) {
-    const lockPath = path.resolve(packageLockPath);
+  if (expectedPackageLockSha256 !== undefined) {
+    if (
+      !SHA256_PATTERN.test(expectedPackageLockSha256) ||
+      manifest.source.packageLockSha256 !== expectedPackageLockSha256
+    ) {
+      fail("Renderer package lock differs from the reviewed source object");
+    }
+  } else if (packageLockPath !== null) {
+    const lockPath = path.resolve(packageLockPath || WEB_PACKAGE_LOCK);
     let lockInfo;
     try {
       lockInfo = fs.lstatSync(lockPath);
@@ -326,7 +406,15 @@ function auditRenderer(
   return {
     files: actual.length,
     bytes: actual.reduce((total, record) => total + record.size, 0),
-    repositoryCommit: manifest.source.repositoryCommit
+    repositoryCommit: manifest.source.repositoryCommit,
+    repositoryTree: manifest.source.repositoryTree,
+    sourceSnapshotSha256: manifest.source.sourceSnapshotSha256,
+    inputSnapshotSha256: manifest.source.inputSnapshotSha256,
+    packageLockSha256: manifest.source.packageLockSha256,
+    installedContentSha256: manifest.builder.installedContentSha256,
+    builder: { ...manifest.builder },
+    manifest: JSON.parse(JSON.stringify(manifest)),
+    manifestSha256: manifestAttestation.manifestSha256
   };
 }
 
@@ -334,7 +422,32 @@ function main(argv = process.argv.slice(2)) {
   if (argv.length > 1 || (argv.length === 1 && !path.isAbsolute(argv[0]))) {
     fail("Usage: auditRenderer.cjs [absolute-renderer-root]");
   }
-  const summary = auditRenderer(argv[0] || DEFAULT_RENDERER_ROOT);
+  const expectedCommit = (process.env.LCF_SOURCE_SHA || "").toLowerCase();
+  const expectedTree = (process.env.LCF_SOURCE_TREE || "").toLowerCase();
+  const expectedSourceSnapshotSha256 = (
+    process.env.LCF_SOURCE_SNAPSHOT_SHA256 || ""
+  ).toLowerCase();
+  const expectedPackageLockSha256 = (
+    process.env.LCF_RENDERER_PACKAGE_LOCK_SHA256 || ""
+  ).toLowerCase();
+  const expectedSourceDateEpoch = Number(process.env.LCF_SOURCE_DATE_EPOCH);
+  if (
+    !/^[0-9a-f]{40}$/.test(expectedCommit) ||
+    !/^[0-9a-f]{40}$/.test(expectedTree) ||
+    !SHA256_PATTERN.test(expectedSourceSnapshotSha256) ||
+    !SHA256_PATTERN.test(expectedPackageLockSha256) ||
+    !Number.isSafeInteger(expectedSourceDateEpoch) ||
+    expectedSourceDateEpoch < 100_000_000
+  ) {
+    fail("Renderer exact source environment is incomplete");
+  }
+  const summary = auditRenderer(argv[0] || DEFAULT_RENDERER_ROOT, {
+    expectedCommit,
+    expectedTree,
+    expectedSourceSnapshotSha256,
+    expectedSourceDateEpoch,
+    expectedPackageLockSha256
+  });
   process.stdout.write(`${canonicalJson(summary)}\n`);
 }
 

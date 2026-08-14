@@ -4,12 +4,15 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
 type JsonObject = Record<string, any>;
@@ -27,7 +30,12 @@ type SourceInspector = (
 };
 type RepositoryInspector = (
   repositoryRoot: string
-) => { commit: string; sourceDateEpoch: number };
+) => {
+  commit: string;
+  tree: string;
+  sourceDateEpoch: number;
+  sourceSnapshotSha256: string;
+};
 
 const gate = require("../scripts/beforePack.cjs") as {
   FIXED_CRITICAL_INPUTS: readonly string[];
@@ -40,11 +48,23 @@ const gate = require("../scripts/beforePack.cjs") as {
     inspectNative: NativeInspector;
     inspectSource: SourceInspector;
     inspectRepository: RepositoryInspector;
-  }): { files: number; nativeFiles: number; components: number };
+  }): {
+    files: number;
+    nativeFiles: number;
+    components: number;
+    repositoryCommit: string;
+    repositoryTree: string;
+    sourceSnapshotSha256: string;
+    normalizedInventorySha256: string;
+    manifest: JsonObject;
+    manifestSha256: string;
+  };
   buildFileInventory(root: string): JsonObject[];
+  canonicalJson(value: unknown): string;
   createBeforePackHook(dependencies: {
     platform: string;
     architecture?: string;
+    inspectRepository?: RepositoryInspector;
     auditPythonSidecar?: () => JsonObject;
     auditQmdRuntime?: () => JsonObject;
     auditCompanion?: () => JsonObject;
@@ -55,10 +75,23 @@ const gate = require("../scripts/beforePack.cjs") as {
     arch?: number | string;
   }) => Promise<unknown>;
   criticalInputDigests(root: string): Record<string, string>;
+  inspectRepositoryProvenance(
+    repositoryRoot: string,
+    environment?: NodeJS.ProcessEnv
+  ): {
+    commit: string;
+    tree: string;
+    sourceDateEpoch: number;
+    sourceSnapshotSha256: string;
+  };
   normalizedInventorySha256(
     files: JsonObject[],
     native: JsonObject[]
   ): string;
+  validateFrameworkCoreInventoryPayload(
+    inventory: JsonObject,
+    contract: JsonObject
+  ): void;
 };
 
 const repositoryRoot = path.resolve(__dirname, "..", "..");
@@ -73,6 +106,12 @@ const toolchainSource = path.join(
   "packaging",
   "python-sidecar-toolchain.lock.json"
 );
+const frameworkCoreInventorySource = path.join(
+  repositoryRoot,
+  "backend",
+  "packaging",
+  "python-framework-sealed-inventory.json"
+);
 const versionSource = path.join(repositoryRoot, "runtime", "version.json");
 const temporaryDirectories: string[] = [];
 
@@ -84,6 +123,157 @@ interface Fixture {
   environment: NodeJS.ProcessEnv;
   toolchain: JsonObject;
 }
+
+interface ToolchainMutationCase {
+  name: string;
+  mutate: (toolchain: JsonObject) => void;
+  expected: RegExp;
+}
+
+const toolchainMutationCases: ToolchainMutationCase[] = [
+  {
+    name: "missing Python field",
+    mutate: (toolchain) => {
+      delete toolchain.python.interpreterSize;
+    },
+    expected: /Toolchain Python does not match the reviewed schema/
+  },
+  {
+    name: "extra Python field",
+    mutate: (toolchain) => {
+      toolchain.python.unreviewed = true;
+    },
+    expected: /Toolchain Python does not match the reviewed schema/
+  },
+  {
+    name: "interpreter size",
+    mutate: (toolchain) => {
+      toolchain.python.interpreterSize += 1;
+    },
+    expected: /execution closure differs from the reviewed lock/
+  },
+  {
+    name: "interpreter hash",
+    mutate: (toolchain) => {
+      toolchain.python.interpreterSha256 = "0".repeat(64);
+    },
+    expected: /execution closure differs from the reviewed lock/
+  },
+  {
+    name: "framework binary size",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkBinarySize += 1;
+    },
+    expected: /execution closure differs from the reviewed lock/
+  },
+  {
+    name: "framework binary hash",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkBinarySha256 = "0".repeat(64);
+    },
+    expected: /execution closure differs from the reviewed lock/
+  },
+  {
+    name: "framework core exclusions",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkCoreFingerprintExcludedPaths.pop();
+    },
+    expected: /framework core differs from the reviewed lock/
+  },
+  {
+    name: "framework core hash",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkCoreFingerprintSha256 = "0".repeat(64);
+    },
+    expected: /framework core differs from the reviewed lock/
+  },
+  {
+    name: "missing framework core inventory",
+    mutate: (toolchain) => {
+      delete toolchain.python.frameworkCoreInventory;
+    },
+    expected: /Toolchain Python does not match the reviewed schema/
+  },
+  {
+    name: "extra framework core inventory field",
+    mutate: (toolchain) => {
+      toolchain.python.frameworkCoreInventory.unreviewed = true;
+    },
+    expected: /framework core inventory does not match the reviewed schema/
+  },
+  ...[
+    ["file name", "fileName", "unreviewed-inventory.json"],
+    ["file size", "fileSize", 615970],
+    ["file hash", "fileSha256", "0".repeat(64)],
+    ["schema version", "schemaVersion", 2],
+    ["source payload size", "sourcePayloadSize", 32739569],
+    ["source payload hash", "sourcePayloadSha256", "0".repeat(64)],
+    ["source entry count", "sourceEntryCount", 3655],
+    ["source inventory hash", "sourceInventorySha256", "0".repeat(64)],
+    ["transformation count", "transformationCount", 7],
+    ["entry count", "entryCount", 3649],
+    ["inventory hash", "inventorySha256", "0".repeat(64)]
+  ].map(([label, field, replacement]) => ({
+    name: `framework core inventory ${label}`,
+    mutate: (toolchain: JsonObject) => {
+      toolchain.python.frameworkCoreInventory[field as string] = replacement;
+    },
+    expected: /framework core inventory differs from the reviewed contract/
+  })),
+  {
+    name: "install method",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.installMethod =
+        "macos-installer-pkg-direct";
+    },
+    expected: /distribution evidence is incomplete/
+  },
+  {
+    name: "missing framework component field",
+    mutate: (toolchain) => {
+      delete toolchain.python.distribution.frameworkComponent.payloadSize;
+    },
+    expected: /framework component does not match the reviewed schema/
+  },
+  {
+    name: "extra framework component field",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.unreviewed = true;
+    },
+    expected: /framework component does not match the reviewed schema/
+  },
+  {
+    name: "framework component size",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.payloadSize += 1;
+    },
+    expected: /framework component differs from the reviewed contract/
+  },
+  {
+    name: "framework component hash",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.payloadSha256 =
+        "0".repeat(64);
+    },
+    expected: /framework component differs from the reviewed contract/
+  },
+  {
+    name: "framework component mode",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.noOpPostinstallMode =
+        "0700";
+    },
+    expected: /framework component differs from the reviewed contract/
+  },
+  {
+    name: "framework component package",
+    mutate: (toolchain) => {
+      toolchain.python.distribution.frameworkComponent.packageName =
+        "Unreviewed_Framework.pkg";
+    },
+    expected: /framework component differs from the reviewed contract/
+  }
+];
 
 async function writeFixtureFile(
   root: string,
@@ -104,7 +294,7 @@ async function writeJson(
   filePath: string,
   value: JsonObject
 ): Promise<void> {
-  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
+  await writeFile(filePath, `${gate.canonicalJson(value)}\n`);
 }
 
 async function mutateManifest(
@@ -163,10 +353,16 @@ async function createFixture(): Promise<Fixture> {
     "fixture notice\n"
   );
 
-  const [schemaBytes, toolchainBytes, versionBytes] = await Promise.all([
+  const [
+    schemaBytes,
+    toolchainBytes,
+    versionBytes,
+    frameworkCoreInventoryBytes
+  ] = await Promise.all([
     readFile(schemaSource),
     readFile(toolchainSource),
-    readFile(versionSource)
+    readFile(versionSource),
+    readFile(frameworkCoreInventorySource)
   ]);
   await Promise.all([
     writeFixtureFile(
@@ -178,6 +374,11 @@ async function createFixture(): Promise<Fixture> {
       root,
       "backend/packaging/python-sidecar-toolchain.lock.json",
       toolchainBytes
+    ),
+    writeFixtureFile(
+      root,
+      "backend/packaging/python-framework-sealed-inventory.json",
+      frameworkCoreInventoryBytes
     ),
     writeFixtureFile(root, "runtime/version.json", versionBytes)
   ]);
@@ -237,8 +438,12 @@ async function createFixture(): Promise<Fixture> {
   await chmod(executablePath, 0o755);
 
   const environment: NodeJS.ProcessEnv = {
-    GITHUB_SHA: "a".repeat(40),
+    GITHUB_SHA: "9".repeat(40),
+    LCF_SOURCE_SHA: "a".repeat(40),
+    LCF_SOURCE_TREE: "b".repeat(40),
+    LCF_SOURCE_SNAPSHOT_SHA256: "c".repeat(64),
     LCF_SOURCE_DATE_EPOCH: "1700000000",
+    LCF_RENDERER_PACKAGE_LOCK_SHA256: "d".repeat(64),
     ImageVersion: "20260731.1.0",
     LCF_PYTHON_DISTRIBUTION_ARCHIVE:
       "/private/fixture/python-distribution.tar.gz",
@@ -261,6 +466,45 @@ async function createFixture(): Promise<Fixture> {
       codeSignature: "valid"
     }
   ];
+  const inputDigests = gate.criticalInputDigests(root);
+  const buildTools = {
+    altgraphVersion: "0.17.4",
+    macholibVersion: "1.16.3",
+    packagingVersion: "26.2",
+    pyinstallerVersion: "6.21.0",
+    pyinstallerHooksContribVersion: "2026.6",
+    setuptoolsVersion: "83.0.0",
+    uvVersion: "0.11.29"
+  };
+  const toolchainFiles = [
+    { path: ".", type: "directory", mode: "0555", size: 0 }
+  ];
+  const installedTreeContentSha256 = createHash("sha256")
+    .update(
+      Buffer.from(
+        gate.canonicalJson({ schemaVersion: 1, entries: toolchainFiles }),
+        "utf8"
+      )
+    )
+    .digest("hex");
+  const pythonToolchain = {
+    buildRequirementsLockSha256:
+      inputDigests["backend/packaging/build-requirements.lock"],
+    runtimeLockSha256: inputDigests["backend/uv.lock"],
+    runtimeRequirementsSha256: "e".repeat(64),
+    installedTreeContentSha256,
+    buildTools
+  };
+  await writeFixtureFile(
+    root,
+    "desktop/generated/sidecar/python-build-toolchain.json",
+    `${gate.canonicalJson({
+      $schema: "python-sidecar-toolchain-evidence.json",
+      schemaVersion: 1,
+      ...pythonToolchain,
+      files: toolchainFiles
+    })}\n`
+  );
   const files = gate.buildFileInventory(stagingRoot);
   const distribution = toolchain.python.distribution;
   const manifest: JsonObject = {
@@ -279,7 +523,9 @@ async function createFixture(): Promise<Fixture> {
       architecture: toolchain.target.architecture
     },
     build: {
-      repositoryCommit: environment.GITHUB_SHA,
+      repositoryCommit: environment.LCF_SOURCE_SHA,
+      repositoryTree: environment.LCF_SOURCE_TREE,
+      sourceSnapshotSha256: "c".repeat(64),
       sourceDateEpoch: Number(environment.LCF_SOURCE_DATE_EPOCH),
       runnerImage: toolchain.target.runnerLabel,
       runnerImageVersion: environment.ImageVersion,
@@ -306,13 +552,15 @@ async function createFixture(): Promise<Fixture> {
         hashManifestSha256: distribution.hashManifestSha256,
         installRootFingerprintSha256: "b".repeat(64)
       },
-      inputDigests: gate.criticalInputDigests(root)
+      pythonToolchain,
+      inputDigests
     },
     components,
     artifacts: {
       spdxSbom: "sbom.spdx.json",
       thirdPartyNotices: "THIRD-PARTY-NOTICES.txt",
-      licensesDirectory: "licenses"
+      licensesDirectory: "licenses",
+      pythonBuildToolchain: "python-build-toolchain.json"
     },
     files,
     native,
@@ -360,12 +608,14 @@ function auditFixture(
       fixture.toolchain.python.distribution.hashManifestSha256
   }),
   inspectRepository: RepositoryInspector = () => ({
-    commit: fixture.environment.GITHUB_SHA as string,
+    commit: fixture.environment.LCF_SOURCE_SHA as string,
+    tree: fixture.environment.LCF_SOURCE_TREE as string,
     sourceDateEpoch: Number(
       fixture.environment.LCF_SOURCE_DATE_EPOCH
-    )
+    ),
+    sourceSnapshotSha256: "c".repeat(64)
   })
-): { files: number; nativeFiles: number; components: number } {
+): JsonObject {
   return gate.auditPythonSidecar({
     repositoryRoot: fixture.root,
     stagingRoot: fixture.stagingRoot,
@@ -392,6 +642,15 @@ describe("Python sidecar beforePack gate", () => {
     const hook = gate.createBeforePackHook({
       platform: "darwin",
       architecture: "arm64",
+      inspectRepository: () => {
+        calls.push("repository");
+        return {
+          commit: "a".repeat(40),
+          tree: "b".repeat(40),
+          sourceDateEpoch: 1_800_000_000,
+          sourceSnapshotSha256: "c".repeat(64)
+        };
+      },
       auditPythonSidecar: () => {
         calls.push("python");
         return { files: 1 };
@@ -424,6 +683,7 @@ describe("Python sidecar beforePack gate", () => {
       updateTrust: { algorithm: "Ed25519" }
     });
     expect(calls).toEqual([
+      "repository",
       "python",
       "qmd",
       "companion",
@@ -447,6 +707,275 @@ describe("Python sidecar beforePack gate", () => {
     });
     expect(summary.files).toBeGreaterThan(5);
     expect(inspected).toEqual(["lcf-service"]);
+  });
+
+  it("accepts only the six ordered AppleDouble removal transformations", async () => {
+    const [inventory, toolchain] = await Promise.all([
+      readJson(frameworkCoreInventorySource),
+      readJson(toolchainSource)
+    ]);
+    const contract = toolchain.python.frameworkCoreInventory as JsonObject;
+
+    expect(inventory.transformations).toHaveLength(6);
+    expect(
+      inventory.transformations.every(
+        (transformation: JsonObject) =>
+          transformation.kind === "remove-appledouble" &&
+          transformation.type === "file" &&
+          transformation.mode === "0664" &&
+          path.posix.basename(transformation.path).startsWith("._")
+      )
+    ).toBe(true);
+    expect(inventory.entries).toHaveLength(3648);
+    expect(inventory.inventorySha256).toBe(
+      "77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10"
+    );
+    expect(() =>
+      gate.validateFrameworkCoreInventoryPayload(inventory, contract)
+    ).not.toThrow();
+  });
+
+  it.each([
+    {
+      name: "unsupported symlink-mode",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[0] = {
+          kind: "symlink-mode",
+          path: "Frameworks/Tcl.framework/Headers",
+          type: "symlink",
+          target: "Versions/Current/Headers",
+          fromMode: "0775",
+          toMode: "0777"
+        };
+      },
+      expected: /does not match the reviewed schema/
+    },
+    {
+      name: "extra removal field",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[0].unreviewed = true;
+      },
+      expected: /does not match the reviewed schema/
+    },
+    {
+      name: "non-AppleDouble removal path",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[0].path =
+          "Frameworks/Tcl.framework/Versions/8.6/tclConfig.sh";
+      },
+      expected: /transformation is malformed/
+    },
+    {
+      name: "unsafe removal path",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[0].path = "../._outside";
+      },
+      expected: /path is unsafe/
+    },
+    {
+      name: "out-of-order removals",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations.reverse();
+      },
+      expected: /not strictly ordered/
+    },
+    {
+      name: "duplicate removal",
+      mutate: (inventory: JsonObject) => {
+        inventory.transformations[1] = structuredClone(
+          inventory.transformations[0]
+        );
+      },
+      expected: /not strictly ordered/
+    }
+  ])(
+    "rejects framework inventory transformation mutation: $name",
+    async ({ mutate, expected }) => {
+      const [inventory, toolchain] = await Promise.all([
+        readJson(frameworkCoreInventorySource),
+        readJson(toolchainSource)
+      ]);
+      mutate(inventory);
+      expect(() =>
+        gate.validateFrameworkCoreInventoryPayload(
+          inventory,
+          toolchain.python.frameworkCoreInventory
+        )
+      ).toThrow(expected);
+    }
+  );
+
+  it.each(toolchainMutationCases)(
+    "rejects reviewed Python toolchain mutation: $name",
+    async ({ mutate, expected }) => {
+      const fixture = await createFixture();
+      mutate(fixture.toolchain);
+      await writeJson(
+        path.join(
+          fixture.root,
+          "backend",
+          "packaging",
+          "python-sidecar-toolchain.lock.json"
+        ),
+        fixture.toolchain
+      );
+
+      expect(() => auditFixture(fixture)).toThrow(expected);
+    }
+  );
+
+  it("rejects a changed framework inventory even with refreshed input digests", async () => {
+    const fixture = await createFixture();
+    await appendFile(
+      path.join(
+        fixture.root,
+        "backend",
+        "packaging",
+        "python-framework-sealed-inventory.json"
+      ),
+      "\n"
+    );
+    await mutateManifest(fixture, (manifest) => {
+      manifest.build.inputDigests = gate.criticalInputDigests(fixture.root);
+    });
+
+    expect(() => auditFixture(fixture)).toThrow(
+      /framework core inventory file differs from its lock/
+    );
+  });
+
+  it("rejects hostile local Git config before provenance commands can use it", async () => {
+    const canonicalTemporaryParent = await realpath(os.tmpdir());
+    const root = await mkdtemp(
+      path.join(canonicalTemporaryParent, "lcf-before-pack-git-")
+    );
+    temporaryDirectories.push(root);
+    const gitEnvironment = {
+      PATH: "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_TERMINAL_PROMPT: "0"
+    };
+    const git = (...arguments_: string[]): string =>
+      execFileSync("/usr/bin/git", ["-C", root, ...arguments_], {
+        encoding: "utf8",
+        env: gitEnvironment
+      }).trim();
+    git("init", "--quiet");
+    await mkdir(path.join(root, "desktop"), { recursive: true });
+    await mkdir(path.join(root, "web"), { recursive: true });
+    await writeFile(path.join(root, "tracked.txt"), "reviewed\n");
+    await writeFile(
+      path.join(root, "desktop", "package.json"),
+      '{"name":"fixture","version":"0.0.0"}\n'
+    );
+    const packageLock = path.join(root, "web", "package-lock.json");
+    await writeFile(packageLock, '{"lockfileVersion":3}\n');
+    git("add", "--all");
+    git(
+      "-c",
+      "user.name=LCF Test",
+      "-c",
+      "user.email=lcf-test@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture"
+    );
+    const commit = git("rev-parse", "HEAD");
+    const tree = git("rev-parse", "HEAD^{tree}");
+    const sourceDateEpoch = git("show", "-s", "--format=%ct", "HEAD");
+    const inventory = git("ls-tree", "-r", "--full-tree", "HEAD")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const match = /^(\d+) (\w+) ([0-9a-f]{40})\t(.+)$/.exec(line);
+        if (!match) {
+          throw new Error("invalid Git fixture inventory");
+        }
+        return {
+          mode: match[1],
+          objectId: match[3],
+          path: match[4],
+          type: match[2]
+        };
+      });
+    const environment = {
+      LCF_SOURCE_SHA: commit,
+      LCF_SOURCE_TREE: tree,
+      LCF_SOURCE_DATE_EPOCH: sourceDateEpoch,
+      LCF_SOURCE_SNAPSHOT_SHA256: createHash("sha256")
+        .update(Buffer.from(JSON.stringify(inventory), "utf8"))
+        .digest("hex"),
+      LCF_RENDERER_PACKAGE_LOCK_SHA256: createHash("sha256")
+        .update(await readFile(packageLock))
+        .digest("hex")
+    };
+    git("config", "--local", "gc.auto", "0");
+    expect(gate.inspectRepositoryProvenance(root, environment)).toMatchObject({
+      commit,
+      tree,
+      sourceSnapshotSha256: expect.stringMatching(/^[0-9a-f]{64}$/)
+    });
+    git("config", "--local", "gc.auto", "1");
+    expect(() => gate.inspectRepositoryProvenance(root, environment)).toThrow(
+      /provenance inspection failed/
+    );
+    git("config", "--local", "gc.auto", "0");
+    const filterMarker = path.join(root, "filter-must-not-run");
+    git(
+      "config",
+      "--local",
+      "filter.lcf-attack.clean",
+      `/bin/sh -c 'touch ${filterMarker}; cat'`
+    );
+    const infoAttributes = path.join(root, ".git", "info", "attributes");
+    await writeFile(infoAttributes, "* filter=lcf-attack\n");
+    expect(() => gate.inspectRepositoryProvenance(root, environment)).toThrow(
+      /provenance inspection failed/
+    );
+    await expect(readFile(filterMarker)).rejects.toThrow();
+    git("config", "--local", "--unset-all", "filter.lcf-attack.clean");
+    await writeFile(infoAttributes, "");
+
+    const trackedPath = path.join(root, "tracked.txt");
+    git("update-index", "--skip-worktree", "tracked.txt");
+    await writeFile(trackedPath, "skip-worktree attack\n");
+    expect(() => gate.inspectRepositoryProvenance(root, environment)).toThrow(
+      /provenance inspection failed/
+    );
+    await writeFile(trackedPath, "reviewed\n");
+    git("update-index", "--no-skip-worktree", "tracked.txt");
+
+    git("update-index", "--assume-unchanged", "tracked.txt");
+    await writeFile(trackedPath, "assume-unchanged attack\n");
+    expect(() => gate.inspectRepositoryProvenance(root, environment)).toThrow(
+      /provenance inspection failed/
+    );
+    await writeFile(trackedPath, "reviewed\n");
+    git("update-index", "--no-assume-unchanged", "tracked.txt");
+
+    const infoExclude = path.join(root, ".git", "info", "exclude");
+    await writeFile(infoExclude, "hidden-by-local-exclude\n");
+    expect(() => gate.inspectRepositoryProvenance(root, environment)).toThrow(
+      /provenance inspection failed/
+    );
+    await writeFile(infoExclude, "# reviewed empty local exclude\n");
+
+    const outside = await mkdtemp(
+      path.join(canonicalTemporaryParent, "lcf-git-outside-")
+    );
+    temporaryDirectories.push(outside);
+    const excludes = path.join(outside, "excludes");
+    await writeFile(excludes, "ignored.txt\n");
+    git("config", "--local", "core.excludesFile", excludes);
+    git("config", "--local", "core.worktree", outside);
+
+    expect(() => gate.inspectRepositoryProvenance(root, environment)).toThrow(
+      /provenance inspection failed/
+    );
   });
 
   it("rejects a non-Darwin production host before reading staging", async () => {
@@ -535,14 +1064,41 @@ describe("Python sidecar beforePack gate", () => {
     );
   });
 
-  it("rejects a manifest commit unlike the current GITHUB_SHA", async () => {
+  it("rejects a manifest commit unlike the explicit source commit", async () => {
     const fixture = await createFixture();
     await mutateManifest(fixture, (manifest) => {
       manifest.build.repositoryCommit = "1".repeat(40);
     });
     expect(() => auditFixture(fixture)).toThrow(
-      /commit differs from the current GITHUB_SHA/
+      /commit differs from the explicit source commit/
     );
+  });
+
+  it("rejects manifest tree and source-snapshot provenance drift", async () => {
+    const treeFixture = await createFixture();
+    await mutateManifest(treeFixture, (manifest) => {
+      manifest.build.repositoryTree = "1".repeat(40);
+    });
+    expect(() => auditFixture(treeFixture)).toThrow(
+      /tree differs from the explicit source tree/
+    );
+
+    const snapshotFixture = await createFixture();
+    expect(() =>
+      auditFixture(
+        snapshotFixture,
+        () => ["arm64"],
+        undefined,
+        () => ({
+          commit: snapshotFixture.environment.LCF_SOURCE_SHA as string,
+          tree: snapshotFixture.environment.LCF_SOURCE_TREE as string,
+          sourceDateEpoch: Number(
+            snapshotFixture.environment.LCF_SOURCE_DATE_EPOCH
+          ),
+          sourceSnapshotSha256: "2".repeat(64)
+        })
+      )
+    ).toThrow(/repository provenance differs from the checkout/);
   });
 
   it("independently rejects repository checkout provenance drift", async () => {
@@ -554,9 +1110,11 @@ describe("Python sidecar beforePack gate", () => {
         undefined,
         () => ({
           commit: "9".repeat(40),
+          tree: fixture.environment.LCF_SOURCE_TREE as string,
           sourceDateEpoch: Number(
             fixture.environment.LCF_SOURCE_DATE_EPOCH
-          )
+          ),
+          sourceSnapshotSha256: "c".repeat(64)
         })
       )
     ).toThrow(/repository provenance differs from the checkout/);
@@ -569,10 +1127,36 @@ describe("Python sidecar beforePack gate", () => {
       /runner image differs from the current runner input/
     );
 
-    const missingFixture = await createFixture();
-    delete missingFixture.environment.LCF_PYTHON_DISTRIBUTION_ARCHIVE;
-    expect(() => auditFixture(missingFixture)).toThrow(
-      /runner inputs are missing/
+    for (const input of [
+      "LCF_SOURCE_SHA",
+      "LCF_SOURCE_TREE",
+      "LCF_PYTHON_DISTRIBUTION_ARCHIVE",
+      "LCF_PYTHON_DISTRIBUTION_HASH_MANIFEST",
+      "LCF_PYTHON_INSTALL_ROOT"
+    ]) {
+      const missingFixture = await createFixture();
+      delete missingFixture.environment[input];
+      expect(() => auditFixture(missingFixture)).toThrow(
+        /runner inputs are missing/
+      );
+    }
+  });
+
+  it("rejects unsafe reviewed Python framework broken symlinks", async () => {
+    const fixture = await createFixture();
+    fixture.toolchain.python.reviewedBrokenSymlinks[0].target = "../outside";
+    await writeJson(
+      path.join(
+        fixture.root,
+        "backend",
+        "packaging",
+        "python-sidecar-toolchain.lock.json"
+      ),
+      fixture.toolchain
+    );
+
+    expect(() => auditFixture(fixture)).toThrow(
+      /reviewed broken symlink is unsafe/
     );
   });
 
@@ -634,6 +1218,82 @@ describe("Python sidecar beforePack gate", () => {
     });
     expect(() => auditFixture(domainSmokeFixture)).toThrow(
       /passing frozen smoke evidence/
+    );
+  });
+
+  it("binds Python toolchain summary, source locks, and canonical artifact inventory", async () => {
+    const versionFixture = await createFixture();
+    await mutateManifest(versionFixture, (manifest) => {
+      manifest.build.pythonToolchain.buildTools.uvVersion = "0.0.0";
+    });
+    expect(() => auditFixture(versionFixture)).toThrow(
+      /build tool versions differ from reviewed pins/
+    );
+
+    const artifactFixture = await createFixture();
+    const artifactPath = path.join(
+      artifactFixture.stagingRoot,
+      "python-build-toolchain.json"
+    );
+    const artifact = await readJson(artifactPath);
+    artifact.runtimeRequirementsSha256 = "f".repeat(64);
+    await writeJson(artifactPath, artifact);
+    await mutateManifest(artifactFixture, (manifest) => {
+      manifest.files = gate.buildFileInventory(artifactFixture.stagingRoot);
+      manifest.audit.normalizedInventorySha256 =
+        gate.normalizedInventorySha256(manifest.files, manifest.native);
+    });
+    expect(() => auditFixture(artifactFixture)).toThrow(
+      /toolchain artifact differs from the manifest/
+    );
+
+    const inventoryFixture = await createFixture();
+    const inventoryArtifactPath = path.join(
+      inventoryFixture.stagingRoot,
+      "python-build-toolchain.json"
+    );
+    const inventoryArtifact = await readJson(inventoryArtifactPath);
+    inventoryArtifact.files[0].mode = "0755";
+    inventoryArtifact.installedTreeContentSha256 = createHash("sha256")
+      .update(
+        Buffer.from(
+          gate.canonicalJson({
+            schemaVersion: 1,
+            entries: inventoryArtifact.files
+          }),
+          "utf8"
+        )
+      )
+      .digest("hex");
+    await writeJson(inventoryArtifactPath, inventoryArtifact);
+    await mutateManifest(inventoryFixture, (manifest) => {
+      manifest.build.pythonToolchain.installedTreeContentSha256 =
+        inventoryArtifact.installedTreeContentSha256;
+      manifest.files = gate.buildFileInventory(inventoryFixture.stagingRoot);
+      manifest.audit.normalizedInventorySha256 =
+        gate.normalizedInventorySha256(manifest.files, manifest.native);
+    });
+    expect(() => auditFixture(inventoryFixture)).toThrow(
+      /toolchain entry is malformed/
+    );
+
+    const sourceLockFixture = await createFixture();
+    const sourceLockArtifactPath = path.join(
+      sourceLockFixture.stagingRoot,
+      "python-build-toolchain.json"
+    );
+    const sourceLockArtifact = await readJson(sourceLockArtifactPath);
+    sourceLockArtifact.buildRequirementsLockSha256 = "f".repeat(64);
+    await writeJson(sourceLockArtifactPath, sourceLockArtifact);
+    await mutateManifest(sourceLockFixture, (manifest) => {
+      manifest.build.pythonToolchain.buildRequirementsLockSha256 =
+        sourceLockArtifact.buildRequirementsLockSha256;
+      manifest.files = gate.buildFileInventory(sourceLockFixture.stagingRoot);
+      manifest.audit.normalizedInventorySha256 =
+        gate.normalizedInventorySha256(manifest.files, manifest.native);
+    });
+    expect(() => auditFixture(sourceLockFixture)).toThrow(
+      /toolchain differs from reviewed source locks/
     );
   });
 

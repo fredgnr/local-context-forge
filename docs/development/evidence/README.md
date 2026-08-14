@@ -11,12 +11,21 @@
 | `VAL-DOC-HANDOFF-001` | `625db7647d47fb6ff8f23c3136c4f45ded80384f` | `pass`（文档 source checkpoint） | [2026-07-31-625db76](VAL-DOC-HANDOFF-001/2026-07-31-625db76.md) |
 | `VAL-LEGACY-SCOPE-001` | `64ec3c232d08f1e843d81dc7c4972dc5ebf96c9b` | `pass`（planning/documentation scope） | [2026-07-31-64ec3c2](VAL-LEGACY-SCOPE-001/2026-07-31-64ec3c2.md) |
 | W01 旧 candidate | final `2b7629468c711d0db5107f7001aa90c0271079ae` / tree `ad1b76febd1adcaf1ada96ed7dd43fbe1e5a3adf` | technical `pass`；independent `fail`；activation `not-eligible` | [schema v2 history](W01/2026-08-04.json)；[Actions 30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329)；旧 artifact `8900365901` |
-| W01 remediation candidate | Checkpoint A `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree `f059ad8bd3cfc6accac707745d5d8727bfb532bd` | PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597`；[closed schema](W01/schema-v2.json) |
+| W01 remediation historical Checkpoint A | `f4074a31bde50710bb40e1e8509dfdcd232835c4` / tree `f059ad8bd3cfc6accac707745d5d8727bfb532bd` | 记录时刻 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | [immutable schema v2 lifecycle record](W01/2026-08-04.json)；[Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597`；[closed schema](W01/schema-v2.json) |
+| W01 accepted remediation / W02 entry | final `36885e04df09c4789d8ec3c9dc5c5e78a381a634`；resulting main `1786255b55dd1a78659ed92235893876175a0722`；same tree `1b9f3a34847fd3acc8b7f3a31ff19332d5328b64` | PR/source、independent acceptance、merge、resulting-main source、W02 activation `pass`；packaged smoke `not-run` | [W02 entry closeout](W02/2026-08-05-entry.md)；[Actions 30986208251](https://github.com/fredgnr/local-context-forge/actions/runs/30986208251) |
+| W02 static assembly substage | `08137c7bce5469350b861cef7960e4a0530151bf` / tree `d7814ac96136cea33fb7069d9538a4aad8dffa38` | `.app` directory assembly / bundle audit `pass`；packaged launch/runtime 与 `VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [assembly record](W02/2026-08-06-08137c7-assembly.md)；[run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806)；source run `31024794734` success |
+| W02 PR #21 independent NO-GO / remediation entry | reviewed `8c5fd23206b671b768fd21d253bf292642f93a51` / tree `785f4656de8a7233b6dd632fe4815976d33468fb`；latest failed exact `095cbc12585a2c141f151389c1829bd758e8ed54` / parent `8b2277a2c8027c5fbdab8f3e85506b72044dbba4` / tree `2eca5e8e293de444213e3aba43079802b6a0d910` | independent `NO-GO`；first through eleventh remediation technical attempts `fail` / `superseded`；twelfth local candidate `not-run`；W02 `in-progress`；`VAL-PACKAGED-SMOKE-001` `not-run`；W10/W11 locked | [append-only remediation record](W02/2026-08-07-pr21-remediation.md)；eleventh Desktop source `31799645685` success；Engineering `31799645731` / job `94764347264` real-Installer seal failure，expected `3648` / `fdd600…`、observed `3648` / `77b580…`、only mode diff `33`，rollback/postcondition/scratch cleanup success，artifacts `[]` / no App；Containers `31799645737` success/no publish；twelfth local contract is compressed-Payload raw `3654` / `863a6353…` + only 6 exact AppleDouble removals = sealed `3648` / `77b580…`，33 symlink modes remain `0775`；`pkgutil --expand-full` 的 `0777` symlink 是旧模型来源/反例，不是正向复现；fresh twelfth exact-head Actions remain `not-run` |
 
-旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。修复记录
-必须与 exact final head 上的新 payload/provenance 一起读取；仓库记录不能自行声明 independent
-acceptance 或 canonical activation。以上记录均不代表 packaged、physical、GitHub settings、
-legacy absence 或 release gate 已通过。
+旧 W01 technical execution 是真实历史，但独立 NO-GO 使其不具 canonical eligibility。W01 JSON
+冻结其记录时刻的 remediation lifecycle；后续 external acceptance/merge/main run 由新的 W02 entry
+追加，而不是回写历史 JSON。仓库 bytes 不能凭自身 technical result 自我提升 independent
+acceptance；closeout 记录必须绑定外部 accepted head、canonical main 与 Actions 坐标。以上记录均
+不代表 packaged、physical、GitHub settings、legacy absence 或 release gate 已通过。
+
+当前 W02 权威结论由 `CTX-PR21-NOGO-CURRENT` 的 append-only remediation 记录补充：旧
+checkpoint 与旧 workflow `success` 不回写，但也不能证明 build scratch lifecycle、Git tree/source
+provenance 或 capability-bound cleanup。只有修复后的新 exact PR head、fresh Actions 与新的独立
+验收可以取代该 `NO-GO`；仓库内记录不能自我宣告接受。
 
 ## 1. 证据原则
 
@@ -179,7 +188,9 @@ closeout 中的 canonical record digest 用来捕获局部字段改写；权威�
 服务中已存在的 exact run、payload/provenance artifact ID 与两层完整 digest，以及独立验收所钉住
 的 exact PR head。若后续提交协调替换全部坐标并重算 record digest，那是一个新的 candidate，
 必须重新运行 exact-head CI 并重新接受独立验收，不能继承旧 candidate 的 technical 或 acceptance
-结论。仓库内容本身始终不能把 `independent_acceptance` 从 `pending` 提升为 `pass`。
+结论。历史 W01 JSON 本身始终不能把 `independent_acceptance` 从 `pending` 提升为 `pass`。
+外部独立验收完成后，应像 [W02 entry](W02/2026-08-05-entry.md) 一样追加 exact accepted
+head/main/run 坐标，不得改写旧 record。
 
 PR 与 non-main branch payload 使用 `pull-request-candidate` / `branch-candidate`，只输出 technical
 candidate results，canonical activation 必须为 `blocked`。只有 `push` to `refs/heads/main` 可输出
@@ -207,6 +218,50 @@ digest、architecture、有限 inventory、launch、renderer/preload、private U
 quit/no orphan、process/socket observation、exercised path 的 system Python/Node/Git PATH trap、
 updater unavailable/no-network。`tag`、`release_id`、
 credential generation 和 production pin 必须为 null/absent。
+
+[2026-08-05 entry record](W02/2026-08-05-entry.md) 只证明 W01 外部退出条件已满足，保留其
+记录时刻的 assembly `not-run` 历史，不回写。[2026-08-06 assembly record](W02/2026-08-06-08137c7-assembly.md)
+随后证明 Draft PR #21 exact head 的 static `.app` directory assembly 与 bundle audit 为 `pass`；
+规范化 inventory SHA-256 为
+`7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c`，但 remote artifacts
+empty，没有 retained App/package digest。pre-pack frozen sidecar staging smoke 已成功；assembled
+App 未启动、sidecar 未从 bundle 启动，上述 launch/runtime 观察均为 `not-run`。因此
+`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`，W10/W11 不得据此解锁。
+
+[2026-08-07 PR #21 remediation record](W02/2026-08-07-pr21-remediation.md) 进一步保存最终独立
+验收对 reviewed head `8c5fd232…` / tree `785f4656…` 的 `NO-GO`。该候选的旧 exact-head runs
+以及十一次 remediation executions 只能作为失败候选的历史技术证据。最新第十一次 exact
+`095cbc1…` / parent `8b2277a…` / tree `2eca5e8…` 的 Desktop source `31799645685` 与 Containers
+`31799645737` success/no publish，但 Engineering `31799645731` / job `94764347264` 在真实 Installer
+后的 seal 处 fail closed：expected `3648` / `fdd600…`、observed `3648` / `77b580…`，七类差异只有
+mode `33`；rollback、独立 framework postcondition 与 scratch cleanup 均成功，artifacts `[]` 且没有
+App launch。第十一次“6 个 AppleDouble removals + 33 个 symlink mode `0775→0777`”模型因而已被
+真实 Installer 证明不完整。producer/seal 设计不使用
+`actions/setup-python` 或原 full pkg：只在 exact outer pkg 验签后以唯一 17-byte no-op 重打并
+component-install `Python_Framework.pkg`，隔离旧 root/确认 target absent 后执行 non-symlink
+seal、大小写无关 cache 清理及 O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node
+core/fresh-exclusion verification，随后才精确
+复验/清理 quarantine 并首次运行 framework Python；运行时
+install-reviewed 只验证 distribution/binding，不安装或 `sudo`。第十二次 local candidate 把 locked
+Payload raw `3654` / `863a6353…` 明确转换为 sealed `3648` / `77b580…`：唯一 transformation 是移除
+`6` 个 exact AppleDouble entries；`33` 个 exact symlink mode 保持 `0775`，target/path/type、
+non-symlink mode 与 bytes 继续严格参与。expected manifest size `615969` / SHA-256 `b145fe36…`，
+lock size `4852` / `9682d311…`，verifier size `51765` / `2dbd1f36…`。第十二次正向 contract 只绑定
+compressed Payload canonical raw + 6 removals 与第十一次真实 Installer observed inventory；三个
+`pkgutil --expand-full` materialization 的代表性 symlink mode 均为 `0777`，所以 full expansion 是旧
+normalization 模型的来源/反例，不是 `77b580…` 的正向复现。真实 Installer 已由第十一次 Actions
+执行；本机因无 passwordless `sudo`，本机 system-root install/rollback/postcondition 仍为
+`not-run`。两份 workflow
+的 seal cleanup 以 pre-trap sentinel
+起步；新 root/旧 quarantine 经过 exact path/type/root-owner/`dev:ino` 绑定后才激活。seal 成功只写
+`committed` 并保留 quarantine；独立 `always()` postcondition 重验 held inputs/candidate identity 后才
+进入 `finalizing`、精确删除 quarantine 并最终 `complete`。rollback-ready phase 的
+`HUP`/`INT`/`TERM` 会精确恢复并返回 `129`/`130`/`143`；unbound/identity mismatch preserve/no-delete
+并 fixed `70`，`finalizing` failure no-rollback/fixed `70`，不声称恢复 `SIGKILL` 或 host crash。
+第十二次 local candidate 尚无 committed exact head/tree 或 fresh Actions。
+在新的 exact head 被 fresh Actions 和独立验收接受前，W02 保持
+`in-progress`、twelfth candidate 保持 `not-run`，packaged
+launch/runtime 与 `VAL-PACKAGED-SMOKE-001` 保持 `not-run`，W10/W11 保持 locked。
 
 ### W10/W11 slice
 

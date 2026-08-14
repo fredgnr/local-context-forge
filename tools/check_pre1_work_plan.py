@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -16,9 +17,20 @@ ITERATION = ROOT / "docs/development/iterations/0008-incremental-retirement-engi
 LEGACY_MANIFEST = ROOT / "docs/development/legacy-retirement.md"
 ADR = ROOT / "docs/adr/0016-pre1-incremental-retirement-engineering-package.md"
 STATUS = ROOT / "docs/development/status.md"
+PARENT_ITERATION = ROOT / "docs/development/iterations/0002-bundled-runtimes.md"
 R13 = ROOT / "docs/development/iterations/0002-r13-pre1-incremental-retirement.md"
 RELEASE_RUNBOOK = ROOT / "docs/development/desktop-release.md"
+EVIDENCE_INDEX = ROOT / "docs/development/evidence/README.md"
 W01_EVIDENCE = ROOT / "docs/development/evidence/W01/2026-08-04.json"
+W02_ENTRY = ROOT / "docs/development/evidence/W02/2026-08-05-entry.md"
+W02_ASSEMBLY = (
+    ROOT
+    / "docs/development/evidence/W02/2026-08-06-08137c7-assembly.md"
+)
+W02_REMEDIATION = (
+    ROOT
+    / "docs/development/evidence/W02/2026-08-07-pr21-remediation.md"
+)
 
 EXPECTED_ORDER = [
     "W01",
@@ -173,9 +185,10 @@ EXPECTED_TASK_STATUS = {
 }
 EXPECTED_TASK_STATUS.update(
     {
-        "TODO-PRE1-SEQUENCING-001": "in-progress",
-        "TODO-GOV-EVIDENCE-001": "in-progress",
-        "TODO-CI-COVERAGE-001": "in-progress",
+        "TODO-PRE1-SEQUENCING-001": "done",
+        "TODO-GOV-EVIDENCE-001": "done",
+        "TODO-CI-COVERAGE-001": "done",
+        "TODO-PACKAGED-SMOKE-001": "in-progress",
         "TODO-REL-GOV-001": "blocked",
         "TODO-REL-KEYS-001": "blocked",
         "TODO-REL-DRAFT-001": "blocked",
@@ -225,12 +238,809 @@ OLD_REJECTED_TRACE_MARKER = (
     "canonical activation `not-eligible`"
 )
 
+W01_ACCEPTED_HEAD = "36885e04df09c4789d8ec3c9dc5c5e78a381a634"
+W01_RESULTING_MAIN = "1786255b55dd1a78659ed92235893876175a0722"
+W01_ACCEPTED_TREE = "1b9f3a34847fd3acc8b7f3a31ff19332d5328b64"
+W01_RESULTING_MAIN_RUN = "30986208251"
+W02_ENTRY_AUTHORITY_MARKER = (
+    "<!-- w02-entry-authority: "
+    "rejected=2b7629468c711d0db5107f7001aa90c0271079ae,"
+    f"accepted={W01_ACCEPTED_HEAD},main={W01_RESULTING_MAIN},"
+    f"tree={W01_ACCEPTED_TREE},source-run={W01_RESULTING_MAIN_RUN} -->"
+)
+CURRENT_W01_TRACE_MARKER = (
+    f"accepted final `{W01_ACCEPTED_HEAD}` / tree `{W01_ACCEPTED_TREE}`："
+    "PR/source、independent acceptance、canonical merge 与 resulting-main source 均 `pass`"
+)
+W02_PHASE_MARKERS = {
+    "engineering-smoke boundary/assembly：旧 static technical run 保留；PR #21 independent",
+    "acceptance `NO-GO`；第一次至第十一次 remediation technical attempts 均为 `fail` / `superseded`",
+    "第十二次 local candidate `not-run`。旧 exact Draft head",
+    "packaged App launch/runtime smoke：十一次 remediation 均未启动 bundle，第十二次 candidate 也尚未运行，\n"
+    "    当前 `not-run`",
+    "W10/W11 保持 locked",
+}
+W02_ENTRY_REQUIRED_MARKERS = {
+    "remediation final head 的 PR/source technical result：`pass`",
+    "同一 exact final head 的 independent acceptance：`pass`",
+    "accepted candidate 合入 canonical `main`：`pass`",
+    "resulting exact main 的 `source-coverage`：`pass`",
+    "W02 canonical activation：`pass`",
+    "engineering-smoke `.app` assembly：`not-run`",
+    "packaged App launch：`not-run`",
+    "`VAL-PACKAGED-SMOKE-001`：`not-run`",
+    "W10/W11 destructive slices：`not-run`",
+    "public release：`NO-GO`",
+    "Python source checks | `success`",
+    "Web source checks | `success`",
+    "Desktop source checks | `success`",
+    "macOS 15 arm64 source IPC | `success`",
+    "W01 exact-head source coverage evidence | `success`",
+}
+W02_ASSEMBLY_SOURCE = "08137c7bce5469350b861cef7960e4a0530151bf"
+W02_ASSEMBLY_TREE = "d7814ac96136cea33fb7069d9538a4aad8dffa38"
+W02_ASSEMBLY_RUN = "31024794972"
+W02_ASSEMBLY_JOB = "92370351806"
+W02_ASSEMBLY_SOURCE_RUN = "31024794734"
+W02_ASSEMBLY_INVENTORY_SHA256 = (
+    "7fcdb699ad367e7c7da28a074694c6fe8a0a67b54829173894d311de4f6ffe5c"
+)
+W02_ASSEMBLY_DOCUMENT_SHA256 = (
+    "6404b2274348d10c5d1a4a18a3cf4ed15ae2cdfbddfa540b5f96b3ef600425a4"
+)
+W02_ASSEMBLY_AUTHORITY_MARKER = (
+    "<!-- w02-assembly-authority: "
+    f"source={W02_ASSEMBLY_SOURCE},tree={W02_ASSEMBLY_TREE},"
+    f"assembly-run={W02_ASSEMBLY_RUN},assembly-job={W02_ASSEMBLY_JOB},"
+    f"source-run={W02_ASSEMBLY_SOURCE_RUN},"
+    f"inventory-sha256={W02_ASSEMBLY_INVENTORY_SHA256},"
+    "inventory-entries=879,native-files=78,source-date-epoch=1785946811 -->"
+)
+W02_ASSEMBLY_REQUIRED_MARKERS = {
+    "Draft #21",
+    "assembly job conclusion | `success`；all steps `success`",
+    "remote artifacts | empty",
+    "| `assembly` | `pass` |",
+    "| `bundleAudit` | `pass` |",
+    "`identityName=-` / `identityHash=none`",
+    "| notarization | `false` |",
+    "pre-pack frozen sidecar staging smoke 已运行且成功",
+    "sidecar 未从 assembled bundle 启动",
+    "`packagedAppLaunch`：`not-run`",
+    "`packagedSmokeValidation`：`not-run`",
+    "`VAL-PACKAGED-SMOKE-001`：`not-run`",
+    "W10/W11：`locked`",
+    "public release：`NO-GO`",
+    "没有可下载的 `.app` archive 或 package digest",
+    f"| exact source commit | `{W02_ASSEMBLY_SOURCE}` |",
+    f"| exact source tree | `{W02_ASSEMBLY_TREE}` |",
+    (
+        "| normalized inventory SHA-256 | "
+        f"`{W02_ASSEMBLY_INVENTORY_SHA256}` |"
+    ),
+}
+W02_ASSEMBLY_FORBIDDEN_CLAIMS = {
+    "`VAL-PACKAGED-SMOKE-001`：`pass`",
+    "VAL-PACKAGED-SMOKE-001: pass",
+    "public release：`GO`",
+    "public release: GO",
+    "normalized inventory SHA-256 is the package digest",
+}
 
-def current_w01_trace_marker(technical_result: str) -> str:
-    return (
-        f"修复候选 PR/source `{technical_result}`；independent acceptance `pending`；"
-        "canonical-main source `not-run`；canonical activation `blocked`"
-    )
+W02_PR21_CONTEXT = "CTX-PR21-NOGO-CURRENT"
+W02_PR21_BASE = "1786255b55dd1a78659ed92235893876175a0722"
+W02_PR21_REVIEWED_HEAD = "8c5fd23206b671b768fd21d253bf292642f93a51"
+W02_PR21_REVIEWED_TREE = "785f4656de8a7233b6dd632fe4815976d33468fb"
+W02_PR21_BRANCH = "agent/w02a-engineering-smoke-boundary"
+W02_PR21_ASSEMBLY_RUN = "31026905444"
+W02_PR21_ASSEMBLY_JOB = "92377586784"
+W02_PR21_SOURCE_RUN = "31026907916"
+W02_PR21_CONTAINER_RUN = "31026906777"
+W02_PR21_FIRST_REMEDIATION_HEAD = "9f7d5d11225517ff5b1643d4bb71983346358ae0"
+W02_PR21_FIRST_REMEDIATION_TREE = "ea8e62e9b76c3270d60135a8633f56db025ad921"
+W02_PR21_FIRST_REMEDIATION_ASSEMBLY_RUN = "31181911570"
+W02_PR21_FIRST_REMEDIATION_ASSEMBLY_JOB = "92876982671"
+W02_PR21_FIRST_REMEDIATION_SOURCE_RUN = "31181911534"
+W02_PR21_FIRST_REMEDIATION_CONTAINER_RUN = "31181911527"
+W02_PR21_SECOND_REMEDIATION_HEAD = "9ecf0effaa48a8b010ff46ffb42afc57e0f3d948"
+W02_PR21_SECOND_REMEDIATION_TREE = "ee82712c7874155eba038d1ce05d374416ed34e5"
+W02_PR21_SECOND_REMEDIATION_ASSEMBLY_RUN = "31184441362"
+W02_PR21_SECOND_REMEDIATION_ASSEMBLY_JOB = "92885372402"
+W02_PR21_SECOND_REMEDIATION_SOURCE_RUN = "31184441306"
+W02_PR21_SECOND_REMEDIATION_CONTAINER_RUN = "31184441281"
+W02_PR21_THIRD_REMEDIATION_HEAD = "2665ec61712fe410608ac50c7a6d44fa35746092"
+W02_PR21_THIRD_REMEDIATION_TREE = "c3cd1706838f7050533e2812dfdcad482aaedde5"
+W02_PR21_THIRD_REMEDIATION_ASSEMBLY_RUN = "31258135925"
+W02_PR21_THIRD_REMEDIATION_ASSEMBLY_JOB = "93104615763"
+W02_PR21_THIRD_REMEDIATION_SOURCE_RUN = "31258135929"
+W02_PR21_THIRD_REMEDIATION_CONTAINER_RUN = "31258135932"
+W02_PR21_FOURTH_REMEDIATION_HEAD = "c2be665f5832c15064cae87c694a782e51351e7c"
+W02_PR21_FOURTH_REMEDIATION_TREE = "f90b527b4de1a422f63c4bfeb01f9c1010e22b7d"
+W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_RUN = "31358373320"
+W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_JOB = "93362214499"
+W02_PR21_FOURTH_REMEDIATION_SOURCE_RUN = "31358373316"
+W02_PR21_FOURTH_REMEDIATION_CONTAINER_RUN = "31358373311"
+W02_PR21_FIFTH_REMEDIATION_HEAD = "c04fe9fce2bc2f0f4350e080f7f02c44699c975d"
+W02_PR21_FIFTH_REMEDIATION_PARENT = "c2be665f5832c15064cae87c694a782e51351e7c"
+W02_PR21_FIFTH_REMEDIATION_TREE = "2f8b3aceb4caa2d71537cd51c3b3b985c55a3db5"
+W02_PR21_FIFTH_REMEDIATION_ASSEMBLY_RUN = "31454826263"
+W02_PR21_FIFTH_REMEDIATION_ASSEMBLY_JOB = "93666344718"
+W02_PR21_FIFTH_REMEDIATION_SOURCE_RUN = "31454826261"
+W02_PR21_FIFTH_REMEDIATION_SOURCE_JOB = "93666344561"
+W02_PR21_FIFTH_REMEDIATION_CONTAINER_RUN = "31454826243"
+W02_PR21_SIXTH_REMEDIATION_HEAD = "cc6ade1113d4753cc6094c5ee23a588dbbe8c18e"
+W02_PR21_SIXTH_REMEDIATION_PARENT = "c04fe9fce2bc2f0f4350e080f7f02c44699c975d"
+W02_PR21_SIXTH_REMEDIATION_TREE = "911e91d6849266fa75b0efde794ae9b5236f5504"
+W02_PR21_SIXTH_REMEDIATION_CONTEXT = "d01c1b4d9ea2c5f77605859a9af8137580b52d8e"
+W02_PR21_SIXTH_REMEDIATION_SOURCE_SNAPSHOT_SHA256 = (
+    "dfed1f824a60ebcfb0e8e9facfb46e5552f412b273cb58979596eb3c26d97884"
+)
+W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_RUN = "31460588223"
+W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_JOB = "93683139742"
+W02_PR21_SIXTH_REMEDIATION_SOURCE_RUN = "31460588210"
+W02_PR21_SIXTH_REMEDIATION_CONTAINER_RUN = "31460588212"
+W02_PR21_SEVENTH_REMEDIATION_HEAD = "aaf3f51f69dfded82b8237e03a871017317e7158"
+W02_PR21_SEVENTH_REMEDIATION_PARENT = "cc6ade1113d4753cc6094c5ee23a588dbbe8c18e"
+W02_PR21_SEVENTH_REMEDIATION_TREE = "60c2c6c2553ff8d10c2faee47ec838b34e378fc5"
+W02_PR21_SEVENTH_REMEDIATION_CONTEXT = "6f9a15f65301acd898109203c0ad9381d7290539"
+W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_RUN = "31559498116"
+W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_JOB = "93998717925"
+W02_PR21_SEVENTH_REMEDIATION_SOURCE_RUN = "31559498106"
+W02_PR21_SEVENTH_REMEDIATION_CONTAINER_RUN = "31559498070"
+W02_PR21_EIGHTH_REMEDIATION_HEAD = "15336568c6fcf3a40eb051cdb2b90242ef1e1e09"
+W02_PR21_EIGHTH_REMEDIATION_PARENT = "aaf3f51f69dfded82b8237e03a871017317e7158"
+W02_PR21_EIGHTH_REMEDIATION_TREE = "66779e9ca8df445fb413e93faed4d265899fb1ec"
+W02_PR21_EIGHTH_REMEDIATION_CONTEXT = "1c662735da0306027ec54641b8706130cf6b91dc"
+W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_RUN = "31570734636"
+W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_JOB = "94031972543"
+W02_PR21_EIGHTH_REMEDIATION_SOURCE_RUN = "31570734560"
+W02_PR21_EIGHTH_REMEDIATION_CONTAINER_RUN = "31570734580"
+W02_PR21_NINTH_REMEDIATION_HEAD = "6eec41125b431a9fd99d8b1821362573de1b5b8a"
+W02_PR21_NINTH_REMEDIATION_PARENT = "15336568c6fcf3a40eb051cdb2b90242ef1e1e09"
+W02_PR21_NINTH_REMEDIATION_TREE = "3361f3e3880c926015a82abc862cb3e8334410c2"
+W02_PR21_NINTH_REMEDIATION_CONTEXT = "8b862ebff66e86bb2549ec76da67422fe60c8f7b"
+W02_PR21_NINTH_REMEDIATION_ASSEMBLY_RUN = "31575062796"
+W02_PR21_NINTH_REMEDIATION_ASSEMBLY_JOB = "94045233041"
+W02_PR21_NINTH_REMEDIATION_SOURCE_RUN = "31575062814"
+W02_PR21_NINTH_REMEDIATION_CONTAINER_RUN = "31575062785"
+W02_PR21_TENTH_REMEDIATION_HEAD = "70b1823259590725d6f579b97fa294d3d9dcf728"
+W02_PR21_TENTH_REMEDIATION_PARENT = "6eec41125b431a9fd99d8b1821362573de1b5b8a"
+W02_PR21_TENTH_REMEDIATION_TREE = "a706817f28b170bab1fe9fe6c3a6e8b673e5dc81"
+W02_PR21_TENTH_REMEDIATION_ASSEMBLY_RUN = "31580628877"
+W02_PR21_TENTH_REMEDIATION_ASSEMBLY_JOB = "94062603909"
+W02_PR21_TENTH_REMEDIATION_SOURCE_RUN = "31580628860"
+W02_PR21_TENTH_REMEDIATION_CONTAINER_RUN = "31580628857"
+W02_PR21_ELEVENTH_REMEDIATION_HEAD = "095cbc12585a2c141f151389c1829bd758e8ed54"
+W02_PR21_ELEVENTH_REMEDIATION_PARENT = "8b2277a2c8027c5fbdab8f3e85506b72044dbba4"
+W02_PR21_ELEVENTH_REMEDIATION_TREE = "2eca5e8e293de444213e3aba43079802b6a0d910"
+W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_RUN = "31799645731"
+W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_JOB = "94764347264"
+W02_PR21_ELEVENTH_REMEDIATION_SOURCE_RUN = "31799645685"
+W02_PR21_ELEVENTH_REMEDIATION_CONTAINER_RUN = "31799645737"
+W02_PR21_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-nogo-authority: "
+    f"context={W02_PR21_CONTEXT},base={W02_PR21_BASE},"
+    f"merge-base={W02_PR21_BASE},reviewed-head={W02_PR21_REVIEWED_HEAD},"
+    f"reviewed-tree={W02_PR21_REVIEWED_TREE},branch={W02_PR21_BRANCH},"
+    "commits=26,files=54,additions=11527,deletions=392,"
+    f"assembly-run={W02_PR21_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_ASSEMBLY_JOB},source-run={W02_PR21_SOURCE_RUN},"
+    f"container-run={W02_PR21_CONTAINER_RUN},decision=NO-GO -->"
+)
+W02_PR21_FIRST_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-first-remediation-authority: "
+    f"source={W02_PR21_FIRST_REMEDIATION_HEAD},"
+    f"tree={W02_PR21_FIRST_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_FIRST_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_FIRST_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_FIRST_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_FIRST_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_SECOND_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-second-remediation-authority: "
+    f"source={W02_PR21_SECOND_REMEDIATION_HEAD},"
+    f"tree={W02_PR21_SECOND_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_SECOND_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_SECOND_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_SECOND_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_SECOND_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_THIRD_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-third-remediation-authority: "
+    f"source={W02_PR21_THIRD_REMEDIATION_HEAD},"
+    f"tree={W02_PR21_THIRD_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_THIRD_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_THIRD_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_THIRD_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_THIRD_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_FOURTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-fourth-remediation-authority: "
+    f"source={W02_PR21_FOURTH_REMEDIATION_HEAD},"
+    f"tree={W02_PR21_FOURTH_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_FOURTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_FOURTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_FIFTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-fifth-remediation-authority: "
+    f"source={W02_PR21_FIFTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_FIFTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_FIFTH_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_FIFTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_FIFTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_FIFTH_REMEDIATION_SOURCE_RUN},"
+    f"source-job={W02_PR21_FIFTH_REMEDIATION_SOURCE_JOB},"
+    f"container-run={W02_PR21_FIFTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-sixth-remediation-authority: "
+    f"source={W02_PR21_SIXTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_SIXTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_SIXTH_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_SIXTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_SIXTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_SEVENTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-seventh-remediation-authority: "
+    f"source={W02_PR21_SEVENTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_SEVENTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_SEVENTH_REMEDIATION_TREE},"
+    f"context={W02_PR21_SEVENTH_REMEDIATION_CONTEXT},"
+    f"assembly-run={W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_SEVENTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_SEVENTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_EIGHTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-eighth-remediation-authority: "
+    f"source={W02_PR21_EIGHTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_EIGHTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_EIGHTH_REMEDIATION_TREE},"
+    f"context={W02_PR21_EIGHTH_REMEDIATION_CONTEXT},"
+    f"assembly-run={W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_EIGHTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_EIGHTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_NINTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-ninth-remediation-authority: "
+    f"source={W02_PR21_NINTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_NINTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_NINTH_REMEDIATION_TREE},"
+    f"context={W02_PR21_NINTH_REMEDIATION_CONTEXT},"
+    f"assembly-run={W02_PR21_NINTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_NINTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_NINTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_NINTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_TENTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-tenth-remediation-authority: "
+    f"source={W02_PR21_TENTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_TENTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_TENTH_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_TENTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_TENTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_TENTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_TENTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER = (
+    "<!-- w02-pr21-eleventh-remediation-authority: "
+    f"source={W02_PR21_ELEVENTH_REMEDIATION_HEAD},"
+    f"parent={W02_PR21_ELEVENTH_REMEDIATION_PARENT},"
+    f"tree={W02_PR21_ELEVENTH_REMEDIATION_TREE},"
+    f"assembly-run={W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_RUN},"
+    f"assembly-job={W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_JOB},"
+    f"source-run={W02_PR21_ELEVENTH_REMEDIATION_SOURCE_RUN},"
+    f"container-run={W02_PR21_ELEVENTH_REMEDIATION_CONTAINER_RUN},result=fail -->"
+)
+W02_PR21_FIFTH_ROOT_CAUSE_LIMIT_MARKER = (
+    "这是高置信代码/时序归因，不是 raw log 直接输出的\n"
+    "binding root cause"
+)
+W02_PR21_SIXTH_PRECOMMIT_NOT_RUN_MARKER = (
+    "| PR #21 sixth remediation technical candidate | `not-run`"
+)
+W02_PR21_SEVENTH_PRECOMMIT_NOT_RUN_MARKER = (
+    "| PR #21 seventh remediation technical candidate | `not-run`"
+)
+W02_PR21_SEVENTH_NOT_RUN_MARKER = W02_PR21_SEVENTH_PRECOMMIT_NOT_RUN_MARKER
+W02_PR21_EIGHTH_PRECOMMIT_NOT_RUN_MARKER = (
+    "第八次 remediation technical candidate：`not-run`"
+)
+W02_PR21_EIGHTH_NOT_RUN_MARKER = W02_PR21_EIGHTH_PRECOMMIT_NOT_RUN_MARKER
+W02_PR21_NINTH_PRECOMMIT_NOT_RUN_MARKER = (
+    "第九次 remediation technical candidate：`not-run`"
+)
+W02_PR21_NINTH_NOT_RUN_MARKER = W02_PR21_NINTH_PRECOMMIT_NOT_RUN_MARKER
+W02_PR21_TENTH_NOT_RUN_MARKER = (
+    "第十次 remediation technical candidate：`not-run`"
+)
+W02_PR21_ELEVENTH_NOT_RUN_MARKER = (
+    "第十一次 remediation technical candidate：`not-run`"
+)
+W02_PR21_TWELFTH_NOT_RUN_MARKER = (
+    "第十二次 remediation technical candidate：`not-run`"
+)
+W02_PR21_REMEDIATION_DOCUMENT_SHA256 = (
+    "0a95146c480c6fe64236c665d3aec198ef6920bec50e1fb2a547d3c4f16d604d"
+)
+W02_PR21_REMEDIATION_REQUIRED_MARKERS = {
+    "PR #21 independent NO-GO 与 remediation 交接",
+    f"| context | `{W02_PR21_CONTEXT}` |",
+    f"| base / merge-base | `{W02_PR21_BASE}` |",
+    f"| branch | `{W02_PR21_BRANCH}` |",
+    f"| independently reviewed head | `{W02_PR21_REVIEWED_HEAD}` |",
+    f"| independently reviewed tree | `{W02_PR21_REVIEWED_TREE}` |",
+    "| reviewed topology | `26` commits；`54` changed files；`11527` additions / `392` deletions |",
+    f"run `{W02_PR21_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_SOURCE_RUN}`",
+    f"run `{W02_PR21_CONTAINER_RUN}`",
+    "| independent decision | **`NO-GO`** |",
+    "`H1 build scratch lifecycle / held dirfd / inode binding / publish / cleanup`",
+    "`LCF_GITHUB_CONTEXT_SHA` 设为 PR context",
+    "`fb3079b851362e2cdb8a6db21c2e071b9b07a842`",
+    "job 末尾三条 `Post job cleanup` 属于 setup-python、setup-node 与 checkout action 的 post",
+    "backend pytest `450` passed、Host Runner `8` tests、demo SDK `3` passed、tools unittest `152`",
+    "QMD `10` passed / `1` allowlisted skip",
+    "旧 PR body 的 `595 passed, 1 skipped` 聚合不能",
+    "不得迁移为新 head\n的 `pass`",
+    f"| exact head | `{W02_PR21_FIRST_REMEDIATION_HEAD}` |",
+    f"| exact tree | `{W02_PR21_FIRST_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_FIRST_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_FIRST_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_FIRST_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_FIRST_REMEDIATION_CONTAINER_RUN}`",
+    "`Installed toolchain symlink is unsafe`",
+    "| technical result | **`fail`**；第一次 remediation attempt 已 `superseded` |",
+    "| PR #21 first remediation technical attempt | `fail` / `superseded`",
+    f"| exact head | `{W02_PR21_SECOND_REMEDIATION_HEAD}` |",
+    f"| exact tree | `{W02_PR21_SECOND_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_SECOND_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_SECOND_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_SECOND_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_SECOND_REMEDIATION_CONTAINER_RUN}`",
+    "`Installed toolchain file is unsafe`",
+    "Python 为 `744` passed / `2` failed / `1` skipped /\n`2` warnings",
+    "W01 evidence job 仍按 `always()` 运行并 fail closed",
+    "| technical result | **`fail`**；第二次 remediation attempt 已 `superseded` |",
+    "| PR #21 second remediation technical attempt | `fail` / `superseded`",
+    "第三次 remediation candidate 的 producer 私有化边界：`not-run`",
+    "**producer output privatization**",
+    "Darwin `RENAME_SWAP` / Linux `RENAME_EXCHANGE`",
+    "group/world-writable hardlink、atomic exchange 不可用",
+    "technical result 在 fresh exact-head source/assembly 完成前仍是 `not-run`",
+    f"| exact head | `{W02_PR21_THIRD_REMEDIATION_HEAD}` |",
+    f"| exact tree | `{W02_PR21_THIRD_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_THIRD_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_THIRD_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_THIRD_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_THIRD_REMEDIATION_CONTAINER_RUN}`",
+    "`Exact uv runtime export failed`",
+    "payload artifact `9022014613` 与 provenance artifact\n`9022014784`",
+    "API 与 MCP jobs success",
+    "| technical result | **`fail`**；第三次 remediation attempt 已 `superseded` |",
+    "| PR #21 third remediation technical attempt | `fail` / `superseded`",
+    "| PR #21 next exact remediation technical candidate | `not-run`",
+    "第四次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_FOURTH_REMEDIATION_HEAD}` |",
+    f"| exact tree | `{W02_PR21_FOURTH_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_FOURTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_FOURTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_FOURTH_REMEDIATION_CONTAINER_RUN}`",
+    "`Exact Python sidecar inner build failed (exit=2; category=unclassified)`",
+    "cleanup-only `always()` gate 也以 exit `1` 失败",
+    "Actions 原始日志直接证明的是 inner `exit=2/category=unclassified` 与随后 cleanup gate `exit=1`",
+    "Apple APFS reference 把 directory `nchildren` 定义为全部\n   directory entries",
+    "没有找到公开 Apple/XNU source 对 `nchildren` 到 POSIX `st_nlink` 的直接",
+    "source snapshot 已密封为 `0500`",
+    "| technical result | **`fail`**；第四次 remediation attempt 已 `superseded` |",
+    "| PR #21 fourth remediation technical attempt | `fail` / `superseded`",
+    "第五次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_FIFTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_FIFTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_FIFTH_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_FIFTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_FIFTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_FIFTH_REMEDIATION_SOURCE_RUN}`",
+    f"job `{W02_PR21_FIFTH_REMEDIATION_SOURCE_JOB}`",
+    f"run `{W02_PR21_FIFTH_REMEDIATION_CONTAINER_RUN}`",
+    "测试在 `0500` directory 中创建 `state` fixture 时已失败，尚未调用被测\nproduct cleanup",
+    W02_PR21_FIFTH_ROOT_CAUSE_LIMIT_MARKER,
+    "日志未记录 launcher 替换前后的 identity 或专用因果 enum",
+    "| technical result | **`fail`**；第五次 remediation attempt 已 `superseded` |",
+    "| PR #21 fifth remediation technical attempt | `fail` / `superseded`",
+    "第六次 remediation technical candidate：`not-run`",
+    W02_PR21_SIXTH_PRECOMMIT_NOT_RUN_MARKER,
+    "无 committed exact head/tree；无 fresh exact-head Actions",
+    "rebind/fixture focused tests `18 passed`",
+    "packaging corpus `545 passed / 2 skipped`",
+    "backend source suite `809 passed / 3 skipped`",
+    "pre-1 policy/checker corpus `211 tests`",
+    "| local validation date | `2026-08-11` |",
+    "| local baseline | `HEAD c04fe9fce2bc2f0f4350e080f7f02c44699c975d` + 当前未提交的 `14` 个 tracked file bytes",
+    "| local environment | `Linux 6.18.35 x86_64`；CPython `3.12.13` |",
+    "不是 committed exact-head\nActions、macOS framework installer 或 packaged App launch/runtime evidence",
+    "本地完整 Python packaging corpus 为 `533 passed / 2 skipped`",
+    "两个 skip 分别是 foreign-owner\nfilesystem capability case 与 Darwin/APFS 真机 case，在当前 Linux 环境 `not-run`",
+    "第六次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_SIXTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_SIXTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_SIXTH_REMEDIATION_TREE}` |",
+    f"| synthetic PR context SHA | `{W02_PR21_SIXTH_REMEDIATION_CONTEXT}` |",
+    (
+        "| committed-source snapshot SHA-256 | "
+        f"`{W02_PR21_SIXTH_REMEDIATION_SOURCE_SNAPSHOT_SHA256}` |"
+    ),
+    f"run `{W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_SIXTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_SIXTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_SIXTH_REMEDIATION_CONTAINER_RUN}`",
+    "packaged-smoke policy `67/67`",
+    "exact-Git test `1/1`",
+    "`Reviewed Python installer launcher is unsafe`",
+    "cleanup-only `always()` step\n成功",
+    "focused lifecycle tests 全部 skipped",
+    "remote engineering product artifacts 为 `[]`",
+    "| technical result | **`fail`**；第六次 remediation attempt 已 `superseded` |",
+    "Desktop source run `31460588210` 的预期 jobs 全部 success",
+    "Containers run\n`31460588212` 也成功，但 PR 路径保持 no publish",
+    "第七次 remediation technical candidate：`not-run`",
+    W02_PR21_SEVENTH_PRECOMMIT_NOT_RUN_MARKER,
+    "六次\nremediation attempts `fail` / `superseded` 与第七次 exact candidate `not-run`",
+    "第七次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_SEVENTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_SEVENTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_SEVENTH_REMEDIATION_TREE}` |",
+    f"| synthetic PR context SHA | `{W02_PR21_SEVENTH_REMEDIATION_CONTEXT}`",
+    f"run `{W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_SEVENTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_SEVENTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_SEVENTH_REMEDIATION_CONTAINER_RUN}`",
+    "digest 加一个 ASCII 空格",
+    "workflow 当时错误期待小写 digest 加两个空格",
+    "cleanup-only `always()` gate 却无条件解引用该 success-only 环境变量",
+    "| technical result | **`fail`**；第七次 remediation attempt 已 `superseded` |",
+    W02_PR21_EIGHTH_NOT_RUN_MARKER,
+    "它尚无 committed exact head/tree 或 fresh exact-head Actions",
+    "第八候选仍为\n`not-run`",
+    "第八候选 pre-commit local validation",
+    "| local baseline | `HEAD aaf3f51f69dfded82b8237e03a871017317e7158` / tree `60c2c6c2553ff8d10c2faee47ec838b34e378fc5` + 未提交 `15`-file bytes",
+    "direct checker pass、`53/53`",
+    "默认 uv cache\n`/root/.cache/uv` 为只读",
+    "| latest independent acceptance | `NO-GO`（仍绑定旧 `8c5fd…` / `785f46…`）；本候选 `pending` |",
+    "| latest independent acceptance | `NO-GO`",
+    "| W02 | `in-progress` |",
+    "| `VAL-PACKAGED-SMOKE-001` | `not-run` |",
+    "| W10/W11 | `locked` |",
+    "| packaged App / bundle sidecar launch | `not-run` |",
+    "| public release | `NO-GO` |",
+    "第八次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_EIGHTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_EIGHTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_EIGHTH_REMEDIATION_TREE}` |",
+    f"| synthetic PR context SHA | `{W02_PR21_EIGHTH_REMEDIATION_CONTEXT}`",
+    f"run `{W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_EIGHTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_EIGHTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_EIGHTH_REMEDIATION_CONTAINER_RUN}`",
+    "root-owned、不可由\n普通 runner 遍历的 `.lcf-python-quarantine.*` 空目录",
+    "该 system-root quarantine\nresidue cleanup 明确为 `not-proven`",
+    "success-only source provenance、renderer、Desktop profile、static assembly/bundle audit 与 focused\nlifecycle tests 全部 skipped",
+    "assembled App 未启动",
+    "| technical result | **`fail`**；第八次 remediation attempt 已 `superseded` |",
+    W02_PR21_NINTH_NOT_RUN_MARKER,
+    "第九候选 pre-commit local validation",
+    "`HEAD 15336568c6fcf3a40eb051cdb2b90242ef1e1e09` / tree\n"
+    "`66779e9ca8df445fb413e93faed4d265899fb1ec` 加当前 scoped `15`-file worktree",
+    "placeholder state 在 EXIT trap 注册前覆盖 inherited values",
+    "policy mutation `80/80`、exact-Git `1/1`",
+    "direct checker pass、`55/55`",
+    "当前汇总是八次 remediation attempts `fail` / `superseded` 与第九次 exact candidate `not-run`",
+    "第九次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_NINTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_NINTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_NINTH_REMEDIATION_TREE}` |",
+    f"| synthetic PR context SHA | `{W02_PR21_NINTH_REMEDIATION_CONTEXT}`",
+    f"run `{W02_PR21_NINTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_NINTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_NINTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_NINTH_REMEDIATION_CONTAINER_RUN}`",
+    "reviewed archive 中 symlink mode 是 `0775`，macOS Installer 落盘后的\n同一 symlink mode 是 `0777`",
+    "`Reviewed Python framework core fingerprint changed`",
+    "cleanup-only `always()` step 成功只证明其声明的 runner-temp producer/toolchain/installer、\nreviewed-source 与 repo scratch scope",
+    "| technical result | **`fail`**；第九次 remediation attempt 已 `superseded` |",
+    W02_PR21_TENTH_NOT_RUN_MARKER,
+    "当前汇总是九次 remediation attempts `fail` / `superseded` 与第十次 exact candidate `not-run`",
+    "第十候选设计补充：单一落盘指纹与事务式 seal cleanup",
+    "macOS Installer 落盘后的 reviewed framework core fingerprint 单一固定为\n"
+    "`ba58cfb559f29c34beb962cb5d88587e9104f5610c255a58494c2945c1e863ec`",
+    "在注册 EXIT trap 前，transaction phase、新 installed root identity 与旧 quarantine state/identity\n  都先写入 fail-closed sentinel",
+    "只有在新 root 与旧 quarantine（若存在）的 exact path、directory/non-symlink type、root owner 和\n  `dev:ino` 全部验证并绑定后",
+    "verifier 或 held verifier/lock inputs 失败时，只在新 root 与旧 quarantine 的双 identity 仍与已绑定\n  值一致时删除新 root并把旧 root 原子恢复",
+    "原先没有旧 root 时只删除\n  identity-matched 新 root",
+    "任一 path/type/owner/`dev:ino` mismatch 都不得删除新 root、旧 quarantine 或 replacement",
+    "fixed cleanup failure `70`",
+    "verifier 与 held inputs 全部成功后才能把 transaction 标为 `committed`",
+    "committed cleanup 只在旧\n  quarantine exact identity 仍匹配时精确删除该 quarantine",
+    "第十候选 technical\nresult 继续为 `not-run`",
+    "`f922c9d7c78f3745dc453211677fbce2e4b415616556b11376a92ca7a17fc391`",
+    "其中 `33` 条 symlink 的 lstat mode 为 `0775`，得到旧 fingerprint\n`863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d`",
+    "只把这 `33` 条 symlink\nmode 映射为 macOS Installer 表示的 `0777`",
+    "仓库 Node verifier 独立计算也得到同一 `ba58…`",
+    "这不是 runtime learn-and-accept",
+    "symlink mode、target、path、type 与其他 inventory mode/\nbytes 全部参与比较",
+    "第十候选 pre-commit local validation",
+    "`HEAD 6eec41125b431a9fd99d8b1821362573de1b5b8a` / tree\n"
+    "`3361f3e3880c926015a82abc862cb3e8334410c2` 加当前 `19` 个 tracked-file worktree",
+    "`Linux 6.18.35 x86_64` / CPython `3.12.13` / Node `v24.14.0`",
+    "Node verifier `42/42`、direct checker pass、policy mutation `80/80`、exact-Git `1/1`",
+    "`559 passed / 2 skipped`",
+    "`824 passed / 3 skipped / 2 warnings`",
+    "direct checker pass；`57/57`",
+    "`6` modified Python files compile；`2` CJS files syntax check pass",
+    "这些 portable/local 结果不证明 macOS Installer 的 exact seal、transaction rollback/restore",
+    "不能把第十候选提升为\ntechnical `pass`",
+    "第十次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_TENTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_TENTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_TENTH_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_TENTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_TENTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_TENTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_TENTH_REMEDIATION_CONTAINER_RUN}`",
+    "| technical result | **`fail`**；第十次 remediation attempt 已 `superseded` |",
+    W02_PR21_ELEVENTH_NOT_RUN_MARKER,
+    "`8b2277a2c8027c5fbdab8f3e85506b72044dbba4` / tree",
+    "`dd741078e65d1fc9d02e3d012e5590df3a5f98fd` 开始的未提交本地 worktree",
+    "`3654` entries / SHA-256",
+    "`863a6353e58b9c71dc44847051aa582519a66b9347d8c09915ef5254c694bb5d`",
+    "Frameworks/Tcl.framework/Versions/8.6/._libtclstub8.6.a",
+    "Frameworks/Tcl.framework/Versions/8.6/._tclConfig.sh",
+    "Frameworks/Tcl.framework/Versions/8.6/._tclooConfig.sh",
+    "Frameworks/Tk.framework/Versions/8.6/._libtkstub8.6.a",
+    "Frameworks/Tk.framework/Versions/8.6/._tkConfig.sh",
+    "lib/python3.13/config-3.13-darwin/._python.o",
+    "`33` 个 exact `kind=symlink-mode` records",
+    "以上 `39` 条 path-level transformations 产生唯一 expected sealed core：`3648` entries",
+    "`fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9`",
+    "文件 size `620662` / SHA-256",
+    "`b8ef4275109642632e5b8e254156da410889f0bb38e95188321d602f20496eec`",
+    "raw materialization 都只作为 seal 输入",
+    "七类 difference count 全部为 `0`",
+    "committed` 状态继续保留旧 quarantine",
+    "rollback-ready 的 `pending:pending`、`rolled-back:rolled-back` 或 `committed:committed`",
+    "no-rollback/fixed `70`",
+    "不声称能从 `SIGKILL`、host crash",
+    "本机没有 passwordless",
+    "real Installer reproduction、",
+    "`macOS 26.2 (25C56) arm64` / Node `v24.10.0` / npm `11.6.0` / Python `3.14.6`",
+    "policy mutation `86/86`",
+    "exact-Git `1/1`",
+    "`60 passed / 4 skipped`",
+    "Homebrew Python `pyexpat` 缺 `_XML_SetAllocTrackerActivationThreshold` symbol",
+    "`PYTHONPATH=/private/tmp/lcf-python313-compat`",
+    "exit `0`；`22 passed`",
+    "exit non-zero；`85 passed / 5 failed`",
+    "exit `0`；`90/90`",
+    "`460 passed / 114 failed / 1 skipped`",
+    "direct checker pass；`59/59`",
+    "YAML `2/2`；Bash `37/37`",
+    "Markdown links `90` files；diff check pass",
+    "当前汇总是十次 remediation\nattempts `fail` / `superseded` 与第十一次 local candidate `not-run`",
+    "第十一次 remediation 技术执行：`fail` / `superseded`",
+    f"| exact head | `{W02_PR21_ELEVENTH_REMEDIATION_HEAD}` |",
+    f"| exact parent | `{W02_PR21_ELEVENTH_REMEDIATION_PARENT}` |",
+    f"| exact tree | `{W02_PR21_ELEVENTH_REMEDIATION_TREE}` |",
+    f"run `{W02_PR21_ELEVENTH_REMEDIATION_SOURCE_RUN}`",
+    f"run `{W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_RUN}`",
+    f"job `{W02_PR21_ELEVENTH_REMEDIATION_ASSEMBLY_JOB}`",
+    f"run `{W02_PR21_ELEVENTH_REMEDIATION_CONTAINER_RUN}`",
+    "`fdd600648dfce22601ceb0f5a8464d3784f58aa7d7dd09b288e1c942c14167f9`",
+    "`77b58098a5ebc6890e1335eed3afaa1b9bad96029b7b5ad42e45b270b6649d10`",
+    "`mode=33`，missing、extra、type、target、size、content 均为 `0`",
+    "Installer 保持这些 symlink 的 `0775` mode",
+    "system-root transaction 进入 `rolled-back`",
+    "独立\n`always()` framework postcondition 成功",
+    "| technical result | **`fail`**；第十一次 remediation attempt 已 `superseded` |",
+    W02_PR21_TWELFTH_NOT_RUN_MARKER,
+    "`095cbc12585a2c141f151389c1829bd758e8ed54` 为 baseline 的未提交本地 worktree",
+    "唯一允许的 package\ntransformation 是移除既有列表中的 `6` 个 exact AppleDouble regular-file entries",
+    "symlink 的 path/type/target/mode 均保持 exact `0775`",
+    "文件\nsize `615969` / SHA-256",
+    "`b145fe364990e1f029d2d628c03082b039a29704acdd13a11277d14c7d89a25f`",
+    "lock size `4852` /\nSHA-256 `9682d3112cf816944bdf34ba532ccc401c80f44a4e7c752d60ce314307894431`",
+    "verifier size `51765` /\nSHA-256 `2dbd1f364a56bbabfd1959259ba0c23fada464b526d7aef64bfdca8161f8bbfe`",
+    "三个 full-expansion materialization 上都观察到",
+    "`Frameworks/Tcl.framework/Headers` 的 lstat mode 为 `0777`",
+    "错误\n模型的来源/反例，不是 `77b580…` 的正向复现",
+    "本机真实 `/Library/Frameworks` install/rollback/postcondition\n继续为 `not-run`",
+    "第十二次候选本地验证",
+    "`095cbc12585a2c141f151389c1829bd758e8ed54` baseline + 当前",
+    "`entries=3648`；inventory `77b580…`",
+    "`60 passed / 4 skipped`；4 个 skip 均为 root-only fixture",
+    "`57/57`",
+    "direct checker pass；policy mutation `86/86`；exact-Git `1/1`",
+    "`30 passed / 553 deselected`",
+    "`468 passed / 114 failed / 1 skipped` in `117.62s`",
+    "`11 passed` in `0.49s`",
+    "| Desktop engineering consumer default aggregate（initial） | "
+    "`npm --prefix desktop run test:engineering-smoke` |",
+    "exit `1`；`92 passed / 5 failed`；4 个 renderer canonical-directory failures",
+    "| Desktop engineering consumer default aggregate（isolated retry） | "
+    "`npm --prefix desktop run test:engineering-smoke` |",
+    "exit `1`；`93 passed / 4 failed`；4 个 failure 均为上述 renderer canonical "
+    "temp-dir `/tmp` vs `/private/tmp` 差异",
+    "initial 的第 5 个 timeout 未复现，故记为 concurrent-load transient",
+    "`97/97`",
+    "| Desktop build | `cd desktop && npm run build` | exit `0`；main/preload/companion build success |",
+    "direct checker pass；`61/61`",
+    "YAML `2/2`；Bash `37/37`（smoke `14` + formal `23`）",
+    "Markdown links `90` files；version/protocol sync pass；diff check pass",
+    "上述 Python aggregate failure 也不会被 focused pass 覆盖",
+    "`97/97` 不能覆盖默认 Desktop engineering aggregate initial "
+    "`92 passed / 5 failed` 与 isolated\nretry `93 passed / 4 failed` 的失败结论",
+    "first through eleventh remediation attempts `fail` / `superseded`",
+    "第十二次 local candidate\n`not-run`",
+}
+W02_PR21_REMEDIATION_FORBIDDEN_CLAIMS = {
+    "decision=GO",
+    "| independent acceptance | `pass`",
+    "| latest independent acceptance | `pass`",
+    "| W02 | `completed`",
+    "| `VAL-PACKAGED-SMOKE-001` | `pass`",
+    "| W10/W11 | `unlocked`",
+    "| packaged App / bundle sidecar launch | `pass`",
+    "| public release | `GO`",
+    "| PR #21 sixth remediation technical candidate | `pass`",
+    "| PR #21 sixth remediation technical attempt | `pass`",
+    "| PR #21 seventh remediation technical candidate | `pass`",
+    "| PR #21 seventh remediation technical attempt | `pass`",
+    "| PR #21 eighth remediation technical candidate | `pass`",
+    "第八次 remediation technical candidate：`pass`",
+    "| PR #21 eighth remediation technical attempt | `pass`",
+    "| PR #21 ninth remediation technical candidate | `pass`",
+    "第九次 remediation technical candidate：`pass`",
+    "| PR #21 ninth remediation technical attempt | `pass`",
+    "| PR #21 tenth remediation technical candidate | `pass`",
+    "第十次 remediation technical candidate：`pass`",
+    "| PR #21 eleventh remediation technical candidate | `pass`",
+    "第十一次 remediation technical candidate：`pass`",
+    "| PR #21 eleventh remediation technical attempt | `pass`",
+    "| PR #21 twelfth remediation technical candidate | `pass`",
+    "第十二次 remediation technical candidate：`pass`",
+    "raw log 直接证明 binding root cause",
+}
+
+W02_STATUS_CURRENT_SUMMARY = (
+    "| 当前结论 | **W02 in-progress：latest independent `NO-GO`（仅绑定旧 reviewed "
+    "head/tree）；eleven remediation attempts `fail` / `superseded`；twelfth local "
+    "candidate `not-run`（无 committed exact head/tree；无 fresh exact-head Actions）；"
+    "eleventh Actions real Installer ran and rolled back，local system-root 与 packaged "
+    "launch/runtime `not-run`；W10/W11 locked；public release NO-GO** |"
+)
+
+W02_CURRENT_GOVERNANCE_REQUIREMENTS = {
+    "work plan": {
+        "evidence/W02/2026-08-07-pr21-remediation.md",
+        "reviewed `8c5fd232…` / tree `785f4656…`",
+        "独立判定为 `NO-GO`",
+        "第十一次 exact `095cbc1…` / parent `8b2277a…` / tree",
+        "第十一次已 technical",
+        "第十二次 local candidate `not-run`",
+        "`3654` / `863a6353…`",
+        "`3648` / `77b580…`",
+        "`b145fe36…`",
+        "pkgutil full-expansion materialization",
+        "来源/反例",
+        "本机 system-root reproduction 为 `not-run`",
+        "pre-trap sentinel",
+        "`VAL-PACKAGED-SMOKE-001` 仍为 `not-run`",
+    },
+    "TODO": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "独立判定为 `NO-GO`",
+        "first remediation technical attempt `fail` / `superseded`",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "twelfth local candidate remains `not-run`",
+        "`77b580…`",
+        "`b145fe36…`",
+        "来源/反例",
+        "本机 system-root reproduction 为 `not-run`",
+        "pre-trap sentinel",
+        "W10/W11 保持 locked",
+    },
+    "traceability": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "independent `NO-GO`",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "first through eleventh remediations technical `fail` / `superseded`",
+        "twelfth local",
+        "`77b580…`",
+        "`b145fe36…`",
+        "full expansion 是旧\nnormalization 模型的来源/反例",
+        "本机 real Installer/system-root",
+        "pre-trap",
+        "W10/W11 locked",
+    },
+    "iteration": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "latest independent `NO-GO`",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "technical `fail` / `superseded`；第十二次",
+        "PR #21 twelfth local candidate",
+        "`77b580…`",
+        "`b145fe36…`",
+        "来源/反例",
+        "本机 system-root reproduction 仍为 `not-run`",
+        "Desktop default initial `92 pass / 5 fail`",
+        "isolated retry `93 pass / 4 fail`",
+        "timeout 未复现并记为 concurrent-load transient",
+        "显式 `TMPDIR=/private/tmp` 后 `97/97` 但不覆盖 default failure",
+        "在 trap 前设置 sentinel",
+        "W10/W11 保持 locked",
+    },
+    "status": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "latest independent `NO-GO`",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "eleven remediation attempts `fail` / `superseded`",
+        "twelfth local candidate `not-run`",
+        "`77b580…`",
+        "`b145fe36…`",
+        "来源/反例",
+        "eleventh Actions real Installer ran and rolled back",
+        "pre-trap sentinel",
+        "W10/W11 locked",
+        "public release NO-GO",
+    },
+    "evidence index": {
+        W02_PR21_REVIEWED_HEAD,
+        W02_PR21_REVIEWED_TREE,
+        "independent `NO-GO`",
+        "first through eleventh remediation technical attempts `fail` / `superseded`",
+        W02_PR21_ELEVENTH_REMEDIATION_HEAD,
+        W02_PR21_ELEVENTH_REMEDIATION_PARENT,
+        W02_PR21_ELEVENTH_REMEDIATION_TREE,
+        "twelfth local candidate `not-run`",
+        "`77b580…`",
+        "`b145fe36…`",
+        "来源/反例",
+        "本机 system-root install/rollback/postcondition 仍为",
+        "pre-trap sentinel",
+        "W10/W11 locked",
+    },
+    "parent iteration": {
+        "reviewed `8c5fd232…` / tree `785f4656…`",
+        "independent `NO-GO`",
+        "first through eleventh attempts `fail` / `superseded`",
+        "twelfth local candidate `not-run`",
+        "latest failed `095cbc1…` / parent `8b2277a…` / tree `2eca5e8…`",
+        "`77b580…`",
+        "`b145fe36…`",
+        "pkgutil full-expansion `0777` is a counterexample",
+        "本机 real Installer/\nsystem-root reproduction 仍为 `not-run`",
+        "pre-trap sentinel",
+        "W10/W11 locked",
+    },
+}
 
 CONTINUITY_COMPONENTS = {
     "W13 checkpoint commit/package digest",
@@ -306,6 +1116,11 @@ def validate_documents(
     r13: str,
     release_runbook: str,
     w01_evidence: dict[str, object],
+    w02_entry: str,
+    w02_assembly: str,
+    w02_remediation: str,
+    evidence_index: str,
+    parent_iteration: str,
 ) -> list[str]:
     errors: list[str] = []
     expected_task_status = dict(EXPECTED_TASK_STATUS)
@@ -315,9 +1130,8 @@ def validate_documents(
         if isinstance(remediation, dict)
         else None
     )
-    if remediation_technical not in {"pending", "pass"}:
-        errors.append("W01 remediation technical result must be pending or pass")
-        remediation_technical = "pending"
+    if remediation_technical != "pass":
+        errors.append("historical W01 remediation technical result must remain pass")
 
     marker = re.search(r"<!-- pre1-work-order: ([A-Z0-9,]+) -->", plan)
     actual_order = marker.group(1).split(",") if marker else []
@@ -459,7 +1273,7 @@ def validate_documents(
             continue
         for marker in (
             OLD_REJECTED_TRACE_MARKER,
-            current_w01_trace_marker(remediation_technical),
+            CURRENT_W01_TRACE_MARKER,
         ):
             if marker not in row[2]:
                 errors.append(f"{gate} lifecycle result missing {marker!r}")
@@ -468,22 +1282,136 @@ def validate_documents(
         errors.append("W01 evidence remediation lifecycle is missing")
     else:
         if remediation.get("independent_acceptance") != "pending":
-            errors.append("W01 independent acceptance must remain pending")
+            errors.append("historical W01 independent acceptance must remain pending")
         activation = remediation.get("canonical_activation")
         if not isinstance(activation, dict) or activation.get("status") != "blocked":
-            errors.append("W01 canonical activation must remain blocked")
+            errors.append("historical W01 canonical activation must remain blocked")
     canonical_main = w01_evidence.get("canonical_main_source")
     if not isinstance(canonical_main, dict) or canonical_main.get("status") != "not-run":
-        errors.append("W01 canonical-main source result must remain not-run")
+        errors.append("historical W01 canonical-main source result must remain not-run")
+
+    candidate_history = w01_evidence.get("candidate_history")
+    rejected = candidate_history[0] if isinstance(candidate_history, list) and candidate_history else None
+    if not isinstance(rejected, dict) or rejected.get("source_commit") != (
+        "2b7629468c711d0db5107f7001aa90c0271079ae"
+    ):
+        errors.append("historical W01 rejected final head drifted")
+    if not isinstance(rejected, dict) or rejected.get("independent_acceptance") != "fail":
+        errors.append("historical W01 rejected acceptance must remain fail")
+
+    if w02_entry.count(W02_ENTRY_AUTHORITY_MARKER) != 1:
+        errors.append("W02 entry must contain the exact external authority marker once")
+    for marker in sorted(W02_ENTRY_REQUIRED_MARKERS):
+        if marker not in w02_entry:
+            errors.append(f"W02 entry missing required marker: {marker}")
+
+    if w02_assembly.count(W02_ASSEMBLY_AUTHORITY_MARKER) != 1:
+        errors.append("W02 assembly must contain the exact run authority marker once")
+    if (
+        hashlib.sha256(w02_assembly.encode("utf-8")).hexdigest()
+        != W02_ASSEMBLY_DOCUMENT_SHA256
+    ):
+        errors.append("W02 assembly reviewed document drifted")
+    for marker in sorted(W02_ASSEMBLY_REQUIRED_MARKERS):
+        if marker not in w02_assembly:
+            errors.append(f"W02 assembly missing required marker: {marker}")
+    for forbidden in sorted(W02_ASSEMBLY_FORBIDDEN_CLAIMS):
+        if forbidden in w02_assembly:
+            errors.append(f"W02 assembly contains forbidden claim: {forbidden}")
+
+    if w02_remediation.count(W02_PR21_AUTHORITY_MARKER) != 1:
+        errors.append("W02 PR #21 remediation must contain the exact NO-GO authority marker once")
+    if w02_remediation.count(W02_PR21_FIRST_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact first-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_SECOND_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact second-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_THIRD_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact third-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_FOURTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact fourth-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_FIFTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact fifth-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_SIXTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact sixth-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_SEVENTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact seventh-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_EIGHTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact eighth-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_NINTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact ninth-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_TENTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact tenth-attempt authority marker once"
+        )
+    if w02_remediation.count(W02_PR21_ELEVENTH_REMEDIATION_AUTHORITY_MARKER) != 1:
+        errors.append(
+            "W02 PR #21 remediation must contain the exact eleventh-attempt authority marker once"
+        )
+    if (
+        hashlib.sha256(w02_remediation.encode("utf-8")).hexdigest()
+        != W02_PR21_REMEDIATION_DOCUMENT_SHA256
+    ):
+        errors.append("W02 PR #21 remediation reviewed document drifted")
+    for marker in sorted(W02_PR21_REMEDIATION_REQUIRED_MARKERS):
+        if marker not in w02_remediation:
+            errors.append(f"W02 PR #21 remediation missing required marker: {marker}")
+    for forbidden in sorted(W02_PR21_REMEDIATION_FORBIDDEN_CLAIMS):
+        if forbidden in w02_remediation:
+            errors.append(f"W02 PR #21 remediation contains forbidden claim: {forbidden}")
+
+    current_governance_documents = {
+        "work plan": plan,
+        "TODO": todo,
+        "traceability": trace,
+        "iteration": iteration,
+        "status": status,
+        "evidence index": evidence_index,
+        "parent iteration": parent_iteration,
+    }
+    for label, required in W02_CURRENT_GOVERNANCE_REQUIREMENTS.items():
+        text = current_governance_documents[label]
+        for marker in sorted(required):
+            if marker not in text:
+                errors.append(f"{label} missing current PR #21 NO-GO marker: {marker}")
+    if status.count(W02_STATUS_CURRENT_SUMMARY) != 1:
+        errors.append(
+            "status must contain the exact eleven-failure/twelfth-candidate summary once"
+        )
 
     r13_status = re.search(r"^- 状态：`([^`]+)`", r13, re.MULTILINE)
-    if r13_status is None or r13_status.group(1) != "in-progress":
-        errors.append("R13 status must remain in-progress until canonical activation")
+    if r13_status is None or r13_status.group(1) != "completed":
+        errors.append("R13 status must be completed after external W01 closeout")
     if "- [x] R13-06" not in r13 or "旧候选" not in r13:
         errors.append("R13-06 must preserve the old technical execution as rejected history")
-    remediation_checked = "- [x] R13-07" in r13
-    if remediation_checked != (remediation_technical == "pass"):
-        errors.append("R13-07 checkbox must match remediation technical closeout only")
+    if "- [x] R13-07" not in r13:
+        errors.append("R13-07 must preserve remediation technical closeout")
+    if "- [x] R13-08" not in r13:
+        errors.append("R13-08 must record external W01 closeout")
+
+    iteration_status = re.search(r"^- 状态：`([^`]+)`", iteration, re.MULTILINE)
+    if iteration_status is None or iteration_status.group(1) != "in-progress":
+        errors.append("ITER-0008 status must be in-progress while W02 is active")
+    for marker in sorted(W02_PHASE_MARKERS):
+        if marker not in iteration:
+            errors.append(f"ITER-0008 missing W02 phase marker: {marker}")
 
     continuity_row = validation_by_id.get("VAL-RELEASE-CONTINUITY-001")
     if continuity_row is not None:
@@ -499,6 +1427,24 @@ def validate_documents(
         for item in sorted(NEW_STABLE_IDS):
             if re.search(rf"(?<![A-Z0-9-]){re.escape(item)}(?![A-Z0-9-])", text) is None:
                 errors.append(f"{label} stable ID missing {item}")
+
+    for label, text in (
+        ("work plan", plan),
+        ("TODO", todo),
+        ("traceability", trace),
+        ("iteration", iteration),
+        ("R13", r13),
+        ("status", status),
+        ("W02 entry", w02_entry),
+        ("W02 assembly", w02_assembly),
+        ("W02 remediation", w02_remediation),
+        ("evidence index", evidence_index),
+        ("parent iteration", parent_iteration),
+    ):
+        if re.search(r"(?:REQ|TODO|VAL|ITER)-W02A\b|\bW02A\b", text):
+            errors.append(f"{label} must not create a W02A stable ID")
+        if re.search(r"\bW02-B\b|\bW02B\b", text):
+            errors.append(f"{label} must not introduce W02-B/W02B")
 
     authority_requirements = {
         "ADR-0016": (adr, {"VAL-RELEASE-CONTINUITY-001", "W13 checkpoint", "W16"}),
@@ -571,13 +1517,21 @@ def main() -> int:
         read(R13),
         read(RELEASE_RUNBOOK),
         json.loads(read(W01_EVIDENCE)),
+        read(W02_ENTRY),
+        read(W02_ASSEMBLY),
+        read(W02_REMEDIATION),
+        read(EVIDENCE_INDEX),
+        read(PARENT_ITERATION),
     )
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
         return 1
 
-    print("pre-1.0 work plan OK: exact ranks, mappings, gates, statuses, and release boundary")
+    print(
+        "pre-1.0 work plan OK: exact ranks, mappings, immutable W02 historical assembly "
+        "and PR #21 NO-GO/remediation evidence, packaged gate status, and release boundary"
+    )
     return 0
 
 

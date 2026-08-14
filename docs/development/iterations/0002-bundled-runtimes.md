@@ -8,8 +8,8 @@
 - two-stage release merge：`main@fb8bbbc3d0b4e4b5a20c943bd7fd71b2450651a8`
 - Electron-only planning merge：`main@da40553e43ec6272e1affc1f40abf4f9215f1ba5`
 - Pre-1.0 planning merge：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
-- 当前治理基线：`main@3eff97d97b2de4484d568bab5ac96d63830c79ee`
-- 当前文档/CI 分支：`agent/w01-governance-source-ci`
+- 当前实施基线：`main@1786255b55dd1a78659ed92235893876175a0722`
+- 当前工程包分支：`agent/w02a-engineering-smoke-boundary`
 - 依赖：[ITER-0001](0001-electron-foundation.md) 的源码模式 trust/IPC 契约
 - 路线图阶段：P2、P3；提前落地 P5/P6 source foundation
 - 追踪矩阵：[traceability](../traceability.md)
@@ -59,7 +59,7 @@ packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
 | Codex MCP onboarding 与签名 CLI discovery | [ADR-0013](../../adr/0013-codex-mcp-onboarding-signed-cli-discovery.md) | R08 source discovery/onboarding 已实现；真实 OpenAI 签名 gate 待运行 |
 | 候选 Draft 与公开 promotion 分离 | [ADR-0014](../../adr/0014-two-stage-desktop-release-promotion.md) | R09 的 tag-only signing、trusted-main promotion（无配置 release secret/长期签名凭据，使用短期 `GITHUB_TOKEN`）、ruleset/immutable source policy 已实现并复验；真实 settings/promotion 待运行 |
 | Electron-only 与 legacy retirement | [ADR-0015](../../adr/0015-electron-only-legacy-retirement.md) | R12 已冻结 remove/retain/split；cutover/removal/absence gate 均 `not-run` |
-| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13/W01 旧 technical candidate 独立验收 `fail`；remediation technical checkpoint `pass` / activation pending；runtime/package/slice/final/release gate 均 `not-run` |
+| 增量 retirement 与工程测试包 | [ADR-0016](../../adr/0016-pre1-incremental-retirement-engineering-package.md) | R13/W01 external closeout `pass`；ITER-0008/W02 旧 static assembly/bundle audit 是历史技术 `pass`，PR #21 reviewed head 独立验收 `NO-GO`、first through eleventh remediation attempts `fail` / `superseded`、twelfth local candidate `not-run`；eleventh Actions real Installer 已运行但 seal failed/rolled back，本机 system-root 与 packaged launch/runtime `not-run`；W02 仍 `in-progress`，slice/final/release gate 均 `not-run` |
 
 ## 任务
 
@@ -95,9 +95,9 @@ packaged runtime 的 source/macOS CI 合同不替代 clean-user DMG、
 - [x] **R12 Electron-only retirement scope**：接受 ADR-0015，建立严格路径矩阵、替代门禁和
   ITER-0007/TODO；实际删除不在本纵切，见
   [R12](0002-r12-legacy-retirement-scope.md)。
-- [ ] **R13 Pre-1.0 增量式 retirement 治理**：接受 ADR-0016，落盘 W01–W16、最小
-  packaged smoke、独立 slice、cleaned-tree engineering package 与正式发行后置门禁；旧 W01
-  technical candidate 已被独立拒绝，remediation 与 canonical activation 尚未完成，见
+- [x] **R13 Pre-1.0 增量式 retirement 治理**：接受 ADR-0016，落盘 W01–W16、最小
+  packaged smoke、独立 slice、cleaned-tree engineering package 与正式发行后置门禁；保留旧 W01
+  rejection，并记录 accepted remediation、canonical merge 与 resulting-main source closeout，见
   [R13](0002-r13-pre1-incremental-retirement.md)。
 
 以上 `[x]` 表示对应 source 纵切落地，不表示下列完整验收或父迭代完成。
@@ -131,7 +131,10 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 | --- | --- | --- | --- | --- |
 | VAL-GOV-001 baseline | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) 的 Python source job | 该基线包含 Markdown link check；R11 最终 head 仍在 [R11 validation](0002-r11-documentation-handoff.md#验证日志) 独立记录 |
 | W01 old candidate | technical `pass` / independent `fail` / activation `not-eligible` | 2026-08-04；checkpoint `8573f608…` + final `2b762946…` | [Actions 30927840380](https://github.com/fredgnr/local-context-forge/actions/runs/30927840380)、[30929070329](https://github.com/fredgnr/local-context-forge/actions/runs/30929070329)；[machine record](../evidence/W01/2026-08-04.json) | 旧 run/artifact/NO-GO 保留；不解锁 W02 |
-| W01 remediation candidate | PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | Checkpoint A `f4074a31…` / tree `f059ad8b…` | [Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597` | future descendant 与 merge/squash/rebase/main movement 不再由历史 ancestry/diff 限制；final containing-head CI 仍须重跑 |
+| W01 remediation historical Checkpoint A | 记录时刻 PR/source `pass`；independent `pending`；canonical-main `not-run`；activation `blocked` | `f4074a31…` / tree `f059ad8b…` | [Actions 30980342634](https://github.com/fredgnr/local-context-forge/actions/runs/30980342634)；payload `8919891304`；provenance `8919891597` | immutable history；后续 closeout 见下一行，不回写本记录 |
+| W01 external closeout | PR/source、independent、merge、resulting-main source、activation `pass` | final `36885e04…`；main `1786255b…`；tree `1b9f3a34…` | [W02 entry](../evidence/W02/2026-08-05-entry.md)；[Actions 30986208251](https://github.com/fredgnr/local-context-forge/actions/runs/30986208251) | 历史 W01 JSON 不回写；W02 解锁，但 packaged gate 未运行 |
+| W02 static assembly substage | `pass` | 2026-08-06；`08137c7…` / tree `d7814ac9…` | [assembly run `31024794972` / job `92370351806`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794972/job/92370351806)；[source run `31024794734`](https://github.com/fredgnr/local-context-forge/actions/runs/31024794734) | [evidence](../evidence/W02/2026-08-06-08137c7-assembly.md)；inventory `879` / native `78` / SHA-256 `7fcdb699…`；pre-pack sidecar staging smoke 成功，assembled App 未启动；full gate `not-run` |
+| W02 PR #21 independent review / remediation | independent `NO-GO`；first through eleventh attempts `fail` / `superseded`；twelfth local candidate `not-run` | 2026-08-14；reviewed `8c5fd232…` / tree `785f4656…`；latest failed `095cbc1…` / parent `8b2277a…` / tree `2eca5e8…` | eleventh Desktop `31799645685` success；Engineering `31799645731` / job `94764347264` failure；Containers `31799645737` success/no publish | [append-only record](../evidence/W02/2026-08-07-pr21-remediation.md)；real Installer seal expected `3648` / `fdd600…` vs observed `3648` / `77b580…` with only 33 mode diffs；rollback/postcondition/scratch cleanup success，artifacts `[]` / no App；twelfth contract compressed raw `3654` / `863a6353…` + only 6 AppleDouble removals = sealed `3648` / `77b580…`，33 symlink modes remain `0775`；pkgutil full-expansion `0777` is a counterexample, not positive reproduction；fresh twelfth Actions `not-run`；W02 remains `in-progress`；W10/W11 locked |
 | VAL-P1-SOURCE-001 | `pass` | 2026-07-30；`7e4524f` | 继承 ITER-0001 Actions 证据 | 仅证明恢复基线 |
 | Backend source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Python source job success；历史本地计数 322 pass / 1 AF_UNIX skip |
 | Desktop source 回归 | `pass` | 2026-07-31；`71890ee` | [Actions 30611309112](https://github.com/fredgnr/local-context-forge/actions/runs/30611309112) | Desktop source job success；历史本地计数 30 files / 245 pass / 7 skip |
@@ -180,7 +183,7 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 治理与证据：
 
 - `docs/adr/{README,0003-*,0005-* 至 0016-*}.md`
-- `docs/development/{README,roadmap,traceability,desktop-release,mcp-companion-protocol}.md`
+- `docs/development/{README,roadmap,traceability,desktop-release,mcp-companion-protocol,evidence/**}.md`
 - `docs/development/iterations/{README,0002-bundled-runtimes,0002-r07-qmd-embeddings,0002-r08-mcp-onboarding,0002-r09-signed-update-client,0002-r10-local-repositories,0002-r11-documentation-handoff,0002-r12-legacy-retirement-scope,0002-r13-pre1-incremental-retirement,0007-electron-only-retirement,0008-incremental-retirement-engineering-package}.md`
 - `README.md`、`SECURITY.md`、`desktop/README.md`
 - `docs/{README,00-overview,03-hardware-deployment,04-quickstart,06-api-and-mcp,10-security,14-all-in-one-macos,16-electron-desktop-guide}.md`
@@ -191,7 +194,7 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 - `desktop/src/**`、`desktop/companion/**`、`desktop/workers/qmd/**`、`desktop/tests/**`
 - `web/src/**`
 - `runtime/**`、`tools/**`、`desktop/scripts/**`、`desktop/resources/**`
-- `.github/workflows/{desktop-ci,desktop-release}.yml`
+- `.github/workflows/{desktop-ci,desktop-release,packaged-smoke}.yml`
 
 `fcca1e4` 相对 `8eedd7e` 的直接代码证据路径为：
 
@@ -204,5 +207,37 @@ P2/P3 必须先完成 P5/P6 才能进入 P4 的依赖循环。
 生成 staging、release assets、缓存、模型、索引、用户数据、credential bundle 和私有 evidence
 不入库。
 
-本轮最新 release source contract 不提升生产门禁：真实 GitHub settings 与物理 Mac 证据继续
-`not-run`，整体状态保持 **W01 remediation in progress / PR merge blocked / release NO-GO**。
+第七候选已提交的 producer/seal 设计从 `actions/setup-python` / 原完整 product pkg 改为：验签 exact
+outer pkg 后只重打并安装 `Python_Framework.pkg`，其唯一 postinstall 是 locked 17-byte no-op；
+旧 exact root 先隔离且 target 必须 absent，安装树只对非 symlink seal，再进行大小写无关 cache
+清理和 O_NOFOLLOW-held verifier/lock bytes 的 pre-Python Node core/fresh-exclusion
+verification。首次 framework Python 只允许出现在该
+verifier 成功后的 exact quarantine validation/cleanup 之后；运行时 `--install-reviewed-python` 只复验 distribution/framework/interpreter binding，
+不安装且不调用 `sudo`。第七次在更早的 manifest literal 绑定处 fail closed，未进入该安装边界。
+第八候选保留这些约束并通过 manifest/component 前置检查，但 root-owned `0700` 空 quarantine
+在 ordinary runner canonical `cd` 时 permission denied；cleanup-only success 未覆盖
+`/Library/Frameworks/**`，所以 quarantine residue absence 是 `not-proven`。第九候选关闭该问题并
+让 producer 成功，但 archive symlink mode `0775` 与 macOS Installer 落盘 `0777` 导致 core
+fingerprint change。第十次 exact `70b1823…` 的 Engineering `31580628877` / job `94062603909`
+又以 framework fingerprint change fail，证明旧 `ba58cfb…` 模型不完整；Desktop `31580628860`
+与 Containers `31580628857` success/no-publish 不能抵消。第十一次 exact `095cbc1…` 的 Desktop
+`31799645685` 与 Containers `31799645737` success/no-publish；Engineering `31799645731` / job
+`94764347264` 在真实 Installer 后观察到 `3648` / `77b580…`，与 expected `3648` / `fdd600…`
+只有 33 条 mode diff，随后 rollback、framework postcondition 与 scratch cleanup success，later
+skipped、artifacts `[]`、no App。第十二次 local contract 从 compressed Payload raw `3654` /
+`863a6353…` 只应用 6 个 exact AppleDouble removals，保持 33 个 symlink mode `0775`，得到 sealed
+`3648` / `77b580…`；manifest `615969` / `b145fe36…`、lock `4852` / `9682d311…`、verifier
+`51765` / `2dbd1f36…`。三个 pkgutil full-expansion materialization 的代表性 symlink 都是 `0777`，
+所以它们是旧 normalization 模型的来源/反例，不是 positive reproduction。本机 real Installer/
+system-root reproduction 仍为 `not-run`。两份 workflow 还以 pre-trap sentinel 和 exact
+path/type/root-owner/`dev:ino` 激活 seal transaction。seal 成功只写 `committed` 并保留 quarantine；
+独立 `always()` postcondition 重验后才 `finalizing` 删除并最终 `complete`。rollback-ready phase 的
+`HUP`/`INT`/`TERM` 精确恢复；unbound/mismatch preserve/no-delete、`finalizing` failure no-rollback，
+均 fixed `70`，且不声称 `SIGKILL`/host-crash recovery；第十二次 candidate 尚未提交或运行 fresh
+exact-head Actions。
+
+本轮最新 release source contract 与 W02 历史 static assembly evidence 不提升生产门禁；PR #21
+reviewed head 的独立结论是 `NO-GO`，first through eleventh remediation attempts 已 `fail` /
+`superseded`，twelfth local candidate 仍为 `not-run`。packaged
+launch/runtime、真实 GitHub settings 与物理 Mac 证据继续 `not-run`，整体状态为
+**W02 in-progress / release NO-GO**。
